@@ -133,6 +133,80 @@ export function statusMeta(status: StatusState, seasonLabel?: string): StatusMet
   }
 }
 
+/**
+ * Plain-language age read for the "Who it's for" section. Grounded ONLY in the
+ * numeric age_min/age_max the source gave us — no invented "fit score". Maps the
+ * range onto the canonical age_band taxonomy (under2 / 2-4 / 5-9 / 10-14 / 15+)
+ * for a parent-readable band label, and states the sibling read honestly from the
+ * width of the range (how many bands it spans), never more than the data supports.
+ */
+export interface AgeGuide {
+  /** The plain range, e.g. "Ages 5–9" — same source of truth as the stat row. */
+  range: string;
+  /** Parent-readable band, e.g. "Toddlers" or "Babies to tweens". */
+  band: string;
+  /** Honest sibling read, derived only from how wide the band is. */
+  siblingFit: string;
+  /** True when the source didn't narrow the ages (open 0–15+ span) — flag, don't overclaim. */
+  unspecified: boolean;
+}
+
+// Canonical bands (TSD §6.1 age_band), upper bound inclusive in whole years.
+const AGE_BANDS: { upperYear: number; label: string }[] = [
+  { upperYear: 1, label: 'babies' },
+  { upperYear: 4, label: 'toddlers' },
+  { upperYear: 9, label: 'school-age kids' },
+  { upperYear: 14, label: 'tweens' },
+  { upperYear: Infinity, label: 'teens' },
+];
+
+function bandIndex(year: number): number {
+  const i = AGE_BANDS.findIndex((b) => year <= b.upperYear);
+  return i === -1 ? AGE_BANDS.length - 1 : i;
+}
+
+function capitalise(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+export function ageGuide(min: number, max: number): AgeGuide {
+  const range = formatAges(min, max);
+  const unspecified = min <= 0 && max >= 15; // source gave no meaningful narrower bound
+
+  const lo = bandIndex(Math.max(0, min));
+  const hi = bandIndex(max);
+  const spanned = hi - lo + 1;
+  const band =
+    lo === hi ? capitalise(AGE_BANDS[lo].label) : `${capitalise(AGE_BANDS[lo].label)} to ${AGE_BANDS[hi].label}`;
+
+  let siblingFit: string;
+  if (unspecified) {
+    siblingFit = "The source doesn't list an age limit — check the listing for any toddler restrictions.";
+  } else if (spanned >= 3) {
+    siblingFit = 'Wide age range — one outing that can work for siblings of different ages.';
+  } else if (spanned === 2) {
+    siblingFit = 'Spans two age groups — usually fine for close-in-age siblings.';
+  } else {
+    siblingFit = 'Aimed at one age group — best when your kids are close in age.';
+  }
+
+  return { range, band, siblingFit, unspecified };
+}
+
+/**
+ * "Good to know" practical facts — scannable qualities drawn straight from real
+ * boolean fields (indoor/outdoor, rainy-day suitability, drop-in). Additive to the
+ * stat row, never a marketing claim. Order is stable for deterministic rendering.
+ */
+export function practicalFacts(
+  activity: Pick<Activity, 'indoor' | 'rainyDay' | 'dropIn'>
+): string[] {
+  const facts = [activity.indoor ? 'Indoor' : 'Outdoor'];
+  if (activity.rainyDay) facts.push('Rainy-day friendly');
+  if (activity.dropIn) facts.push('No registration needed');
+  return facts;
+}
+
 /** Short booking/registration tag copy (empty string when nothing to book). */
 export function bookingTag(booking: Activity['booking']): string {
   switch (booking) {

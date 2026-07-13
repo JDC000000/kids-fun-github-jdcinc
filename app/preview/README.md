@@ -9,8 +9,12 @@ the backend (Track B schema) and search API (Track D) and swaps to live data cle
 - `/preview` — Landing / Today dashboard + results (Screen 1 & 2): sticky date/area
   bar, scroll-snap filter chips, transparent sort (D6), confirmed-vs-expected split
   (D7), and the empty/broadening state (Screen 5b) when filters over-constrain.
-- `/preview/[id]` — Activity detail stub (Screen 3): key stat row, honesty block,
-  source & freshness panel, sticky bottom action bar.
+- `/preview/[id]` — Activity detail (Screen 3): key stat row, honesty block,
+  **Who it's for** (age-band clarity + honest sibling-fit read from `age_min`/`age_max`,
+  plus source-authored `age_notes` verbatim when present), **Good to know** practical
+  facts (indoor/outdoor, rainy-day, drop-in — from real boolean fields), Overview,
+  Parent notes, source & freshness panel, sticky bottom action bar. Fixture-backed
+  locally, DB-backed in staging.
 
 ## Structure (all self-contained under `app/preview/`)
 | Path | Role |

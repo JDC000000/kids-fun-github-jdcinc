@@ -9,12 +9,14 @@ import { FIXTURE_LISTINGS } from '@/lib/search/__fixtures__/listings';
 import { ACTIVITIES, findActivity } from '../_data/fixtures';
 import { mapListingRecordToActivity, mapSearchItemToActivity } from '../_data/search-api';
 import {
+  ageGuide,
   bookingTag,
   formatAges,
   formatChecked,
   formatCost,
   formatDistance,
   formatWhen,
+  practicalFacts,
   statusMeta,
 } from '../_data/format';
 
@@ -60,6 +62,8 @@ export default async function DetailPage({ params }: { params: { id: string } })
   const isBookable = activity.status === 'confirmed' || activity.status === 'bookable_open';
   const isBlocked = activity.status === 'cancelled' || activity.status === 'postponed';
   const bookLabel = bookingTag(activity.booking) || 'View booking page';
+  const ages = ageGuide(activity.ageMin, activity.ageMax);
+  const facts = practicalFacts(activity);
 
   return (
     <div className="kf-detail">
@@ -102,14 +106,40 @@ export default async function DetailPage({ params }: { params: { id: string } })
         <p>{activity.descriptionSnippet}</p>
       </section>
 
+      {/* Who it's for — age-band clarity + honest sibling read from the source's own age range. */}
       <section className="kf-panel">
-        <h2 className="kf-panel__title">Parent notes</h2>
-        <ul>
-          {activity.parentNotes.map((note) => (
-            <li key={note}>{note}</li>
-          ))}
-        </ul>
+        <h2 className="kf-panel__title">Who it&apos;s for</h2>
+        <p className="kf-guide__band">
+          {ages.range} · {ages.band}
+        </p>
+        <p className="kf-guide__fit">{ages.siblingFit}</p>
+        {activity.ageNotes && <p className="kf-guide__note">From the source: {activity.ageNotes}</p>}
       </section>
+
+      {/* Good to know — scannable practical qualities pulled straight from real fields. */}
+      {facts.length > 0 && (
+        <section className="kf-panel">
+          <h2 className="kf-panel__title">Good to know</h2>
+          <ul className="kf-facts" aria-label="Practical details">
+            {facts.map((fact) => (
+              <li key={fact} className="kf-fact">
+                {fact}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {activity.parentNotes.length > 0 && (
+        <section className="kf-panel">
+          <h2 className="kf-panel__title">Parent notes</h2>
+          <ul>
+            {activity.parentNotes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Source & freshness panel — provenance foregrounded; consistent help. */}
       <section className="kf-panel">

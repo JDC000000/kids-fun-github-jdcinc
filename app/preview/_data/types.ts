@@ -75,6 +75,8 @@ export interface Activity {
   dropIn: boolean;
   descriptionSnippet: string;
   parentNotes: string[]; // stroller/transit/sibling-fit facts
+  /** Real source-authored age guidance (occurrence_age.age_notes), surfaced verbatim when present. */
+  ageNotes?: string;
 }
 
 /** Visual + copy treatment for a status — never colour-only (paired label + icon). */

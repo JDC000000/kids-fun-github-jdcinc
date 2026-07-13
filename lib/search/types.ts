@@ -83,6 +83,8 @@ export interface ListingRecord {
   ageBandMatches: AgeBandKey[];
   ageMinMonths: number | null;
   ageMaxMonths: number | null;
+  /** Free-text age guidance from the source (occurrence_age.age_notes). Optional; surfaced verbatim by detail UX, not indexed. */
+  ageNotes?: string | null;
 
   // Geo / region (venue).
   geo: GeoPoint | null; // null → un-geocoded; shown without distance (TSD §5B)

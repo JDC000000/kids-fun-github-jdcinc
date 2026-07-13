@@ -31,6 +31,7 @@ interface ListingRow {
   last_checked_at: Date | string | null;
   age_min_months: number | null;
   age_max_months: number | null;
+  age_notes: string | null;
   age_band_keys: string[] | null;
   lat: number | string | null;
   lng: number | string | null;
@@ -104,6 +105,7 @@ function listingSelectSql(): string {
        o.last_checked_at,
        oa.age_min_months,
        oa.age_max_months,
+       oa.age_notes,
        COALESCE(array_remove(array_agg(DISTINCT ab.key), NULL), '{}') AS age_band_keys,
        CASE WHEN v.geo IS NULL THEN NULL ELSE ST_Y(v.geo::geometry) END AS lat,
        CASE WHEN v.geo IS NULL THEN NULL ELSE ST_X(v.geo::geometry) END AS lng,
@@ -133,7 +135,7 @@ function listingGroupBySql(): string {
        o.description_snippet, o.start_datetime_utc, o.end_datetime_utc, o.open_hours_state,
        o.cost_status, o.cost_min_cad, o.cost_max_cad, o.source_url, o.booking_url,
        o.location_url, o.status_state, o.confidence_label, o.last_checked_at,
-       oa.age_min_months, oa.age_max_months, v.geo, v.municipality_id, v.neighbourhood, v.display_area`;
+       oa.age_min_months, oa.age_max_months, oa.age_notes, v.geo, v.municipality_id, v.neighbourhood, v.display_area`;
 }
 
 function rowToListing(row: ListingRow): ListingRecord {
@@ -165,6 +167,7 @@ function rowToListing(row: ListingRow): ListingRecord {
     ageBandMatches: (row.age_band_keys ?? []).filter(isAgeBandKey),
     ageMinMonths: row.age_min_months,
     ageMaxMonths: row.age_max_months,
+    ageNotes: cleanText(row.age_notes),
     geo: row.lat != null && row.lng != null ? { lat: Number(row.lat), lng: Number(row.lng) } : null,
     municipalityId: row.municipality_id,
     neighbourhood: row.neighbourhood,
@@ -219,6 +222,13 @@ function iso(value: Date | string | null): string | null {
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+/** Trim source free-text; collapse empty/whitespace-only values to null so the UI can skip them. */
+function cleanText(value: string | null): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function venueFromSeriesTitle(title: string): string | null {
