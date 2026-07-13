@@ -15,10 +15,12 @@
     "smoke": "node dist/chromium-smoke.js"
   },
   "dependencies": {
+    "pg": "^8.22.0",
     "puppeteer-core": "22.15.0"
   },
   "devDependencies": {
     "@types/node": "20.14.10",
+    "@types/pg": "^8.20.0",
     "typescript": "5.5.3"
   }
 }
