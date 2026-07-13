@@ -3,13 +3,12 @@
 // The interactive results surface: sticky date/area bar, scroll-snap filter chips,
 // a transparent sort control (D6), the confirmed/expected split (D7), and the
 // empty/broadening fork. Client-side because filtering/sorting the fixtures is
-// instant, local state — no network. Swaps to the Track D search API later by
-// replacing `ACTIVITIES` + the pure filter/sort calls with fetched results.
+// instant local state on top of an API response. The API is fixture-backed for
+// now (`x-data-source: fixture`), but the UI no longer imports static listings.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityCard } from './ActivityCard';
 import { EmptyState } from './EmptyState';
-import { ACTIVITIES } from '../_data/fixtures';
 import {
   BOOL_CHIPS,
   DEFAULT_FILTERS,
@@ -25,6 +24,7 @@ import {
   type FilterState,
   type SortKey,
 } from '../_data/filter';
+import { mapSearchResponseToActivities, searchApiUrl, type SearchResponseDto } from '../_data/search-api';
 import type { Activity, TimeOfDay } from '../_data/types';
 
 function Section({ title, note, items }: { title: string; note?: string; items: Activity[] }) {
@@ -48,16 +48,40 @@ export function ResultsShell() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [sort, setSort] = useState<SortKey>('best_match');
   const [sortOpen, setSortOpen] = useState(false);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    fetch(searchApiUrl(), { signal: controller.signal, headers: { accept: 'application/json' } })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Search API returned ${res.status}`);
+        const body = (await res.json()) as SearchResponseDto;
+        setActivities(mapSearchResponseToActivities(body));
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setActivities([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
 
   const { confirmed, expected, total } = useMemo(() => {
-    const matched = applyFilters(ACTIVITIES, filters);
+    const matched = applyFilters(activities, filters);
     const parts = partitionSections(matched);
     return {
       confirmed: sortActivities(parts.confirmed, sort),
       expected: sortActivities(parts.expected, sort),
       total: matched.length,
     };
-  }, [filters, sort]);
+  }, [activities, filters, sort]);
 
   const toggleBool = (key: BoolChipKey) => setFilters((f) => ({ ...f, [key]: !f[key] }));
   const setTimeOfDay = (t: TimeOfDay | 'any') =>
@@ -200,7 +224,19 @@ export function ResultsShell() {
           </div>
         )}
 
-        {total === 0 ? (
+        {loading ? (
+          <div className="kf-empty" aria-live="polite">
+            <p className="kf-empty__eyebrow">Loading fixture-backed search…</p>
+            <h2 className="kf-empty__title">Getting today’s cards.</h2>
+            <p className="kf-empty__copy">This is using /api/search now, so the UI is on the same seam as live data.</p>
+          </div>
+        ) : error ? (
+          <div className="kf-empty" role="alert">
+            <p className="kf-empty__eyebrow">Search API issue</p>
+            <h2 className="kf-empty__title">Couldn’t load activities.</h2>
+            <p className="kf-empty__copy">{error}</p>
+          </div>
+        ) : total === 0 ? (
           <EmptyState
             radiusKm={filters.radiusKm}
             canWiden={filters.radiusKm < 20}
@@ -210,6 +246,7 @@ export function ResultsShell() {
           />
         ) : (
           <>
+            <p className="kf-section__note">Data source: fixture-backed /api/search. Live source crawling is still intentionally off.</p>
             <Section title="On today near East Van" items={confirmed} />
             <Section
               title="Expected / not yet posted"

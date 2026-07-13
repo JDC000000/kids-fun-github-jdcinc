@@ -4,6 +4,8 @@ import { CategoryTile } from '../_components/CategoryTile';
 import { FreshnessStamp } from '../_components/FreshnessStamp';
 import { ReportWrongInfo } from '../_components/ReportWrongInfo';
 import { ACTIVITIES, findActivity } from '../_data/fixtures';
+import { mapSearchItemToActivity } from '../_data/search-api';
+import { FIXTURE_LISTINGS } from '../../../lib/search/__fixtures__/listings';
 import {
   bookingTag,
   formatAges,
@@ -19,7 +21,14 @@ import {
 // sections land when the search API + full occurrence data are wired.
 
 export function generateStaticParams() {
-  return ACTIVITIES.map((a) => ({ id: a.id }));
+  return [...ACTIVITIES.map((a) => ({ id: a.id })), ...FIXTURE_LISTINGS.map((a) => ({ id: a.id }))];
+}
+
+function findAnyActivity(id: string) {
+  const visualFixture = findActivity(id);
+  if (visualFixture) return visualFixture;
+  const searchFixture = FIXTURE_LISTINGS.find((listing) => listing.id === id);
+  return searchFixture ? mapSearchItemToActivity({ listing: searchFixture, distanceKm: null }) : null;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -32,7 +41,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 export default function DetailPage({ params }: { params: { id: string } }) {
-  const activity = findActivity(params.id);
+  const activity = findAnyActivity(params.id);
   if (!activity) notFound();
 
   const when = formatWhen(activity.startIso, activity.endIso);

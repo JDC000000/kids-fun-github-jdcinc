@@ -1,3 +1,4 @@
+import './preview/preview.css';
 import type { ReactNode } from 'react';
 
 export const metadata = {
