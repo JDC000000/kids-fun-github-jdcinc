@@ -1,14 +1,15 @@
--- 0014_occurrence_dedup_key.sql — Schema enabler for T14 dedup / Track C ingestion.
--- Adds activity_occurrence.dedup_key + a UNIQUE index so the ingestion sink's
--- idempotent upsert `ON CONFLICT (dedup_key)` (worker/core/upsert.ts PgOccurrenceSink,
--- G-T5-4) runs against Postgres instead of the in-memory reference sink.
+-- 0015_occurrence_dedup_key.sql — Schema hook for future T14 cross-source dedup.
+-- Adds activity_occurrence.dedup_key + a UNIQUE index reserved for the deterministic
+-- dedup engine (keys / adjudicate / merge, T14 / TSD §5.2).
 --
--- SCOPE: this is the schema HOOK only. The deterministic dedup ENGINE
--- (keys / adjudicate / merge, T14 / TSD §5.2) remains out of scope here.
--- NULL dedup_key is allowed (NULLs are distinct in a unique index) so manual /
--- non-deduplicable rows never collide; the sink routes empty-key records to review
--- rather than inserting a NULL key. A full (non-partial) unique index is used so it
--- matches the sink's bare `ON CONFLICT (dedup_key)` inference.
+-- NOTE: current ingestion idempotency does NOT use this column. worker/core/upsert.ts
+-- currently upserts same-source records with (series_id, source_record_id), matching
+-- 0011_job_queue.sql's partial unique index. dedup_key is intentionally unused until
+-- the T14 cross-source dedup workflow is implemented.
+--
+-- SCOPE: this is the schema HOOK only. The deterministic dedup ENGINE remains out
+-- of scope here. NULL dedup_key is allowed (NULLs are distinct in a unique index)
+-- so manual / non-deduplicable rows never collide.
 --
 -- Src: TSD v1.2 §5.2/§6.2, scope-to-task v1.1 §C (T14). Deps: 0004_activities.
 -- Forward-only; reversible steps recorded below.
