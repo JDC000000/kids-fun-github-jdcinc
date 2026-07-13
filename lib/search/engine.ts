@@ -40,6 +40,7 @@ export interface SearchEngineDeps {
   rankConfig?: RankConfigProvider;
   matcher?: CandidateMatcher;
   geocoder?: Geocoder;
+  fixtureBacked?: boolean;
 }
 
 export interface SearchRequest {
@@ -73,7 +74,7 @@ export interface SearchResponse {
   expected: SearchResultItem[];
   total: number;
   broadening: { applied: BroadenRung[]; emptyState: ConstraintExplanation | null };
-  meta: { fixtureBacked: boolean; sort: SortKey };
+  meta: { fixtureBacked: boolean; sort: SortKey; backend?: 'fixture' | 'database'; fallbackReason?: string };
 }
 
 export class SearchEngine {
@@ -83,6 +84,7 @@ export class SearchEngine {
   private readonly rankConfig: RankConfigProvider;
   private readonly matcher: CandidateMatcher;
   private readonly geocoder?: Geocoder;
+  private readonly fixtureBacked: boolean;
 
   constructor(deps: SearchEngineDeps) {
     this.repo = deps.repository;
@@ -91,6 +93,7 @@ export class SearchEngine {
     this.rankConfig = deps.rankConfig ?? new StaticRankConfig();
     this.matcher = deps.matcher ?? new WeightedTrigramMatcher();
     this.geocoder = deps.geocoder;
+    this.fixtureBacked = deps.fixtureBacked ?? true;
   }
 
   search(req: SearchRequest): SearchResponse {
@@ -152,7 +155,7 @@ export class SearchEngine {
       expected: applyLimit(expected).map(toItem),
       total: scored.length,
       broadening: { applied, emptyState },
-      meta: { fixtureBacked: true, sort: working.sort },
+      meta: { fixtureBacked: this.fixtureBacked, sort: working.sort },
     };
   }
 

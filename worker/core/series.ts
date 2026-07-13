@@ -5,11 +5,9 @@
 // canonical_title) so all dates of a recurring program share one series and the
 // series is not duplicated across ingest runs.
 //
-// activity_series has no unique constraint on (source_id, canonical_title), so
-// this does a lookup-then-insert rather than ON CONFLICT. A per-source ingest
-// runs as a single active job (the queue guards one running job per source), so
-// concurrent duplicate inserts for one source are not expected; a future series
-// dedup index would harden this against races.
+// activity_series has a unique index on (source_id, canonical_title), so this
+// uses INSERT ... ON CONFLICT DO NOTHING and a follow-up SELECT. That keeps the
+// resolver race-safe even if a manual one-off run overlaps with the queued run.
 import type { Pool } from 'pg';
 
 export interface SeriesInput {
@@ -28,21 +26,32 @@ export interface SeriesResult {
 }
 
 export async function resolveSeries(pool: Pool, input: SeriesInput): Promise<SeriesResult> {
+  const params = [
+    input.canonicalTitle,
+    input.sourceId,
+    input.venueId ?? null,
+    input.recurrenceRule ?? null,
+  ];
+
+  const inserted = await pool.query<{ id: string }>(
+    `INSERT INTO activity_series (canonical_title, source_id, venue_id, recurrence_rule)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (source_id, canonical_title) DO NOTHING
+     RETURNING id`,
+    params
+  );
+  if (inserted.rows[0]) {
+    return { seriesId: inserted.rows[0].id, created: true };
+  }
+
   const existing = await pool.query<{ id: string }>(
     `SELECT id FROM activity_series
      WHERE source_id = $1 AND canonical_title = $2
      LIMIT 1`,
     [input.sourceId, input.canonicalTitle]
   );
-  if (existing.rows[0]) {
-    return { seriesId: existing.rows[0].id, created: false };
+  if (!existing.rows[0]) {
+    throw new Error('series conflict resolution failed: existing row not found');
   }
-
-  const inserted = await pool.query<{ id: string }>(
-    `INSERT INTO activity_series (canonical_title, source_id, venue_id, recurrence_rule)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id`,
-    [input.canonicalTitle, input.sourceId, input.venueId ?? null, input.recurrenceRule ?? null]
-  );
-  return { seriesId: inserted.rows[0].id, created: true };
+  return { seriesId: existing.rows[0].id, created: false };
 }

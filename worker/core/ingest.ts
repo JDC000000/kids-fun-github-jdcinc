@@ -14,6 +14,7 @@ import { startCheckRun, finishCheckRun } from './checkrun';
 import { resolveSeries } from './series';
 import { upsertOccurrence } from './upsert';
 import { recordProvenance } from './provenance';
+import { resolvePrimaryCategoryId } from './taxonomy';
 
 export interface IngestSummary {
   checkRunId: string;
@@ -71,7 +72,12 @@ export async function ingestSource(
         });
         if (series.created) seriesCreated += 1;
 
-        const { occurrenceId, created } = await upsertOccurrence(pool, series.seriesId, record);
+        const primaryCategoryId = await resolvePrimaryCategoryId(pool, record);
+        const { occurrenceId, created } = await upsertOccurrence(pool, series.seriesId, record, {
+          primaryCategoryId,
+          statusState: 'confirmed',
+          confidenceLabel: 'high',
+        });
         occurrencesUpserted += 1;
         if (created) occurrencesCreated += 1;
 

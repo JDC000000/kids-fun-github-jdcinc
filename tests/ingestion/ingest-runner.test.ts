@@ -37,14 +37,19 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     expect(run.status).toBe('success');
 
     // occurrence exists and is attached to a (NOT NULL) series for this source.
-    const occ = await query<{ series_id: string }>(
-      `SELECT o.series_id FROM activity_occurrence o
+    const occ = await query<{ series_id: string; status_state: string; confidence_label: string; category_key: string }>(
+      `SELECT o.series_id, o.status_state, o.confidence_label, c.key AS category_key
+       FROM activity_occurrence o
        JOIN activity_series s ON s.id = o.series_id
+       LEFT JOIN category c ON c.id = o.primary_category_id
        WHERE s.source_id = $1`,
       [source.id]
     );
     expect(occ.length).toBe(1);
     expect(occ[0].series_id).not.toBeNull();
+    expect(occ[0].status_state).toBe('confirmed');
+    expect(occ[0].confidence_label).toBe('high');
+    expect(occ[0].category_key).toBe('class_program');
   });
 
   it('is idempotent: a second run reuses the series and updates the occurrence in place', async () => {

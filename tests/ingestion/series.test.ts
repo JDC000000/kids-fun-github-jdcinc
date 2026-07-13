@@ -35,6 +35,28 @@ describe.skipIf(!hasDb)('Series resolution (G-T5-4)', () => {
     expect(Number(rows[0].n)).toBe(1);
   });
 
+  it('uses the database uniqueness guard under concurrent series resolution', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      [`Concurrent Series Source ${crypto.randomUUID()}`]
+    );
+    const title = `Concurrent Open Gym ${crypto.randomUUID()}`;
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => resolveSeries(pool, { sourceId: source.id, canonicalTitle: title }))
+    );
+
+    expect(new Set(results.map((r) => r.seriesId)).size).toBe(1);
+    expect(results.filter((r) => r.created).length).toBe(1);
+
+    const rows = await query<{ n: string }>(
+      `SELECT count(*) AS n FROM activity_series WHERE source_id = $1 AND canonical_title = $2`,
+      [source.id, title]
+    );
+    expect(Number(rows[0].n)).toBe(1);
+  });
+
   it('feeds upsertOccurrence so a NoopAdapter record upserts under the resolved series', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
