@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { getPool, query, closePool } from '../../lib/db/client';
-import { loadPostgresListings } from '../../lib/search/postgres-repository';
+import { loadPostgresListingById, loadPostgresListings } from '../../lib/search/postgres-repository';
 import { SearchEngine } from '../../lib/search/engine';
 import { InMemoryListingRepository } from '../../lib/search/repository';
 import { FixtureAliasResolver } from '../../lib/search/expand';
@@ -50,6 +50,10 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
     expect(listing?.confidenceLabel).toBe('official_recent');
     expect(listing?.costStatus).toBe('free');
     expect(listing?.sourceUrl).toBe('https://example.org/events/repo-test');
+
+    const detailListing = await loadPostgresListingById(pool, occurrence.id);
+    expect(detailListing?.id).toBe(occurrence.id);
+    expect(detailListing?.activityName).toBe(`Family Storytime ${suffix}`);
   });
 
   it('feeds DB storytime listings through the search engine', async () => {
@@ -87,6 +91,10 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
   });
 
 
+  it('does not load malformed IDs for detail pages', async () => {
+    await expect(loadPostgresListingById(getPool(), 'not-a-uuid')).resolves.toBeNull();
+  });
+
   it('does not return expired fixed-time occurrences from the live read model', async () => {
     const [source] = await query<{ id: string }>(
       `INSERT INTO source (family, name, authority_tier) VALUES ('library_bibliocommons', $1, 'official') RETURNING id`,
@@ -109,6 +117,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
 
     const listings = await loadPostgresListings(getPool());
     expect(listings.some((l) => l.id === occurrence.id)).toBe(false);
+    await expect(loadPostgresListingById(getPool(), occurrence.id)).resolves.toBeNull();
   });
 
 });

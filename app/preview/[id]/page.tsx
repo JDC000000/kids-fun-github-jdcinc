@@ -3,9 +3,11 @@ import { notFound } from 'next/navigation';
 import { CategoryTile } from '../_components/CategoryTile';
 import { FreshnessStamp } from '../_components/FreshnessStamp';
 import { ReportWrongInfo } from '../_components/ReportWrongInfo';
+import { getPool } from '@/lib/db/client';
+import { loadPostgresListingById } from '@/lib/search/postgres-repository';
+import { FIXTURE_LISTINGS } from '@/lib/search/__fixtures__/listings';
 import { ACTIVITIES, findActivity } from '../_data/fixtures';
-import { mapSearchItemToActivity } from '../_data/search-api';
-import { FIXTURE_LISTINGS } from '../../../lib/search/__fixtures__/listings';
+import { mapListingRecordToActivity, mapSearchItemToActivity } from '../_data/search-api';
 import {
   bookingTag,
   formatAges,
@@ -17,18 +19,27 @@ import {
 } from '../_data/format';
 
 // Activity detail / source page (Screen 3) — everything to decide and to trust,
-// with source provenance foregrounded. Fixture-backed stub: real Schedule/Similar
-// sections land when the search API + full occurrence data are wired.
+// with source provenance foregrounded. Fixture-backed locally, and DB-backed in
+// staging when the approved live search backend surfaces real occurrence IDs.
 
-export function generateStaticParams() {
-  return [...ACTIVITIES.map((a) => ({ id: a.id })), ...FIXTURE_LISTINGS.map((a) => ({ id: a.id }))];
-}
+export const dynamic = 'force-dynamic';
 
-function findAnyActivity(id: string) {
+async function findAnyActivity(id: string) {
   const visualFixture = findActivity(id);
   if (visualFixture) return visualFixture;
+
   const searchFixture = FIXTURE_LISTINGS.find((listing) => listing.id === id);
-  return searchFixture ? mapSearchItemToActivity({ listing: searchFixture, distanceKm: null }) : null;
+  if (searchFixture) return mapSearchItemToActivity({ listing: searchFixture, distanceKm: null });
+
+  if (process.env.KIDS_FUN_SEARCH_BACKEND !== 'database') return null;
+
+  try {
+    const listing = await loadPostgresListingById(getPool(), id);
+    return listing ? mapListingRecordToActivity(listing) : null;
+  } catch {
+    // Detail pages must fail closed rather than leaking DB errors to parents.
+    return null;
+  }
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -40,8 +51,8 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function DetailPage({ params }: { params: { id: string } }) {
-  const activity = findAnyActivity(params.id);
+export default async function DetailPage({ params }: { params: { id: string } }) {
+  const activity = await findAnyActivity(params.id);
   if (!activity) notFound();
 
   const when = formatWhen(activity.startIso, activity.endIso);

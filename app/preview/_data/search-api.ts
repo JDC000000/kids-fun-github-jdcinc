@@ -1,3 +1,4 @@
+import type { ListingRecord } from '@/lib/search/types';
 import type { Activity, BookingType, Category, ConfidenceLabel, CostStatus, StatusState, TimeOfDay } from './types';
 
 export interface ListingRecordDto {
@@ -62,6 +63,10 @@ export function mapSearchResponseToActivities(response: SearchResponseDto): Acti
     .map(mapSearchItemToActivity);
 }
 
+export function mapListingRecordToActivity(listing: ListingRecord, distanceKm: number | null = null): Activity {
+  return mapSearchItemToActivity({ listing, distanceKm });
+}
+
 export function mapSearchItemToActivity(item: SearchItemDto): Activity {
   const l = item.listing;
   const startIso = l.startDatetimeUtc ?? new Date().toISOString();
@@ -90,7 +95,6 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     confidence: mapConfidence(l.confidenceLabel),
     sourceName: hostLabel(sourceUrl),
     sourceUrl,
-    detailUrl: sourceUrl,
     ...(l.bookingUrl ? { bookingUrl: l.bookingUrl } : {}),
     ...(l.locationUrl ? { locationUrl: l.locationUrl } : {}),
     lastCheckedIso: l.lastCheckedAtUtc ?? new Date().toISOString(),

@@ -114,7 +114,7 @@ describe('search API mapping', () => {
     expect(url.searchParams.get('limit')).toBe('100');
   });
 
-  it('uses the official source as the temporary detail target for live API cards', () => {
+  it('keeps live API cards on the internal detail path and preserves official source links', () => {
     const activity = mapSearchItemToActivity({
       distanceKm: null,
       listing: {
@@ -146,7 +146,8 @@ describe('search API mapping', () => {
       },
     });
 
-    expect(activity.detailUrl).toBe(activity.sourceUrl);
+    expect(activity.detailUrl).toBeUndefined();
+    expect(activity.sourceUrl).toBe('https://yourlibrary.bibliocommons.com/v2/events/live-1');
     expect(activity.area).toBe('Steveston');
     expect(activity.distanceKm).toBeGreaterThan(10);
   });

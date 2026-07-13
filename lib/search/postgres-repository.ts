@@ -43,13 +43,43 @@ export interface LoadPostgresListingsOptions {
   limit?: number;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export async function loadPostgresListings(
   pool: Pool,
   options: LoadPostgresListingsOptions = {}
 ): Promise<ListingRecord[]> {
   const limit = Math.max(1, Math.min(options.limit ?? 500, 1000));
   const { rows } = await pool.query<ListingRow>(
-    `SELECT
+    `${listingSelectSql()}
+     WHERE ${visibleOccurrenceWhereSql()}
+     ${listingGroupBySql()}
+     ORDER BY o.start_datetime_utc NULLS LAST, o.last_checked_at DESC NULLS LAST, o.created_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+
+  return rows.map(rowToListing);
+}
+
+/** Load one visible occurrence for the detail page without scanning the whole read model. */
+export async function loadPostgresListingById(pool: Pool, id: string): Promise<ListingRecord | null> {
+  if (!UUID_RE.test(id)) return null;
+
+  const { rows } = await pool.query<ListingRow>(
+    `${listingSelectSql()}
+     WHERE ${visibleOccurrenceWhereSql()}
+       AND o.id = $1
+     ${listingGroupBySql()}
+     LIMIT 1`,
+    [id]
+  );
+
+  return rows[0] ? rowToListing(rows[0]) : null;
+}
+
+function listingSelectSql(): string {
+  return `SELECT
        o.id,
        o.series_id,
        o.activity_name,
@@ -89,21 +119,21 @@ export async function loadPostgresListings(
      LEFT JOIN tag t ON t.id = oct.tag_id
      LEFT JOIN occurrence_age oa ON oa.occurrence_id = o.id
      LEFT JOIN LATERAL unnest(oa.age_band_matches) AS band_id(id) ON true
-     LEFT JOIN age_band ab ON ab.id = band_id.id
-     WHERE o.archived_at IS NULL
-       AND (o.open_hours_state IS NOT NULL OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now())
-     GROUP BY
+     LEFT JOIN age_band ab ON ab.id = band_id.id`;
+}
+
+function visibleOccurrenceWhereSql(): string {
+  return `o.archived_at IS NULL
+       AND (o.open_hours_state IS NOT NULL OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now())`;
+}
+
+function listingGroupBySql(): string {
+  return `GROUP BY
        o.id, o.series_id, o.activity_name, c.key, v.name, s.name, ser.canonical_title, s.authority_tier,
        o.description_snippet, o.start_datetime_utc, o.end_datetime_utc, o.open_hours_state,
        o.cost_status, o.cost_min_cad, o.cost_max_cad, o.source_url, o.booking_url,
        o.location_url, o.status_state, o.confidence_label, o.last_checked_at,
-       oa.age_min_months, oa.age_max_months, v.geo, v.municipality_id, v.neighbourhood, v.display_area
-     ORDER BY o.start_datetime_utc NULLS LAST, o.last_checked_at DESC NULLS LAST, o.created_at DESC
-     LIMIT $1`,
-    [limit]
-  );
-
-  return rows.map(rowToListing);
+       oa.age_min_months, oa.age_max_months, v.geo, v.municipality_id, v.neighbourhood, v.display_area`;
 }
 
 function rowToListing(row: ListingRow): ListingRecord {
