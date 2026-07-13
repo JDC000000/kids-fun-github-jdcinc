@@ -2,17 +2,18 @@
   "name": "kids-fun-worker",
   "version": "0.0.0",
   "private": true,
-  "description": "KIDS FUN ingestion worker — long-running/containerised Node runtime with headless Chromium (TSD §3A.1, §5). NOT Vercel serverless.",
+  "description": "KIDS FUN ingestion worker \u2014 long-running/containerised Node runtime with headless Chromium (TSD \u00a73A.1, \u00a75). NOT Vercel serverless.",
   "engines": {
     "node": ">=20 <23"
   },
   "type": "commonjs",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "dev": "node --loader ts-node/esm src/index.ts",
-    "smoke": "node dist/chromium-smoke.js"
+    "smoke": "node dist/src/chromium-smoke.js",
+    "ingest:once": "node dist/src/ingest-once.js"
   },
   "dependencies": {
     "pg": "^8.22.0",

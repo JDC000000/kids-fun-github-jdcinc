@@ -9,6 +9,9 @@ COPY package.json package-lock.json* ./
 RUN npm install --no-audit --no-fund
 COPY tsconfig.json ./
 COPY src ./src
+COPY core ./core
+COPY adapters ./adapters
+COPY scheduler ./scheduler
 RUN npm run build
 
 # ── runtime: Chromium + prod deps + compiled dist ────────────────────────────
@@ -52,4 +55,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS "http://localhost:${WORKER_HEALTHZ_PORT}/healthz" || exit 1
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/src/index.js"]

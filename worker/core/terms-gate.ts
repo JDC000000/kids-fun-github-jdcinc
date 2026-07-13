@@ -10,6 +10,7 @@ export type Environment = 'staging' | 'production';
 export interface SourceTermsInfo {
   id: string;
   termsStatus: string; // 'pending' | 'allowed' | 'summarise_only' | 'disallowed' | 'blocked'
+  robotsStatus?: string; // 'pending' | 'allowed' | 'disallowed' | 'unknown'
 }
 
 export interface GateDecision {
@@ -18,9 +19,17 @@ export interface GateDecision {
 }
 
 const PRODUCTION_ALLOWED_STATUSES = new Set(['allowed', 'summarise_only']);
+const STAGING_BLOCKED_STATUSES = new Set(['disallowed', 'blocked']);
 
 export function evaluateTermsGate(source: SourceTermsInfo, env: Environment): GateDecision {
+  if (source.robotsStatus === 'disallowed') {
+    return { allowed: false, reason: 'blocked — robots_status=disallowed' };
+  }
+
   if (env === 'staging') {
+    if (STAGING_BLOCKED_STATUSES.has(source.termsStatus)) {
+      return { allowed: false, reason: `staging blocked — terms_status=${source.termsStatus}` };
+    }
     return { allowed: true, reason: `staging review — terms_status=${source.termsStatus}` };
   }
   if (PRODUCTION_ALLOWED_STATUSES.has(source.termsStatus)) {

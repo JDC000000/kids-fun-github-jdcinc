@@ -86,9 +86,17 @@ describe('Terms/robots gate (G-T5-6)', () => {
     expect(evaluateTermsGate({ id: 's1', termsStatus: 'summarise_only' }, 'production').allowed).toBe(true);
   });
 
-  it('allows any terms_status in staging (review)', () => {
+  it('allows review-safe statuses in staging but refuses explicit blocks', () => {
     expect(evaluateTermsGate({ id: 's1', termsStatus: 'pending' }, 'staging').allowed).toBe(true);
-    expect(evaluateTermsGate({ id: 's1', termsStatus: 'blocked' }, 'staging').allowed).toBe(true);
+    expect(evaluateTermsGate({ id: 's1', termsStatus: 'allowed' }, 'staging').allowed).toBe(true);
+    expect(evaluateTermsGate({ id: 's1', termsStatus: 'summarise_only' }, 'staging').allowed).toBe(true);
+    expect(evaluateTermsGate({ id: 's1', termsStatus: 'disallowed' }, 'staging').allowed).toBe(false);
+    expect(evaluateTermsGate({ id: 's1', termsStatus: 'blocked' }, 'staging').allowed).toBe(false);
+  });
+
+  it('refuses robots-disallowed sources in every environment', () => {
+    expect(evaluateTermsGate({ id: 's1', termsStatus: 'allowed', robotsStatus: 'disallowed' }, 'staging').allowed).toBe(false);
+    expect(evaluateTermsGate({ id: 's1', termsStatus: 'allowed', robotsStatus: 'disallowed' }, 'production').allowed).toBe(false);
   });
 });
 
