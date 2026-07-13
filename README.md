@@ -1,5 +1,6 @@
 # KIDS FUN
 
+Aggregator of kid-friendly activities in the GVRD.
 Metro Vancouver kids-activity discovery index. Next.js (App Router, TypeScript) on Vercel,
 Supabase (managed Postgres + PostGIS + FTS + Auth) for data, a containerised ingestion
 worker for browser-rendered sources, Resend for email, Sentry for observability.
