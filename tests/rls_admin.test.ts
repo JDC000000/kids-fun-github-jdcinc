@@ -42,12 +42,14 @@ describe.skipIf(!hasDb)('admin_user / admin_audit_log RLS (security regression)'
     }
   });
 
-
   // ── Control: the two denials above are 0014-specific, NOT a blank harness ─────
-  // The local-dev auth stub models Supabase's default table grants, so the
-  // `authenticated` role CAN read ordinary RLS-free public tables. That it can
-  // read region but not admin_user/admin_audit_log proves those denials come from
-  // 0014's ENABLE RLS + REVOKE, not from a role that simply cannot see anything.
+  // Without this control the Layer-1 tests are ambiguous: the local-dev stub used
+  // to grant the API roles NO table access, so `authenticated` got a generic
+  // "permission denied" on EVERY public table — the same error with or without
+  // 0014. The stub now models Supabase's default table grants, so `authenticated`
+  // CAN read an ordinary RLS-free public table (region). That it can read region
+  // but not admin_user/admin_audit_log proves those denials come from 0014's
+  // ENABLE RLS + REVOKE, not from a role that simply can't see anything.
   it('control: authenticated CAN read a normal RLS-free public table (region)', async () => {
     const client = new Client({ connectionString: authenticatedConnectionString() });
     await client.connect();
