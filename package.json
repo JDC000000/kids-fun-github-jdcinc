@@ -14,15 +14,18 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate": "bash scripts/migrate.sh"
+    "migrate": "bash scripts/migrate.sh",
+    "seed": "bash scripts/seed.sh"
   },
   "dependencies": {
-    "next": "14.2.5",
+    "next": "14.2.35",
+    "pg": "8.22.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@types/node": "20.14.10",
+    "@types/pg": "8.20.0",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
     "eslint": "8.57.0",

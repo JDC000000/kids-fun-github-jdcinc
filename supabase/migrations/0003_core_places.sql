@@ -42,6 +42,10 @@ CREATE TRIGGER source_set_updated_at
   BEFORE UPDATE ON source
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- One row per source/tenant (e.g. one ActiveNet row per municipality); backs
+-- the idempotent registry seed (G-T3-4, supabase/seeds/sources.sql).
+CREATE UNIQUE INDEX idx_source_family_name_unique ON source (family, name);
+
 CREATE TABLE organisation (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name           text NOT NULL,
