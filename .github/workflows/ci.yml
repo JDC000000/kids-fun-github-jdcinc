@@ -34,6 +34,12 @@ jobs:
 
     env:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/kids_fun_ci
+      # Non-owner, RLS-subject role (the local-dev auth stub's `authenticated`) so
+      # tests/user_scoped_client.test.ts exercises the withUserContext POOL path in
+      # CI, not just the injectable core. Mirrors the production requirement that
+      # USER_DATABASE_URL is a non-owner role; the password is the documented
+      # local/CI-only dummy from supabase/local-dev/000_auth_stub.sql.
+      USER_DATABASE_URL: postgres://authenticated:local_dev_only_not_a_secret@localhost:5432/kids_fun_ci
       NEXT_PUBLIC_APP_ENV: test
 
     steps:
