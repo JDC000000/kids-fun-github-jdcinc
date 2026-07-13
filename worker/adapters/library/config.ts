@@ -15,6 +15,10 @@ export interface LibrarySystemConfig {
   /** source.name in supabase/seeds/sources.sql. */
   sourceName: string;
   feedBaseUrl: string;
+  /** Public BiblioCommons gateway endpoint; only used when explicitly live-enabled. */
+  gatewayEventsUrl?: string;
+  /** Hard cap per request for live approved-source dry-runs. */
+  liveEventsLimit?: number;
 }
 
 export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
@@ -33,6 +37,8 @@ export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
     sourceFamily: 'library_bibliocommons',
     sourceName: 'Richmond Public Library BiblioEvents',
     feedBaseUrl: 'https://yourlibrary.bibliocommons.com/events',
+    gatewayEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/yourlibrary/events',
+    liveEventsLimit: 20,
   },
   {
     systemKey: 'cpl',

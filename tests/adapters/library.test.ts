@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { loadLibraryAdapters, LIBRARY_SYSTEMS } from '../../worker/adapters/library';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { loadLibraryAdapters, LIBRARY_SYSTEMS, LibraryAdapter, getLibrarySystem } from '../../worker/adapters/library';
 
 // G-T9-1/2 — Library adapter scaffold (TSD §5.1 Adapter B).
 describe('Library adapter scaffold (G-T9-1/2)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS;
+  });
+
   it('covers >=2 library systems across both platforms', () => {
     expect(LIBRARY_SYSTEMS.length).toBeGreaterThanOrEqual(2);
     const platforms = new Set(LIBRARY_SYSTEMS.map((s) => s.platform));
@@ -27,5 +32,58 @@ describe('Library adapter scaffold (G-T9-1/2)', () => {
     const toddler = all.find((r) => r.title === 'Toddler Storytime')!; // Communico
     expect(toddler.ageText).toBe('Ages 2-5');
     expect(toddler.venueName).toContain('City Centre');
+  });
+
+  it('live-parses the approved RPL BiblioCommons gateway shape without headless rendering', async () => {
+    process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'rpl';
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        events: { items: ['evt-1'] },
+        entities: {
+          events: {
+            'evt-1': {
+              id: 'evt-1',
+              definition: {
+                start: '2026-09-24T11:00',
+                end: '2026-09-24T11:30',
+                title: 'DUPLO Free Play',
+                description: '<p>Ideal for children ages 2-5 with a caregiver.</p><p>No registration needed.</p>',
+                branchLocationId: 'S',
+                audienceIds: ['aud-preschool'],
+                typeIds: ['type-child'],
+                registrationInfo: { enabledMethods: [], loginToRegister: false, maxSeats: null, cap: null },
+                isCancelled: false,
+              },
+            },
+          },
+          locations: { S: { name: 'Steveston Library (Easthope Hub)' } },
+          eventAudiences: { 'aud-preschool': { name: 'Children-Preschool' } },
+          eventTypes: { 'type-child': { name: 'Child Development' } },
+        },
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const rpl = getLibrarySystem('rpl')!;
+    const adapter = new LibraryAdapter(rpl);
+    const records = adapter.extract(await adapter.fetch());
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const firstFetchCall = fetchMock.mock.calls[0] as unknown[];
+    expect(String(firstFetchCall[0])).toContain('gateway.bibliocommons.com/v2/libraries/yourlibrary/events');
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      sourceRecordId: 'evt-1',
+      title: 'DUPLO Free Play',
+      venueName: 'Steveston Library (Easthope Hub)',
+      startDatetimeUtc: '2026-09-24T18:00:00.000Z',
+      endDatetimeUtc: '2026-09-24T18:30:00.000Z',
+      costStatus: 'free',
+      categoryHint: 'indoor_play',
+      sourceUrl: 'https://yourlibrary.bibliocommons.com/v2/events/evt-1',
+    });
+    expect(records[0].ageText).toContain('Children-Preschool');
+    expect(records[0].ageText).toContain('ages 2-5');
   });
 });
