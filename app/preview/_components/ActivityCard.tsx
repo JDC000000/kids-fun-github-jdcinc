@@ -27,9 +27,8 @@ export function ActivityCard({ activity }: { activity: Activity }) {
     .filter(Boolean)
     .join(' ');
   const label = `${activity.activityName} at ${activity.venue}, ${when.day} ${when.time}, ${formatAges(activity.ageMin, activity.ageMax)}, ${meta.label}`;
-
-  return (
-    <Link href={`/preview/${activity.id}`} className={cardClass} aria-label={label}>
+  const body = (
+    <>
       <CategoryTile category={activity.category} />
       <div className="kf-card__body">
         <p className="kf-card__type">{activity.activityName}</p>
@@ -48,6 +47,20 @@ export function ActivityCard({ activity }: { activity: Activity }) {
         </div>
         <FreshnessStamp activity={activity} />
       </div>
+    </>
+  );
+
+  if (activity.detailUrl) {
+    return (
+      <a href={activity.detailUrl} className={cardClass} aria-label={`${label}; opens official source`} target="_blank" rel="noreferrer noopener">
+        {body}
+      </a>
+    );
+  }
+
+  return (
+    <Link href={`/preview/${activity.id}`} className={cardClass} aria-label={label}>
+      {body}
     </Link>
   );
 }

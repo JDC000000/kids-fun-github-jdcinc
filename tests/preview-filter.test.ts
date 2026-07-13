@@ -13,10 +13,10 @@ import type { FilterState } from '../app/preview/_data/filter';
 const withFilters = (patch: Partial<FilterState>): FilterState => ({ ...DEFAULT_FILTERS, ...patch });
 
 describe('applyFilters', () => {
-  it('defaults to a 10 km radius and drops farther listings', () => {
+  it('defaults to a 20 km radius and drops farther listings', () => {
     const results = applyFilters(ACTIVITIES, DEFAULT_FILTERS);
-    expect(results.every((a) => a.distanceKm <= 10)).toBe(true);
-    expect(results.some((a) => a.distanceKm > 10)).toBe(false);
+    expect(results.every((a) => a.distanceKm <= 20)).toBe(true);
+    expect(results.some((a) => a.distanceKm > 20)).toBe(false);
   });
 
   it('tightens to 5 km', () => {

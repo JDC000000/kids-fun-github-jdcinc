@@ -24,7 +24,7 @@ export const DEFAULT_FILTERS: FilterState = {
   indoors: false,
   toddler: false,
   timeOfDay: 'any',
-  radiusKm: 10,
+  radiusKm: 20,
 };
 
 /** Boolean chip keys (everything except time-of-day and radius). */

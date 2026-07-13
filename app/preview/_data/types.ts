@@ -64,6 +64,8 @@ export interface Activity {
   confidence: ConfidenceLabel;
   sourceName: string; // e.g. "vancouver.ca"
   sourceUrl: string; // authoritative deep link (external)
+  /** Optional external detail fallback while live DB detail pages are not built. */
+  detailUrl?: string;
   bookingUrl?: string;
   locationUrl?: string;
   lastCheckedIso: string; // freshness stamp source of truth

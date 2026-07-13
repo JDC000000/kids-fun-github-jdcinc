@@ -36,14 +36,14 @@ export interface SearchItemDto {
 export interface SearchResponseDto {
   results: SearchItemDto[];
   expected: SearchItemDto[];
-  meta: { fixtureBacked: boolean; sort: string };
+  meta: { fixtureBacked: boolean; sort: string; backend?: 'fixture' | 'database'; fallbackReason?: string };
 }
 
 const EAST_VAN = { lat: 49.26, lng: -123.07 };
 
 export function searchApiUrl(): string {
   const params = new URLSearchParams({
-    q: 'open gym',
+    q: '',
     includeUnknownCost: '1',
     minResults: '100',
     limit: '100',
@@ -90,6 +90,7 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     confidence: mapConfidence(l.confidenceLabel),
     sourceName: hostLabel(sourceUrl),
     sourceUrl,
+    detailUrl: sourceUrl,
     ...(l.bookingUrl ? { bookingUrl: l.bookingUrl } : {}),
     ...(l.locationUrl ? { locationUrl: l.locationUrl } : {}),
     lastCheckedIso: l.lastCheckedAtUtc ?? new Date().toISOString(),

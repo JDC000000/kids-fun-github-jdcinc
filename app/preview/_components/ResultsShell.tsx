@@ -3,8 +3,8 @@
 // The interactive results surface: sticky date/area bar, scroll-snap filter chips,
 // a transparent sort control (D6), the confirmed/expected split (D7), and the
 // empty/broadening fork. Client-side because filtering/sorting the fixtures is
-// instant local state on top of an API response. The API is fixture-backed for
-// now (`x-data-source: fixture`), but the UI no longer imports static listings.
+// instant local state on top of an API response. The API can be live-DB backed
+// in staging and still falls back safely to fixtures when needed.
 
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityCard } from './ActivityCard';
@@ -44,6 +44,16 @@ function Section({ title, note, items }: { title: string; note?: string; items: 
   );
 }
 
+function sourceNote(body: SearchResponseDto): string {
+  if (body.meta.backend === 'database' && !body.meta.fixtureBacked) {
+    return 'Data source: live staging database — approved public sources only.';
+  }
+  if (body.meta.fallbackReason) {
+    return `Data source: fixture fallback — ${body.meta.fallbackReason}.`;
+  }
+  return 'Data source: fixture-backed /api/search.';
+}
+
 export function ResultsShell() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [sort, setSort] = useState<SortKey>('best_match');
@@ -51,6 +61,7 @@ export function ResultsShell() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dataSourceNote, setDataSourceNote] = useState('Data source: loading /api/search…');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -60,11 +71,13 @@ export function ResultsShell() {
         if (!res.ok) throw new Error(`Search API returned ${res.status}`);
         const body = (await res.json()) as SearchResponseDto;
         setActivities(mapSearchResponseToActivities(body));
+        setDataSourceNote(sourceNote(body));
         setError(null);
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : String(err));
+        setDataSourceNote('Data source: unavailable — cards could not load.');
         setActivities([]);
       })
       .finally(() => {
@@ -109,10 +122,10 @@ export function ResultsShell() {
               ▾
             </span>
           </div>
-          <div className="kf-control" role="group" aria-label={`Area: East Van, within ${filters.radiusKm} km`}>
+          <div className="kf-control" role="group" aria-label={`Area: Metro Vancouver, within ${filters.radiusKm} km`}>
             <span>
               <span className="kf-control__label">Where</span>
-              <span className="kf-control__value">East Van · {filters.radiusKm} km</span>
+              <span className="kf-control__value">Metro Van · {filters.radiusKm} km</span>
             </span>
             <span className="kf-control__caret" aria-hidden="true">
               ▾
@@ -226,9 +239,9 @@ export function ResultsShell() {
 
         {loading ? (
           <div className="kf-empty" aria-live="polite">
-            <p className="kf-empty__eyebrow">Loading fixture-backed search…</p>
+            <p className="kf-empty__eyebrow">Loading search…</p>
             <h2 className="kf-empty__title">Getting today’s cards.</h2>
-            <p className="kf-empty__copy">This is using /api/search now, so the UI is on the same seam as live data.</p>
+            <p className="kf-empty__copy">This is using /api/search, with live database rows when available.</p>
           </div>
         ) : error ? (
           <div className="kf-empty" role="alert">
@@ -246,8 +259,8 @@ export function ResultsShell() {
           />
         ) : (
           <>
-            <p className="kf-section__note">Data source: fixture-backed /api/search. Live source crawling is still intentionally off.</p>
-            <Section title="On today near East Van" items={confirmed} />
+            <p className="kf-section__note">{dataSourceNote}</p>
+            <Section title="Confirmed from approved sources" items={confirmed} />
             <Section
               title="Expected / not yet posted"
               note="Kept separate from confirmed — we never blur the two. Recheck dates and seasonal notes are on each card."

@@ -9,6 +9,7 @@ import {
   formatWhen,
   statusMeta,
 } from '../app/preview/_data/format';
+import { mapSearchItemToActivity, searchApiUrl } from '../app/preview/_data/search-api';
 
 describe('formatAges', () => {
   it('formats a normal band', () => {
@@ -103,5 +104,50 @@ describe('bookingTag', () => {
     expect(bookingTag('drop_in')).toBe('Drop-in');
     expect(bookingTag('registration')).toBe('Registration');
     expect(bookingTag('none')).toBe('');
+  });
+});
+
+describe('search API mapping', () => {
+  it('defaults the preview shell to browse approved API rows', () => {
+    const url = new URL(searchApiUrl(), 'https://example.test');
+    expect(url.searchParams.get('q')).toBe('');
+    expect(url.searchParams.get('limit')).toBe('100');
+  });
+
+  it('uses the official source as the temporary detail target for live API cards', () => {
+    const activity = mapSearchItemToActivity({
+      distanceKm: null,
+      listing: {
+        id: 'live-1',
+        activityName: 'Family Storytime',
+        primaryCategoryKey: 'storytime',
+        categoryTags: ['storytime'],
+        venueName: 'Steveston Library (Easthope Hub)',
+        organisation: 'Richmond Public Library',
+        descriptionSnippet: 'Stories and songs.',
+        suitabilityTags: ['indoor'],
+        startDatetimeUtc: '2026-09-24T18:00:00.000Z',
+        endDatetimeUtc: '2026-09-24T18:30:00.000Z',
+        costStatus: 'free',
+        costMinCad: null,
+        costMaxCad: null,
+        statusState: 'confirmed',
+        confidenceLabel: 'official_recent',
+        lastCheckedAtUtc: '2026-07-13T20:00:00.000Z',
+        ageMinMonths: null,
+        ageMaxMonths: null,
+        geo: { lat: 49.12546, lng: -123.1783832 },
+        displayArea: 'Steveston',
+        neighbourhood: null,
+        municipalityId: 'Richmond',
+        sourceUrl: 'https://yourlibrary.bibliocommons.com/v2/events/live-1',
+        bookingUrl: null,
+        locationUrl: 'https://www.google.com/maps/search/?api=1&query=4320%20Moncton',
+      },
+    });
+
+    expect(activity.detailUrl).toBe(activity.sourceUrl);
+    expect(activity.area).toBe('Steveston');
+    expect(activity.distanceKm).toBeGreaterThan(10);
   });
 });
