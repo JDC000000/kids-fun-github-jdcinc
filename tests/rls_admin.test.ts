@@ -42,6 +42,23 @@ describe.skipIf(!hasDb)('admin_user / admin_audit_log RLS (security regression)'
     }
   });
 
+
+  // ── Control: the two denials above are 0014-specific, NOT a blank harness ─────
+  // The local-dev auth stub models Supabase's default table grants, so the
+  // `authenticated` role CAN read ordinary RLS-free public tables. That it can
+  // read region but not admin_user/admin_audit_log proves those denials come from
+  // 0014's ENABLE RLS + REVOKE, not from a role that simply cannot see anything.
+  it('control: authenticated CAN read a normal RLS-free public table (region)', async () => {
+    const client = new Client({ connectionString: authenticatedConnectionString() });
+    await client.connect();
+    try {
+      const res = await client.query<{ c: number }>('SELECT count(*)::int AS c FROM region');
+      expect(res.rows[0].c).toBeGreaterThan(0); // reads seeded rows, no permission error
+    } finally {
+      await client.end();
+    }
+  });
+
   // ── Layer 2: RLS itself is enabled and default-deny (structural invariant) ────
   // This is what the two tests above do NOT prove: they pass on the GRANT revoke
   // alone and would still be green if RLS were accidentally disabled. Assert the

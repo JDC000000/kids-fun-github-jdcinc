@@ -35,3 +35,20 @@ BEGIN
 END $$;
 
 GRANT USAGE ON SCHEMA public TO authenticated, anon;
+
+
+-- Model Supabase's DEFAULT table privileges for the API roles. Real Supabase
+-- grants anon/authenticated broad access to public-schema tables and relies on
+-- RLS (+ explicit REVOKEs) as the actual access boundary. Bare Postgres grants
+-- the API roles NO table access, which can make security tests pass for the
+-- wrong reason: a generic missing-grant denial instead of the intended RLS or
+-- explicit admin-table REVOKE.
+--
+-- ALTER DEFAULT PRIVILEGES (deliberately NOT `GRANT ON ALL TABLES`) applies only
+-- to tables the owner creates later via migrate.sh. That lets earlier migrations
+-- grant ordinary table access at create-time and lets 0014_admin_rls.sql revoke
+-- admin_user/admin_audit_log back afterward. A blanket GRANT ON ALL TABLES here
+-- would re-grant admin tables if the stub were ever re-applied after 0014.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO authenticated, anon;
