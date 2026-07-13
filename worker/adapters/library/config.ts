@@ -19,6 +19,17 @@ export interface LibrarySystemConfig {
   gatewayEventsUrl?: string;
   /** Hard cap per request for live approved-source dry-runs. */
   liveEventsLimit?: number;
+  /** Deterministic branch/location metadata used for venue rows; no live geocoder. */
+  branchLocations?: Record<string, LibraryBranchLocation>;
+}
+
+export interface LibraryBranchLocation {
+  address: string;
+  lat: number;
+  lng: number;
+  municipalityName: string;
+  displayArea: string;
+  locationUrl: string;
 }
 
 export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
@@ -39,6 +50,18 @@ export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
     feedBaseUrl: 'https://yourlibrary.bibliocommons.com/events',
     gatewayEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/yourlibrary/events',
     liveEventsLimit: 20,
+    branchLocations: {
+      'Steveston Library (Easthope Hub)': {
+        address: '4320 Moncton St, Richmond, BC V7E 6T4',
+        // Public Richmond map coordinates for RPL Steveston/Moncton area; kept
+        // deterministic so ingest never calls an external geocoder.
+        lat: 49.12546,
+        lng: -123.1783832,
+        municipalityName: 'Richmond',
+        displayArea: 'Steveston',
+        locationUrl: 'https://www.google.com/maps/search/?api=1&query=4320%20Moncton%20St%20Richmond%20BC%20V7E%206T4',
+      },
+    },
   },
   {
     systemKey: 'cpl',

@@ -33,17 +33,22 @@ export async function resolveSeries(pool: Pool, input: SeriesInput): Promise<Ser
     input.recurrenceRule ?? null,
   ];
 
-  const inserted = await pool.query<{ id: string }>(
+  const inserted = await pool.query<{ id: string; created: boolean }>(
     `INSERT INTO activity_series (canonical_title, source_id, venue_id, recurrence_rule)
      VALUES ($1, $2, $3, $4)
-     ON CONFLICT (source_id, canonical_title) DO NOTHING
-     RETURNING id`,
+     ON CONFLICT (source_id, canonical_title) DO UPDATE SET
+       venue_id = COALESCE(activity_series.venue_id, EXCLUDED.venue_id),
+       recurrence_rule = COALESCE(activity_series.recurrence_rule, EXCLUDED.recurrence_rule),
+       updated_at = now()
+     RETURNING id, (xmax = 0) AS created`,
     params
   );
   if (inserted.rows[0]) {
-    return { seriesId: inserted.rows[0].id, created: true };
+    return { seriesId: inserted.rows[0].id, created: inserted.rows[0].created };
   }
 
+  // Defensive fallback for databases where the conflict target is missing during
+  // early local development. Current canonical migrations have the unique index.
   const existing = await pool.query<{ id: string }>(
     `SELECT id FROM activity_series
      WHERE source_id = $1 AND canonical_title = $2

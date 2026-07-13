@@ -30,9 +30,9 @@ export async function upsertOccurrence(
     `INSERT INTO activity_occurrence (
        series_id, source_record_id, activity_name,
        primary_category_id, start_datetime_utc, end_datetime_utc, open_hours_state,
-       cost_min_cad, cost_max_cad, cost_status, source_url, booking_url,
+       cost_min_cad, cost_max_cad, cost_status, source_url, booking_url, location_url,
        status_state, confidence_label, last_checked_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now())
      ON CONFLICT (series_id, source_record_id) WHERE source_record_id IS NOT NULL
      DO UPDATE SET
        activity_name        = EXCLUDED.activity_name,
@@ -45,6 +45,7 @@ export async function upsertOccurrence(
        cost_status           = EXCLUDED.cost_status,
        source_url            = EXCLUDED.source_url,
        booking_url           = EXCLUDED.booking_url,
+       location_url          = EXCLUDED.location_url,
        status_state          = EXCLUDED.status_state,
        confidence_label      = EXCLUDED.confidence_label,
        last_checked_at       = now()
@@ -62,6 +63,7 @@ export async function upsertOccurrence(
       record.costStatus ?? 'unknown',
       record.sourceUrl,
       record.bookingUrl ?? null,
+      record.locationUrl ?? null,
       fields.statusState ?? 'needs_review',
       fields.confidenceLabel ?? 'unscored',
     ]

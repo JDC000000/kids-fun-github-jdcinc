@@ -1,0 +1,104 @@
+// worker/core/venue.ts — deterministic venue resolver for ingest.
+//
+// Search radius/ranking only works when an occurrence's series points at a venue
+// row. Adapters may provide venue metadata (name/address/geo); this resolver
+// creates or enriches the venue once, then returns the venue_id for
+// activity_series. It is intentionally deterministic and does not call external
+// geocoding services during ingest.
+import type { Pool } from 'pg';
+
+export interface VenueInput {
+  name: string;
+  address?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  municipalityName?: string | null;
+  displayArea?: string | null;
+  officialUrl?: string | null;
+}
+
+export interface VenueResult {
+  venueId: string;
+  created: boolean;
+}
+
+function hasFiniteGeo(input: VenueInput): input is VenueInput & { lat: number; lng: number } {
+  return Number.isFinite(input.lat) && Number.isFinite(input.lng);
+}
+
+/** Resolve by exact case-insensitive name, then enrich missing metadata. */
+export async function resolveVenue(pool: Pool, input: VenueInput): Promise<VenueResult> {
+  const name = input.name.trim();
+  if (!name) throw new Error('venue name is required');
+
+  const existing = await pool.query<{ id: string }>(
+    `SELECT id FROM venue WHERE lower(name) = lower($1) LIMIT 1`,
+    [name]
+  );
+
+  if (existing.rows[0]) {
+    await enrichVenue(pool, existing.rows[0].id, input);
+    return { venueId: existing.rows[0].id, created: false };
+  }
+
+  const inserted = await pool.query<{ id: string }>(
+    `WITH municipality AS (
+       SELECT id FROM region WHERE level = 'municipality' AND name = $3 LIMIT 1
+     )
+     INSERT INTO venue (name, address, municipality_id, display_area, official_url, geo)
+     VALUES (
+       $1,
+       $2,
+       (SELECT id FROM municipality),
+       $4,
+       $5,
+       CASE WHEN $6::double precision IS NULL OR $7::double precision IS NULL
+         THEN NULL
+         ELSE ST_SetSRID(ST_MakePoint($7::double precision, $6::double precision), 4326)::geography
+       END
+     )
+     RETURNING id`,
+    [
+      name,
+      input.address ?? null,
+      input.municipalityName ?? null,
+      input.displayArea ?? null,
+      input.officialUrl ?? null,
+      hasFiniteGeo(input) ? input.lat : null,
+      hasFiniteGeo(input) ? input.lng : null,
+    ]
+  );
+
+  return { venueId: inserted.rows[0].id, created: true };
+}
+
+async function enrichVenue(pool: Pool, venueId: string, input: VenueInput): Promise<void> {
+  await pool.query(
+    `WITH municipality AS (
+       SELECT id FROM region WHERE level = 'municipality' AND name = $3 LIMIT 1
+     )
+     UPDATE venue
+     SET
+       address = COALESCE($1, address),
+       municipality_id = COALESCE((SELECT id FROM municipality), municipality_id),
+       display_area = COALESCE($4, display_area),
+       official_url = COALESCE($5, official_url),
+       geo = COALESCE(
+         CASE WHEN $6::double precision IS NULL OR $7::double precision IS NULL
+           THEN NULL
+           ELSE ST_SetSRID(ST_MakePoint($7::double precision, $6::double precision), 4326)::geography
+         END,
+         geo
+       )
+     WHERE id = $2`,
+    [
+      input.address ?? null,
+      venueId,
+      input.municipalityName ?? null,
+      input.displayArea ?? null,
+      input.officialUrl ?? null,
+      hasFiniteGeo(input) ? input.lat : null,
+      hasFiniteGeo(input) ? input.lng : null,
+    ]
+  );
+}

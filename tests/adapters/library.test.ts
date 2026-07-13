@@ -77,11 +77,17 @@ describe('Library adapter scaffold (G-T9-1/2)', () => {
       sourceRecordId: 'evt-1',
       title: 'DUPLO Free Play',
       venueName: 'Steveston Library (Easthope Hub)',
+      venueAddress: '4320 Moncton St, Richmond, BC V7E 6T4',
+      venueLat: 49.12546,
+      venueLng: -123.1783832,
+      venueMunicipalityName: 'Richmond',
+      venueDisplayArea: 'Steveston',
       startDatetimeUtc: '2026-09-24T18:00:00.000Z',
       endDatetimeUtc: '2026-09-24T18:30:00.000Z',
       costStatus: 'free',
       categoryHint: 'indoor_play',
       sourceUrl: 'https://yourlibrary.bibliocommons.com/v2/events/evt-1',
+      locationUrl: 'https://www.google.com/maps/search/?api=1&query=4320%20Moncton%20St%20Richmond%20BC%20V7E%206T4',
     });
     expect(records[0].ageText).toContain('Children-Preschool');
     expect(records[0].ageText).toContain('ages 2-5');

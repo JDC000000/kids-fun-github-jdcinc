@@ -11,6 +11,11 @@ export interface StructuredRecord {
   sourceRecordId: string;
   title: string;
   venueName?: string;
+  venueAddress?: string;
+  venueLat?: number;
+  venueLng?: number;
+  venueMunicipalityName?: string;
+  venueDisplayArea?: string;
   startDatetimeUtc?: string; // ISO 8601; absent for open-hours records
   endDatetimeUtc?: string;
   openHoursState?: string;
@@ -21,6 +26,7 @@ export interface StructuredRecord {
   categoryHint?: string;
   sourceUrl: string;
   bookingUrl?: string;
+  locationUrl?: string;
   /** Captured payload slice for contract-test fixtures + breakage debugging. */
   raw?: unknown;
 }

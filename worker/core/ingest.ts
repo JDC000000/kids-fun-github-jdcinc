@@ -12,6 +12,7 @@ import type { Pool } from 'pg';
 import type { Adapter, StructuredRecord } from './adapter';
 import { startCheckRun, finishCheckRun } from './checkrun';
 import { resolveSeries } from './series';
+import { resolveVenue } from './venue';
 import { upsertOccurrence } from './upsert';
 import { recordProvenance } from './provenance';
 import { confidenceLabelForCategory, resolvePrimaryCategoryId } from './taxonomy';
@@ -65,10 +66,23 @@ export async function ingestSource(
     for (const record of records) {
       recordsFound += 1;
       try {
+        const venue = record.venueName
+          ? await resolveVenue(pool, {
+              name: record.venueName,
+              address: record.venueAddress,
+              lat: record.venueLat,
+              lng: record.venueLng,
+              municipalityName: record.venueMunicipalityName,
+              displayArea: record.venueDisplayArea,
+              officialUrl: record.locationUrl,
+            })
+          : null;
+
         // Resolve/create the owning series first — series_id is NOT NULL.
         const series = await resolveSeries(pool, {
           sourceId,
           canonicalTitle: seriesTitleFor(record),
+          venueId: venue?.venueId ?? null,
         });
         if (series.created) seriesCreated += 1;
 

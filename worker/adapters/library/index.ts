@@ -8,7 +8,7 @@
 // approval; the live path uses the public BiblioCommons gateway events endpoint,
 // one paginated request, no login, no headless browser, no CAPTCHA bypass.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
-import { LIBRARY_SYSTEMS, getLibrarySystem, type LibrarySystemConfig } from './config';
+import { LIBRARY_SYSTEMS, getLibrarySystem, type LibraryBranchLocation, type LibrarySystemConfig } from './config';
 
 /** BiblioCommons/BiblioEvents-shaped event after normalisation from gateway JSON. */
 interface BiblioEvent {
@@ -22,6 +22,7 @@ interface BiblioEvent {
   registrationRequired: boolean;
   descriptionText?: string;
   categoryHint?: string;
+  location?: LibraryBranchLocation;
 }
 
 /** Communico/Libnet-shaped event. */
@@ -158,6 +159,7 @@ function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommon
     const def = event?.definition;
     if (!event || !def || !def.title || !def.start || def.isCancelled) return [];
     const branch = def.branchLocationId ? locations[def.branchLocationId]?.name : undefined;
+    const location = branch ? system.branchLocations?.[branch] : undefined;
     const audienceNames = (def.audienceIds ?? []).map((a) => audiences[a]?.name).filter(Boolean) as string[];
     const typeNames = (def.typeIds ?? []).map((t) => types[t]?.name).filter(Boolean) as string[];
     const descriptionText = stripHtml(def.description);
@@ -178,6 +180,7 @@ function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommon
         registrationRequired: registrationRequired(event),
         descriptionText,
         categoryHint: categoryHint(def.title, typeNames),
+        location,
       } as BiblioEvent,
     ];
   });
@@ -252,6 +255,11 @@ export class LibraryAdapter implements Adapter {
         sourceRecordId: e.id,
         title: e.title,
         venueName: e.branch, // branch/location provenance (G-T9-3)
+        venueAddress: e.location?.address,
+        venueLat: e.location?.lat,
+        venueLng: e.location?.lng,
+        venueMunicipalityName: e.location?.municipalityName,
+        venueDisplayArea: e.location?.displayArea,
         startDatetimeUtc: e.startsAt,
         endDatetimeUtc: e.endsAt,
         costStatus: 'free' as const,
@@ -259,6 +267,7 @@ export class LibraryAdapter implements Adapter {
         categoryHint: e.categoryHint ?? categoryHint(e.title),
         sourceUrl: e.url,
         bookingUrl: e.registrationRequired ? e.url : undefined,
+        locationUrl: e.location?.locationUrl,
         raw: e,
       }));
     }
