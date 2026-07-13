@@ -43,7 +43,7 @@ export function resolveAdapterForSourceRow(
   return registry.get(key(source.family, source.name)) ?? null;
 }
 
-/** Resolve a DB source_id into an Adapter for makeIngestJobHandler(). */
+/** Resolve a DB source_id into an Adapter for makeTermsGatedIngestJobHandler(). */
 export async function resolveAdapterForSource(
   pool: Pool,
   sourceId: string,

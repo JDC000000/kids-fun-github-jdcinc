@@ -34,6 +34,9 @@ export interface Adapter {
   /** Unique adapter id — matches `source.family` in the DB (e.g. 'activenet'). */
   readonly family: string;
 
+  /** True only when fetch() will perform an external live network/render request. */
+  isLiveFetchEnabled?(): boolean;
+
   /** (D) Fetch raw payload(s) from the source. */
   fetch(): Promise<unknown[]>;
 

@@ -13,13 +13,15 @@ export interface DueSource {
 }
 
 /** Enqueues an ingest job for every source whose cadence says it's due.
- *  Idempotent per tick: skips sources with an already-pending/running job,
- *  and never enqueues a source whose terms_status is 'blocked' (§5.3). */
+ *  Idempotent per tick: skips sources with an already-pending/running job.
+ *  Scheduler is live-run oriented, so it only enqueues explicitly approved
+ *  terms+robots sources; fixture-only staging review uses ingest-once. */
 export async function enqueueDueJobs(pool: Pool): Promise<DueSource[]> {
   const { rows } = await pool.query<DueSource>(
     `SELECT s.id, s.family
      FROM source s
-     WHERE s.terms_status <> 'blocked'
+     WHERE s.terms_status IN ('allowed', 'summarise_only')
+       AND s.robots_status = 'allowed'
        AND (s.next_check_at IS NULL OR s.next_check_at <= now())
        AND NOT EXISTS (
          SELECT 1 FROM job_queue jq

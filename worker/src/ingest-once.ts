@@ -13,7 +13,8 @@ function argValue(args: string[], name: string): string | undefined {
 }
 
 function parseEnvironment(value: string | undefined): Environment {
-  return value === 'production' ? 'production' : 'staging';
+  if (value === 'staging' || value === 'production') return value;
+  throw new Error('explicit --env staging|production is required');
 }
 
 export function parseArgs(argv = process.argv.slice(2)): Args {

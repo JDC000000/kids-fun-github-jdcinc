@@ -108,20 +108,3 @@ export async function ingestSource(
     errors,
   };
 }
-
-/**
- * Build a pollLoop handler that ingests a claimed job's source. The caller
- * supplies `resolveAdapter` (source_id → Adapter) since the adapter registry
- * spans families; a null adapter or missing source_id fails the job (retry path).
- */
-export function makeIngestJobHandler(
-  pool: Pool,
-  resolveAdapter: (sourceId: string) => Promise<Adapter | null> | Adapter | null
-) {
-  return async (job: { sourceId: string | null }): Promise<void> => {
-    if (!job.sourceId) throw new Error('ingest job has no source_id');
-    const adapter = await resolveAdapter(job.sourceId);
-    if (!adapter) throw new Error(`no adapter resolved for source ${job.sourceId}`);
-    await ingestSource(pool, adapter, job.sourceId);
-  };
-}

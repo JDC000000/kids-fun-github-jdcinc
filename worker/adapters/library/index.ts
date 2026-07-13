@@ -207,8 +207,12 @@ export class LibraryAdapter implements Adapter {
 
   constructor(private readonly system: LibrarySystemConfig) {}
 
+  isLiveFetchEnabled(): boolean {
+    return this.system.platform === 'bibliocommons' && liveEnabledFor(this.system.systemKey);
+  }
+
   async fetch(): Promise<unknown[]> {
-    if (this.system.platform === 'bibliocommons' && liveEnabledFor(this.system.systemKey)) {
+    if (this.isLiveFetchEnabled()) {
       return fetchBiblioCommonsEvents(this.system);
     }
 

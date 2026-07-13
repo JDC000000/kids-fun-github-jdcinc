@@ -4,7 +4,7 @@
 // job queue/source registry and the runtime entrypoints; live network fetching
 // remains blocked in adapters until each source clears D-6/live-wiring tasks.
 import type { Pool } from 'pg';
-import { evaluateTermsGate, type Environment } from './terms-gate';
+import { evaluateLiveFetchGate, evaluateTermsGate, type Environment } from './terms-gate';
 import { resolveAdapterForSourceRow } from './adapter-registry';
 import { ingestSource, type IngestSummary } from './ingest';
 
@@ -76,28 +76,44 @@ export async function runTermsGatedIngest(
   environment: Environment = 'staging'
 ): Promise<TermsGatedIngestResult> {
   const source = await loadSourceForIngest(pool, selector);
-  const gate = evaluateTermsGate(source, environment);
-  if (!gate.allowed) {
-    return { ok: false, source, gate, error: gate.reason };
+  const adapter = resolveAdapterForSourceRow(source);
+  const baseGate = evaluateTermsGate(source, environment);
+  if (!baseGate.allowed) {
+    return { ok: false, source, gate: baseGate, error: baseGate.reason };
   }
 
-  const adapter = resolveAdapterForSourceRow(source);
   if (!adapter) {
     return {
       ok: false,
       source,
-      gate,
+      gate: baseGate,
       error: `no adapter registered for source family/name: ${source.family} / ${source.name}`,
     };
+  }
+
+  const liveGate = adapter.isLiveFetchEnabled?.()
+    ? evaluateLiveFetchGate(source, environment)
+    : baseGate;
+  if (!liveGate.allowed) {
+    return { ok: false, source, gate: liveGate, adapterFamily: adapter.family, error: liveGate.reason };
   }
 
   const summary = await ingestSource(pool, adapter, source.id);
   return {
     ok: summary.errors.length === 0,
     source,
-    gate,
+    gate: liveGate,
     adapterFamily: adapter.family,
     summary,
     error: summary.errors.length > 0 ? summary.errors.join('; ') : undefined,
+  };
+}
+
+/** Safe queue handler: every claimed job goes through the same source terms/live gate. */
+export function makeTermsGatedIngestJobHandler(pool: Pool, environment: Environment = 'staging') {
+  return async (job: { sourceId: string | null }): Promise<void> => {
+    if (!job.sourceId) throw new Error('ingest job has no source_id');
+    const result = await runTermsGatedIngest(pool, { id: job.sourceId }, environment);
+    if (!result.ok) throw new Error(result.error ?? 'terms-gated ingest failed');
   };
 }

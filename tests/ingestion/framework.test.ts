@@ -12,7 +12,7 @@ import {
   clearBackoffState,
   buildConditionalHeaders,
 } from '../../worker/core/politeness';
-import { evaluateTermsGate } from '../../worker/core/terms-gate';
+import { evaluateLiveFetchGate, evaluateTermsGate } from '../../worker/core/terms-gate';
 import { getPool, query, closePool } from '../../lib/db/client';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -97,6 +97,12 @@ describe('Terms/robots gate (G-T5-6)', () => {
   it('refuses robots-disallowed sources in every environment', () => {
     expect(evaluateTermsGate({ id: 's1', termsStatus: 'allowed', robotsStatus: 'disallowed' }, 'staging').allowed).toBe(false);
     expect(evaluateTermsGate({ id: 's1', termsStatus: 'allowed', robotsStatus: 'disallowed' }, 'production').allowed).toBe(false);
+  });
+
+  it('requires explicit terms and robots approval before live fetch, even in staging', () => {
+    expect(evaluateLiveFetchGate({ id: 's1', termsStatus: 'pending', robotsStatus: 'allowed' }, 'staging').allowed).toBe(false);
+    expect(evaluateLiveFetchGate({ id: 's1', termsStatus: 'allowed', robotsStatus: 'pending' }, 'staging').allowed).toBe(false);
+    expect(evaluateLiveFetchGate({ id: 's1', termsStatus: 'allowed', robotsStatus: 'allowed' }, 'staging').allowed).toBe(true);
   });
 });
 
@@ -201,13 +207,13 @@ describe.skipIf(!hasDb)('Tiered scheduler (G-T5-3)', () => {
     const pool = getPool();
     const suffix = crypto.randomUUID();
     const [due] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, baseline_cadence, next_check_at)
-       VALUES ('noop', $1, '1 day', now() - interval '1 minute') RETURNING id`,
+      `INSERT INTO source (family, name, terms_status, robots_status, baseline_cadence, next_check_at)
+       VALUES ('noop', $1, 'allowed', 'allowed', '1 day', now() - interval '1 minute') RETURNING id`,
       [`Due Source ${suffix}`]
     );
     const [notDue] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, baseline_cadence, next_check_at)
-       VALUES ('noop', $1, '1 day', now() + interval '1 day') RETURNING id`,
+      `INSERT INTO source (family, name, terms_status, robots_status, baseline_cadence, next_check_at)
+       VALUES ('noop', $1, 'allowed', 'allowed', '1 day', now() + interval '1 day') RETURNING id`,
       [`Not Due Source ${suffix}`]
     );
 
