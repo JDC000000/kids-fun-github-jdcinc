@@ -63,8 +63,21 @@ export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
     sourceFamily: 'library_bibliocommons',
     sourceName: 'Richmond Public Library BiblioEvents',
     feedBaseUrl: 'https://yourlibrary.bibliocommons.com/events',
-    gatewayEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/yourlibrary/events',
+    // ToS-compliant automated-access path, migrated off the JSON gateway (KIDS
+    // FUN Task 8, 2026-07-13). BiblioCommons' Terms of Use permit automated
+    // harvesting only via RSS/XML feeds, so RPL — the original live source —
+    // now uses the same public RSS feed as VPL (slug `yourlibrary`). Each item
+    // carries structured venue geo (bc:latitude/longitude) and UTC start/end,
+    // so ingest never calls an external geocoder. gatewayEventsUrl is
+    // deliberately omitted: with no JSON fallback, RPL can never silently
+    // regress onto the ToS-ambiguous gateway path. Live-enabled via
+    // KIDS_FUN_LIVE_LIBRARY_SYSTEMS=rpl. NOTE: RSS and the retired JSON gateway
+    // expose disjoint event-instance ids, so cutting existing RPL rows over to
+    // RSS is a delete-and-replace, not an in-place upsert (see Task 8 findings).
+    rssEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/yourlibrary/rss/events',
     liveEventsLimit: 20,
+    // Deterministic Steveston fallback retained for reference; the live RSS path
+    // derives venue geo directly from the feed's bc:location block per item.
     branchLocations: {
       'Steveston Library (Easthope Hub)': {
         address: '4320 Moncton St, Richmond, BC V7E 6T4',
