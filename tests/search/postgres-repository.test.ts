@@ -1,6 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { getPool, query, closePool } from '../../lib/db/client';
 import { loadPostgresListings } from '../../lib/search/postgres-repository';
+import { SearchEngine } from '../../lib/search/engine';
+import { InMemoryListingRepository } from '../../lib/search/repository';
+import { FixtureAliasResolver } from '../../lib/search/expand';
+import { ALIAS_SEED } from '../../lib/search/__fixtures__/aliases';
+import { REGIONS } from '../../lib/search/__fixtures__/regions';
+import { RegionHierarchy } from '../../lib/geo/region';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
@@ -45,6 +51,41 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
     expect(listing?.costStatus).toBe('free');
     expect(listing?.sourceUrl).toBe('https://example.org/events/repo-test');
   });
+
+  it('feeds DB storytime listings through the search engine', async () => {
+    const suffix = crypto.randomUUID();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name, authority_tier) VALUES ('library_bibliocommons', $1, 'official') RETURNING id`,
+      [`Engine Test Source ${suffix}`]
+    );
+    const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
+    const [series] = await query<{ id: string }>(
+      `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
+      [`Family Storytime — Test Branch ${suffix}`, source.id]
+    );
+    const [occurrence] = await query<{ id: string }>(
+      `INSERT INTO activity_occurrence (
+         series_id, source_record_id, activity_name, primary_category_id,
+         start_datetime_utc, end_datetime_utc, cost_status, source_url,
+         status_state, confidence_label, last_checked_at
+       ) VALUES ($1,$2,$3,$4,'2026-09-17T17:30:00Z','2026-09-17T18:00:00Z','free',$5,'confirmed','high',now())
+       RETURNING id`,
+      [series.id, `engine-test-${suffix}`, `Family Storytime ${suffix}`, category.id, 'https://example.org/events/engine-test']
+    );
+
+    const listings = await loadPostgresListings(getPool());
+    const engine = new SearchEngine({
+      repository: new InMemoryListingRepository(listings),
+      aliasResolver: new FixtureAliasResolver(ALIAS_SEED),
+      regionHierarchy: new RegionHierarchy(REGIONS),
+      fixtureBacked: false,
+    });
+
+    const response = engine.search({ q: 'storytime', minResults: 1, limit: 5 });
+    expect(response.results.some((item) => item.listing.id === occurrence.id)).toBe(true);
+    expect(response.meta.fixtureBacked).toBe(false);
+  });
+
 
   it('does not return expired fixed-time occurrences from the live read model', async () => {
     const [source] = await query<{ id: string }>(

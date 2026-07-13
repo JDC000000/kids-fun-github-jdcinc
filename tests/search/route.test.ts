@@ -24,6 +24,13 @@ describe('GET /api/search (fixture stub)', () => {
     expect(body.results.every((r: { listing: { municipalityId: string } }) => r.listing.municipalityId === 'van')).toBe(true);
   });
 
+  it('does not invent a 0,0 near-me origin when lat/lng are omitted', async () => {
+    const { body } = await call('q=open+gym&minResults=1');
+    expect(body.origin).toBeNull();
+    expect(body.originError).toBeNull();
+    expect(body.results.length).toBeGreaterThan(0);
+  });
+
   it('returns an empty-state explanation when nothing matches in range', async () => {
     const { body } = await call('q=public+skate&lat=49.26&lng=-123.07&minResults=1');
     expect(body.broadening.emptyState).not.toBeNull();

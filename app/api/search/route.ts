@@ -107,9 +107,12 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
 
 /** Derive an origin resolution request from query params (near me / area chip / saved home). */
 function buildOriginRequest(p: URLSearchParams): OriginRequest | null {
-  const lat = Number(p.get('lat'));
-  const lng = Number(p.get('lng'));
-  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+  const latParam = p.get('lat');
+  const lngParam = p.get('lng');
+  if (latParam != null && lngParam != null) {
+    const lat = Number(latParam);
+    const lng = Number(lngParam);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
     return { mode: 'near_me', coords: { lat, lng } };
   }
   const area = p.get('area');
