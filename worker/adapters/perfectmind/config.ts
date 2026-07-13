@@ -11,6 +11,8 @@ export interface PerfectMindTenantConfig {
   municipality: string;
   /** Public BookMe4 widget/calendar URL (no auth). */
   widgetBaseUrl: string;
+  /** source.name in supabase/seeds/sources.sql. */
+  sourceName: string;
   /** BookMe4 pages are dynamic → require headless render in the worker runtime. */
   requiresRender: boolean;
   launchStatus: 'launch' | 'candidate';
@@ -21,6 +23,7 @@ export const PERFECTMIND_TENANTS: PerfectMindTenantConfig[] = [
     tenantKey: 'richmond',
     municipality: 'Richmond',
     widgetBaseUrl: 'https://richmond.perfectmind.com/booking/richmond-dropin',
+    sourceName: 'City of Richmond PerfectMind',
     requiresRender: true,
     launchStatus: 'launch',
   },
@@ -28,6 +31,7 @@ export const PERFECTMIND_TENANTS: PerfectMindTenantConfig[] = [
     tenantKey: 'nvrc',
     municipality: 'North Vancouver (NVRC)',
     widgetBaseUrl: 'https://nvrc.perfectmind.com/booking/nvrc-dropin',
+    sourceName: 'NVRC (North Vancouver) PerfectMind',
     requiresRender: true,
     launchStatus: 'launch',
   },
@@ -35,6 +39,7 @@ export const PERFECTMIND_TENANTS: PerfectMindTenantConfig[] = [
     tenantKey: 'newwest',
     municipality: 'New Westminster',
     widgetBaseUrl: 'https://newwest.perfectmind.com/booking/newwest-dropin',
+    sourceName: 'New Westminster PerfectMind',
     requiresRender: true,
     launchStatus: 'candidate',
   },

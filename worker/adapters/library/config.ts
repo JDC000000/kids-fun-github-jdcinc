@@ -10,6 +10,10 @@ export interface LibrarySystemConfig {
   systemKey: string;
   systemName: string;
   platform: LibraryPlatform;
+  /** source.family in supabase/seeds/sources.sql. */
+  sourceFamily: 'library_bibliocommons' | 'library_communico';
+  /** source.name in supabase/seeds/sources.sql. */
+  sourceName: string;
   feedBaseUrl: string;
 }
 
@@ -18,18 +22,24 @@ export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
     systemKey: 'vpl',
     systemName: 'Vancouver Public Library',
     platform: 'bibliocommons',
+    sourceFamily: 'library_bibliocommons',
+    sourceName: 'Vancouver Public Library BiblioEvents',
     feedBaseUrl: 'https://vpl.bibliocommons.com/events',
   },
   {
     systemKey: 'rpl',
     systemName: 'Richmond Public Library',
     platform: 'bibliocommons',
+    sourceFamily: 'library_bibliocommons',
+    sourceName: 'Richmond Public Library BiblioEvents',
     feedBaseUrl: 'https://yourlibrary.bibliocommons.com/events',
   },
   {
     systemKey: 'cpl',
     systemName: 'Coquitlam Public Library',
     platform: 'communico',
+    sourceFamily: 'library_communico',
+    sourceName: 'Coquitlam Public Library Communico',
     feedBaseUrl: 'https://coqlibrary.ca/events',
   },
 ];
