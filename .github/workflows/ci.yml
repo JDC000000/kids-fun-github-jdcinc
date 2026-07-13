@@ -17,7 +17,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # postgis/postgis (not vanilla postgres) — G-T4-1 requires the PostGIS
+        # extension binaries, which the official postgres image doesn't ship.
+        image: postgis/postgis:16-3.4
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -53,6 +55,9 @@ jobs:
 
       - name: Migrations (forward, ephemeral Postgres)
         run: bash scripts/migrate.sh
+
+      - name: Seeds (reference data)
+        run: bash scripts/seed.sh
 
       - name: Typecheck
         run: npx tsc --noEmit
