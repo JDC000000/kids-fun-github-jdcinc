@@ -24,6 +24,7 @@
 //     and delegates to the core. Every future user_profile/saved_search read or
 //     write MUST go through this, not lib/db/client.ts's query().
 import { Pool, type ClientBase, type QueryResultRow } from 'pg';
+import { poolConfigFor } from './pool-config';
 
 // auth.uid() expects the sub claim to be a uuid. Validate the format (null-aware —
 // null is a legitimate anonymous request) BEFORE it reaches Postgres, so a
@@ -42,7 +43,7 @@ function getUserPool(): Pool {
           'Do not fall back to DATABASE_URL: that connection is service-level and bypasses RLS.'
       );
     }
-    userPool = new Pool({ connectionString, max: 5 });
+    userPool = new Pool(poolConfigFor(connectionString));
   }
   return userPool;
 }

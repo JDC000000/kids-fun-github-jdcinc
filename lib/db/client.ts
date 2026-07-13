@@ -2,6 +2,7 @@
 // Reads DATABASE_URL (TSD §3A.1). Used by lib/*, tests, and app/api routes.
 // NOT for client/browser code — this touches `pg` directly.
 import { Pool, type QueryResultRow } from 'pg';
+import { poolConfigFor } from './pool-config';
 
 let pool: Pool | undefined;
 
@@ -11,7 +12,7 @@ export function getPool(): Pool {
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set');
     }
-    pool = new Pool({ connectionString, max: 5 });
+    pool = new Pool(poolConfigFor(connectionString));
   }
   return pool;
 }
