@@ -1,8 +1,10 @@
-# KIDS FUN ingestion worker — Fly.io app manifest (D-3 default: Fly.io/Railway-class
-# container). Region `sea` (Seattle) is closest to Metro Vancouver. Chromium needs ~1GB.
-# Swap for a Railway service or satellite-hosted process if the operator prefers.
+# KIDS FUN ingestion worker — Fly.io app manifest (approved runtime: Fly.io, Jon 2026-07-13).
+# Region `yyz` (Toronto) aligns with the approved ca-central-1 data-residency gate.
+# Chromium needs ~1GB. Machine deploy is deferred until M1 ingestion actually needs it
+# (cost-conscious: an app with no running machine is $0). Bring-up requires an org-scoped
+# Fly token — the current deploy-scoped fly-io token cannot create the app.
 app = "kids-fun-worker-staging"
-primary_region = "sea"
+primary_region = "yyz"
 
 [build]
   dockerfile = "Dockerfile"

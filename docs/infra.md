@@ -20,38 +20,35 @@ Source: TSD v1.2 §3A.1 / §3A.3 / §3.5 · scope-to-task v1.1 §C (G-T1-1..G-T1
 
 | Provider | Vault slug | Account / scope | Status |
 |---|---|---|---|
-| Vercel | `vercel` | `jdc000000` (personal) · team `JDCInc` (jdci-nc) available | token valid |
+| Vercel | `vercel` | team `JDCInc` (`jdci-nc`, `team_GvqNex1Ppl55vbBZqI6k58un`) — approved scope | token valid (rotated 2026-07-13) |
 | Supabase | `supabase-management` (org PAT) | org `JDC000000's Org` (`tpzqvsfdunawnibnihlb`) | token valid |
-| Fly.io | `fly-io` | `personal` org | deploy token valid |
+| Fly.io | `fly-io` | `personal` org | deploy-scoped only — **cannot create apps** |
 
 Existing projects in these accounts (do not disturb): Vercel — 24-hours-of-power, the-wip,
 curious-if, stem-loops-web, stem-loops. Supabase — Stem-Loops, the-wip, Curious If,
 24-hours-of-power (all `us-east-1`, org already on a paid plan).
 
-## Provisioning runbook (live create — gated on operator go)
+## Live provisioning status — 2026-07-13 (Wave 0, gates approved by Jon)
 
-The config-first deliverables (this repo) are complete. Live project creation is **gated**
-because it is a spend/ownership decision (§ below). To provision once approved:
+Approved gates: **Supabase staging only** (not prod) · **Vercel team JDCInc** · region
+**ca-central-1** · worker runtime **Fly.io** · GitHub **private repo `JDCInc/kids-fun`**.
+
+| Resource | Status | Identity |
+|---|---|---|
+| Supabase staging project | ✅ **LIVE** | `kids-fun-staging`, ref `mdusztrunwnniwnpwsmy`, region `ca-central-1`, PG17. Keys in vault `kids-fun-supabase-staging`. |
+| Supabase prod project | ⛔ not created (gate: staging only) | deferred |
+| Vercel project | ✅ **LIVE** | `kids-fun-staging` under team JDCInc (`prj_dCwLkWiBZGRlrz6EWmzaevP8uIuC`). Staging Supabase env vars wired. No deployment yet (no git link → no cost). |
+| Fly.io worker app | ⛔ **BLOCKED** | `fly-io` token is deploy-scoped; cannot create `kids-fun-worker-staging`. Needs org-scoped token (secure form requested). Image + config validated locally. |
+| GitHub repo + push | ⛔ **BLOCKED** | stored `github` PAT returns HTTP 401 (revoked). Needs a valid classic PAT with `repo`+`admin:org` (secure form requested). Repo is local-only at `27a0f47`. |
+| CI on PR | ⛔ **BLOCKED (on GitHub)** | `.github/workflows/ci.yml` authored + migration harness validated locally; will run once the repo is pushed. |
+
+Remaining bring-up once the two blocked credentials land:
 
 ```bash
-# 1. Vercel projects (free). Choose scope: personal (jdc000000) or team JDCInc.
-#    Create kids-fun-staging + kids-fun (prod); set NEXT_PUBLIC_APP_ENV per env; deploy.
-# 2. Supabase projects (RECURRING SPEND — org is on a paid plan). Create
-#    kids-fun-staging + kids-fun-prod in org tpzqvsfdunawnibnihlb; choose region.
-# 3. Worker: fly launch/deploy worker/ (Fly app) OR run as satellite-hosted process.
-# 4. Wire per-env env vars from the vault; run scripts/migrate.sh against each DB.
-# 5. Smoke: GET /api/health (web) 200; curl worker /healthz 200 + /smoke PASS.
+# GitHub (once a valid PAT is in the `github` connector):
+#   create private repo JDCInc/kids-fun -> git push -u origin main --tags -> CI runs on PR.
+#   Link the repo to the Vercel project (kids-fun-staging) for preview deploys.
+# Fly.io (once an org-scoped token is in the `fly-io` connector):
+#   fly apps create kids-fun-worker-staging (or Machines API) — deploy deferred to M1.
+# Smoke: GET /api/health (web) 200; worker /healthz 200 + /smoke PASS.
 ```
-
-## Decisions needed before live provisioning (spend / ownership)
-
-1. **Supabase spend** — create 2 new projects (staging + prod) in the paid org → recurring
-   cost. Confirm go.
-2. **Vercel scope** — personal (`jdc000000`, matches all existing MyZone projects) vs team
-   `JDCInc`. Default suggestion: personal, to match THE WIP / 24HOP.
-3. **Region** — existing projects are `us-east-1`; Metro Vancouver would favour `ca-central-1`
-   (Supabase) / `pdx1`+`sea` (Vercel/Fly, Pacific NW). Confirm data-residency preference.
-4. **Worker runtime** — Fly.io app (recurring spend, ~1GB VM for Chromium) vs Railway vs a
-   satellite-hosted process. Default (D-3): Fly.io/Railway-class container.
-5. **GitHub repo** — create remote repo + push (needed for CI to actually run on PRs) and
-   under which account/org. Currently local-only (`/opt/projects/user/kids-fun`).
