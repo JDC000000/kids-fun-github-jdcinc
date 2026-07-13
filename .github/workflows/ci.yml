@@ -1,0 +1,64 @@
+name: CI
+
+# G-T1-4 — migrations + typecheck + lint + unit on every PR (scope-to-task §C, TSD §9).
+# Any red step fails the PR. Foundation for the milestone-boundary code-review gate.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kids_fun_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/kids_fun_ci
+      NEXT_PUBLIC_APP_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Ensure psql client
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Migrations (forward, ephemeral Postgres)
+        run: bash scripts/migrate.sh
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Unit tests
+        run: npx vitest run

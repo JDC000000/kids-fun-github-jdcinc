@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+worker/node_modules/
+
+# builds
+.next/
+dist/
+worker/dist/
+out/
+
+# env & secrets — NEVER commit real values (schema lives in .env.example)
+.env
+.env.*
+!.env.example
+
+# vercel / supabase local
+.vercel/
+.supabase/
+supabase/.branches/
+supabase/.temp/
+
+# misc
+*.log
+.DS_Store
+coverage/
+*.tsbuildinfo
