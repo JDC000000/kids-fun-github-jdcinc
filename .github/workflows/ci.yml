@@ -53,8 +53,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Migrations (forward, ephemeral Postgres)
-        run: bash scripts/migrate.sh
+      - name: Migrations (forward, ephemeral Postgres + local-dev auth stub)
+        run: bash scripts/local-db-bootstrap.sh
 
       - name: Seeds (reference data)
         run: bash scripts/seed.sh
