@@ -43,7 +43,11 @@ async function searchDatabase(
 ): Promise<{ ok: true; response: SearchResponse; header: string } | { ok: false }> {
   try {
     const listings = await loadPostgresListings(getPool());
-    if (listings.length === 0) return { ok: false };
+    if (listings.length === 0) {
+      const fallback = searchFixtures(searchRequest);
+      fallback.meta.fallbackReason = 'database has no indexed listings yet';
+      return { ok: true, response: fallback, header: 'database-fallback-fixture' };
+    }
 
     const engine = new SearchEngine({
       repository: new InMemoryListingRepository(listings),

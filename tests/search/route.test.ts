@@ -29,4 +29,24 @@ describe('GET /api/search (fixture stub)', () => {
     expect(body.broadening.emptyState).not.toBeNull();
     expect(body.broadening.applied.length).toBeGreaterThan(0);
   });
+
+  it('falls back safely when database search is enabled but unavailable', async () => {
+    const oldBackend = process.env.KIDS_FUN_SEARCH_BACKEND;
+    const oldDb = process.env.DATABASE_URL;
+    process.env.KIDS_FUN_SEARCH_BACKEND = 'database';
+    delete process.env.DATABASE_URL;
+    try {
+      const { res, body } = await call('q=open+gym&lat=49.26&lng=-123.07&minResults=1');
+      expect(res.headers.get('x-data-source')).toBe('database-fallback-fixture');
+      expect(body.meta.backend).toBe('fixture');
+      expect(body.meta.fallbackReason).toBe('database search unavailable');
+      expect(body.results.length).toBeGreaterThan(0);
+    } finally {
+      if (oldBackend === undefined) delete process.env.KIDS_FUN_SEARCH_BACKEND;
+      else process.env.KIDS_FUN_SEARCH_BACKEND = oldBackend;
+      if (oldDb === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = oldDb;
+    }
+  });
+
 });

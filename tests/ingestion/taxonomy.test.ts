@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { primaryCategoryKeyForRecord } from '../../worker/core/taxonomy';
+import { confidenceLabelForCategory, primaryCategoryKeyForRecord } from '../../worker/core/taxonomy';
 
 describe('ingest taxonomy scaffolding', () => {
   it('honours explicit primary category hints from structured adapters', () => {
@@ -13,4 +13,11 @@ describe('ingest taxonomy scaffolding', () => {
     expect(primaryCategoryKeyForRecord({ title: 'Family Public Swim' })).toBe('public_swim');
     expect(primaryCategoryKeyForRecord({ title: 'Preschool Open Gym' })).toBe('open_gym');
   });
+
+  it('keeps generic class-program fallback below high confidence', () => {
+    expect(primaryCategoryKeyForRecord({ title: 'Interesting Library Event' })).toBe('class_program');
+    expect(confidenceLabelForCategory({ title: 'Interesting Library Event' })).toBe('medium');
+    expect(confidenceLabelForCategory({ title: 'Robotics Workshop' })).toBe('high');
+  });
+
 });

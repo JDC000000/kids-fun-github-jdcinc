@@ -91,6 +91,7 @@ export async function loadPostgresListings(
      LEFT JOIN LATERAL unnest(oa.age_band_matches) AS band_id(id) ON true
      LEFT JOIN age_band ab ON ab.id = band_id.id
      WHERE o.archived_at IS NULL
+       AND (o.open_hours_state IS NOT NULL OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now())
      GROUP BY
        o.id, o.series_id, o.activity_name, c.key, v.name, s.name, ser.canonical_title, s.authority_tier,
        o.description_snippet, o.start_datetime_utc, o.end_datetime_utc, o.open_hours_state,

@@ -48,7 +48,7 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     expect(occ.length).toBe(1);
     expect(occ[0].series_id).not.toBeNull();
     expect(occ[0].status_state).toBe('confirmed');
-    expect(occ[0].confidence_label).toBe('high');
+    expect(occ[0].confidence_label).toBe('medium');
     expect(occ[0].category_key).toBe('class_program');
   });
 
