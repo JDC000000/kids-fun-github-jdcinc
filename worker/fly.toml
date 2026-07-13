@@ -1,8 +1,10 @@
 # KIDS FUN ingestion worker — Fly.io app manifest (approved runtime: Fly.io, Jon 2026-07-13).
 # Region `yyz` (Toronto) aligns with the approved ca-central-1 data-residency gate.
-# Chromium needs ~1GB. Machine deploy is deferred until M1 ingestion actually needs it
-# (cost-conscious: an app with no running machine is $0). Bring-up requires an org-scoped
-# Fly token — the current deploy-scoped fly-io token cannot create the app.
+# Chromium needs ~1GB. The entrypoint (dist/src/index.js) runs the cadence-driven
+# scheduler continuously: a tiered enqueue tick (source.baseline_cadence /
+# near_date_cadence) plus the durable job-queue poll loop that runs terms-gated
+# ingest. DATABASE_URL is injected as a Fly secret (Supabase session pooler,
+# ca-central-1) — never committed here. Keep this app STAGING-only.
 app = "kids-fun-worker-staging"
 primary_region = "yyz"
 
@@ -12,6 +14,7 @@ primary_region = "yyz"
 [env]
   WORKER_HEALTHZ_PORT = "8080"
   PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
+  APP_ENV = "staging"
 
 [http_service]
   internal_port = 8080
