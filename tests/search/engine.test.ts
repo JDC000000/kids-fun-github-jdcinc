@@ -1,0 +1,52 @@
+// tests/search/engine.test.ts — End-to-end search assembly (G-T16-7, FR-02/09/10).
+
+import { describe, it, expect } from 'vitest';
+import { makeFixtureEngine, FIXTURE_NOW } from '../../lib/search/__fixtures__/engine';
+
+const eastVan = { lat: 49.26, lng: -123.07 };
+
+describe('SearchEngine.search (FR-02)', () => {
+  const { engine } = makeFixtureEngine();
+
+  it('"open gym near me" returns open-gym listings ranked before unrelated ones', () => {
+    const res = engine.search({ q: 'open gym near me', now: FIXTURE_NOW, origin: { mode: 'near_me', coords: eastVan }, minResults: 1 });
+    expect(res.results.length).toBeGreaterThan(0);
+    expect(res.results[0].listing.primaryCategoryKey).toBe('open_gym');
+    // no unrelated categories, and cancelled/hidden never surfaced
+    expect(res.results.every((r) => r.listing.primaryCategoryKey === 'open_gym')).toBe(true);
+    expect(res.results.some((r) => r.listing.id === 'l-cancelled-gym')).toBe(false);
+    expect(res.meta.fixtureBacked).toBe(true);
+  });
+
+  it('confirmed/bookable outranks an otherwise-equal stale listing end-to-end (FR-02 + §5A.3)', () => {
+    const res = engine.search({ q: 'open gym', now: FIXTURE_NOW, origin: { mode: 'near_me', coords: eastVan }, minResults: 1 });
+    const ids = res.results.map((r) => r.listing.id);
+    expect(ids.indexOf('l-rank-confirmed')).toBeLessThan(ids.indexOf('l-rank-stale'));
+  });
+
+  it('honours the time-of-day filter at the API layer, not just chips (FR-09)', () => {
+    const res = engine.search({ q: 'open gym morning', now: FIXTURE_NOW, origin: { mode: 'near_me', coords: eastVan }, minResults: 1 });
+    const ids = res.results.map((r) => r.listing.id);
+    expect(ids).toContain('l-opengym-van'); // 10:00 local
+    expect(ids).not.toContain('l-gymplay-nvan'); // 14:00 local (afternoon)
+  });
+
+  it('honours the cost filter — free excludes unknown unless include-unknown is set (FR-10)', () => {
+    const free = engine.search({ q: 'storytime free', now: FIXTURE_NOW, minResults: 1 });
+    const freeIds = free.results.map((r) => r.listing.id);
+    expect(freeIds).toContain('l-storytime-van'); // genuinely free
+    expect(freeIds).not.toContain('l-storytime-unknown'); // unknown is never free
+
+    const withUnknown = engine.search({ q: 'storytime free', now: FIXTURE_NOW, includeUnknownCost: true, minResults: 1 });
+    expect(withUnknown.results.map((r) => r.listing.id)).toContain('l-storytime-unknown');
+  });
+
+  it('applies the distance sort control over the same filtered set', () => {
+    const res = engine.search({
+      q: 'open gym', now: FIXTURE_NOW, origin: { mode: 'near_me', coords: eastVan }, sort: 'distance', minResults: 1,
+    });
+    const distances = res.results.map((r) => r.distanceKm ?? Infinity);
+    const sorted = [...distances].sort((a, b) => a - b);
+    expect(distances).toEqual(sorted);
+  });
+});

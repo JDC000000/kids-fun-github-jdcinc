@@ -1,86 +1,188 @@
-// lib/search/parse.ts — G-T16-1: query parser (normalise + intent extraction,
-// TSD §5A.2). Deterministic, no DB/network access — lowercase/trim + extract
-// date, time-of-day, age hints, radius, cost intent into a SearchContext.
+// lib/search/parse.ts — Query parser (G-T16-1, TSD §5A.2).
+//
+// Turns a raw parent-language query into a structured `SearchContext`: date,
+// time-of-day, age bands, radius, cost + status intent, sort, and residual
+// free-text terms (fed to alias-expand → matcher). Intent phrases are stripped
+// so they don't pollute text relevance (e.g. "free" must not match a venue named
+// "Freedom"). Deterministic: pass `now` for reproducible relative-date parsing.
 
-export type DateIntent = 'today' | 'tomorrow' | 'this_weekend' | null;
-export type TimeOfDay = 'morning' | 'afternoon' | 'evening' | null;
+import type { AgeBandKey, DayPart, DateIntent, SearchContext, SortKey } from './types';
+import { normalize, tokenize } from './text/normalize';
+import { localIsoDate, addDaysIso, toVancouverParts } from './time/vancouver';
 
-export interface SearchContext {
-  /** Raw query with recognised intent words stripped — feeds tsquery/trigram matching. */
-  freeText: string;
-  dateIntent: DateIntent;
-  timeOfDay: TimeOfDay;
-  ageHints: string[];
-  radiusKm: number | null;
-  costIntent: 'free' | null;
-  nearMe: boolean;
+export interface ParseOptions {
+  /** Reference instant for relative dates ("today"/"tomorrow"/weekday). Defaults to now. */
+  now?: Date;
+  /** Default radius when none is expressed (TSD §5B). */
+  defaultRadiusKm?: number;
+  /** Explicit sort from the UI control; overrides any sort keyword in the text. */
+  sort?: SortKey;
+  /** Explicit include-unknown-cost flag from the UI (FR-10); OR-ed with any text intent. */
+  includeUnknownCost?: boolean;
 }
 
-const DATE_WORDS: Array<[string, NonNullable<DateIntent>]> = [
-  ['this weekend', 'this_weekend'],
-  ['weekend', 'this_weekend'],
-  ['tomorrow', 'tomorrow'],
-  ['tonight', 'today'],
-  ['today', 'today'],
+const WEEKDAYS: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+};
+
+// Parent-language → user age bands. A phrase may imply multiple bands.
+const AGE_PHRASES: Array<{ re: RegExp; bands: AgeBandKey[] }> = [
+  { re: /\bunder ?2\b|\bnewborn\b|\binfant(s)?\b|\bbaby\b|\bbabies\b/, bands: ['under2'] },
+  { re: /\btoddler(s)?\b/, bands: ['under2', '2-4'] },
+  { re: /\bpreschool(er)?(s)?\b|\b2 ?- ?4\b/, bands: ['2-4'] },
+  { re: /\bkids?\b|\bchildren\b|\b5 ?- ?9\b/, bands: ['5-9'] },
+  { re: /\btween(s)?\b|\b10 ?- ?14\b/, bands: ['10-14'] },
+  { re: /\bteen(s|ager)?s?\b|\byouth\b|\b15\+?\b/, bands: ['15+'] },
 ];
 
-const TIME_OF_DAY_WORDS: Array<[string, NonNullable<TimeOfDay>]> = [
-  ['morning', 'morning'],
-  ['afternoon', 'afternoon'],
-  ['evening', 'evening'],
-  ['night', 'evening'],
+const SORT_PHRASES: Array<{ re: RegExp; sort: SortKey }> = [
+  { re: /\bcheapest\b|\blowest cost\b|\bleast expensive\b/, sort: 'lowest_cost' },
+  { re: /\bclosest\b|\bnearest\b/, sort: 'distance' },
+  { re: /\bsoonest\b|\bnext up\b/, sort: 'soonest' },
+  { re: /\bnewest\b|\bjust added\b/, sort: 'newest' },
 ];
 
-const AGE_HINT_WORDS = ['toddler', 'baby', 'infant', 'preschooler', 'teenager', 'teen', 'kids', 'kid'];
-const RADIUS_RE = /\b(\d{1,3})\s*km\b/;
-const AGE_NUMBER_RE = /\b(\d{1,2})\s*(?:years?|yrs?|yo)\b/;
-const NEAR_ME_RE = /\bnear me\b/;
-const FREE_RE = /\bfree\b/;
+/** Parse a raw query into a `SearchContext`. */
+export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext {
+  const now = opts.now ?? new Date();
+  const ctx: SearchContext = {
+    raw,
+    terms: [],
+    date: null,
+    timeOfDay: null,
+    ageBands: [],
+    radiusKm: opts.defaultRadiusKm ?? 10,
+    nearMe: false,
+    costFree: false,
+    includeUnknownCost: opts.includeUnknownCost ?? false,
+    bookableNow: false,
+    rainyDay: false,
+    sort: opts.sort ?? 'best_match',
+  };
 
-export function parseQuery(rawQuery: string): SearchContext {
-  const normalised = rawQuery.toLowerCase().trim().replace(/\s+/g, ' ');
+  // Work on a normalised string; strip each matched span so residual = free text.
+  let s = ` ${normalize(raw)} `;
+  const strip = (re: RegExp) => {
+    s = s.replace(re, ' ');
+  };
 
-  const dateIntent = firstMatch(normalised, DATE_WORDS);
-  const timeOfDay = firstMatch(normalised, TIME_OF_DAY_WORDS);
-  const nearMe = NEAR_ME_RE.test(normalised);
-  const costIntent = FREE_RE.test(normalised) ? 'free' : null;
-  const radiusMatch = normalised.match(RADIUS_RE);
-  const radiusKm = radiusMatch ? Number(radiusMatch[1]) : null;
-  const ageHints = extractAgeHints(normalised);
-  const freeText = stripKnownTerms(normalised);
-
-  return { freeText, dateIntent, timeOfDay, ageHints, radiusKm, costIntent, nearMe };
-}
-
-function firstMatch<T extends string>(text: string, pairs: Array<[string, T]>): T | null {
-  for (const [word, value] of pairs) {
-    if (text.includes(word)) return value;
+  // --- Location intent ---
+  if (/\bnear me\b|\bnearby\b|\baround me\b/.test(s)) {
+    ctx.nearMe = true;
+    strip(/\bnear me\b|\bnearby\b|\baround me\b/g);
   }
-  return null;
-}
+  const radiusMatch = s.match(/\b(\d{1,3})\s*km\b/);
+  if (radiusMatch) {
+    ctx.radiusKm = Number(radiusMatch[1]);
+    strip(/\bwithin\b/g);
+    strip(/\b\d{1,3}\s*km\b/g);
+  }
 
-function extractAgeHints(normalised: string): string[] {
-  const hints = AGE_HINT_WORDS.filter((w) => normalised.includes(w));
-  const ageNumberMatch = normalised.match(AGE_NUMBER_RE);
-  if (ageNumberMatch) hints.push(ageNumberMatch[0]);
-  return hints;
-}
+  // --- Cost intent (FR-10/BR-11) ---
+  if (/\binclude unknown\b|\bunknown cost\b|\bcheck source\b|\bcheck-source\b/.test(s)) {
+    ctx.includeUnknownCost = true;
+    strip(/\binclude unknown\b|\bunknown cost\b|\bcheck source\b|\bcheck-source\b/g);
+  }
+  if (/\bfree\b|\bno cost\b|\bno charge\b/.test(s)) {
+    ctx.costFree = true;
+    strip(/\bfree\b|\bno cost\b|\bno charge\b/g);
+  }
 
-function stripKnownTerms(normalised: string): string {
-  let text = normalised;
-  const stripPhrases = [
-    'near me',
-    'free',
-    ...DATE_WORDS.map(([w]) => w),
-    ...TIME_OF_DAY_WORDS.map(([w]) => w),
+  // --- Status chips ---
+  if (/\bbookable now\b|\bbookable\b|\bbook now\b/.test(s)) {
+    ctx.bookableNow = true;
+    strip(/\bbookable now\b|\bbookable\b|\bbook now\b/g);
+  }
+  if (/\brainy day\b|\brainy-day\b|\brainy\b/.test(s)) {
+    ctx.rainyDay = true;
+    strip(/\brainy day\b|\brainy-day\b|\brainy\b/g);
+  }
+  if (/\bindoor\b|\bindoors\b/.test(s)) {
+    ctx.rainyDay = true; // Rainy-day chip == indoor suitability (TSD §5A.4)
+    strip(/\bindoor\b|\bindoors\b/g);
+  }
+
+  // --- Time-of-day (FR-09) ---
+  if (/\btonight\b/.test(s)) {
+    ctx.timeOfDay = 'evening';
+    ctx.date = ctx.date ?? relativeDate('today', now);
+    strip(/\btonight\b/g);
+  }
+  const dayParts: Array<[RegExp, DayPart]> = [
+    [/\bmorning\b/, 'morning'],
+    [/\bafternoon\b/, 'afternoon'],
+    [/\bevening\b|\bnight\b/, 'evening'],
   ];
-  for (const phrase of stripPhrases) {
-    text = text.replace(new RegExp(`\\b${escapeRegExp(phrase)}\\b`, 'g'), ' ');
+  for (const [re, part] of dayParts) {
+    if (re.test(s)) {
+      ctx.timeOfDay = ctx.timeOfDay ?? part;
+      strip(new RegExp(re.source, 'g'));
+    }
   }
-  text = text.replace(RADIUS_RE, ' ');
-  return text.replace(/\s+/g, ' ').trim();
+
+  // --- Date intent ---
+  const explicit = s.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (explicit) {
+    ctx.date = { kind: 'explicit', isoDate: explicit[0], weekday: null };
+    strip(/\b\d{4}-\d{2}-\d{2}\b/g);
+  } else if (/\btoday\b/.test(s)) {
+    ctx.date = relativeDate('today', now);
+    strip(/\btoday\b/g);
+  } else if (/\btomorrow\b/.test(s)) {
+    ctx.date = relativeDate('tomorrow', now);
+    strip(/\btomorrow\b/g);
+  } else if (/\bthis weekend\b|\bweekend\b/.test(s)) {
+    ctx.date = relativeDate('weekend', now);
+    strip(/\bthis weekend\b|\bweekend\b/g);
+  } else {
+    for (const [name, idx] of Object.entries(WEEKDAYS)) {
+      if (new RegExp(`\\b${name}\\b`).test(s)) {
+        ctx.date = weekdayDate(idx, now);
+        strip(new RegExp(`\\b${name}\\b`, 'g'));
+        break;
+      }
+    }
+  }
+
+  // --- Age intent ---
+  const bands = new Set<AgeBandKey>();
+  for (const { re, bands: b } of AGE_PHRASES) {
+    if (re.test(s)) {
+      b.forEach((x) => bands.add(x));
+      strip(new RegExp(re.source, 'g'));
+    }
+  }
+  ctx.ageBands = [...bands];
+
+  // --- Sort keyword (only if UI didn't pass one) ---
+  if (!opts.sort) {
+    for (const { re, sort } of SORT_PHRASES) {
+      if (re.test(s)) {
+        ctx.sort = sort;
+        strip(new RegExp(re.source, 'g'));
+        break;
+      }
+    }
+  }
+
+  // Residual free-text terms → alias-expand + matcher.
+  ctx.terms = tokenize(s);
+  return ctx;
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function relativeDate(kind: 'today' | 'tomorrow' | 'weekend', now: Date): DateIntent {
+  const todayIso = localIsoDate(now);
+  if (kind === 'today') return { kind: 'today', isoDate: todayIso, weekday: null };
+  if (kind === 'tomorrow') return { kind: 'tomorrow', isoDate: addDaysIso(todayIso, 1), weekday: null };
+  // weekend → upcoming Saturday (today if already Saturday).
+  const wd = toVancouverParts(now).weekday;
+  const delta = (6 - wd + 7) % 7;
+  return { kind: 'weekend', isoDate: addDaysIso(todayIso, delta), weekday: 6 };
+}
+
+function weekdayDate(targetWeekday: number, now: Date): DateIntent {
+  const todayIso = localIsoDate(now);
+  const wd = toVancouverParts(now).weekday;
+  const delta = (targetWeekday - wd + 7) % 7; // next occurrence incl. today
+  return { kind: 'weekday', isoDate: addDaysIso(todayIso, delta), weekday: targetWeekday };
 }

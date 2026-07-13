@@ -1,0 +1,709 @@
+/*
+ * KIDS FUN — mobile fixture shell styles.
+ * Design system: Brand Workbook V2 + Visual Blueprint v0.2. Values are the
+ * production token names from documents/brand-identities/kids-fun.json.
+ * Everything is scoped under `.kf` so this route's styles never leak into the
+ * rest of the app (other tracks own app/layout + app/page).
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+
+.kf {
+  /* ── Palette (production token names) ── */
+  --leaf: #48c774;
+  --leaf-hover: #36a65a;
+  --forest-ink: #102316;
+  --evergreen: #183b24;
+  --warm-paper: #f7f2e8;
+  --playground-sand: #c9b79e;
+  --rainy-fog: #d8e3e0;
+  --park-moss: #758a73;
+  --park-moss-text: #5f7360; /* AA secondary text on white/paper (5.11:1) */
+  --tertiary-text: #6c766b; /* AA metadata (4.73:1) */
+  --museum-lilac: #d9c7ef;
+  --evening-plum: #8d7aad;
+
+  --neutral-100: #f4f5f4;
+  --neutral-200: #e6eae6; /* hairline rules */
+  --neutral-300: #d0d6ce;
+  --neutral-700: #535b52;
+  --neutral-900: #222621;
+
+  /* ── Status (paired colour + always used with a text label + icon) ── */
+  --confirmed-text: #375c2d;
+  --confirmed-bg: #eef7ed;
+  --info-text: #30538b;
+  --info-bg: #eef6fe;
+  --expected-text: #6b4e12;
+  --expected-bg: #fbf3de;
+  --cancelled-text: #853b20;
+  --cancelled-bg: #fdf1ed;
+
+  /* ── Surfaces (light) ── */
+  --canvas: var(--warm-paper);
+  --surface: #ffffff;
+  --ink: var(--forest-ink);
+  --ink-secondary: var(--park-moss-text);
+  --ink-muted: var(--tertiary-text);
+  --hairline: var(--neutral-200);
+  --anchor: var(--evergreen);
+  --anchor-text: var(--warm-paper);
+
+  /* ── Radius / elevation / motion ── */
+  --r-card: 16px;
+  --r-chip: 9999px;
+  --r-sheet: 24px;
+  --e-100: 0 2px 4px rgba(0, 0, 0, 0.14), 0 0 1px rgba(0, 0, 0, 0.3);
+  --e-200: 0 4px 8px rgba(0, 0, 0, 0.18), 0 0 1px rgba(0, 0, 0, 0.3);
+  --e-300: 0 8px 12px rgba(0, 0, 0, 0.15), 0 0 1px rgba(0, 0, 0, 0.3);
+  --motion: 180ms cubic-bezier(0.2, 0, 0, 1);
+
+  font-family: 'Manrope', 'Avenir Next', 'Segoe UI', Arial, sans-serif;
+  /* D2: tabular lining numerals everywhere data appears. */
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Dark mode via existing dark_* tokens (D12) — a real 9pm one-handed surface. */
+@media (prefers-color-scheme: dark) {
+  .kf {
+    --canvas: #102316; /* dark_primary */
+    --surface: #183b24; /* dark_secondary */
+    --ink: #f7f2e8; /* dark_text */
+    --ink-secondary: #b9c5b7; /* dark_muted */
+    --ink-muted: #9fb09d;
+    --hairline: #223f30; /* dark_elevated */
+    --anchor: #0e110e;
+    --anchor-text: #f7f2e8;
+    --confirmed-bg: #1c3a24;
+    --confirmed-text: #a6e6b4;
+    --info-bg: #16304a;
+    --info-text: #bcd6f5;
+    --expected-bg: #3a2f16;
+    --expected-text: #f2d99a;
+    --cancelled-bg: #3a2018;
+    --cancelled-text: #f2b8a0;
+  }
+}
+
+/* ── Mobile frame: the phone is the primary artboard (blueprint mobile-first) ── */
+.kf-page {
+  min-height: 100vh;
+  background: var(--neutral-300);
+  background-image: radial-gradient(var(--neutral-200) 1px, transparent 1px);
+  background-size: 22px 22px;
+  display: flex;
+  justify-content: center;
+}
+@media (prefers-color-scheme: dark) {
+  .kf-page {
+    background: #0e110e;
+    background-image: radial-gradient(#1a271d 1px, transparent 1px);
+  }
+}
+
+.kf-app {
+  width: 100%;
+  max-width: 440px;
+  min-height: 100vh;
+  background: var(--canvas);
+  box-shadow: var(--e-300);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.kf a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Focus is always visible and never obscured (WCAG 2.4.11 / 2.4.7). */
+.kf :focus-visible {
+  outline: 3px solid var(--leaf-hover);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── Hero (Evergreen anchor, one leaf CTA) ── */
+.kf-hero {
+  background: var(--anchor);
+  color: var(--anchor-text);
+  padding: 20px 16px 18px;
+}
+.kf-hero__wordmark {
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.kf-hero__title {
+  font-weight: 800;
+  font-size: 26px;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  margin: 8px 0 4px;
+}
+.kf-hero__sub {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--rainy-fog);
+  margin: 0;
+}
+
+/* ── Sticky date + area bar (Elevation 200) — the single most important control ── */
+.kf-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--surface);
+  box-shadow: var(--e-200);
+  border-bottom: 1px solid var(--hairline);
+}
+.kf-dateArea {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.kf-control {
+  flex: 1;
+  min-height: 44px; /* WCAG 2.5.8 target size */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--canvas);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.kf-control__label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.kf-control__value {
+  font-size: 14px;
+}
+.kf-control__caret {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+/* Radius segmented control lives inside the sticky bar (travel radius chip group). */
+.kf-radius {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 10px;
+  align-items: center;
+}
+.kf-radius__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-right: 2px;
+}
+.kf-seg {
+  min-height: 36px;
+  padding: 4px 12px;
+  border-radius: var(--r-chip);
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--motion), color var(--motion);
+}
+.kf-seg[aria-pressed='true'] {
+  background: var(--evergreen);
+  border-color: var(--evergreen);
+  color: var(--warm-paper);
+}
+
+/* ── Scroll-snap filter chip rail ── */
+.kf-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 12px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.kf-chips::-webkit-scrollbar {
+  display: none;
+}
+.kf-chip {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--r-chip);
+  border: 1px solid var(--neutral-300);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion), color var(--motion), border-color var(--motion);
+}
+/* Selected = fill AND checkmark (never colour alone). */
+.kf-chip[aria-pressed='true'] {
+  background: var(--confirmed-bg);
+  border-color: var(--confirmed-text);
+  color: var(--confirmed-text);
+}
+.kf-chip__check {
+  font-weight: 800;
+}
+
+/* ── Transparent sort line (D6) ── */
+.kf-results {
+  padding: 4px 16px 24px;
+  flex: 1;
+}
+.kf-sort {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 0 6px;
+}
+.kf-sort__text {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-secondary);
+}
+.kf-sort__text b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.kf-sort__change {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--info-text);
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px;
+  min-height: 44px;
+}
+
+/* ── Section headers ── */
+.kf-section__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 18px 0 10px;
+}
+.kf-section__title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.kf-section__count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.kf-section__rule {
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+.kf-section__note {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-secondary);
+  margin: -2px 0 12px;
+}
+
+/* ── Activity card (the atomic unit) ── */
+.kf-card {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  box-shadow: var(--e-100);
+  transition: transform var(--motion), box-shadow var(--motion);
+}
+.kf-card:hover {
+  box-shadow: var(--e-200);
+}
+.kf-card--muted {
+  opacity: 0.9;
+}
+.kf-card--cancelled {
+  background: var(--cancelled-bg);
+}
+.kf-card__body {
+  min-width: 0;
+}
+.kf-card__type {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.kf-card__title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin: 2px 0 6px;
+  color: var(--ink);
+}
+.kf-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--ink-secondary);
+}
+.kf-card__meta b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.kf-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* Booking / registration tag */
+.kf-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: var(--r-chip);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.kf-tag--book {
+  background: var(--leaf);
+  color: var(--forest-ink);
+}
+.kf-tag--dropin {
+  background: var(--rainy-fog);
+  color: var(--evergreen);
+}
+.kf-tag--reg {
+  background: var(--museum-lilac);
+  color: #3f2f57;
+}
+
+/* ── Freshness stamp (signature component, D9) ── */
+.kf-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px dashed currentColor;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.kf-stamp--confirmed {
+  color: var(--confirmed-text);
+  background: var(--confirmed-bg);
+}
+.kf-stamp--info {
+  color: var(--info-text);
+  background: var(--info-bg);
+}
+.kf-stamp--expected {
+  color: var(--expected-text);
+  background: var(--expected-bg);
+}
+.kf-stamp--cancelled {
+  color: var(--cancelled-text);
+  background: var(--cancelled-bg);
+}
+.kf-stamp--muted {
+  color: var(--tertiary-text);
+  background: var(--neutral-100);
+  border-style: dashed;
+}
+.kf-stamp__icon {
+  font-weight: 800;
+}
+.kf-stamp__src {
+  opacity: 0.85;
+}
+
+/* ── Category illustration tile (D4: flat, two-tone, category-coded glyph) ── */
+.kf-tile {
+  width: 72px;
+  height: 72px;
+  border-radius: 12px;
+  display: block;
+}
+
+/* ── Empty / broadening state ── */
+.kf-empty {
+  text-align: left;
+  padding: 24px 4px;
+}
+.kf-empty__glyph {
+  font-size: 30px;
+  line-height: 1;
+}
+.kf-empty__title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 12px 0 6px;
+  color: var(--ink);
+}
+.kf-empty__body {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+  margin: 0 0 14px;
+}
+.kf-empty__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kf-empty__action {
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--neutral-300);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.kf-empty__action--primary {
+  background: var(--leaf);
+  border-color: var(--leaf);
+  color: var(--forest-ink);
+}
+
+/* ── Detail stub ── */
+.kf-detail {
+  flex: 1;
+  padding-bottom: 88px; /* room for the sticky bottom action bar */
+}
+.kf-detail__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--info-text);
+}
+.kf-detail__hero {
+  padding: 4px 16px 12px;
+}
+.kf-detail__type {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.kf-detail__title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 4px 0 2px;
+}
+.kf-detail__venue {
+  font-size: 14px;
+  color: var(--ink-secondary);
+}
+.kf-statrow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--hairline);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  margin: 14px 16px 0;
+}
+.kf-stat {
+  background: var(--surface);
+  padding: 12px;
+  min-height: 44px;
+}
+.kf-stat__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.kf-stat__value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 2px;
+}
+.kf-panel {
+  margin: 16px;
+  padding: 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.kf-panel__title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+.kf-panel p,
+.kf-panel li {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+}
+.kf-panel ul {
+  margin: 0;
+  padding-left: 18px;
+}
+/* Honesty block — amber, only when relevant, above booking. */
+.kf-honesty {
+  margin: 16px;
+  padding: 12px 14px;
+  border-radius: var(--r-card);
+  background: var(--expected-bg);
+  color: var(--expected-text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  display: flex;
+  gap: 8px;
+}
+.kf-honesty--cancelled {
+  background: var(--cancelled-bg);
+  color: var(--cancelled-text);
+}
+.kf-linkrow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+.kf-link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--neutral-300);
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--info-text);
+}
+
+/* Sticky bottom action bar (thumb zone) — Book on source = primary. */
+.kf-actionbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  background: var(--surface);
+  border-top: 1px solid var(--hairline);
+  box-shadow: var(--e-300);
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  display: flex;
+  gap: 10px;
+}
+.kf-btn {
+  flex: 1;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.kf-btn--primary {
+  background: var(--leaf);
+  color: var(--forest-ink);
+}
+.kf-btn--primary:hover {
+  background: var(--leaf-hover);
+}
+.kf-btn--ghost {
+  background: var(--surface);
+  border-color: var(--neutral-300);
+  color: var(--ink);
+  flex: 0 0 auto;
+  padding: 0 16px;
+}
+
+/* Screen-reader-only helper */
+.kf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Respect reduced-motion (D11): no non-essential animation. */
+@media (prefers-reduced-motion: reduce) {
+  .kf * {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}

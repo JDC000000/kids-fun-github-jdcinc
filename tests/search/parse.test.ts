@@ -1,38 +1,50 @@
+// tests/search/parse.test.ts — Query parser (G-T16-1).
+
 import { describe, it, expect } from 'vitest';
 import { parseQuery } from '../../lib/search/parse';
+import { FIXTURE_NOW } from '../../lib/search/__fixtures__/engine';
 
-// G-T16-1 — query parser (TSD §5A.2).
-describe('parseQuery (G-T16-1)', () => {
-  it('parses "open gym near me saturday morning free" into a structured context', () => {
-    const ctx = parseQuery('open gym near me saturday morning free');
+describe('parseQuery', () => {
+  it('parses "open gym near me saturday morning free" into a structured context (AC G-T16-1)', () => {
+    const ctx = parseQuery('open gym near me saturday morning free', { now: FIXTURE_NOW });
+    expect(ctx.terms).toEqual(['open', 'gym']);
     expect(ctx.nearMe).toBe(true);
     expect(ctx.timeOfDay).toBe('morning');
-    expect(ctx.costIntent).toBe('free');
-    expect(ctx.freeText).toContain('open gym');
-    expect(ctx.freeText).toContain('saturday');
-    expect(ctx.freeText).not.toContain('near me');
-    expect(ctx.freeText).not.toContain('free');
+    expect(ctx.costFree).toBe(true);
+    expect(ctx.date?.kind).toBe('weekday');
+    expect(ctx.date?.weekday).toBe(6); // Saturday
   });
 
-  it('extracts a radius in km', () => {
-    const ctx = parseQuery('storytime within 5km');
-    expect(ctx.radiusKm).toBe(5);
+  it('extracts radius, age bands and include-unknown flag', () => {
+    const ctx = parseQuery('toddler swim within 20km include unknown', { now: FIXTURE_NOW });
+    expect(ctx.radiusKm).toBe(20);
+    expect(ctx.ageBands).toEqual(expect.arrayContaining(['under2', '2-4']));
+    expect(ctx.includeUnknownCost).toBe(true);
+    expect(ctx.terms).toEqual(['swim']);
   });
 
-  it('extracts date intent (today/tomorrow/weekend)', () => {
-    expect(parseQuery('skate today').dateIntent).toBe('today');
-    expect(parseQuery('swim tomorrow').dateIntent).toBe('tomorrow');
-    expect(parseQuery('festival this weekend').dateIntent).toBe('this_weekend');
+  it('defaults radius to 10km and best_match sort', () => {
+    const ctx = parseQuery('storytime', { now: FIXTURE_NOW });
+    expect(ctx.radiusKm).toBe(10);
+    expect(ctx.sort).toBe('best_match');
+    expect(ctx.timeOfDay).toBeNull();
+    expect(ctx.date).toBeNull();
   });
 
-  it('extracts free-text age hints', () => {
-    const ctx = parseQuery('toddler storytime for a 3 year old');
-    expect(ctx.ageHints).toContain('toddler');
-    expect(ctx.ageHints.some((h) => h.includes('3'))).toBe(true);
+  it('maps "tonight" to today + evening and "rainy day" / "indoor" to the rainy-day chip', () => {
+    const ctx = parseQuery('open gym tonight rainy day', { now: FIXTURE_NOW });
+    expect(ctx.timeOfDay).toBe('evening');
+    expect(ctx.date?.kind).toBe('today');
+    expect(ctx.rainyDay).toBe(true);
   });
 
-  it('is idempotent on already-lowercase input and trims whitespace', () => {
-    const ctx = parseQuery('  open   gym  ');
-    expect(ctx.freeText).toBe('open gym');
+  it('does not leak intent words into free-text terms', () => {
+    const ctx = parseQuery('free indoor bookable now skate today afternoon', { now: FIXTURE_NOW });
+    expect(ctx.terms).toEqual(['skate']);
+    expect(ctx.costFree).toBe(true);
+    expect(ctx.rainyDay).toBe(true);
+    expect(ctx.bookableNow).toBe(true);
+    expect(ctx.timeOfDay).toBe('afternoon');
+    expect(ctx.date?.kind).toBe('today');
   });
 });

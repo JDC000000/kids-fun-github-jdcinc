@@ -139,7 +139,7 @@ describe.skipIf(!hasDb)('Job queue + no-op ingest pipeline (G-T5-2, G-T5-4)', ()
     const pool = getPool();
     await pool.query(
       `INSERT INTO job_queue (id, source_id, status, attempts, max_attempts) VALUES ($1, $2, 'pending', 2, 3)`,
-      ['00000000-0000-0000-0000-0000000000f1', sourceId]
+      [crypto.randomUUID(), sourceId]
     );
     const job = await dequeue(pool); // attempts becomes 3 (== max_attempts)
     expect(job).not.toBeNull();
@@ -191,13 +191,16 @@ describe.skipIf(!hasDb)('Tiered scheduler (G-T5-3)', () => {
 
   it('a tick enqueues jobs only for due sources, reading cadence from the source table', async () => {
     const pool = getPool();
+    const suffix = crypto.randomUUID();
     const [due] = await query<{ id: string }>(
       `INSERT INTO source (family, name, baseline_cadence, next_check_at)
-       VALUES ('noop', 'Due Source', '1 day', now() - interval '1 minute') RETURNING id`
+       VALUES ('noop', $1, '1 day', now() - interval '1 minute') RETURNING id`,
+      [`Due Source ${suffix}`]
     );
     const [notDue] = await query<{ id: string }>(
       `INSERT INTO source (family, name, baseline_cadence, next_check_at)
-       VALUES ('noop', 'Not Due Source', '1 day', now() + interval '1 day') RETURNING id`
+       VALUES ('noop', $1, '1 day', now() + interval '1 day') RETURNING id`,
+      [`Not Due Source ${suffix}`]
     );
 
     const enqueued = await enqueueDueJobs(pool);

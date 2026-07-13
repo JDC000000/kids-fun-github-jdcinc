@@ -3,7 +3,7 @@
   "framework": "nextjs",
   "buildCommand": "next build",
   "installCommand": "npm ci",
-  "regions": ["pdx1"],
+  "regions": ["iad1"],
   "github": {
     "silent": true
   }

@@ -1,0 +1,132 @@
+// Pure filtering + sectioning logic for the results shell. No React — unit-tested.
+// Chips map to parent intent (UXR-03): Bookable now, Drop-in, Rainy-day, Free,
+// Indoors, Toddler, plus time-of-day and a travel radius.
+
+import { statusMeta } from './format';
+import type { Activity, TimeOfDay } from './types';
+
+export interface FilterState {
+  bookableNow: boolean;
+  dropIn: boolean;
+  rainyDay: boolean;
+  free: boolean;
+  indoors: boolean;
+  toddler: boolean; // band reaches toddlers (ageMin <= 3)
+  timeOfDay: TimeOfDay | 'any';
+  radiusKm: 5 | 10 | 20;
+}
+
+export const DEFAULT_FILTERS: FilterState = {
+  bookableNow: false,
+  dropIn: false,
+  rainyDay: false,
+  free: false,
+  indoors: false,
+  toddler: false,
+  timeOfDay: 'any',
+  radiusKm: 10,
+};
+
+/** Boolean chip keys (everything except time-of-day and radius). */
+export type BoolChipKey = 'bookableNow' | 'dropIn' | 'rainyDay' | 'free' | 'indoors' | 'toddler';
+
+export const BOOL_CHIPS: { key: BoolChipKey; label: string }[] = [
+  { key: 'bookableNow', label: 'Bookable now' },
+  { key: 'dropIn', label: 'Drop-in' },
+  { key: 'rainyDay', label: 'Rainy-day' },
+  { key: 'free', label: 'Free' },
+  { key: 'indoors', label: 'Indoors' },
+  { key: 'toddler', label: 'Toddler' },
+];
+
+export const TIME_OF_DAY_OPTIONS: { key: TimeOfDay | 'any'; label: string }[] = [
+  { key: 'any', label: 'Any time' },
+  { key: 'morning', label: 'Morning' },
+  { key: 'afternoon', label: 'Afternoon' },
+  { key: 'evening', label: 'Evening' },
+];
+
+export const RADIUS_OPTIONS: FilterState['radiusKm'][] = [5, 10, 20];
+
+/** AND across groups; a card must satisfy every active filter. */
+export function applyFilters(activities: Activity[], state: FilterState): Activity[] {
+  return activities.filter((a) => {
+    if (a.distanceKm > state.radiusKm) return false;
+    if (state.bookableNow && a.booking !== 'bookable_now') return false;
+    if (state.dropIn && a.booking !== 'drop_in' && !a.dropIn) return false;
+    if (state.rainyDay && !a.rainyDay) return false;
+    if (state.free && a.costStatus !== 'free') return false;
+    if (state.indoors && !a.indoor) return false;
+    if (state.toddler && a.ageMin > 3) return false;
+    if (state.timeOfDay !== 'any' && a.timeOfDay !== state.timeOfDay) return false;
+    return true;
+  });
+}
+
+/** Split into the two honesty sections (D7 / BR-12): confirmed-first, expected below. */
+export function partitionSections(activities: Activity[]): {
+  confirmed: Activity[];
+  expected: Activity[];
+} {
+  const confirmed: Activity[] = [];
+  const expected: Activity[] = [];
+  for (const a of activities) {
+    if (statusMeta(a.status).section === 'confirmed') confirmed.push(a);
+    else expected.push(a);
+  }
+  return { confirmed, expected };
+}
+
+export function activeFilterCount(state: FilterState): number {
+  let n = 0;
+  for (const { key } of BOOL_CHIPS) if (state[key]) n += 1;
+  if (state.timeOfDay !== 'any') n += 1;
+  if (state.radiusKm !== DEFAULT_FILTERS.radiusKm) n += 1;
+  return n;
+}
+
+// ── Sorting ──────────────────────────────────────────────────────────────────
+// Deterministic alternate orderings over the same filtered set (TSD §7 / D6);
+// each is transparent and explainable — never a black-box "magic" ranking.
+
+export type SortKey = 'best_match' | 'distance' | 'soonest' | 'lowest_cost' | 'recently_checked';
+
+export const SORT_OPTIONS: { key: SortKey; label: string; sentence: string }[] = [
+  { key: 'best_match', label: 'Best match', sentence: 'confirmed first, then closest & soonest for your kids' },
+  { key: 'distance', label: 'Closest', sentence: 'nearest first by travel distance' },
+  { key: 'soonest', label: 'Soonest', sentence: 'earliest start time first' },
+  { key: 'lowest_cost', label: 'Lowest cost', sentence: 'free and low-cost first; unknown cost last' },
+  { key: 'recently_checked', label: 'Recently checked', sentence: 'most recently verified first' },
+];
+
+/** Effective cost for ordering: free = 0, unknown sorts last. */
+function effectiveCost(a: Activity): number {
+  if (a.costStatus === 'free') return 0;
+  if (a.costStatus === 'unknown') return Number.POSITIVE_INFINITY;
+  return a.costMinCad ?? 0;
+}
+
+/** Stable sort within an already-sectioned list. Best-match = closest then soonest. */
+export function sortActivities(activities: Activity[], key: SortKey): Activity[] {
+  const copy = [...activities];
+  copy.sort((a, b) => {
+    switch (key) {
+      case 'distance':
+        return a.distanceKm - b.distanceKm;
+      case 'soonest':
+        return a.startIso.localeCompare(b.startIso);
+      case 'lowest_cost':
+        return effectiveCost(a) - effectiveCost(b);
+      case 'recently_checked':
+        return b.lastCheckedIso.localeCompare(a.lastCheckedIso);
+      case 'best_match':
+      default:
+        return a.distanceKm - b.distanceKm || a.startIso.localeCompare(b.startIso);
+    }
+  });
+  return copy;
+}
+
+export function sortSentence(key: SortKey): string {
+  return SORT_OPTIONS.find((o) => o.key === key)?.sentence ?? '';
+}

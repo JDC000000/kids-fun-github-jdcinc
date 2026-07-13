@@ -56,6 +56,13 @@ jobs:
       - name: Migrations (forward, ephemeral Postgres + local-dev auth stub)
         run: bash scripts/local-db-bootstrap.sh
 
+      - name: Migrations — idempotency + forward-only re-check
+        run: |
+          out="$(bash scripts/migrate.sh)"
+          echo "$out"
+          echo "$out" | grep -q "(0 applied this run)" \
+            || { echo "::error::migrate.sh is not idempotent — a second run applied migrations"; exit 1; }
+
       - name: Seeds (reference data)
         run: bash scripts/seed.sh
 
