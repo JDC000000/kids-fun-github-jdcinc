@@ -1,20 +1,21 @@
 // app/api/search/route.ts — Search API route (G-T16-7, TSD §5A, FR-02).
 //
 // Default remains fixture-backed while live coverage is narrow. Staging can opt
-// into the DB read model with KIDS_FUN_SEARCH_BACKEND=database; if DB search is
-// empty or unavailable, the route falls back to fixtures and marks the response
-// header/meta so the product shell never goes blank during staged rollout.
+// into the DB read model with KIDS_FUN_SEARCH_BACKEND=database; when it does, the
+// WHOLE pipeline is live — DB listings AND the DB alias dictionary (synonym_alias,
+// via PostgresAliasResolver) AND the DB region hierarchy (region table). No fixture
+// resolver leaks into database mode. If DB search is empty or unavailable, the route
+// falls back to fixtures and marks the response header/meta so the product shell
+// never goes blank during staged rollout. Fixture/default mode is unchanged.
 
 import { NextResponse } from 'next/server';
 import { makeFixtureEngine } from '@/lib/search/__fixtures__/engine';
-import { ALIAS_SEED } from '@/lib/search/__fixtures__/aliases';
-import { REGIONS } from '@/lib/search/__fixtures__/regions';
 import { fixtureGeocoder } from '@/lib/search/__fixtures__/engine';
 import { InMemoryListingRepository } from '@/lib/search/repository';
 import { loadPostgresListings } from '@/lib/search/postgres-repository';
+import { getPostgresAliasResolver } from '@/lib/search/postgres-alias-resolver';
+import { getPostgresRegionHierarchy } from '@/lib/search/postgres-region-hierarchy';
 import { SearchEngine, type SearchRequest, type SearchResponse } from '@/lib/search/engine';
-import { FixtureAliasResolver } from '@/lib/search/expand';
-import { RegionHierarchy } from '@/lib/geo/region';
 import { getPool } from '@/lib/db/client';
 import type { OriginRequest } from '@/lib/geo/origin';
 import type { SortKey } from '@/lib/search/types';
@@ -42,7 +43,16 @@ async function searchDatabase(
   searchRequest: SearchRequest
 ): Promise<{ ok: true; response: SearchResponse; header: string } | { ok: false }> {
   try {
-    const listings = await loadPostgresListings(getPool());
+    const pool = getPool();
+    // Retire the fixture seam in database mode: the ENTIRE pipeline reads live DB —
+    // listings AND the alias dictionary (synonym_alias) AND the region hierarchy
+    // (region). All three load in parallel; any failure drops to the fixture fallback
+    // below so the staging shell never goes blank during staged rollout.
+    const [listings, aliasResolver, regionHierarchy] = await Promise.all([
+      loadPostgresListings(pool),
+      getPostgresAliasResolver(pool),
+      getPostgresRegionHierarchy(pool),
+    ]);
     if (listings.length === 0) {
       const fallback = searchFixtures(searchRequest);
       fallback.meta.fallbackReason = 'database has no indexed listings yet';
@@ -51,8 +61,10 @@ async function searchDatabase(
 
     const engine = new SearchEngine({
       repository: new InMemoryListingRepository(listings),
-      aliasResolver: new FixtureAliasResolver(ALIAS_SEED),
-      regionHierarchy: new RegionHierarchy(REGIONS),
+      aliasResolver,
+      regionHierarchy,
+      // Geocoder (postal → point, saved-home origin) stays fixture-backed: that is a
+      // separate live-maps concern, out of scope for the alias/region DB wiring here.
       geocoder: fixtureGeocoder,
       fixtureBacked: false,
     });
