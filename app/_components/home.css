@@ -1,0 +1,241 @@
+/*
+ * KIDS FUN — home / front-door styles (`/`).
+ * Additive, scoped under `.kf` so it composes with the shared design system in
+ * app/preview/preview.css (Brand Workbook V2 + Visual Blueprint v0.2) without
+ * touching it. New `.kf-home*` classes only — the namespace exists nowhere else.
+ * Civic field-guide: warm-paper canvas, evergreen hero, Leaf reserved for the one
+ * action, hairline rules, tabular numerals inherited from `.kf`. Dark mode is free —
+ * every colour is a semantic token that already flips via `prefers-color-scheme`.
+ */
+
+/* ── Hero: give the evergreen anchor room for the embedded search control ── */
+.kf-home__hero {
+  padding-bottom: 20px;
+}
+
+/* ── Primary search module, embedded in the hero (the front door's main action) ── */
+.kf-home__search {
+  margin-top: 16px;
+}
+.kf-home__search-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rainy-fog);
+  margin-bottom: 6px;
+}
+.kf-home__search-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.kf-home__search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 48px; /* WCAG 2.5.8 target size, generous for cold/wet one-handed taps */
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: 16px; /* ≥16px stops iOS zoom-on-focus */
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--neutral-300);
+  border-radius: 12px;
+  box-shadow: var(--e-100);
+}
+.kf-home__search-input::placeholder {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+.kf-home__search-btn {
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 0 18px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--forest-ink); /* Leaf is an action fill; text stays forest-ink (never colour-only) */
+  background: var(--leaf);
+  border: 1px solid var(--leaf);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background var(--motion);
+}
+.kf-home__search-btn:hover {
+  background: var(--leaf-hover);
+  border-color: var(--leaf-hover);
+}
+
+/* ── Main column ── */
+.kf-home__main {
+  flex: 1;
+  padding: 8px 16px 4px;
+}
+.kf-home__section {
+  margin-top: 22px;
+}
+.kf-home__note {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+  margin: 8px 0 12px;
+}
+
+/* ── Category tiles: two-up grid of glyph + label into real /search results ── */
+.kf-home__tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.kf-home__tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 44px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  box-shadow: var(--e-100);
+  transition: border-color var(--motion), transform var(--motion);
+}
+.kf-home__tile:hover {
+  border-color: var(--park-moss);
+}
+.kf-home__tile:active {
+  transform: translateY(1px);
+}
+.kf-home__tile .kf-tile {
+  width: 52px;
+  height: 52px;
+}
+.kf-home__tile-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kf-home__tile-label {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.kf-home__tile-caption {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-secondary);
+}
+
+/* ── Quick starts: concrete saved-filter search chips ── */
+.kf-home__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.kf-home__quick-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--r-chip);
+  transition: border-color var(--motion), background var(--motion);
+}
+.kf-home__quick-chip:hover {
+  border-color: var(--park-moss);
+  background: var(--canvas);
+}
+
+/* ── Live "on now" taste strip (cards bring their own .kf-card styles) ── */
+.kf-home__today {
+  display: flex;
+  flex-direction: column;
+}
+.kf-home__more {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--leaf-hover);
+}
+.kf-home__more:hover {
+  text-decoration: underline;
+}
+
+/* ── How it works — the honesty/trust differentiator ── */
+.kf-home__trust {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kf-home__trust-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+}
+.kf-home__trust-badge {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--confirmed-text);
+  background: var(--confirmed-bg);
+  border-radius: 9999px;
+}
+.kf-home__trust-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.kf-home__trust-copy {
+  display: block;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+}
+
+/* ── Footer ── */
+.kf-home__footer {
+  margin-top: 24px;
+  padding: 20px 16px 26px;
+  background: var(--anchor);
+  color: var(--anchor-text);
+}
+.kf-home__footer-word {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin: 0 0 6px;
+}
+.kf-home__footer-note {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--rainy-fog);
+  margin: 0;
+}
