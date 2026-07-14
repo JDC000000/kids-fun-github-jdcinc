@@ -2,7 +2,12 @@
 // Search/browse must never require auth. A stable per-browser anon id is
 // used only to correlate analytics_event rows (user_or_session) — it is
 // NEVER an authorization boundary (no RLS or admin check depends on it).
-import { randomUUID } from 'node:crypto';
+//
+// Runtime-agnostic on purpose: this module is imported from the Node.js runtime
+// (route handlers, server components, tests) AND from Edge middleware.ts, so it
+// uses the Web Crypto global (crypto.randomUUID) — available in Node >=20, the
+// Edge runtime, and Vitest — rather than node:crypto, which the Edge bundle
+// rejects. The output is an identical RFC-4122 v4 UUID either way.
 
 export const ANON_SESSION_COOKIE = 'kf_anon_id';
 
@@ -13,7 +18,7 @@ export function getOrCreateAnonId(existing: string | undefined | null): string {
   if (existing && UUID_RE.test(existing)) {
     return existing;
   }
-  return randomUUID();
+  return crypto.randomUUID();
 }
 
 export interface AnonSessionContext {
