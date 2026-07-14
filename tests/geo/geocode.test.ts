@@ -73,4 +73,33 @@ describe('geocode (G-T4-4)', () => {
     const result = await geocode('unreachable', { fetchImpl });
     expect(result).toBeNull();
   });
+
+  it('does not cache a null result — a transient failure recovers on the next call', async () => {
+    let n = 0;
+    const fetchImpl = vi.fn(async () => {
+      n += 1;
+      return n === 1
+        ? new Response('', { status: 500 }) // first attempt fails
+        : new Response(JSON.stringify({ features: [{ center: [-123.1, 49.1] }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    expect(await geocode('recovers', { fetchImpl })).toBeNull();
+    expect(await geocode('recovers', { fetchImpl })).toEqual({ lat: 49.1, long: -123.1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // null was NOT cached
+  });
+
+  it('aborts and returns null when the request exceeds the timeout', async () => {
+    // fetch that only ever settles by rejecting on abort (never resolves on its own).
+    const fetchImpl = vi.fn(
+      (_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        })
+    ) as unknown as typeof fetch;
+
+    const result = await geocode('slow provider', { fetchImpl, timeoutMs: 10 });
+    expect(result).toBeNull();
+  });
 });
