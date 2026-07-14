@@ -23,6 +23,7 @@ import {
   getAdminDashboardData,
   STALE_CADENCE_GRACE,
   type IngestionSourceHealth,
+  type RecentCorrection,
   type RecentFailure,
   type StaleSource,
 } from '@/lib/admin/dashboard';
@@ -123,6 +124,30 @@ function FailureRow({ f, nowMs }: { f: RecentFailure; nowMs: number }) {
   );
 }
 
+function CorrectionRow({ c, nowMs }: { c: RecentCorrection; nowMs: number }) {
+  return (
+    <tr>
+      <td>
+        <div className="src-name">{c.activityName ?? '(occurrence removed)'}</div>
+        <div className="src-family mono">{c.occurrenceId}</div>
+      </td>
+      <td>
+        <span className="badge muted">{c.issueType}</span>
+      </td>
+      <td className="err-cell">
+        {c.note ? <span>{c.note}</span> : <span className="dim">(no note)</span>}
+      </td>
+      <td>
+        <span className={`badge ${c.status === 'resolved' ? 'ok' : c.status === 'in_review' ? 'info' : 'warn'}`}>{c.status}</span>
+      </td>
+      <td>
+        <div>{formatAge(c.createdAt, nowMs)}</div>
+        <div className="dim mono">{formatTimestampUtc(c.createdAt)}</div>
+      </td>
+    </tr>
+  );
+}
+
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="tile">
@@ -147,7 +172,7 @@ export default async function AdminDashboardPage({
 
   const data = await getAdminDashboardData();
   const nowMs = Date.parse(data.generatedAt);
-  const { registry, ingestion, analytics, alerts } = data;
+  const { registry, ingestion, analytics, alerts, corrections } = data;
   const allHealthy = alerts.staleSources.length === 0 && alerts.recentFailures.length === 0;
   const totalSeries = ingestion.reduce((sum, s) => sum + s.seriesCount, 0);
   const totalOccurrences = ingestion.reduce((sum, s) => sum + s.occurrenceCount, 0);
@@ -239,6 +264,39 @@ export default async function AdminDashboardPage({
               </>
             )}
           </>
+        )}
+      </section>
+
+      <section className="adm-section">
+        <h2>Corrections reported</h2>
+        <p className="adm-hint">
+          Parent-submitted <span className="mono">Report wrong info</span> reports from the activity detail page, newest
+          first (max {formatCount(corrections.length)} shown). Read-only visibility — triage (resolve/archive) is a later
+          data-health slice. Captured into <span className="mono">correction_report</span> keyed to the occurrence and the
+          anonymous session.
+        </p>
+        {corrections.length === 0 ? (
+          <p className="empty">
+            No corrections reported yet. The detail page&apos;s <span className="mono">Report wrong info</span> button POSTs to{' '}
+            <span className="mono">/api/corrections</span>; this fills in as parents flag listings.
+          </p>
+        ) : (
+          <table className="grid">
+            <thead>
+              <tr>
+                <th>Listing</th>
+                <th>Issue</th>
+                <th>Note</th>
+                <th>Status</th>
+                <th>When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {corrections.map((c) => (
+                <CorrectionRow key={c.id} c={c} nowMs={nowMs} />
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
 
