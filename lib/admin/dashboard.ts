@@ -392,11 +392,12 @@ export async function getHealthAlerts(nowMs: number = Date.now()): Promise<Healt
     FROM source_check_run cr
     JOIN source s ON s.id = cr.source_id
     WHERE cr.status = 'failed'
+      AND s.terms_status = $3
       AND cr.started_at >= now() - ($1::int * interval '1 day')
     ORDER BY cr.started_at DESC
     LIMIT $2::int
     `,
-    [RECENT_FAILURE_WINDOW_DAYS, RECENT_FAILURE_LIMIT]
+    [RECENT_FAILURE_WINDOW_DAYS, RECENT_FAILURE_LIMIT, ENABLED_TERMS_STATUS]
   );
 
   const cadenceRows = await query<{

@@ -81,8 +81,42 @@ describe('computeAgeBandMatches — half-open overlap, no band bleed', () => {
 });
 
 describe.skipIf(!hasDb)('age normalisation wiring into ingest (occurrence_age)', () => {
+  // Track every source this test inserts so afterAll can remove ALL rows it wrote
+  // to shared staging (source + series + occurrences + occurrence_age + provenance +
+  // source_check_run). Without this, a leftover failed source_check_run on a pending
+  // test source pollutes the admin health dashboard's "recent failures" view.
+  const createdSourceIds: string[] = [];
+
   afterAll(async () => {
-    await closePool();
+    try {
+      if (createdSourceIds.length > 0) {
+        // Child rows first (no ON DELETE CASCADE is assumed).
+        await query(
+          `DELETE FROM occurrence_age WHERE occurrence_id IN (
+             SELECT o.id FROM activity_occurrence o
+             JOIN activity_series s ON s.id = o.series_id
+             WHERE s.source_id = ANY($1::uuid[]))`,
+          [createdSourceIds]
+        );
+        await query(
+          `DELETE FROM provenance WHERE occurrence_id IN (
+             SELECT o.id FROM activity_occurrence o
+             JOIN activity_series s ON s.id = o.series_id
+             WHERE s.source_id = ANY($1::uuid[]))`,
+          [createdSourceIds]
+        );
+        await query(
+          `DELETE FROM activity_occurrence WHERE series_id IN (
+             SELECT id FROM activity_series WHERE source_id = ANY($1::uuid[]))`,
+          [createdSourceIds]
+        );
+        await query(`DELETE FROM activity_series WHERE source_id = ANY($1::uuid[])`, [createdSourceIds]);
+        await query(`DELETE FROM source_check_run WHERE source_id = ANY($1::uuid[])`, [createdSourceIds]);
+        await query(`DELETE FROM source WHERE id = ANY($1::uuid[])`, [createdSourceIds]);
+      }
+    } finally {
+      await closePool();
+    }
   });
 
   function adapterWith(records: StructuredRecord[]): Adapter {
@@ -100,6 +134,7 @@ describe.skipIf(!hasDb)('age normalisation wiring into ingest (occurrence_age)',
       `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
       [`Age Wiring Source ${crypto.randomUUID()}`]
     );
+    createdSourceIds.push(source.id);
     const rid = `age-record-${crypto.randomUUID()}`;
     const records: StructuredRecord[] = [
       { sourceRecordId: rid, title: 'Baby & Me', ageText: 'ages 0-2 years', startDatetimeUtc: '2026-09-24T18:00:00.000Z', costStatus: 'free', sourceUrl: 'https://example.org/a' },
