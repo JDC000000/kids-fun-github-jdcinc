@@ -16,6 +16,7 @@ import { resolveVenue } from './venue';
 import { upsertOccurrence } from './upsert';
 import { recordProvenance } from './provenance';
 import { confidenceLabelForCategory, resolvePrimaryCategoryId } from './taxonomy';
+import { parseAgeText, computeAgeBandMatches, loadAgeBands, upsertOccurrenceAge } from './age';
 
 export interface IngestSummary {
   checkRunId: string;
@@ -24,6 +25,8 @@ export interface IngestSummary {
   occurrencesUpserted: number;
   occurrencesCreated: number;
   provenanceRows: number;
+  /** Occurrences whose free-text age wording was deterministically resolved into a structured band range. */
+  ageResolved: number;
   errors: string[];
 }
 
@@ -54,6 +57,7 @@ export async function ingestSource(
   let occurrencesUpserted = 0;
   let occurrencesCreated = 0;
   let provenanceRows = 0;
+  let ageResolved = 0;
 
   try {
     const raw = await adapter.fetch();
@@ -62,6 +66,9 @@ export async function ingestSource(
       const hook = adapter.normalizeHook.bind(adapter);
       records = await Promise.all(records.map((r) => hook(r)));
     }
+
+    // Seeded age bands, loaded once per run for deterministic age normalisation.
+    const ageBands = await loadAgeBands(pool);
 
     for (const record of records) {
       recordsFound += 1;
@@ -95,10 +102,23 @@ export async function ingestSource(
         occurrencesUpserted += 1;
         if (created) occurrencesCreated += 1;
 
+        // Deterministic age normalisation: resolve the raw free-text age wording
+        // into a structured occurrence_age row so the age search facet works.
+        // Ambiguous wording is left unresolved (null bounds) for the future
+        // LLM-fallback; unknown/absent wording writes no row (search "don't hide").
+        const ageParse = record.ageText ? parseAgeText(record.ageText) : null;
+        if (ageParse) {
+          await upsertOccurrenceAge(pool, occurrenceId, ageParse, computeAgeBandMatches(ageParse, ageBands));
+          if (ageParse.resolved) ageResolved += 1;
+        }
+
         const facts = [
           { occurrenceId, field: 'activity_name', sourceUrl: record.sourceUrl, sourceFamily: adapter.family },
           { occurrenceId, field: 'start_datetime_utc', sourceUrl: record.sourceUrl, sourceFamily: adapter.family },
         ];
+        if (ageParse?.resolved) {
+          facts.push({ occurrenceId, field: 'age_min_months', sourceUrl: record.sourceUrl, sourceFamily: adapter.family });
+        }
         await recordProvenance(pool, facts);
         provenanceRows += facts.length;
       } catch (err) {
@@ -125,6 +145,7 @@ export async function ingestSource(
     occurrencesUpserted,
     occurrencesCreated,
     provenanceRows,
+    ageResolved,
     errors,
   };
 }
