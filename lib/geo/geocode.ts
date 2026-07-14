@@ -16,16 +16,25 @@ function cacheKey(query: string, region: string): string {
   return `${region.toLowerCase()}::${query.trim().toLowerCase()}`;
 }
 
+/** Default request-time budget. A slow Mapbox response aborts and degrades to null. */
+const DEFAULT_TIMEOUT_MS = 3000;
+
 export interface GeocodeOptions {
   /** Biases/country-scopes the search. Defaults to Canada / BC-ish region. */
   region?: string;
   fetchImpl?: typeof fetch;
+  /**
+   * Abort the lookup after this many ms and return null (so a live request path
+   * degrades to its fallback instead of hanging on a slow provider). Default 3000.
+   * Pass 0 to disable the timeout.
+   */
+  timeoutMs?: number;
 }
 
 /**
  * Geocode a free-text query (postal code or address) to lat/long.
  * Never throws on a failed lookup — returns null so the caller can queue the
- * venue for manual geocode instead of failing the whole ingest/request.
+ * venue for manual geocode (ingest) or degrade to an approximate origin (request).
  */
 export async function geocode(query: string, opts: GeocodeOptions = {}): Promise<LatLong | null> {
   const region = opts.region ?? 'CA';
@@ -34,21 +43,31 @@ export async function geocode(query: string, opts: GeocodeOptions = {}): Promise
     return cache.get(key) ?? null;
   }
 
-  const result = await geocodeUncached(query, region, opts.fetchImpl ?? fetch);
-  cache.set(key, result);
+  const result = await geocodeUncached(
+    query,
+    region,
+    opts.fetchImpl ?? fetch,
+    opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  );
+  // Cache successes only — a transient failure/timeout must be able to recover on
+  // the next call rather than being pinned to the fallback for the process lifetime.
+  if (result) cache.set(key, result);
   return result;
 }
 
 async function geocodeUncached(
   query: string,
   region: string,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  timeoutMs: number
 ): Promise<LatLong | null> {
   const apiKey = process.env.GEOCODING_API_KEY;
   if (!apiKey || !query.trim()) {
     return null;
   }
 
+  const controller = new AbortController();
+  const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
     const url = new URL(
       `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query.trim())}.json`
@@ -57,7 +76,7 @@ async function geocodeUncached(
     url.searchParams.set('country', region);
     url.searchParams.set('limit', '1');
 
-    const res = await fetchImpl(url.toString());
+    const res = await fetchImpl(url.toString(), { signal: controller.signal });
     if (!res.ok) {
       return null;
     }
@@ -74,8 +93,10 @@ async function geocodeUncached(
     }
     return { lat, long };
   } catch {
-    // Network/parse failure: degrade gracefully, never throw.
+    // Network/parse/timeout (AbortError) failure: degrade gracefully, never throw.
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

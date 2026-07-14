@@ -1,7 +1,8 @@
 // tests/search/route.test.ts — Search API route stub (G-T16-7).
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GET } from '../../app/api/search/route';
+import { clearGeocodeCache } from '../../lib/geo/geocode';
 
 async function call(qs: string) {
   const res = await GET(new Request(`http://localhost/api/search?${qs}`));
@@ -9,6 +10,18 @@ async function call(qs: string) {
 }
 
 describe('GET /api/search (fixture stub)', () => {
+  // Keep this suite hermetic + offline: with no geocoding key, a signed-in saved-home
+  // postal deterministically resolves via the Task-29 FSA-centroid fallback (Task 36).
+  const savedKey = process.env.GEOCODING_API_KEY;
+  beforeEach(() => {
+    clearGeocodeCache();
+    delete process.env.GEOCODING_API_KEY;
+  });
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env.GEOCODING_API_KEY;
+    else process.env.GEOCODING_API_KEY = savedKey;
+  });
+
   it('returns fixture-backed results for "open gym near me" with the data-source header', async () => {
     const { res, body } = await call('q=open+gym&lat=49.26&lng=-123.07&minResults=1');
     expect(res.headers.get('x-data-source')).toBe('fixture');
@@ -77,4 +90,42 @@ describe('GET /api/search (fixture stub)', () => {
     }
   });
 
+});
+
+describe('GET /api/search — precise saved-home geocoding (Task 36)', () => {
+  const savedKey = process.env.GEOCODING_API_KEY;
+  beforeEach(() => {
+    clearGeocodeCache();
+    process.env.GEOCODING_API_KEY = 'test-key';
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (savedKey === undefined) delete process.env.GEOCODING_API_KEY;
+    else process.env.GEOCODING_API_KEY = savedKey;
+  });
+
+  it('resolves a signed-in saved-home postal to the precise Mapbox point, not the FSA centroid', async () => {
+    const preciseCenter = [-123.17059, 49.264034]; // Kitsilano V6K 2G8 (Mapbox [lng, lat])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ features: [{ center: preciseCenter }] }), { status: 200 })
+      )
+    );
+    const { body } = await call('q=open+gym&postal=V6K+2G8&signedIn=1&minResults=1');
+    expect(body.origin).not.toBeNull();
+    expect(body.origin.mode).toBe('saved_home');
+    // Precise Kitsilano point — NOT the Vancouver municipality centroid (~49.2827, -123.1207).
+    expect(body.origin.geo.lat).toBeCloseTo(49.264034, 4);
+    expect(body.origin.geo.lng).toBeCloseTo(-123.17059, 4);
+  });
+
+  it('still degrades to the FSA centroid when Mapbox fails at request time', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('mapbox down'); }));
+    const { body } = await call('q=open+gym&postal=V6X+1A1&signedIn=1&minResults=1');
+    expect(body.origin).not.toBeNull();
+    // Richmond municipality centroid from the Task-29 FSA fallback.
+    expect(body.origin.geo.lat).toBeCloseTo(49.1666, 2);
+    expect(body.origin.geo.lng).toBeCloseTo(-123.1336, 2);
+  });
 });

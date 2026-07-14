@@ -17,7 +17,8 @@ import { getPostgresRegionHierarchy } from '@/lib/search/postgres-region-hierarc
 import { SearchEngine, type SearchRequest, type SearchResponse } from '@/lib/search/engine';
 import { getPool } from '@/lib/db/client';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
-import type { OriginRequest } from '@/lib/geo/origin';
+import { resolvePreciseSavedHomeGeocoder } from '@/lib/geo/saved-home-geocoder';
+import type { Geocoder, OriginRequest } from '@/lib/geo/origin';
 import type { SortKey } from '@/lib/search/types';
 
 export const dynamic = 'force-dynamic';
@@ -30,17 +31,27 @@ export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const searchRequest = buildSearchRequest(url.searchParams);
 
+  // Precise saved-home origin (Task 36): pre-resolve the saved postal to a real Mapbox
+  // point once, at the async boundary, so the synchronous engine can use it. Returns
+  // null for anything that can't/shouldn't be precisely geocoded (near_me/area_chip,
+  // not signed in, Mapbox down/timeout/miss) → the FSA-centroid fallback below stands in.
+  const preciseGeocoder = await resolvePreciseSavedHomeGeocoder(
+    searchRequest.origin,
+    searchRequest.signedIn ?? false
+  );
+
   if (process.env.KIDS_FUN_SEARCH_BACKEND === 'database') {
-    const dbResult = await searchDatabase(searchRequest);
+    const dbResult = await searchDatabase(searchRequest, preciseGeocoder);
     if (dbResult.ok) return json(dbResult.response, dbResult.header);
   }
 
-  const response = searchFixtures(searchRequest);
+  const response = searchFixtures(searchRequest, preciseGeocoder);
   return json(response, 'fixture');
 }
 
 async function searchDatabase(
-  searchRequest: SearchRequest
+  searchRequest: SearchRequest,
+  preciseGeocoder: Geocoder | null
 ): Promise<{ ok: true; response: SearchResponse; header: string } | { ok: false }> {
   try {
     const pool = getPool();
@@ -54,7 +65,7 @@ async function searchDatabase(
       getPostgresRegionHierarchy(pool),
     ]);
     if (listings.length === 0) {
-      const fallback = searchFixtures(searchRequest);
+      const fallback = searchFixtures(searchRequest, preciseGeocoder);
       fallback.meta.fallbackReason = 'database has no indexed listings yet';
       return { ok: true, response: fallback, header: 'database-fallback-fixture' };
     }
@@ -63,33 +74,42 @@ async function searchDatabase(
       repository: new InMemoryListingRepository(listings),
       aliasResolver,
       regionHierarchy,
-      // Saved-home origin (postal → point) resolves at FSA / area granularity (Task 29):
-      // the `kids-fun-mapbox` key is still absent, so full street-level geocoding
-      // (lib/geo/geocode.ts) is unavailable — this maps a saved postal's FSA to its
-      // municipality centroid instead. Swap for the Mapbox-backed Geocoder here once the
-      // key lands, no other change needed.
-      geocoder: fsaGeocoder,
+      // Saved-home origin (postal → point): Task 36 wires live Mapbox geocoding. When the
+      // request pre-resolved a precise point, use it; otherwise degrade to the Task-29
+      // FSA-centroid resolver (fsaGeocoder) as the fallback-of-last-resort.
+      geocoder: preciseGeocoder ?? fsaGeocoder,
       fixtureBacked: false,
     });
     const response = engine.search(searchRequest);
     response.meta.backend = 'database';
 
     if (response.results.length === 0 && response.expected.length === 0) {
-      const fallback = searchFixtures(searchRequest);
+      const fallback = searchFixtures(searchRequest, preciseGeocoder);
       fallback.meta.fallbackReason = 'database search returned no visible results for this query';
       return { ok: true, response: fallback, header: 'database-fallback-fixture' };
     }
 
     return { ok: true, response, header: 'database' };
   } catch {
-    const fallback = searchFixtures(searchRequest);
+    const fallback = searchFixtures(searchRequest, preciseGeocoder);
     fallback.meta.fallbackReason = 'database search unavailable';
     return { ok: true, response: fallback, header: 'database-fallback-fixture' };
   }
 }
 
-function searchFixtures(searchRequest: SearchRequest): SearchResponse {
-  const response = fixtureBundle.engine.search(searchRequest);
+function searchFixtures(searchRequest: SearchRequest, preciseGeocoder: Geocoder | null = null): SearchResponse {
+  // Reuse the cached fixture engine (fsaGeocoder baked in) unless the request pre-resolved
+  // a precise saved-home point — then build a one-off engine over the same fixture deps
+  // with the precise geocoder swapped in. Task 36.
+  const engine = preciseGeocoder
+    ? new SearchEngine({
+        repository: fixtureBundle.repository,
+        aliasResolver: fixtureBundle.aliasResolver,
+        regionHierarchy: fixtureBundle.regionHierarchy,
+        geocoder: preciseGeocoder,
+      })
+    : fixtureBundle.engine;
+  const response = engine.search(searchRequest);
   response.meta.backend = 'fixture';
   return response;
 }
