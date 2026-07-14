@@ -33,6 +33,16 @@ export function formatDurationMs(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** Interval seconds → compact cadence like "1d" / "6h" / "30m" / "45s". Null/≤0 → em dash. */
+export function formatCadence(seconds: number | null | undefined): string {
+  if (seconds == null || Number.isNaN(seconds) || seconds <= 0) return EM_DASH;
+  const s = Math.round(seconds);
+  if (s % 86_400 === 0) return `${s / 86_400}d`;
+  if (s % 3_600 === 0) return `${s / 3_600}h`;
+  if (s % 60 === 0) return `${s / 60}m`;
+  return `${s}s`;
+}
+
 /** Integer with thousands separators; null/undefined → "0". */
 export function formatCount(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return '0';

@@ -29,6 +29,40 @@ export interface SourceRegistrySummary {
   enabledSources: number;
 }
 
+/** One failed ingest attempt, for the dashboard "Recent failed runs" list. */
+export interface RecentFailure {
+  checkRunId: string;
+  sourceId: string;
+  sourceName: string;
+  family: string;
+  startedAt: string | null;
+  durationMs: number | null;
+  /** First error string from source_check_run.errors (a jsonb string[]); null if none captured. */
+  errorSummary: string | null;
+  /** Total errors recorded on that run (array length), or null if errors isn't an array. */
+  errorCount: number | null;
+}
+
+/** An enabled source that hasn't had a successful check within its expected cadence. */
+export interface StaleSource {
+  sourceId: string;
+  name: string;
+  family: string;
+  /** COALESCE(near_date_cadence, baseline_cadence) in seconds — the scheduler's expected interval. */
+  cadenceSeconds: number | null;
+  lastSuccessAt: string | null;
+  lastRunAt: string | null;
+  lastRunStatus: string | null;
+}
+
+/** Operational problems only — the "something is wrong" view the healthy-count tiles don't show. */
+export interface HealthAlerts {
+  recentFailures: RecentFailure[];
+  staleSources: StaleSource[];
+  /** How many days back the recent-failures window spans (for the UI copy). */
+  windowDays: number;
+}
+
 export interface AnalyticsSummary {
   totalEvents: number;
   listingViewed: number;
@@ -50,10 +84,21 @@ export interface AdminDashboardData {
   registry: SourceRegistrySummary;
   ingestion: IngestionSourceHealth[];
   analytics: AnalyticsSummary;
+  alerts: HealthAlerts;
 }
 
 /** "Enabled/live" source = terms reviewed and allowed (terms_status = 'allowed'). */
 export const ENABLED_TERMS_STATUS = 'allowed';
+
+/** How far back the "recent failed runs" list looks. */
+export const RECENT_FAILURE_WINDOW_DAYS = 7;
+/** Cap on rows in the recent-failures list (dashboard is a scan, not a log viewer). */
+export const RECENT_FAILURE_LIMIT = 20;
+/** A source is "stale" once its last successful check is older than grace × its cadence.
+ *  2 = one full missed cycle is tolerated (could be transient); two missed = a real problem. */
+export const STALE_CADENCE_GRACE = 2;
+/** Fallback cadence when a source somehow has none configured (baseline is NOT NULL, so defensive). */
+export const DEFAULT_CADENCE_SECONDS = 24 * 60 * 60;
 
 /** Noise words dropped from the "most common query terms" frequency count. Kept small
  *  and domain-aware ('kids' is noise here — every listing is for kids). Not NLP: a plain
@@ -293,17 +338,154 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
   };
 }
 
+/**
+ * Pure staleness rule (exported for unit tests so a failure case can be simulated
+ * without touching the DB). An enabled source is stale when its last successful/partial
+ * check is older than `grace × cadence`. A source that has NEVER succeeded is stale only
+ * if it has actually been attempted (a failing source) — a never-run source is "no runs
+ * yet", not stale, so freshly-registered sources don't false-alarm.
+ */
+export function isSourceStale(
+  input: { lastSuccessAtMs: number | null; lastRunAtMs: number | null; cadenceSeconds: number | null },
+  nowMs: number,
+  grace: number = STALE_CADENCE_GRACE
+): boolean {
+  const cadence =
+    input.cadenceSeconds != null && input.cadenceSeconds > 0 ? input.cadenceSeconds : DEFAULT_CADENCE_SECONDS;
+  const thresholdMs = cadence * 1000 * grace;
+  if (input.lastSuccessAtMs != null) {
+    return nowMs - input.lastSuccessAtMs > thresholdMs;
+  }
+  return input.lastRunAtMs != null;
+}
+
+/**
+ * Failure / staleness visibility for the dashboard, all derived from source_check_run
+ * (ground truth — source.last_check_at/health_state aren't actively maintained yet).
+ * Recent failed runs come straight from the table; staleness is computed in TS via
+ * isSourceStale so it's unit-testable. This is VISIBILITY ONLY — no email/Slack alerting.
+ */
+export async function getHealthAlerts(nowMs: number = Date.now()): Promise<HealthAlerts> {
+  const failureRows = await query<{
+    id: string;
+    source_id: string;
+    name: string;
+    family: string;
+    started_at: Date | null;
+    duration_ms: number | null;
+    error_summary: string | null;
+    error_count: number | null;
+  }>(
+    `
+    SELECT
+      cr.id,
+      cr.source_id,
+      s.name,
+      s.family,
+      cr.started_at,
+      cr.duration_ms,
+      left(
+        coalesce(cr.errors #>> '{0}', cr.errors ->> 'message', cr.errors #>> '{}', cr.errors::text),
+        300
+      ) AS error_summary,
+      CASE WHEN jsonb_typeof(cr.errors) = 'array' THEN jsonb_array_length(cr.errors) ELSE NULL END AS error_count
+    FROM source_check_run cr
+    JOIN source s ON s.id = cr.source_id
+    WHERE cr.status = 'failed'
+      AND cr.started_at >= now() - ($1::int * interval '1 day')
+    ORDER BY cr.started_at DESC
+    LIMIT $2::int
+    `,
+    [RECENT_FAILURE_WINDOW_DAYS, RECENT_FAILURE_LIMIT]
+  );
+
+  const cadenceRows = await query<{
+    id: string;
+    name: string;
+    family: string;
+    cadence_seconds: number | null;
+    last_success_at: Date | null;
+    last_run_at: Date | null;
+    last_run_status: string | null;
+  }>(
+    `
+    SELECT
+      s.id,
+      s.name,
+      s.family,
+      extract(epoch FROM COALESCE(s.near_date_cadence, s.baseline_cadence))::float8 AS cadence_seconds,
+      success.last_success_at,
+      latest.last_run_at,
+      latest.last_run_status
+    FROM source s
+    LEFT JOIN LATERAL (
+      SELECT max(started_at) AS last_success_at
+      FROM source_check_run cr
+      WHERE cr.source_id = s.id AND cr.status IN ('success', 'partial')
+    ) success ON true
+    LEFT JOIN LATERAL (
+      SELECT started_at AS last_run_at, status AS last_run_status
+      FROM source_check_run cr
+      WHERE cr.source_id = s.id
+      ORDER BY cr.started_at DESC
+      LIMIT 1
+    ) latest ON true
+    WHERE s.terms_status = $1
+    ORDER BY s.name
+    `,
+    [ENABLED_TERMS_STATUS]
+  );
+
+  const staleSources: StaleSource[] = cadenceRows
+    .map((r) => ({
+      sourceId: r.id,
+      name: r.name,
+      family: r.family,
+      cadenceSeconds: r.cadence_seconds ?? null,
+      lastSuccessAt: toIso(r.last_success_at),
+      lastRunAt: toIso(r.last_run_at),
+      lastRunStatus: r.last_run_status,
+    }))
+    .filter((s) =>
+      isSourceStale(
+        {
+          lastSuccessAtMs: s.lastSuccessAt ? Date.parse(s.lastSuccessAt) : null,
+          lastRunAtMs: s.lastRunAt ? Date.parse(s.lastRunAt) : null,
+          cadenceSeconds: s.cadenceSeconds,
+        },
+        nowMs
+      )
+    );
+
+  return {
+    recentFailures: failureRows.map((r) => ({
+      checkRunId: r.id,
+      sourceId: r.source_id,
+      sourceName: r.name,
+      family: r.family,
+      startedAt: toIso(r.started_at),
+      durationMs: r.duration_ms,
+      errorSummary: r.error_summary,
+      errorCount: r.error_count,
+    })),
+    staleSources,
+    windowDays: RECENT_FAILURE_WINDOW_DAYS,
+  };
+}
+
 /** One call that assembles everything the dashboard renders. */
 export async function getAdminDashboardData(): Promise<AdminDashboardData> {
-  const [registry, ingestion, analytics] = await Promise.all([
+  const [registry, ingestion, analytics, alerts] = await Promise.all([
     getSourceRegistrySummary(),
     getIngestionHealth(),
     getAnalyticsSummary(),
+    getHealthAlerts(),
   ]);
   return {
     generatedAt: new Date().toISOString(),
     registry,
     ingestion,
     analytics,
+    alerts,
   };
 }

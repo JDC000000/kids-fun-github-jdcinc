@@ -19,8 +19,14 @@ import {
   checkAdminDashboardAccess,
   resolvePresentedToken,
 } from '@/lib/admin/access';
-import { getAdminDashboardData, type IngestionSourceHealth } from '@/lib/admin/dashboard';
-import { formatAge, formatCount, formatDurationMs, formatTimestampUtc } from '@/lib/admin/format';
+import {
+  getAdminDashboardData,
+  STALE_CADENCE_GRACE,
+  type IngestionSourceHealth,
+  type RecentFailure,
+  type StaleSource,
+} from '@/lib/admin/dashboard';
+import { formatAge, formatCadence, formatCount, formatDurationMs, formatTimestampUtc } from '@/lib/admin/format';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // pg pool needs the Node runtime, not edge.
@@ -78,6 +84,45 @@ function IngestionRow({ s, nowMs }: { s: IngestionSourceHealth; nowMs: number })
   );
 }
 
+function StaleRow({ s, nowMs }: { s: StaleSource; nowMs: number }) {
+  return (
+    <tr>
+      <td>
+        <div className="src-name">{s.name}</div>
+        <div className="src-family">{s.family}</div>
+      </td>
+      <td>
+        <div>{formatAge(s.lastSuccessAt, nowMs)}</div>
+        <div className="dim mono">{formatTimestampUtc(s.lastSuccessAt)}</div>
+      </td>
+      <td className="mono">{formatCadence(s.cadenceSeconds)}</td>
+      <td>
+        <span className={`badge ${statusClass(s.lastRunStatus)}`}>{s.lastRunStatus ?? 'no runs'}</span>
+      </td>
+    </tr>
+  );
+}
+
+function FailureRow({ f, nowMs }: { f: RecentFailure; nowMs: number }) {
+  return (
+    <tr>
+      <td>
+        <div className="src-name">{f.sourceName}</div>
+        <div className="src-family">{f.family}</div>
+      </td>
+      <td>
+        <div>{formatAge(f.startedAt, nowMs)}</div>
+        <div className="dim mono">{formatTimestampUtc(f.startedAt)}</div>
+      </td>
+      <td className="mono">{formatDurationMs(f.durationMs)}</td>
+      <td className="err-cell">
+        {f.errorSummary ? <span className="mono err-text">{f.errorSummary}</span> : <span className="dim">(no message)</span>}
+        {f.errorCount != null && f.errorCount > 1 && <span className="dim"> · +{f.errorCount - 1} more</span>}
+      </td>
+    </tr>
+  );
+}
+
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="tile">
@@ -102,7 +147,8 @@ export default async function AdminDashboardPage({
 
   const data = await getAdminDashboardData();
   const nowMs = Date.parse(data.generatedAt);
-  const { registry, ingestion, analytics } = data;
+  const { registry, ingestion, analytics, alerts } = data;
+  const allHealthy = alerts.staleSources.length === 0 && alerts.recentFailures.length === 0;
   const totalSeries = ingestion.reduce((sum, s) => sum + s.seriesCount, 0);
   const totalOccurrences = ingestion.reduce((sum, s) => sum + s.occurrenceCount, 0);
   const peakDay = analytics.last7Days.reduce((max, d) => Math.max(max, d.count), 0);
@@ -129,6 +175,71 @@ export default async function AdminDashboardPage({
           <StatTile label="Analytics events" value={formatCount(analytics.totalEvents)} sub={`${formatCount(analytics.listingViewed)} listing views`} />
           <StatTile label="Searches" value={formatCount(analytics.searchPerformed)} sub="search_performed events" />
         </div>
+      </section>
+
+      <section className="adm-section">
+        <h2>Health alerts</h2>
+        <p className="adm-hint">
+          Operational problems only — enabled sources with a failed ingest run in the last{' '}
+          {formatCount(alerts.windowDays)} day(s), or that haven&apos;t had a successful check within{' '}
+          {STALE_CADENCE_GRACE}× their configured cadence. Derived live from{' '}
+          <span className="mono">source_check_run</span>. Visibility only — no email/Slack alerting is wired (deferred;
+          this surface is for a human watching the board).
+        </p>
+        {allHealthy ? (
+          <p className="ok-note">
+            ✓ All {formatCount(registry.enabledSources)} enabled source(s) healthy — no failed runs in the last{' '}
+            {formatCount(alerts.windowDays)} day(s) and none stale.
+          </p>
+        ) : (
+          <>
+            {alerts.staleSources.length > 0 && (
+              <>
+                <h3>Stale sources ({formatCount(alerts.staleSources.length)})</h3>
+                <p className="adm-hint">No successful check within {STALE_CADENCE_GRACE}× the source&apos;s cadence.</p>
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Last successful check</th>
+                      <th>Cadence</th>
+                      <th>Latest run</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alerts.staleSources.map((s) => (
+                      <StaleRow key={s.sourceId} s={s} nowMs={nowMs} />
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+            {alerts.recentFailures.length > 0 && (
+              <>
+                <h3>Recent failed runs ({formatCount(alerts.recentFailures.length)})</h3>
+                <p className="adm-hint">
+                  Failed <span className="mono">source_check_run</span> rows from the last {formatCount(alerts.windowDays)}{' '}
+                  day(s), newest first (max {formatCount(alerts.recentFailures.length)} shown).
+                </p>
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>When</th>
+                      <th>Duration</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alerts.recentFailures.map((f) => (
+                      <FailureRow key={f.checkRunId} f={f} nowMs={nowMs} />
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </>
+        )}
       </section>
 
       <section className="adm-section">
@@ -371,6 +482,10 @@ const ADMIN_CSS = `
   .badge.info { background: #e8f0fe; border-color: #b7ccf5; color: #1a56c4; }
   .badge.muted { background: #f0f0f0; border-color: #ddd; color: #666; }
   .empty { color: #888; font-style: italic; padding: 8px 0; }
+  .ok-note { color: #1a7f3c; background: #e7f6ec; border: 1px solid #b6e0c4; border-radius: 6px;
+             padding: 8px 12px; margin: 6px 0 0; }
+  .err-cell { max-width: 520px; }
+  .err-text { color: #b3261e; word-break: break-word; white-space: normal; }
   .bar { display: inline-block; height: 10px; background: #6c8cff; border-radius: 3px; min-width: 2px; }
   @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
 `;

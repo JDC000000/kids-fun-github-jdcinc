@@ -5,8 +5,11 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import {
   ENABLED_TERMS_STATUS,
+  RECENT_FAILURE_LIMIT,
+  RECENT_FAILURE_WINDOW_DAYS,
   getAdminDashboardData,
   getAnalyticsSummary,
+  getHealthAlerts,
   getIngestionHealth,
   getSourceRegistrySummary,
 } from '../../lib/admin/dashboard';
@@ -67,9 +70,31 @@ describe.skipIf(!hasDb)('admin dashboard data layer', () => {
     for (const r of a.topSearchFilters) expect(r.count).toBeLessThanOrEqual(a.searchPerformed);
   });
 
+  it('health alerts have a sane shape and respect the window/limit', async () => {
+    const a = await getHealthAlerts();
+    expect(a.windowDays).toBe(RECENT_FAILURE_WINDOW_DAYS);
+    expect(a.recentFailures.length).toBeLessThanOrEqual(RECENT_FAILURE_LIMIT);
+    for (const f of a.recentFailures) {
+      expect(typeof f.checkRunId).toBe('string');
+      expect(typeof f.sourceName).toBe('string');
+      expect(typeof f.family).toBe('string');
+      if (f.errorSummary !== null) expect(typeof f.errorSummary).toBe('string');
+      if (f.errorCount !== null) expect(f.errorCount).toBeGreaterThanOrEqual(1);
+    }
+    for (const s of a.staleSources) {
+      // Only enabled sources can be stale.
+      expect(typeof s.name).toBe('string');
+      // A stale source either never succeeded (but ran) or has an old last success.
+      expect(s.lastSuccessAt === null || typeof s.lastSuccessAt === 'string').toBe(true);
+    }
+  });
+
   it('assembles the full dashboard payload', async () => {
     const data = await getAdminDashboardData();
     expect(Number.isNaN(Date.parse(data.generatedAt))).toBe(false);
     expect(data.registry.enabledSources).toBe(data.ingestion.length);
+    expect(data.alerts.windowDays).toBe(RECENT_FAILURE_WINDOW_DAYS);
+    expect(Array.isArray(data.alerts.recentFailures)).toBe(true);
+    expect(Array.isArray(data.alerts.staleSources)).toBe(true);
   });
 });
