@@ -15,8 +15,16 @@ export interface LibrarySystemConfig {
   /** source.name in supabase/seeds/sources.sql. */
   sourceName: string;
   feedBaseUrl: string;
-  /** Public BiblioCommons gateway endpoint; only used when explicitly live-enabled. */
+  /** Public BiblioCommons gateway endpoint (JSON); only used when explicitly live-enabled. */
   gatewayEventsUrl?: string;
+  /**
+   * Public BiblioCommons RSS/XML events feed. Preferred live path where present:
+   * the BiblioCommons Terms of Use prohibit automated harvesting "except as may be
+   * specifically permitted using RSS/XML feeds", so this is the ToS-compliant
+   * mechanism for automated ingestion. When set, it takes priority over
+   * gatewayEventsUrl in fetch(). (KIDS FUN Task 5 — VPL enablement, 2026-07-13.)
+   */
+  rssEventsUrl?: string;
   /** Hard cap per request for live approved-source dry-runs. */
   liveEventsLimit?: number;
   /** Deterministic branch/location metadata used for venue rows; no live geocoder. */
@@ -40,6 +48,13 @@ export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
     sourceFamily: 'library_bibliocommons',
     sourceName: 'Vancouver Public Library BiblioEvents',
     feedBaseUrl: 'https://vpl.bibliocommons.com/events',
+    // ToS-compliant automated-access path: the BiblioCommons public RSS/XML feed
+    // (one paginated GET, no login, no headless browser, no CAPTCHA). Each item
+    // carries structured venue geo (bc:latitude/longitude/street/city) and UTC
+    // start/end, so ingest never calls an external geocoder. Live-enabled via
+    // KIDS_FUN_LIVE_LIBRARY_SYSTEMS=vpl after the Task-5 terms/robots check.
+    rssEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/vpl/rss/events',
+    liveEventsLimit: 25,
   },
   {
     systemKey: 'rpl',

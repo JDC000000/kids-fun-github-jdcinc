@@ -205,6 +205,149 @@ async function fetchBiblioCommonsEvents(system: LibrarySystemConfig): Promise<Bi
   return mapBiblioCommonsGateway(system, body);
 }
 
+// --- BiblioCommons RSS/XML feed path (ToS-permitted automated-access mechanism) ---
+// The feed is machine-generated and stable: CDATA-wrapped text nodes plus the
+// BiblioCommons `bc:` namespace (start_date in UTC, structured location w/ geo).
+// A small dependency-free extractor keeps the worker runtime at pg+puppeteer-core
+// (no XML-parser dep, no lockfile churn) and matches the adapter's existing
+// regex-based stripHtml style.
+
+function decodeXmlText(value = ''): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .trim();
+}
+
+function tagBlocks(xml: string, tag: string): string[] {
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'gi');
+  const out: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(xml)) !== null) out.push(match[1]);
+  return out;
+}
+
+function firstTag(xml: string, tag: string): string | undefined {
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i');
+  const match = re.exec(xml);
+  return match ? decodeXmlText(match[1]) : undefined;
+}
+
+function toUtcIso(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+function finiteFloat(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function eventIdFromLink(link: string): string {
+  const cleaned = link.split(/[?#]/)[0].replace(/\/$/, '');
+  return cleaned.split('/').pop() || cleaned;
+}
+
+// Prefer an explicit numeric age/grade range (e.g. "ages 0-2", "grades K-3");
+// fall back to a keyword audience hint. Raw wording only — normalizeHook/T13
+// resolves it to structured age bands downstream.
+const AGE_RANGE_RE = /(?:ages?|grades?)\s*[\dK][^.<\n]{0,40}/i;
+const AGE_HINT_RE =
+  /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers)?|kindergarten|family|all ages)[^.<\n]{0,40}/i;
+
+function rssLocation(itemXml: string): LibraryBranchLocation | undefined {
+  const [locBlock] = tagBlocks(itemXml, 'bc:location');
+  if (!locBlock) return undefined;
+  const name = firstTag(locBlock, 'bc:name');
+  const number = firstTag(locBlock, 'bc:number');
+  const street = firstTag(locBlock, 'bc:street');
+  const city = firstTag(locBlock, 'bc:city');
+  const state = firstTag(locBlock, 'bc:state') || 'BC';
+  const zip = firstTag(locBlock, 'bc:zip');
+  const lat = finiteFloat(firstTag(locBlock, 'bc:latitude'));
+  const lng = finiteFloat(firstTag(locBlock, 'bc:longitude'));
+  if (lat === undefined || lng === undefined) return undefined;
+
+  const streetLine = [number, street].filter(Boolean).join(' ');
+  const address = [streetLine, city, [state, zip].filter(Boolean).join(' ')]
+    .filter(Boolean)
+    .join(', ');
+  const displayArea = (name ?? '').replace(/\s+Branch$/i, '').trim() || (city ?? '');
+  return {
+    address,
+    lat,
+    lng,
+    municipalityName: city ?? '',
+    displayArea,
+    locationUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`,
+  };
+}
+
+function parseBiblioCommonsRss(system: LibrarySystemConfig, xml: string): BiblioEvent[] {
+  const items = tagBlocks(xml, 'item');
+  const limit = system.liveEventsLimit ?? DEFAULT_BIBLIOCOMMONS_LIMIT;
+  const events: BiblioEvent[] = [];
+
+  for (const item of items) {
+    if ((firstTag(item, 'bc:is_cancelled') ?? '').toLowerCase() === 'true') continue;
+    const title = firstTag(item, 'title');
+    const link = firstTag(item, 'link');
+    const start = toUtcIso(firstTag(item, 'bc:start_date'));
+    if (!title || !link || !start) continue;
+
+    const descriptionHtml = firstTag(item, 'description') ?? '';
+    const descriptionText = stripHtml(descriptionHtml);
+    const categories = tagBlocks(item, 'category').map((c) => decodeXmlText(c)).filter(Boolean);
+    const location = rssLocation(item);
+    const branch = firstTag(tagBlocks(item, 'bc:location')[0] ?? '', 'bc:name') || `${system.systemName} branch`;
+    const ageText =
+      descriptionText.match(AGE_RANGE_RE)?.[0]?.trim() ||
+      descriptionText.match(AGE_HINT_RE)?.[0]?.trim() ||
+      categories.join(', ') ||
+      'See event details';
+
+    events.push({
+      id: eventIdFromLink(link),
+      title,
+      branch,
+      startsAt: start,
+      endsAt: toUtcIso(firstTag(item, 'bc:end_date')),
+      ages: ageText,
+      url: link,
+      registrationRequired: /registration\s+required/i.test(descriptionText),
+      descriptionText,
+      categoryHint: categoryHint(title, categories),
+      location,
+    });
+    if (events.length >= limit) break;
+  }
+  return events;
+}
+
+async function fetchBiblioCommonsRss(system: LibrarySystemConfig): Promise<BiblioEvent[]> {
+  if (!system.rssEventsUrl) {
+    throw new Error(`No BiblioCommons RSS URL configured for ${system.systemKey}`);
+  }
+  const response = await fetch(new URL(system.rssEventsUrl), {
+    headers: {
+      accept: 'application/rss+xml, application/xml, text/xml',
+      'user-agent': USER_AGENT,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`BiblioCommons RSS fetch failed: ${response.status} ${response.statusText}`);
+  }
+  const xml = await response.text();
+  return parseBiblioCommonsRss(system, xml);
+}
+
 export class LibraryAdapter implements Adapter {
   readonly family = 'library';
 
@@ -216,6 +359,11 @@ export class LibraryAdapter implements Adapter {
 
   async fetch(): Promise<unknown[]> {
     if (this.isLiveFetchEnabled()) {
+      // Prefer the ToS-permitted RSS/XML feed where configured (e.g. VPL);
+      // fall back to the public JSON gateway (e.g. RPL) otherwise.
+      if (this.system.rssEventsUrl) {
+        return fetchBiblioCommonsRss(this.system);
+      }
       return fetchBiblioCommonsEvents(this.system);
     }
 
