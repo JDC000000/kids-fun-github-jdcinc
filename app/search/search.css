@@ -1,0 +1,192 @@
+/*
+ * KIDS FUN — search-results route styles (`/search`).
+ * Additive, scoped under `.kf` so it composes with the shared design system in
+ * app/preview/preview.css (Brand Workbook V2 + Visual Blueprint v0.2) without
+ * touching it. New classes only — the `.kf-sbar*`/`.kf-browse*` namespace does
+ * not exist elsewhere. Civic field-guide: warm-paper canvas, hairline rules,
+ * Leaf reserved for the one action, tabular numerals inherited from `.kf`.
+ */
+
+/* ── Primary search module (Elevation 200 — the always-visible top control) ── */
+.kf-sbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--canvas);
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.kf-sbar__form {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.kf-sbar__field {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.kf-sbar__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.kf-sbar__input {
+  width: 100%;
+  min-height: 44px; /* WCAG 2.5.8 target size */
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: 16px; /* ≥16px stops iOS zoom-on-focus */
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--neutral-300);
+  border-radius: 12px;
+  box-shadow: var(--e-100);
+}
+
+.kf-sbar__input::placeholder {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+
+.kf-sbar__input:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 1px;
+  border-color: var(--leaf);
+}
+
+.kf-sbar__submit {
+  align-self: flex-end;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 18px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--leaf);
+  border: 1px solid var(--leaf-hover);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background var(--motion);
+}
+
+.kf-sbar__submit:hover {
+  background: var(--leaf-hover);
+}
+
+.kf-sbar__submit:focus-visible {
+  outline: 2px solid var(--anchor);
+  outline-offset: 2px;
+}
+
+/* ── Sort + cost chip rail (D6 transparent sort; tap-to-change, no JS needed) ── */
+.kf-sbar__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.kf-sbar__controls-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+  margin-right: 2px;
+}
+
+.kf-sbar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  background: var(--surface);
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--r-chip);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kf-sbar__chip[aria-current='true'],
+.kf-sbar__chip[aria-pressed='true'] {
+  color: var(--confirmed-text);
+  background: var(--confirmed-bg);
+  border-color: var(--confirmed-text);
+}
+
+.kf-sbar__chip:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
+.kf-sbar__check {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* ── Results header (Screen 2: query in words + count + transparent sort) ── */
+.kf-browse__summary {
+  padding: 14px 16px 2px;
+}
+
+.kf-browse__count {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.kf-browse__query {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-secondary);
+}
+
+.kf-browse__query b {
+  color: var(--ink);
+}
+
+.kf-browse__sortline {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+/* ── SSR empty / broadening state (Screen 5b, no client filter state) ── */
+.kf-browse__empty-eyebrow {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.kf-browse__empty-explain {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--expected-text);
+  background: var(--expected-bg);
+  border-radius: 12px;
+  text-align: left;
+}
