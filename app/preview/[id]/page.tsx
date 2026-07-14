@@ -4,6 +4,7 @@ import { CategoryTile } from '../_components/CategoryTile';
 import { FreshnessStamp } from '../_components/FreshnessStamp';
 import { ReportWrongInfo } from '../_components/ReportWrongInfo';
 import { getPool } from '@/lib/db/client';
+import { recordListingView } from '@/lib/analytics/record';
 import { loadPostgresListingById } from '@/lib/search/postgres-repository';
 import { FIXTURE_LISTINGS } from '@/lib/search/__fixtures__/listings';
 import { ACTIVITIES, findActivity } from '../_data/fixtures';
@@ -56,6 +57,14 @@ function Stat({ label, value }: { label: string; value: string }) {
 export default async function DetailPage({ params }: { params: { id: string } }) {
   const activity = await findAnyActivity(params.id);
   if (!activity) notFound();
+
+  // Analytics (M5): best-effort "listing viewed" capture. Never blocks or breaks
+  // the render — recordListingView swallows all failures.
+  await recordListingView(params.id, {
+    activityName: activity.activityName,
+    category: activity.category,
+    sourceName: activity.sourceName,
+  });
 
   const when = formatWhen(activity.startIso, activity.endIso);
   const meta = statusMeta(activity.status, activity.seasonLabel);
