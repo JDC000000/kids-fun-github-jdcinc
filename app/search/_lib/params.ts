@@ -274,6 +274,25 @@ export function intentPhrases(state: SearchState): string[] {
   return phrases;
 }
 
+/**
+ * Stable, non-PII filter tokens for a `search_performed` analytics event. Excludes
+ * the free-text query (captured separately) and the near-me ORIGIN COORDINATES
+ * (location is identifying) — only the boolean `near_me` intent is recorded here.
+ * Regions are captured on their own array, so they are intentionally NOT included.
+ * Tokens are namespaced (`when:`, `age:`) or flat snake_case so the admin dashboard
+ * can frequency-count them directly.
+ */
+export function analyticsFilterTokens(state: SearchState): string[] {
+  const tokens: string[] = [];
+  if (state.when !== 'any') tokens.push(`when:${state.when}`);
+  if (state.bookableNow) tokens.push('bookable_now');
+  if (state.rainyDay) tokens.push('rainy_day');
+  if (state.free) tokens.push('free');
+  for (const band of state.ages) tokens.push(`age:${band}`);
+  if (hasOrigin(state)) tokens.push('near_me');
+  return tokens;
+}
+
 /** Build the `/api/search` query string from the search state. */
 export function apiQuery(state: SearchState): string {
   const q = [state.q, ...intentPhrases(state)].filter(Boolean).join(' ').trim();

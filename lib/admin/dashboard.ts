@@ -32,9 +32,17 @@ export interface SourceRegistrySummary {
 export interface AnalyticsSummary {
   totalEvents: number;
   listingViewed: number;
+  /** Count of `search_performed` events — what parents actually searched/browsed. */
+  searchPerformed: number;
   byType: { eventType: string; count: number }[];
   topListings: { label: string; occurrenceId: string | null; views: number }[];
   last7Days: { day: string; count: number }[];
+  /** Most common query WORDS across all searches (stopwords + <3-char tokens dropped). */
+  topQueryTerms: { term: string; count: number }[];
+  /** Most-used region chips across all searches (raw chip ids, e.g. 'van'). */
+  topSearchRegions: { region: string; count: number }[];
+  /** Most-used non-region filter tokens (e.g. 'free', 'when:weekend', 'age:5-9'). */
+  topSearchFilters: { filter: string; count: number }[];
 }
 
 export interface AdminDashboardData {
@@ -46,6 +54,14 @@ export interface AdminDashboardData {
 
 /** "Enabled/live" source = terms reviewed and allowed (terms_status = 'allowed'). */
 export const ENABLED_TERMS_STATUS = 'allowed';
+
+/** Noise words dropped from the "most common query terms" frequency count. Kept small
+ *  and domain-aware ('kids' is noise here — every listing is for kids). Not NLP: a plain
+ *  stopword list, applied alongside a >=3-char minimum, per the task's "simple count". */
+const QUERY_TERM_STOPWORDS = [
+  'the', 'and', 'for', 'with', 'near', 'you', 'your', 'our', 'from', 'that', 'this',
+  'kids', 'kid', 'any', 'are', 'has', 'have', 'get', 'about', 'not', 'find',
+];
 
 function toIso(value: Date | string | null | undefined): string | null {
   if (value == null) return null;
@@ -157,11 +173,12 @@ export async function getSourceRegistrySummary(): Promise<SourceRegistrySummary>
 
 /** Analytics rollups from analytics_event. Robust to an empty table (returns zeros). */
 export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
-  const totalsRows = await query<{ total_events: number; listing_viewed: number }>(
+  const totalsRows = await query<{ total_events: number; listing_viewed: number; search_performed: number }>(
     `
     SELECT
       count(*)::int AS total_events,
-      count(*) FILTER (WHERE event_type = 'listing_viewed')::int AS listing_viewed
+      count(*) FILTER (WHERE event_type = 'listing_viewed')::int AS listing_viewed,
+      count(*) FILTER (WHERE event_type = 'search_performed')::int AS search_performed
     FROM analytics_event
     `
   );
@@ -202,12 +219,77 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     `
   );
 
+  // --- search analytics rollups (search_performed events) ----------------------
+  // What parents actually search for. All three tokenise the jsonb fields the
+  // /search page writes; each guards its set-returning function with a WHERE on
+  // event_type (applied before the SELECT-list expansion) so a non-search or
+  // legacy row can never error the query. Robust to an empty table (returns []).
+
+  // Most common query WORDS. Split the raw query on non-alphanumerics, drop tokens
+  // under 3 chars and a small stopword set, then frequency-count.
+  const topQueryTerms = await query<{ term: string; count: number }>(
+    `
+    SELECT term, count(*)::int AS count
+    FROM (
+      SELECT unnest(
+        regexp_split_to_array(lower(coalesce(search_context_json->>'q', '')), '[^a-z0-9]+')
+      ) AS term
+      FROM analytics_event
+      WHERE event_type = 'search_performed'
+    ) t
+    WHERE length(term) >= 3
+      AND term <> ALL ($1::text[])
+    GROUP BY term
+    ORDER BY count DESC, term
+    LIMIT 15
+    `,
+    [QUERY_TERM_STOPWORDS]
+  );
+
+  // Most-used region chips (search_context_json.regions is a string array).
+  const topSearchRegions = await query<{ region: string; count: number }>(
+    `
+    SELECT region, count(*)::int AS count
+    FROM (
+      SELECT jsonb_array_elements_text(search_context_json->'regions') AS region
+      FROM analytics_event
+      WHERE event_type = 'search_performed'
+        AND jsonb_typeof(search_context_json->'regions') = 'array'
+    ) t
+    GROUP BY region
+    ORDER BY count DESC, region
+    LIMIT 10
+    `
+  );
+
+  // Most-used non-region filter tokens (search_context_json.filters is a string array).
+  // Alias the unnested value `token` (not `filter`) — FILTER is a SQL keyword and a bare
+  // `filter` alias is a parser landmine right after a set-returning function.
+  const topSearchFilters = await query<{ token: string; count: number }>(
+    `
+    SELECT token, count(*)::int AS count
+    FROM (
+      SELECT jsonb_array_elements_text(search_context_json->'filters') AS token
+      FROM analytics_event
+      WHERE event_type = 'search_performed'
+        AND jsonb_typeof(search_context_json->'filters') = 'array'
+    ) t
+    GROUP BY token
+    ORDER BY count DESC, token
+    LIMIT 15
+    `
+  );
+
   return {
     totalEvents: totals?.total_events ?? 0,
     listingViewed: totals?.listing_viewed ?? 0,
+    searchPerformed: totals?.search_performed ?? 0,
     byType: byType.map((r) => ({ eventType: r.event_type, count: r.count })),
     topListings: topListings.map((r) => ({ label: r.label, occurrenceId: r.occurrence_id, views: r.views })),
     last7Days: last7Days.map((r) => ({ day: r.day, count: r.count })),
+    topQueryTerms: topQueryTerms.map((r) => ({ term: r.term, count: r.count })),
+    topSearchRegions: topSearchRegions.map((r) => ({ region: r.region, count: r.count })),
+    topSearchFilters: topSearchFilters.map((r) => ({ filter: r.token, count: r.count })),
   };
 }
 

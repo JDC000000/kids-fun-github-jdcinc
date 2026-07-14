@@ -26,6 +26,17 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // pg pool needs the Node runtime, not edge.
 export const metadata = { title: 'KIDS FUN — Admin / Health', robots: { index: false, follow: false } };
 
+// Human labels for the region-chip ids stored on search_performed events (mirrors
+// REGION_CHIPS in app/search/_lib/params.ts). Kept local so the admin data layer stays
+// app-agnostic; falls back to the raw id if a new chip lands before this map updates.
+const SEARCH_REGION_LABELS: Record<string, string> = {
+  van: 'Vancouver',
+  nvan: 'North Van',
+  wvan: 'West Van',
+  bby: 'Burnaby',
+  rmd: 'Richmond',
+};
+
 function statusClass(status: string | null): string {
   switch (status) {
     case 'success':
@@ -116,6 +127,7 @@ export default async function AdminDashboardPage({
           <StatTile label="Series" value={formatCount(totalSeries)} sub="from enabled sources" />
           <StatTile label="Occurrences" value={formatCount(totalOccurrences)} sub="non-archived" />
           <StatTile label="Analytics events" value={formatCount(analytics.totalEvents)} sub={`${formatCount(analytics.listingViewed)} listing views`} />
+          <StatTile label="Searches" value={formatCount(analytics.searchPerformed)} sub="search_performed events" />
         </div>
       </section>
 
@@ -221,6 +233,94 @@ export default async function AdminDashboardPage({
                       <tr key={`${r.occurrenceId ?? 'x'}-${i}`}>
                         <td>{r.label}</td>
                         <td className="num">{formatCount(r.views)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="adm-section">
+        <h2>Search analytics</h2>
+        <p className="adm-hint">
+          What parents actually search for — query terms and filters from{' '}
+          <span className="mono">search_performed</span> events fired by the /search page. The raw query text is
+          captured (product signal); nothing identifying beyond the anonymous session id, and never the near-me
+          location.
+        </p>
+        {analytics.searchPerformed === 0 ? (
+          <p className="empty">
+            No searches captured yet. The /search page fires a <span className="mono">search_performed</span> event
+            whenever a real query or filter runs; this fills in as parents search.
+          </p>
+        ) : (
+          <div className="cols">
+            <div>
+              <h3>Top query terms</h3>
+              {analytics.topQueryTerms.length === 0 ? (
+                <p className="empty">No query words yet — searches so far were filter-only.</p>
+              ) : (
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th>Term</th>
+                      <th className="num">Searches</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analytics.topQueryTerms.map((r) => (
+                      <tr key={r.term}>
+                        <td className="mono">{r.term}</td>
+                        <td className="num">{formatCount(r.count)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div>
+              <h3>Region filters used</h3>
+              {analytics.topSearchRegions.length === 0 ? (
+                <p className="empty">No region filters used yet.</p>
+              ) : (
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th>Region</th>
+                      <th className="num">Searches</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analytics.topSearchRegions.map((r) => (
+                      <tr key={r.region}>
+                        <td>{SEARCH_REGION_LABELS[r.region] ?? r.region}</td>
+                        <td className="num">{formatCount(r.count)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              <h3>Quick-filters used</h3>
+              {analytics.topSearchFilters.length === 0 ? (
+                <p className="empty">No quick-filters used yet.</p>
+              ) : (
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th>Filter</th>
+                      <th className="num">Searches</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analytics.topSearchFilters.map((r) => (
+                      <tr key={r.filter}>
+                        <td className="mono">{r.filter}</td>
+                        <td className="num">{formatCount(r.count)}</td>
                       </tr>
                     ))}
                   </tbody>
