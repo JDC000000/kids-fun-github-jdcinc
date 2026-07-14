@@ -10,13 +10,13 @@
 
 import { NextResponse } from 'next/server';
 import { makeFixtureEngine } from '@/lib/search/__fixtures__/engine';
-import { fixtureGeocoder } from '@/lib/search/__fixtures__/engine';
 import { InMemoryListingRepository } from '@/lib/search/repository';
 import { loadPostgresListings } from '@/lib/search/postgres-repository';
 import { getPostgresAliasResolver } from '@/lib/search/postgres-alias-resolver';
 import { getPostgresRegionHierarchy } from '@/lib/search/postgres-region-hierarchy';
 import { SearchEngine, type SearchRequest, type SearchResponse } from '@/lib/search/engine';
 import { getPool } from '@/lib/db/client';
+import { fsaGeocoder } from '@/lib/geo/postal-fsa';
 import type { OriginRequest } from '@/lib/geo/origin';
 import type { SortKey } from '@/lib/search/types';
 
@@ -63,9 +63,12 @@ async function searchDatabase(
       repository: new InMemoryListingRepository(listings),
       aliasResolver,
       regionHierarchy,
-      // Geocoder (postal → point, saved-home origin) stays fixture-backed: that is a
-      // separate live-maps concern, out of scope for the alias/region DB wiring here.
-      geocoder: fixtureGeocoder,
+      // Saved-home origin (postal → point) resolves at FSA / area granularity (Task 29):
+      // the `kids-fun-mapbox` key is still absent, so full street-level geocoding
+      // (lib/geo/geocode.ts) is unavailable — this maps a saved postal's FSA to its
+      // municipality centroid instead. Swap for the Mapbox-backed Geocoder here once the
+      // key lands, no other change needed.
+      geocoder: fsaGeocoder,
       fixtureBacked: false,
     });
     const response = engine.search(searchRequest);

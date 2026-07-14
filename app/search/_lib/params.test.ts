@@ -4,6 +4,7 @@ import {
   analyticsFilterTokens,
   apiQuery,
   hasActiveFilters,
+  hasNearMeCoords,
   hasOrigin,
   hiddenStateFields,
   hrefFor,
@@ -20,8 +21,8 @@ function st(overrides: Partial<SearchState> = {}): SearchState {
 }
 
 /** Parse an /api/search query string back into a param map for assertions. */
-function apiParams(state: SearchState): URLSearchParams {
-  return new URLSearchParams(apiQuery(state));
+function apiParams(state: SearchState, savedOrigin?: { postal: string } | null): URLSearchParams {
+  return new URLSearchParams(apiQuery(state, savedOrigin));
 }
 
 describe('parseSearchState', () => {
@@ -183,5 +184,60 @@ describe('analyticsFilterTokens', () => {
   it('never includes regions (captured on their own array)', () => {
     const tokens = analyticsFilterTokens(st({ regions: ['van', 'rmd'], free: true }));
     expect(tokens).toEqual(['free']);
+  });
+
+  it('records saved_home (not near_me) for the saved-location intent', () => {
+    const tokens = analyticsFilterTokens(st({ useSavedLocation: true }));
+    expect(tokens).toContain('saved_home');
+    expect(tokens).not.toContain('near_me');
+  });
+});
+
+describe('saved-location origin (Task 29)', () => {
+  it('parses ?home=1 into the saved-location intent', () => {
+    expect(parseSearchState({ home: '1' }).useSavedLocation).toBe(true);
+    expect(parseSearchState({}).useSavedLocation).toBe(false);
+  });
+
+  it('near-me coords take precedence over the saved-location intent', () => {
+    const s = parseSearchState({ home: '1', lat: '49.26', lng: '-123.07' });
+    expect(s.useSavedLocation).toBe(false);
+    expect(hasNearMeCoords(s)).toBe(true);
+  });
+
+  it('hasOrigin is true for either origin; hasNearMeCoords only for coords', () => {
+    const saved = st({ useSavedLocation: true });
+    expect(hasOrigin(saved)).toBe(true);
+    expect(hasNearMeCoords(saved)).toBe(false);
+    expect(hasActiveFilters(saved)).toBe(true);
+  });
+
+  it('serialises only the home flag (never the postal) and keeps radius shareable', () => {
+    const href = hrefFor(st({ useSavedLocation: true, radiusKm: 5 }));
+    const p = new URLSearchParams(href.split('?')[1]);
+    expect(p.get('home')).toBe('1');
+    expect(p.get('radius')).toBe('5');
+    expect(p.has('postal')).toBe(false);
+    expect(p.has('lat')).toBe(false);
+  });
+
+  it('composes a radius phrase for a saved-location origin', () => {
+    expect(intentPhrases(st({ useSavedLocation: true, radiusKm: 20 }))).toContain('20 km');
+  });
+
+  it('forwards the resolved postal + signedIn to /api/search only when chosen', () => {
+    const chosen = apiParams(st({ q: 'swim', useSavedLocation: true }), { postal: 'V6K 1A1' });
+    expect(chosen.get('postal')).toBe('V6K 1A1');
+    expect(chosen.get('signedIn')).toBe('1');
+    // Without a resolved saved origin, nothing is forwarded.
+    const noOrigin = apiParams(st({ q: 'swim', useSavedLocation: true }), null);
+    expect(noOrigin.has('postal')).toBe(false);
+    expect(noOrigin.has('signedIn')).toBe(false);
+  });
+
+  it('near-me coords win over the saved postal at the API boundary', () => {
+    const p = apiParams(st({ useSavedLocation: true, lat: 49.26, lng: -123.07 }), { postal: 'V6K 1A1' });
+    expect(p.get('lat')).toBe('49.26');
+    expect(p.has('postal')).toBe(false);
   });
 });

@@ -31,6 +31,27 @@ describe('GET /api/search (fixture stub)', () => {
     expect(body.results.length).toBeGreaterThan(0);
   });
 
+  it('resolves a signed-in saved-home origin from a postal code (Task 29)', async () => {
+    // V6X is a Richmond FSA that the 3-entry test double never knew — proving the fuller
+    // Metro-Vancouver fsaGeocoder is the active resolver. With signedIn=1 the postal
+    // resolves to an area-level origin (no browser geolocation, no lat/lng needed).
+    const { body } = await call('q=open+gym&postal=V6X+1A1&signedIn=1&minResults=1');
+    expect(body.originError).toBeNull();
+    expect(body.origin).not.toBeNull();
+    expect(body.origin.mode).toBe('saved_home');
+    // Origin lands on the Richmond municipality centroid (~49.17, -123.13), not 0,0.
+    expect(body.origin.geo.lat).toBeCloseTo(49.1666, 2);
+    expect(body.origin.geo.lng).toBeCloseTo(-123.1336, 2);
+  });
+
+  it('gates the saved-home origin on sign-in (no postal origin when signedIn is absent)', async () => {
+    const { body } = await call('q=open+gym&postal=V6X+1A1&minResults=1');
+    expect(body.origin).toBeNull();
+    expect(body.originError).toContain('auth_required');
+    // Search still succeeds, just without a radius origin (never load-bearing).
+    expect(body.results.length).toBeGreaterThan(0);
+  });
+
   it('returns an empty-state explanation when nothing matches in range', async () => {
     const { body } = await call('q=public+skate&lat=49.26&lng=-123.07&minResults=1');
     expect(body.broadening.emptyState).not.toBeNull();

@@ -5,8 +5,11 @@ import { partitionSections } from '../preview/_data/filter';
 import { mapSearchResponseToActivities, type SearchResponseDto } from '../preview/_data/search-api';
 import type { Activity } from '../preview/_data/types';
 import { recordSearchPerformed } from '@/lib/analytics/record';
+import { getRequestUser } from '@/lib/db/session-user';
+import { getUserProfile } from '@/lib/db/user-profile';
+import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { SearchBar } from './_components/SearchBar';
-import { FilterRail } from './_components/FilterRail';
+import { FilterRail, type SavedLocationInfo } from './_components/FilterRail';
 import {
   AGE_OPTIONS,
   CLEARED_FILTERS,
@@ -16,9 +19,10 @@ import {
   analyticsFilterTokens,
   apiQuery,
   hasActiveFilters,
-  hasOrigin,
+  hasNearMeCoords,
   hrefFor,
   parseSearchState,
+  type SavedOrigin,
   type SearchState,
 } from './_lib/params';
 
@@ -56,9 +60,9 @@ interface FetchResult {
   error?: string;
 }
 
-async function runSearch(state: SearchState): Promise<FetchResult> {
+async function runSearch(state: SearchState, savedOrigin: SavedOrigin | null): Promise<FetchResult> {
   try {
-    const res = await fetch(`${baseUrl()}/api/search?${apiQuery(state)}`, {
+    const res = await fetch(`${baseUrl()}/api/search?${apiQuery(state, savedOrigin)}`, {
       cache: 'no-store',
       headers: { accept: 'application/json' },
     });
@@ -80,7 +84,7 @@ function sourceNote(body: SearchApiResponse): string {
 }
 
 /** Human-readable list of the active filters, for the "in words" results summary (Screen 2). */
-function filterSummary(state: SearchState): string[] {
+function filterSummary(state: SearchState, savedLocation: SavedLocationInfo | null): string[] {
   const parts: string[] = [];
   if (state.when !== 'any') parts.push(WHEN_OPTIONS.find((w) => w.key === state.when)?.label ?? '');
   if (state.ages.length) {
@@ -93,8 +97,36 @@ function filterSummary(state: SearchState): string[] {
   if (state.bookableNow) parts.push('Bookable now');
   if (state.rainyDay) parts.push('Rainy-day');
   if (state.free) parts.push('Free');
-  if (hasOrigin(state)) parts.push(`within ${state.radiusKm} km of you`);
+  if (hasNearMeCoords(state)) parts.push(`within ${state.radiusKm} km of you`);
+  else if (state.useSavedLocation && savedLocation) {
+    parts.push(`within ${state.radiusKm} km of ${savedLocation.areaLabel}`);
+  }
   return parts.filter(Boolean);
+}
+
+/**
+ * Resolve the signed-in user's saved-location origin, server-side (Task 29). Anonymous
+ * users get nothing here — their near-me behaviour (browser geolocation) is unchanged.
+ * A signed-in user with a saved home postal that resolves to a covered Metro-Vancouver
+ * area gets both: a `savedOrigin` (postal forwarded to /api/search) and a `savedLocation`
+ * (the area label for the chip). NEVER load-bearing: any auth/DB failure, an un-saved or
+ * out-of-coverage postal, all degrade to nulls (no chip, no origin) — never an error.
+ */
+async function resolveSavedOrigin(): Promise<{
+  savedOrigin: SavedOrigin | null;
+  savedLocation: SavedLocationInfo | null;
+}> {
+  try {
+    const user = await getRequestUser();
+    if (!user) return { savedOrigin: null, savedLocation: null };
+    const profile = await getUserProfile(user.userId);
+    const postal = profile?.home_postal ?? null;
+    const areaLabel = areaLabelForPostal(postal);
+    if (!postal || !areaLabel) return { savedOrigin: null, savedLocation: null };
+    return { savedOrigin: { postal }, savedLocation: { areaLabel } };
+  } catch {
+    return { savedOrigin: null, savedLocation: null };
+  }
 }
 
 function Section({ title, note, items }: { title: string; note?: string; items: Activity[] }) {
@@ -120,14 +152,19 @@ export default async function SearchPage({
   searchParams: Record<string, string | string[] | undefined>;
 }) {
   const state = parseSearchState(searchParams);
-  const result = await runSearch(state);
+  // Signed-in saved-location origin (Task 29); null for anonymous users (unchanged behaviour).
+  const { savedOrigin, savedLocation } = await resolveSavedOrigin();
+  const result = await runSearch(state, savedOrigin);
+  // A radius only truly applies when there's a real origin: browser coords, or a saved
+  // location we actually resolved (a bare ?home=1 with no signed-in profile behind it doesn't).
+  const realOrigin = hasNearMeCoords(state) || (state.useSavedLocation && savedOrigin != null);
 
   const activities = result.body ? mapSearchResponseToActivities(result.body) : [];
   const { confirmed, expected } = partitionSections(activities);
   const total = confirmed.length + expected.length;
   const sortSentence = SORT_OPTIONS.find((o) => o.key === state.sort)?.sentence ?? '';
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
-  const activeFilters = filterSummary(state);
+  const activeFilters = filterSummary(state, savedLocation);
   const filtersActive = hasActiveFilters(state);
 
   // Analytics (M5 / T31): best-effort "search performed" capture. Fires only when a
@@ -143,7 +180,7 @@ export default async function SearchPage({
         sort: state.sort,
         regions: state.regions,
         filters: analyticsFilterTokens(state),
-        radiusKm: hasOrigin(state) ? state.radiusKm : null,
+        radiusKm: realOrigin ? state.radiusKm : null,
         includeUnknownCost: state.includeUnknownCost,
       },
       {
@@ -167,7 +204,7 @@ export default async function SearchPage({
       </header>
 
       <SearchBar state={state} />
-      <FilterRail state={state} />
+      <FilterRail state={state} savedLocation={savedLocation} />
 
       <div className="kf-results">
         {!result.ok ? (

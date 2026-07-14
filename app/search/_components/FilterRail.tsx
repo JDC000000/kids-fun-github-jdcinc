@@ -8,13 +8,19 @@ import {
   REGION_CHIPS,
   WHEN_OPTIONS,
   hasActiveFilters,
-  hasOrigin,
+  hasNearMeCoords,
   hrefFor,
   toggleAge,
   toggleRegion,
   type SearchState,
 } from '../_lib/params';
 import { NearMeButton } from './NearMeButton';
+
+/** The signed-in user's saved-location area, resolved server-side. Null → not offered. */
+export interface SavedLocationInfo {
+  /** Area label for the chip, e.g. "North Vancouver" (from the saved postal's FSA). */
+  areaLabel: string;
+}
 
 // The filter rails under the search bar (Blueprint Screen 2 + Screen 5 groups ①②⑤⑥ and
 // the "Where" control). Every control is a plain <Link> that rewrites the URL, so filters
@@ -56,8 +62,17 @@ function Group({ label, children, id }: { label: string; id: string; children: R
   );
 }
 
-export function FilterRail({ state }: { state: SearchState }) {
-  const originActive = hasOrigin(state);
+export function FilterRail({
+  state,
+  savedLocation,
+}: {
+  state: SearchState;
+  savedLocation?: SavedLocationInfo | null;
+}) {
+  const savedActive = state.useSavedLocation && !!savedLocation;
+  // Radius only matters once there's a REAL origin — browser coords, or a saved location
+  // we could actually resolve (not merely a ?home=1 flag with no signed-in profile behind it).
+  const originActive = hasNearMeCoords(state) || savedActive;
 
   return (
     <div className="kf-filters" aria-label="Filters">
@@ -112,9 +127,36 @@ export function FilterRail({ state }: { state: SearchState }) {
         </Chip>
       </Group>
 
-      {/* Near me — geolocation origin + travel radius (radius shown once an origin is set). */}
+      {/* Near me — origin + travel radius (radius shown once an origin is set). Two origins:
+          browser geolocation (NearMeButton, anyone) and the signed-in user's saved location
+          (a plain Link — no browser permission needed; only rendered when we resolved it). */}
       <Group label="Near me" id="kf-fg-near">
         <NearMeButton state={state} />
+        {savedLocation &&
+          (savedActive ? (
+            <>
+              <span className="kf-fchip kf-fchip--near" aria-current="true">
+                <span className="kf-fchip__check" aria-hidden="true">
+                  ✓
+                </span>
+                Near {savedLocation.areaLabel}
+              </span>
+              <Link
+                className="kf-fchip"
+                href={hrefFor(state, { useSavedLocation: false })}
+                aria-label="Clear saved-location search"
+              >
+                Clear saved location
+              </Link>
+            </>
+          ) : (
+            <Link
+              className="kf-fchip kf-fchip--action"
+              href={hrefFor(state, { useSavedLocation: true, lat: null, lng: null })}
+            >
+              <span aria-hidden="true">🏠</span> Near my saved location
+            </Link>
+          ))}
         {originActive &&
           RADIUS_OPTIONS.map((km) => (
             <Chip key={km} href={hrefFor(state, { radiusKm: km })} active={state.radiusKm === km}>

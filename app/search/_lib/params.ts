@@ -92,7 +92,14 @@ export interface SearchState {
   /** Near-me origin coords (structured lat/lng). Radius search is active iff both set. */
   lat: number | null;
   lng: number | null;
-  /** Travel radius; only meaningful (and only sent) when a near-me origin is set. */
+  /**
+   * "Near my saved location" intent (signed-in only, `home=1`). We carry only the intent
+   * flag in the shareable page URL, never the postal itself — the page resolves the
+   * signed-in user's saved postal server-side and forwards it to /api/search. Mutually
+   * exclusive with lat/lng (near-me coords win if both are somehow present).
+   */
+  useSavedLocation: boolean;
+  /** Travel radius; only meaningful (and only sent) when an origin is set. */
   radiusKm: RadiusKm;
 }
 
@@ -106,6 +113,7 @@ export const CLEARED_FILTERS: Partial<SearchState> = {
   ages: [],
   lat: null,
   lng: null,
+  useSavedLocation: false,
   radiusKm: DEFAULT_RADIUS,
 };
 
@@ -121,6 +129,7 @@ export const DEFAULT_STATE: SearchState = {
   ages: [],
   lat: null,
   lng: null,
+  useSavedLocation: false,
   radiusKm: DEFAULT_RADIUS,
 };
 
@@ -153,9 +162,19 @@ function parseRadius(raw: string | undefined): RadiusKm {
   return (RADIUS_OPTIONS as readonly number[]).includes(n) ? (n as RadiusKm) : DEFAULT_RADIUS;
 }
 
-/** True when the near-me origin is fully resolved (both coords present). */
-export function hasOrigin(state: SearchState): boolean {
+/** True when the near-me (browser geolocation) origin is fully resolved (both coords present). */
+export function hasNearMeCoords(state: SearchState): boolean {
   return state.lat != null && state.lng != null;
+}
+
+/**
+ * True when ANY origin is in play — browser near-me coords OR the signed-in saved-location
+ * intent. Drives whether a radius is meaningful (composed into `q`) and the "within X km"
+ * summary. The saved-location intent only becomes a real API origin once the page resolves
+ * the user's saved postal; when it can't, the search simply runs with no radius origin.
+ */
+export function hasOrigin(state: SearchState): boolean {
+  return hasNearMeCoords(state) || state.useSavedLocation;
 }
 
 /** Parse Next.js `searchParams` into a validated, defaulted search state. */
@@ -174,6 +193,8 @@ export function parseSearchState(sp: RawParams): SearchState {
   const lat = parseCoord(first(sp.lat));
   const lng = parseCoord(first(sp.lng));
   const bothCoords = lat != null && lng != null;
+  // Near-me coords take precedence over the saved-location intent if both are present.
+  const useSavedLocation = !bothCoords && parseBool(first(sp.home));
 
   return {
     q,
@@ -187,6 +208,7 @@ export function parseSearchState(sp: RawParams): SearchState {
     ages: parseOrderedCsv(first(sp.age), AGE_ORDER as AgeBandKey[]),
     lat: bothCoords ? lat : null,
     lng: bothCoords ? lng : null,
+    useSavedLocation,
     radiusKm: parseRadius(first(sp.radius)),
   };
 }
@@ -220,10 +242,15 @@ function pageParams(state: SearchState): URLSearchParams {
   if (state.rainyDay) p.set('rainy', '1');
   if (state.free) p.set('free', '1');
   if (state.ages.length) p.set('age', state.ages.join(','));
-  if (hasOrigin(state)) {
+  // Origin: near-me coords OR the saved-location intent flag (never the postal itself).
+  if (hasNearMeCoords(state)) {
     p.set('lat', String(state.lat));
     p.set('lng', String(state.lng));
-    if (state.radiusKm !== DEFAULT_RADIUS) p.set('radius', String(state.radiusKm));
+  } else if (state.useSavedLocation) {
+    p.set('home', '1');
+  }
+  if (hasOrigin(state) && state.radiusKm !== DEFAULT_RADIUS) {
+    p.set('radius', String(state.radiusKm));
   }
   return p;
 }
@@ -289,12 +316,23 @@ export function analyticsFilterTokens(state: SearchState): string[] {
   if (state.rainyDay) tokens.push('rainy_day');
   if (state.free) tokens.push('free');
   for (const band of state.ages) tokens.push(`age:${band}`);
-  if (hasOrigin(state)) tokens.push('near_me');
+  if (hasNearMeCoords(state)) tokens.push('near_me');
+  else if (state.useSavedLocation) tokens.push('saved_home');
   return tokens;
 }
 
-/** Build the `/api/search` query string from the search state. */
-export function apiQuery(state: SearchState): string {
+/** The signed-in user's saved-location origin, resolved server-side by the /search page. */
+export interface SavedOrigin {
+  /** The user's saved home postal code (never placed in the shareable page URL). */
+  postal: string;
+}
+
+/**
+ * Build the `/api/search` query string from the search state. When the user chose "near my
+ * saved location" and the page resolved their saved postal (`savedOrigin`), forward it as
+ * the saved-home origin (`postal` + `signedIn=1`). Near-me coords always take precedence.
+ */
+export function apiQuery(state: SearchState, savedOrigin?: SavedOrigin | null): string {
   const q = [state.q, ...intentPhrases(state)].filter(Boolean).join(' ').trim();
 
   const params = new URLSearchParams();
@@ -302,9 +340,12 @@ export function apiQuery(state: SearchState): string {
   params.set('sort', state.sort);
   params.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
   if (state.regions.length) params.set('region', state.regions.join(','));
-  if (hasOrigin(state)) {
+  if (hasNearMeCoords(state)) {
     params.set('lat', String(state.lat));
     params.set('lng', String(state.lng));
+  } else if (state.useSavedLocation && savedOrigin?.postal) {
+    params.set('postal', savedOrigin.postal);
+    params.set('signedIn', '1');
   }
   params.set('limit', '60');
   // Broadening policy (respect explicit choices, still help thin browses):
