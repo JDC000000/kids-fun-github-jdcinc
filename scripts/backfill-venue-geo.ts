@@ -1,4 +1,4 @@
-// worker/src/backfill-venue-geo.ts — Task 36 opt-in venue-geo enrichment runner.
+// scripts/backfill-venue-geo.ts — Task 36 opt-in venue-geo enrichment runner.
 //
 // Out-of-band (NOT part of the deterministic ingest loop in worker/core/venue.ts): finds
 // venues that already have a real street address but no coordinates, geocodes each address
@@ -6,12 +6,22 @@
 // only ever writes a NULL geo, so re-runs and concurrent ingest can't be clobbered, and a
 // venue whose address doesn't resolve is simply left NULL to retry later.
 //
+// Lives in the ROOT project (not worker/) so it is typechecked by `npm run typecheck` and
+// shares the same lib/geo + lib/db code that the app and tests use. Run it with vite-node,
+// which is bundled with vitest and resolves the repo's TS + "@/" alias exactly like the
+// test suite (a plain `node` invocation cannot resolve the extensionless TS imports).
+//
 // Usage (DATABASE_URL + GEOCODING_API_KEY in env):
-//   node --experimental-strip-types worker/src/backfill-venue-geo.ts --dry-run
-//   node --experimental-strip-types worker/src/backfill-venue-geo.ts --limit 50
-import { createPool } from './db';
-import { geocode } from '../../lib/geo/geocode';
-import { enrichVenueGeo, type EnrichVenueGeoDeps } from '../../lib/geo/venue-geo-enrichment';
+//   npx vite-node scripts/backfill-venue-geo.ts -- --dry-run
+//   npx vite-node scripts/backfill-venue-geo.ts -- --limit 50
+// (equivalently: node_modules/.bin/vite-node scripts/backfill-venue-geo.ts -- --dry-run)
+import { query, closePool } from '../lib/db/client';
+import { geocode } from '../lib/geo/geocode';
+import {
+  enrichVenueGeo,
+  type EnrichVenueGeoDeps,
+  type VenueGeoRow,
+} from '../lib/geo/venue-geo-enrichment';
 
 function argValue(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
@@ -37,19 +47,12 @@ const SET_GEO_SQL = `
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const dryRun = hasFlag(argv, '--dry-run');
   const limit = Number(argValue(argv, '--limit') ?? 100);
-  const pool = createPool();
 
   const deps: EnrichVenueGeoDeps = {
-    async listMissing(lim) {
-      const { rows } = await pool.query<{ id: string; name: string; address: string }>(
-        LIST_MISSING_SQL,
-        [lim]
-      );
-      return rows;
-    },
+    listMissing: (lim) => query<VenueGeoRow>(LIST_MISSING_SQL, [lim]),
     async setGeo(id, lat, lng) {
       // pg params: $2 = lng (x), $3 = lat (y) → ST_MakePoint(lng, lat).
-      await pool.query(SET_GEO_SQL, [id, lng, lat]);
+      await query(SET_GEO_SQL, [id, lng, lat]);
     },
     geocode: (address) => geocode(address, { region: 'CA' }),
   };
@@ -67,18 +70,17 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     console.log(JSON.stringify({ dryRun, ...result }));
     return 0;
   } finally {
-    await pool.end();
+    await closePool();
   }
 }
 
-if (require.main === module) {
-  main()
-    .then((code) => process.exit(code))
-    .catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error(
-        JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) })
-      );
-      process.exit(1);
-    });
-}
+// This file is a standalone CLI entry (never imported by app or test code), so run on load.
+main()
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error(
+      JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) })
+    );
+    process.exit(1);
+  });
