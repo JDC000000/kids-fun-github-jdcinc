@@ -54,6 +54,9 @@ export function AccountNav() {
         <span className="kf-account__who" title={label}>
           Signed in as <strong>{label}</strong>
         </span>
+        <a className="kf-account__link" href="/account">
+          Account
+        </a>
         <a className="kf-account__link" href="/auth/signout">
           Sign out
         </a>
