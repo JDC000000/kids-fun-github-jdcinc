@@ -41,8 +41,30 @@ describe.skipIf(!hasDb)('admin dashboard data layer', () => {
     expect(a.totalEvents).toBeGreaterThanOrEqual(0);
     expect(a.listingViewed).toBeGreaterThanOrEqual(0);
     expect(a.listingViewed).toBeLessThanOrEqual(a.totalEvents);
+    expect(a.searchPerformed).toBeGreaterThanOrEqual(0);
+    expect(a.searchPerformed).toBeLessThanOrEqual(a.totalEvents);
     const summed = a.byType.reduce((n, r) => n + r.count, 0);
     expect(summed).toBe(a.totalEvents);
+  });
+
+  it('search-analytics rollups have a sane shape', async () => {
+    const a = await getAnalyticsSummary();
+    for (const r of a.topQueryTerms) {
+      expect(typeof r.term).toBe('string');
+      expect(r.term.length).toBeGreaterThanOrEqual(3);
+      expect(r.count).toBeGreaterThan(0);
+    }
+    for (const r of a.topSearchRegions) {
+      expect(typeof r.region).toBe('string');
+      expect(r.count).toBeGreaterThan(0);
+    }
+    for (const r of a.topSearchFilters) {
+      expect(typeof r.filter).toBe('string');
+      expect(r.count).toBeGreaterThan(0);
+    }
+    // A per-term/region/filter count can never exceed the number of searches.
+    for (const r of a.topSearchRegions) expect(r.count).toBeLessThanOrEqual(a.searchPerformed);
+    for (const r of a.topSearchFilters) expect(r.count).toBeLessThanOrEqual(a.searchPerformed);
   });
 
   it('assembles the full dashboard payload', async () => {

@@ -4,6 +4,7 @@ import { ActivityCard } from '../preview/_components/ActivityCard';
 import { partitionSections } from '../preview/_data/filter';
 import { mapSearchResponseToActivities, type SearchResponseDto } from '../preview/_data/search-api';
 import type { Activity } from '../preview/_data/types';
+import { recordSearchPerformed } from '@/lib/analytics/record';
 import { SearchBar } from './_components/SearchBar';
 import { FilterRail } from './_components/FilterRail';
 import {
@@ -12,6 +13,7 @@ import {
   REGION_CHIPS,
   SORT_OPTIONS,
   WHEN_OPTIONS,
+  analyticsFilterTokens,
   apiQuery,
   hasActiveFilters,
   hasOrigin,
@@ -127,6 +129,32 @@ export default async function SearchPage({
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
   const activeFilters = filterSummary(state);
   const filtersActive = hasActiveFilters(state);
+
+  // Analytics (M5 / T31): best-effort "search performed" capture. Fires only when a
+  // real query or an active filter is present (a bare /search browse is not a search)
+  // and only when the search actually executed. Awaited like recordListingView so the
+  // row lands deterministically, but it can never block or break the render.
+  // Non-PII: query text + stable filter tokens + result counts; near-me coordinates
+  // are never persisted (see recordSearchPerformed / analyticsFilterTokens).
+  if (result.ok && (state.q.trim().length > 0 || filtersActive)) {
+    await recordSearchPerformed(
+      {
+        q: state.q,
+        sort: state.sort,
+        regions: state.regions,
+        filters: analyticsFilterTokens(state),
+        radiusKm: hasOrigin(state) ? state.radiusKm : null,
+        includeUnknownCost: state.includeUnknownCost,
+      },
+      {
+        total,
+        confirmed: confirmed.length,
+        expected: expected.length,
+        backend: result.body?.meta.backend,
+        broadened: (result.body?.broadening?.applied?.length ?? 0) > 0,
+      }
+    );
+  }
 
   return (
     <>

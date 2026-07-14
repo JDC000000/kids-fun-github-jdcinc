@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_STATE,
+  analyticsFilterTokens,
   apiQuery,
   hasActiveFilters,
   hasOrigin,
@@ -147,5 +148,40 @@ describe('hiddenStateFields', () => {
     expect(names).toContain('when');
     expect(names).toContain('bookable');
     expect(names).toContain('includeUnknownCost');
+  });
+});
+
+describe('analyticsFilterTokens', () => {
+  it('is empty for a bare state (no filters)', () => {
+    expect(analyticsFilterTokens(DEFAULT_STATE)).toEqual([]);
+  });
+
+  it('namespaces date and age tokens and flattens the quick toggles', () => {
+    const tokens = analyticsFilterTokens(
+      st({ when: 'weekend', bookableNow: true, rainyDay: true, free: true, ages: ['5-9', 'under2'] })
+    );
+    expect(tokens).toContain('when:weekend');
+    expect(tokens).toContain('bookable_now');
+    expect(tokens).toContain('rainy_day');
+    expect(tokens).toContain('free');
+    expect(tokens).toContain('age:5-9');
+    expect(tokens).toContain('age:under2');
+  });
+
+  it('records near_me intent WITHOUT the origin coordinates (non-PII)', () => {
+    const tokens = analyticsFilterTokens(st({ lat: 49.26, lng: -123.07, radiusKm: 5 }));
+    expect(tokens).toContain('near_me');
+    // No token leaks the actual latitude/longitude.
+    expect(tokens.join(' ')).not.toContain('49.26');
+    expect(tokens.join(' ')).not.toContain('-123.07');
+  });
+
+  it('omits near_me when only one coordinate is present (no real origin)', () => {
+    expect(analyticsFilterTokens(st({ lat: 49.26, lng: null }))).not.toContain('near_me');
+  });
+
+  it('never includes regions (captured on their own array)', () => {
+    const tokens = analyticsFilterTokens(st({ regions: ['van', 'rmd'], free: true }));
+    expect(tokens).toEqual(['free']);
   });
 });
