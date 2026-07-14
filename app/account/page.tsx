@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation';
 import { getRequestUser } from '@/lib/db/session-user';
 import { ensureUserProfile, getUserProfile, type UserProfile } from '@/lib/db/user-profile';
+import { listSavedSearches } from '@/lib/db/saved-search';
 import { AccountForm } from './_components/AccountForm';
+import { SavedSearches, type SavedSearchView } from './_components/SavedSearches';
 import './account.css';
 
 // Parent-facing account page (Task 24, M4). A signed-in parent can see and edit
@@ -45,6 +47,15 @@ export default async function AccountPage() {
     email_opt_in: profile?.email_opt_in ?? false,
   };
 
+  // Load the user's saved searches (owner-scoped via RLS). A DB hiccup just
+  // renders an empty list — the "create" form below still works.
+  let savedSearches: SavedSearchView[] = [];
+  try {
+    savedSearches = await listSavedSearches(user.userId);
+  } catch {
+    savedSearches = [];
+  }
+
   return (
     <main className="kf-account-page">
       <div className="kf-account-page__inner">
@@ -65,11 +76,14 @@ export default async function AccountPage() {
 
         <AccountForm initial={initial} />
 
+        <SavedSearches initial={savedSearches} />
+
         <section className="kf-account-page__later" aria-label="Coming later">
           <h2 className="kf-account-page__later-title">Coming later</h2>
           <p>
-            Saved searches, notification preferences, and downloading or deleting your data aren&apos;t
-            here yet. For now you can update your saved area and children&apos;s ages above.
+            Notification preferences and downloading or deleting your data aren&apos;t here yet — and
+            saving a search straight from the search page is on the way too. For now you can manage your
+            profile and saved searches above.
           </p>
         </section>
       </div>

@@ -1,0 +1,242 @@
+'use client';
+
+// SavedSearches — the "My saved searches" section of /account (Task 38, M4/G5).
+//
+// Lists the parent's saved searches, lets them delete one, and — since /search
+// isn't wired to "save this search" yet (DEFERRED to a later round) — lets them
+// create one here from a name + a query + optional filter JSON. It talks to
+// /api/saved-searches (GET/POST) and /api/saved-searches/:id (DELETE); every call
+// is owner-scoped server-side via RLS, so this component only ever handles the
+// current user's rows.
+import { useState, type FormEvent } from 'react';
+
+export interface SavedSearchView {
+  id: string;
+  name: string | null;
+  params: Record<string, unknown>;
+  created_at: string;
+  last_run_at: string | null;
+}
+
+type Status =
+  | { kind: 'idle' }
+  | { kind: 'saving' }
+  | { kind: 'error'; message: string; signin?: boolean };
+
+/** A compact, human summary of a saved search's params for the list row. */
+function summarize(params: Record<string, unknown>): string {
+  const q = typeof params.q === 'string' ? params.q.trim() : '';
+  const otherKeys = Object.keys(params).filter((k) => k !== 'q');
+  const parts: string[] = [];
+  if (q) parts.push(`“${q}”`);
+  if (otherKeys.length > 0) parts.push(`${otherKeys.length} filter${otherKeys.length === 1 ? '' : 's'}`);
+  return parts.length > 0 ? parts.join(' · ') : 'Custom search';
+}
+
+/** Best-effort local date; never throws on a bad timestamp. */
+function formatDate(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+export function SavedSearches({ initial }: { initial: SavedSearchView[] }) {
+  const [items, setItems] = useState<SavedSearchView[]>(initial);
+  const [name, setName] = useState('');
+  const [queryText, setQueryText] = useState('');
+  const [filtersText, setFiltersText] = useState('');
+  const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function onCreate(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setStatus({ kind: 'saving' });
+
+    // Build params from the query + optional filter JSON.
+    const params: Record<string, unknown> = {};
+    const q = queryText.trim();
+    if (q !== '') params.q = q;
+
+    const rawFilters = filtersText.trim();
+    if (rawFilters !== '') {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawFilters);
+      } catch {
+        setStatus({ kind: 'error', message: 'Filters must be valid JSON (e.g. {"region":"van","sort":"soonest"}).' });
+        return;
+      }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setStatus({ kind: 'error', message: 'Filters must be a JSON object.' });
+        return;
+      }
+      Object.assign(params, parsed as Record<string, unknown>);
+    }
+
+    if (Object.keys(params).length === 0) {
+      setStatus({ kind: 'error', message: 'Add a search query or some filters to save.' });
+      return;
+    }
+
+    const body = { name: name.trim() === '' ? null : name.trim(), params };
+
+    try {
+      const res = await fetch('/api/saved-searches', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+
+      if (res.status === 401) {
+        setStatus({ kind: 'error', message: 'Your session has expired. Please sign in again.', signin: true });
+        return;
+      }
+
+      const data = (await res.json().catch(() => null)) as
+        | { ok: boolean; error?: string; savedSearch?: SavedSearchView }
+        | null;
+
+      if (!res.ok || !data?.ok || !data.savedSearch) {
+        setStatus({ kind: 'error', message: data?.error ?? `Could not save (${res.status}).` });
+        return;
+      }
+
+      setItems((prev) => [data.savedSearch as SavedSearchView, ...prev]);
+      setName('');
+      setQueryText('');
+      setFiltersText('');
+      setStatus({ kind: 'idle' });
+    } catch {
+      setStatus({ kind: 'error', message: 'Network error — please try again.' });
+    }
+  }
+
+  async function onDelete(id: string) {
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/saved-searches/${id}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (res.ok || res.status === 404) {
+        // 404 → already gone; drop it from the list either way.
+        setItems((prev) => prev.filter((s) => s.id !== id));
+      } else if (res.status === 401) {
+        setStatus({ kind: 'error', message: 'Your session has expired. Please sign in again.', signin: true });
+      } else {
+        setStatus({ kind: 'error', message: `Could not delete (${res.status}).` });
+      }
+    } catch {
+      setStatus({ kind: 'error', message: 'Network error — please try again.' });
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  const saving = status.kind === 'saving';
+
+  return (
+    <section className="kf-saved" aria-labelledby="kf-saved-title">
+      <h2 className="kf-saved__title" id="kf-saved-title">
+        My saved searches
+      </h2>
+
+      {items.length === 0 ? (
+        <p className="kf-saved__empty">You haven&apos;t saved any searches yet. Create one below.</p>
+      ) : (
+        <ul className="kf-saved__list">
+          {items.map((s) => (
+            <li className="kf-saved__item" key={s.id}>
+              <div className="kf-saved__item-main">
+                <span className="kf-saved__item-name">{s.name ?? summarize(s.params)}</span>
+                <span className="kf-saved__item-meta">
+                  {s.name ? summarize(s.params) : null}
+                  {s.name ? ' · ' : ''}
+                  {formatDate(s.created_at)}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="kf-saved__delete"
+                onClick={() => onDelete(s.id)}
+                disabled={deletingId === s.id}
+                aria-label={`Delete saved search ${s.name ?? summarize(s.params)}`}
+              >
+                {deletingId === s.id ? 'Removing…' : 'Delete'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <form className="kf-saved__form" onSubmit={onCreate} noValidate>
+        <p className="kf-saved__form-title">Save a new search</p>
+
+        <div className="kf-saved__field">
+          <label className="kf-saved__label" htmlFor="ss-name">
+            Name <span className="kf-saved__optional">(optional)</span>
+          </label>
+          <input
+            id="ss-name"
+            className="kf-saved__input"
+            type="text"
+            placeholder="e.g. Toddler swim near home"
+            maxLength={120}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+
+        <div className="kf-saved__field">
+          <label className="kf-saved__label" htmlFor="ss-query">
+            Search query
+          </label>
+          <input
+            id="ss-query"
+            className="kf-saved__input"
+            type="text"
+            placeholder="e.g. open gym"
+            value={queryText}
+            onChange={(e) => setQueryText(e.target.value)}
+          />
+        </div>
+
+        <div className="kf-saved__field">
+          <label className="kf-saved__label" htmlFor="ss-filters">
+            Filters <span className="kf-saved__optional">(optional JSON)</span>
+          </label>
+          <textarea
+            id="ss-filters"
+            className="kf-saved__input kf-saved__textarea"
+            rows={2}
+            placeholder='e.g. {"region":"van","sort":"soonest"}'
+            value={filtersText}
+            onChange={(e) => setFiltersText(e.target.value)}
+          />
+          <p className="kf-saved__hint">
+            Advanced: paste JSON filter params. Leave blank to save just the query. Saving directly from
+            the search page is coming later.
+          </p>
+        </div>
+
+        <div className="kf-saved__actions">
+          <button className="kf-saved__submit" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save search'}
+          </button>
+          {status.kind === 'error' && (
+            <span className="kf-saved__msg kf-saved__msg--err" role="alert">
+              {status.message}
+              {status.signin && (
+                <>
+                  {' '}
+                  <a href="/auth/signin?next=/account">Sign in</a>.
+                </>
+              )}
+            </span>
+          )}
+        </div>
+      </form>
+    </section>
+  );
+}
