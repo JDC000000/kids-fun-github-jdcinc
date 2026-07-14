@@ -1,10 +1,24 @@
+import Link from 'next/link';
 import { headers } from 'next/headers';
 import { ActivityCard } from '../preview/_components/ActivityCard';
 import { partitionSections } from '../preview/_data/filter';
 import { mapSearchResponseToActivities, type SearchResponseDto } from '../preview/_data/search-api';
 import type { Activity } from '../preview/_data/types';
 import { SearchBar } from './_components/SearchBar';
-import { SORT_OPTIONS, apiQuery, parseSearchState, type SearchState } from './_lib/params';
+import { FilterRail } from './_components/FilterRail';
+import {
+  AGE_OPTIONS,
+  CLEARED_FILTERS,
+  REGION_CHIPS,
+  SORT_OPTIONS,
+  WHEN_OPTIONS,
+  apiQuery,
+  hasActiveFilters,
+  hasOrigin,
+  hrefFor,
+  parseSearchState,
+  type SearchState,
+} from './_lib/params';
 
 // Parent-facing search RESULTS page (M3 Screen 2, Visual Blueprint v0.2). The first
 // real surface a parent can type a query into and scan DB-backed results — distinct
@@ -63,6 +77,24 @@ function sourceNote(body: SearchApiResponse): string {
   return 'Fixture-backed search preview.';
 }
 
+/** Human-readable list of the active filters, for the "in words" results summary (Screen 2). */
+function filterSummary(state: SearchState): string[] {
+  const parts: string[] = [];
+  if (state.when !== 'any') parts.push(WHEN_OPTIONS.find((w) => w.key === state.when)?.label ?? '');
+  if (state.ages.length) {
+    const labels = state.ages.map((band) => AGE_OPTIONS.find((a) => a.key === band)?.label ?? band);
+    parts.push(`Ages ${labels.join(' & ')}`);
+  }
+  if (state.regions.length) {
+    parts.push(state.regions.map((id) => REGION_CHIPS.find((r) => r.id === id)?.label ?? id).join(' + '));
+  }
+  if (state.bookableNow) parts.push('Bookable now');
+  if (state.rainyDay) parts.push('Rainy-day');
+  if (state.free) parts.push('Free');
+  if (hasOrigin(state)) parts.push(`within ${state.radiusKm} km of you`);
+  return parts.filter(Boolean);
+}
+
 function Section({ title, note, items }: { title: string; note?: string; items: Activity[] }) {
   if (items.length === 0) return null;
   return (
@@ -93,6 +125,8 @@ export default async function SearchPage({
   const total = confirmed.length + expected.length;
   const sortSentence = SORT_OPTIONS.find((o) => o.key === state.sort)?.sentence ?? '';
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
+  const activeFilters = filterSummary(state);
+  const filtersActive = hasActiveFilters(state);
 
   return (
     <>
@@ -105,6 +139,7 @@ export default async function SearchPage({
       </header>
 
       <SearchBar state={state} />
+      <FilterRail state={state} />
 
       <div className="kf-results">
         {!result.ok ? (
@@ -132,6 +167,14 @@ export default async function SearchPage({
               “gym”), or clear your search to browse everything on.
             </p>
             {emptyExplain && <p className="kf-browse__empty-explain">{emptyExplain}</p>}
+            {filtersActive && (
+              <p className="kf-empty__body" style={{ margin: '10px 0 0' }}>
+                <Link className="kf-browse__clear" href={hrefFor(state, CLEARED_FILTERS)}>
+                  Clear all filters
+                </Link>{' '}
+                to widen your search.
+              </p>
+            )}
           </div>
         ) : (
           <>
@@ -150,6 +193,14 @@ export default async function SearchPage({
                 )}
               </p>
               <p className="kf-browse__sortline">Sorted by {sortSentence}.</p>
+              {activeFilters.length > 0 && (
+                <p className="kf-browse__filterline">
+                  Filtered by {activeFilters.join(' · ')}.{' '}
+                  <Link className="kf-browse__clear" href={hrefFor(state, CLEARED_FILTERS)}>
+                    Clear filters
+                  </Link>
+                </p>
+              )}
             </div>
 
             {result.body && <p className="kf-section__note">Source: {sourceNote(result.body)}</p>}

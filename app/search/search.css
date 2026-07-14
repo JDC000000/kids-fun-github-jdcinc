@@ -141,6 +141,145 @@
   line-height: 1;
 }
 
+/* ── Filter rails (Screen 2 + Screen 5 groups; scroll-snap chips, D10 restraint) ── */
+.kf-filters {
+  padding: 10px 0 4px;
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kf-fgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.kf-fgroup__label {
+  padding: 0 16px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+/* Horizontal, thumb-swipable rail (mobile-first). Chips snap; the row scrolls, the page doesn't. */
+.kf-fgroup__rail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 16px;
+  scrollbar-width: none;
+}
+
+.kf-fgroup__rail::-webkit-scrollbar {
+  display: none;
+}
+
+.kf-fchip {
+  scroll-snap-align: start;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px; /* generous touch target for cold/wet one-handed taps (≈WCAG 2.5.8) */
+  padding: 8px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  background: var(--surface);
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--r-chip);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background var(--motion), border-color var(--motion);
+}
+
+/* Selected = fill AND checkmark (never colour alone). */
+.kf-fchip[aria-current='true'],
+.kf-fchip[aria-pressed='true'] {
+  color: var(--confirmed-text);
+  background: var(--confirmed-bg);
+  border-color: var(--confirmed-text);
+}
+
+.kf-fchip:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
+.kf-fchip__check {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* "Near me" action island (leaf stays reserved for the primary Search CTA — anchor outline here). */
+.kf-fchip--action {
+  color: var(--ink);
+  border-color: var(--anchor);
+  border-width: 1.5px;
+}
+
+.kf-fchip--action:hover {
+  background: var(--confirmed-bg);
+}
+
+.kf-fchip--action[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.kf-fchip--near {
+  cursor: default;
+}
+
+.kf-fchip__hint {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--expected-text);
+  white-space: normal;
+  max-width: 220px;
+}
+
+.kf-filters__foot {
+  padding: 2px 16px 4px;
+}
+
+.kf-filters__clear,
+.kf-browse__clear {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--anchor);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.kf-filters__clear:focus-visible,
+.kf-browse__clear:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.kf-browse__filterline {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kf-fchip {
+    transition: none;
+  }
+}
+
 /* ── Results header (Screen 2: query in words + count + transparent sort) ── */
 .kf-browse__summary {
   padding: 14px 16px 2px;

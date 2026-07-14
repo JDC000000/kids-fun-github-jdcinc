@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { SORT_OPTIONS, hrefFor, type SearchState } from '../_lib/params';
+import { SORT_OPTIONS, hiddenStateFields, hrefFor, type SearchState } from '../_lib/params';
 
 // The primary, always-visible search control (Blueprint Screen 1/2, UXR-01). A plain
 // GET <form> so a parent can type and search with zero client JavaScript; sort and the
@@ -7,6 +7,9 @@ import { SORT_OPTIONS, hrefFor, type SearchState } from '../_lib/params';
 // Everything is URL-driven, so a search is shareable and back-button-safe.
 
 export function SearchBar({ state }: { state: SearchState }) {
+  // Carry the active filter state (areas/when/ages/quick filters/near-me/sort/cost) through
+  // a new text search so typing a query never silently drops the filters already applied.
+  const carried = hiddenStateFields(state);
   return (
     <div className="kf-sbar">
       <form className="kf-sbar__form" action="/search" method="get" role="search">
@@ -26,9 +29,11 @@ export function SearchBar({ state }: { state: SearchState }) {
             aria-label="Search kids' activities"
           />
         </div>
-        {/* Preserve current sort / cost choice when submitting a new query. */}
-        <input type="hidden" name="sort" value={state.sort} />
-        <input type="hidden" name="includeUnknownCost" value={state.includeUnknownCost ? '1' : '0'} />
+        {/* Preserve every active filter (sort, cost, areas, when, ages, quick filters, near-me)
+            when submitting a new query — derived from the same URL serialization as the chips. */}
+        {carried.map((field) => (
+          <input key={field.name} type="hidden" name={field.name} value={field.value} />
+        ))}
         <button className="kf-sbar__submit" type="submit">
           Search
         </button>
