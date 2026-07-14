@@ -8,6 +8,7 @@ import type { Adapter } from './adapter';
 import { ActiveNetAdapter, ACTIVENET_TENANTS } from '../adapters/activenet';
 import { PerfectMindAdapter, PERFECTMIND_TENANTS } from '../adapters/perfectmind';
 import { LibraryAdapter, LIBRARY_SYSTEMS } from '../adapters/library';
+import { CityCalendarAdapter, CITY_CALENDARS } from '../adapters/citycalendar';
 
 export interface SourceRegistryRow {
   id: string;
@@ -31,6 +32,9 @@ export function buildAdapterRegistry(): Map<string, Adapter> {
   }
   for (const system of LIBRARY_SYSTEMS) {
     registry.set(key(system.sourceFamily, system.sourceName), new LibraryAdapter(system));
+  }
+  for (const calendar of CITY_CALENDARS) {
+    registry.set(key(calendar.sourceFamily, calendar.sourceName), new CityCalendarAdapter(calendar));
   }
 
   return registry;
