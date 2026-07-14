@@ -1,0 +1,58 @@
+/* account-nav.css — styling for the global account touchpoint (Task 21, M4).
+ * Self-contained (not scoped under .kf) so it renders consistently on every
+ * route without depending on the preview/search stylesheets. Deliberately small:
+ * a right-aligned bar with a session label and a sign-in/out control. */
+
+.kf-account {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  min-height: 2.25rem;
+  padding: 0.4rem 1rem;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.2;
+  color: #183b24;
+  background: #f7f2e8;
+  border-bottom: 1px solid #e6eae6;
+}
+
+.kf-account__who {
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #5f7360;
+}
+
+.kf-account__who strong {
+  color: #183b24;
+  font-weight: 600;
+}
+
+.kf-account__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.7rem;
+  border-radius: 9999px;
+  color: #183b24;
+  text-decoration: none;
+  border: 1px solid #d0d6ce;
+  background: #ffffff;
+  font-weight: 500;
+}
+
+.kf-account__link:hover {
+  border-color: #758a73;
+}
+
+.kf-account__link--primary {
+  color: #f7f2e8;
+  background: #183b24;
+  border-color: #183b24;
+}
+
+.kf-account__link--primary:hover {
+  background: #102316;
+}
