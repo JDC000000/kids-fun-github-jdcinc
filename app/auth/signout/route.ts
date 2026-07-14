@@ -23,18 +23,20 @@ async function signOut(request: Request): Promise<Response> {
   const { origin, searchParams } = new URL(request.url);
   const next = searchParams.get('next') ?? '/';
 
-  const cookieStore = cookies();
-  const supabase = createSupabaseServerClient({
-    get: (name) => cookieStore.get(name),
-    set: (name, value, options) => cookieStore.set({ name, value, ...options }),
-    remove: (name, options) => cookieStore.set({ name, value: '', ...options, maxAge: 0 }),
-  });
-
   try {
+    const cookieStore = cookies();
+    const supabase = createSupabaseServerClient({
+      get: (name) => cookieStore.get(name),
+      set: (name, value, options) => cookieStore.set({ name, value, ...options }),
+      remove: (name, options) => cookieStore.set({ name, value: '', ...options, maxAge: 0 }),
+    });
     await supabase.auth.signOut();
   } catch {
-    // Best-effort: even if the server-side revocation call fails, the redirect
-    // proceeds; the SSR client still clears the local session cookies.
+    // Best-effort: even if constructing the SSR client (e.g. unset
+    // SUPABASE_URL/SUPABASE_ANON_KEY) or the server-side revocation call fails,
+    // the redirect still proceeds; the SSR client clears the local session
+    // cookies when available. Mirrors /api/me's never-500 posture so signout
+    // can never crash on a misconfigured environment.
   }
 
   return NextResponse.redirect(`${origin}${next}`);
