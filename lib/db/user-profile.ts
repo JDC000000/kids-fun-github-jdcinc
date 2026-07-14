@@ -13,6 +13,7 @@
 // (RLS-enforcing, USER_DATABASE_URL role), NEVER lib/db/client.ts's service pool,
 // so an owner can only ever touch their own row.
 import { withUserContext, type UserScopedQuery } from './user-scoped-client';
+import type { ProfilePatch } from '../user/profile-validate';
 
 export interface UserProfile {
   id: string;
@@ -62,6 +63,64 @@ export async function ensureUserProfile(
 /** Owner-scoped read of the current user's profile. Null if none exists yet. */
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {
   return withUserContext(userId, (db) => readProfile(db, userId));
+}
+
+// Editable columns → their patch keys. Order fixed so the generated SQL is stable
+// (aids testing/logging). google_identity, id, home_geo and the timestamps are
+// deliberately absent: identity/geocoded/auto-managed, not user-editable here.
+const UPDATABLE_COLUMNS = ['home_postal', 'saved_child_ages', 'email_opt_in'] as const;
+
+/**
+ * Owner-scoped partial update of the current user's profile.
+ *
+ * Runs in ONE RLS-enforced transaction: first an idempotent
+ * `INSERT ... ON CONFLICT DO NOTHING` self-heals the row if it wasn't provisioned
+ * yet (auth.uid() = id satisfies the owner INSERT policy), then an UPDATE writes
+ * only the fields present in `patch` (PATCH semantics — an absent key is left
+ * untouched). The owner UPDATE policy (auth.uid() = id) guarantees a signed-in
+ * user can only ever mutate their own row; there is no service-pool path here.
+ * Returns the full, updated profile. A `patch` with no recognized fields is a
+ * no-op that simply returns the current row (callers should reject empty patches
+ * upstream via parseProfilePatch, but this stays safe regardless).
+ */
+export async function updateUserProfile(userId: string, patch: ProfilePatch): Promise<UserProfile> {
+  return withUserContext(userId, async (db) => {
+    // Self-heal: ensure the row exists before updating (mirrors ensureUserProfile
+    // but without needing google_identity — that's set at first-login provisioning).
+    await db.query(
+      `INSERT INTO user_profile (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
+      [userId]
+    );
+
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    for (const col of UPDATABLE_COLUMNS) {
+      if (col in patch) {
+        params.push((patch as Record<string, unknown>)[col]);
+        sets.push(`${col} = $${params.length}`);
+      }
+    }
+
+    if (sets.length === 0) {
+      const current = await readProfile(db, userId);
+      if (!current) {
+        throw new Error('updateUserProfile: profile not visible after upsert (RLS/role misconfiguration?)');
+      }
+      return current;
+    }
+
+    params.push(userId);
+    const rows = await db.query<UserProfile>(
+      `UPDATE user_profile SET ${sets.join(', ')} WHERE id = $${params.length}
+         RETURNING ${PROFILE_COLUMNS}`,
+      params
+    );
+    if (!rows[0]) {
+      // Unreachable in a correct config: we just ensured the row under this uid.
+      throw new Error('updateUserProfile: no row updated (RLS/role misconfiguration?)');
+    }
+    return rows[0];
+  });
 }
 
 async function readProfile(db: UserScopedQuery, userId: string): Promise<UserProfile | null> {

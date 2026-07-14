@@ -1,20 +1,29 @@
-// app/api/me/route.ts — GET /api/me: the session-check endpoint.
+// app/api/me/route.ts — the current-user endpoint.
 //
-// Task 21 (M4, account/session foundation). Reports whether the current request
-// is signed in (via the Supabase SSR session cookies), and if so, ensures the
-// user's user_profile row exists (first-login self-heal) and reports it. Search
-// and browse never depend on this — it is a pure account probe the header polls,
-// so it must NEVER 500: a missing/misconfigured auth or DB reads as "not signed
-// in" / "profile unknown", never a crash (mirrors the never-load-bearing posture
-// of app/api/analytics/event/route.ts).
+// GET  /api/me  — Task 21 (M4): the session-check probe. Reports whether the
+//   request is signed in and, if so, self-heals + reports the user_profile row.
+//   AccountNav polls it, so it must NEVER 500: a missing/misconfigured auth or DB
+//   reads as "not signed in" / "profile unknown", never a crash (mirrors the
+//   never-load-bearing posture of app/api/analytics/event/route.ts).
 //
-// Response (always 200):
+// PATCH /api/me — Task 24 (M4): let the signed-in user edit their own profile
+//   (home_postal / saved_child_ages / email_opt_in). Unlike GET this is a
+//   deliberate write, so it uses real status codes:
+//     • 401 when not signed in (anonymous or unresolvable session),
+//     • 400 on a malformed body / invalid field,
+//     • 200 with the updated profile on success,
+//     • 500 only on a genuine unexpected write failure.
+//   The write goes through withUserContext (RLS `authenticated` role) inside
+//   updateUserProfile — never the service pool — so a user can only touch their
+//   own row.
+//
+// GET response (always 200):
 //   anonymous     -> { authenticated: false, user: null, profile: null }
 //   signed in     -> { authenticated: true,  user: { id, email }, profile: { exists, id } }
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createSupabaseServerClient } from '@/lib/db/auth';
-import { ensureUserProfile, getUserProfile } from '@/lib/db/user-profile';
+import { getRequestUser } from '@/lib/db/session-user';
+import { ensureUserProfile, getUserProfile, updateUserProfile } from '@/lib/db/user-profile';
+import { parseProfilePatch } from '@/lib/user/profile-validate';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // Supabase SSR + pg pool need Node, not edge.
@@ -25,27 +34,10 @@ interface ProfileStatus {
 }
 
 export async function GET(): Promise<NextResponse> {
-  // 1. Resolve the session. Any failure (unset SUPABASE_URL/ANON_KEY, an expired
-  //    or malformed cookie) reads the same as anonymous for a session probe.
-  let userId: string | null = null;
-  let email: string | null = null;
-  try {
-    const cookieStore = cookies();
-    const supabase = createSupabaseServerClient({
-      get: (name) => cookieStore.get(name),
-      set: (name, value, options) => cookieStore.set({ name, value, ...options }),
-      remove: (name, options) => cookieStore.set({ name, value: '', ...options, maxAge: 0 }),
-    });
-    const { data } = await supabase.auth.getUser();
-    if (data.user) {
-      userId = data.user.id;
-      email = data.user.email ?? null;
-    }
-  } catch {
-    return NextResponse.json({ authenticated: false, user: null, profile: null });
-  }
-
-  if (!userId) {
+  // 1. Resolve the session. getRequestUser never throws — any failure (unset
+  //    SUPABASE_URL/ANON_KEY, an expired/malformed cookie) reads as anonymous.
+  const user = await getRequestUser();
+  if (!user) {
     return NextResponse.json({ authenticated: false, user: null, profile: null });
   }
 
@@ -54,9 +46,9 @@ export async function GET(): Promise<NextResponse> {
   //    USER_DATABASE_URL must not fail the probe — report profile unknown.
   let profile: ProfileStatus = { exists: false, id: null };
   try {
-    let row = await getUserProfile(userId);
+    let row = await getUserProfile(user.userId);
     if (!row) {
-      ({ profile: row } = await ensureUserProfile(userId, email));
+      ({ profile: row } = await ensureUserProfile(user.userId, user.email));
     }
     profile = { exists: true, id: row.id };
   } catch {
@@ -65,7 +57,40 @@ export async function GET(): Promise<NextResponse> {
 
   return NextResponse.json({
     authenticated: true,
-    user: { id: userId, email },
+    user: { id: user.userId, email: user.email },
     profile,
   });
+}
+
+export async function PATCH(request: Request): Promise<NextResponse> {
+  // 1. Must be signed in. A null user (anonymous or unresolvable session) is a
+  //    clean 401, not a crash.
+  const user = await getRequestUser();
+  if (!user) {
+    return NextResponse.json({ ok: false, error: 'not signed in' }, { status: 401 });
+  }
+
+  // 2. Parse the body.
+  let json: unknown;
+  try {
+    const raw = await request.text();
+    json = raw.length > 0 ? JSON.parse(raw) : null;
+  } catch {
+    return NextResponse.json({ ok: false, error: 'invalid JSON' }, { status: 400 });
+  }
+
+  // 3. Validate into a normalized patch (unknown/invalid fields rejected here).
+  const parsed = parseProfilePatch(json);
+  if (!parsed.ok) {
+    return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
+  }
+
+  // 4. RLS-scoped write. A genuine DB failure is a real 500 (this is a write, not
+  //    the never-500 probe) — with a generic message so nothing internal leaks.
+  try {
+    const profile = await updateUserProfile(user.userId, parsed.value);
+    return NextResponse.json({ ok: true, profile });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'could not update profile' }, { status: 500 });
+  }
 }
