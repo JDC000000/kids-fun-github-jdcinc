@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { hasOrigin, hrefFor, type SearchState } from '../_lib/params';
+import { hasNearMeCoords, hrefFor, type SearchState } from '../_lib/params';
 
 // "Near me" is the one control that can't be a plain link: it needs the browser
 // geolocation API (client-only). On success it writes the resolved coords into the URL
@@ -20,7 +20,7 @@ const round = (n: number): number => Number(n.toFixed(COORD_DP));
 export function NearMeButton({ state }: { state: SearchState }) {
   const router = useRouter();
   const [status, setStatus] = useState<'idle' | 'locating' | 'error'>('idle');
-  const active = hasOrigin(state);
+  const active = hasNearMeCoords(state);
 
   function locate() {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -31,7 +31,14 @@ export function NearMeButton({ state }: { state: SearchState }) {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setStatus('idle');
-        router.push(hrefFor(state, { lat: round(pos.coords.latitude), lng: round(pos.coords.longitude) }));
+        // Browser near-me wins over any saved-location intent (mutually exclusive origins).
+        router.push(
+          hrefFor(state, {
+            lat: round(pos.coords.latitude),
+            lng: round(pos.coords.longitude),
+            useSavedLocation: false,
+          }),
+        );
       },
       () => setStatus('error'),
       { enableHighAccuracy: false, timeout: 10_000, maximumAge: 5 * 60_000 },

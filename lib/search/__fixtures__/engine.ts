@@ -2,6 +2,7 @@
 
 import type { GeoPoint } from '../types';
 import type { Geocoder } from '../../geo/origin';
+import { fsaGeocoder } from '../../geo/postal-fsa';
 import { RegionHierarchy } from '../../geo/region';
 import { FixtureAliasResolver } from '../expand';
 import { InMemoryListingRepository } from '../repository';
@@ -10,7 +11,9 @@ import { REGIONS } from './regions';
 import { ALIAS_SEED } from './aliases';
 import { FIXTURE_LISTINGS } from './listings';
 
-/** Minimal postal→point map for the saved-home origin mode (BR-06). */
+// Minimal postal→point map for the saved-home origin mode (BR-06). Retained as a small,
+// self-contained test double for lib/geo/origin's resolveOrigin (tests/geo/radius.test.ts);
+// the API engine below now uses the fuller Metro-Vancouver `fsaGeocoder` (Task 29).
 const POSTAL_FIXTURE: Record<string, GeoPoint> = {
   V5L: { lat: 49.28, lng: -123.07 }, // East Van
   V6K: { lat: 49.264, lng: -123.165 }, // West Side
@@ -40,7 +43,9 @@ export function makeFixtureEngine(): FixtureEngineBundle {
     repository,
     aliasResolver,
     regionHierarchy,
-    geocoder: fixtureGeocoder,
+    // FSA-level saved-home origin, consistent with database mode (Task 29). The 3-entry
+    // fixtureGeocoder above stays only as a direct test double for resolveOrigin.
+    geocoder: fsaGeocoder,
   });
   return { engine, aliasResolver, regionHierarchy, repository };
 }
