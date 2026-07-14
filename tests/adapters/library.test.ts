@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { loadLibraryAdapters, LIBRARY_SYSTEMS, LibraryAdapter, getLibrarySystem } from '../../worker/adapters/library';
+import type { LibrarySystemConfig } from '../../worker/adapters/library/config';
 
 // G-T9-1/2 — Library adapter scaffold (TSD §5.1 Adapter B).
 describe('Library adapter scaffold (G-T9-1/2)', () => {
@@ -34,8 +35,99 @@ describe('Library adapter scaffold (G-T9-1/2)', () => {
     expect(toddler.venueName).toContain('City Centre');
   });
 
-  it('live-parses the approved RPL BiblioCommons gateway shape without headless rendering', async () => {
+  // KIDS FUN Task 8 (2026-07-13) — RPL migrated OFF the ToS-ambiguous JSON
+  // gateway ONTO the ToS-permitted BiblioCommons RSS/XML feed (same slug
+  // `yourlibrary`), reusing Task 5's generic RSS parser. Venue geo now comes
+  // from the feed's bc:location block (no config geocoder fallback needed).
+  const RPL_RSS_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:bc="http://bibliocommons.com/rss/1.0/modules/event/" version="2.0">
+<channel>
+<title><![CDATA[Events | Richmond Public Library]]></title>
+<link>https://yourlibrary.bibliocommons.com/events</link>
+<description><![CDATA[Events RSS feed]]></description>
+<language><![CDATA[en-CA]]></language>
+<item>
+<title><![CDATA[DUPLO Free Play]]></title>
+<description><![CDATA[<p>Ideal for children ages 2-5 with a caregiver.</p><p>Registration Required.</p>]]></description>
+<link>https://yourlibrary.bibliocommons.com/events/6a2b26b67550c8bf9f5cab8e</link>
+<guid isPermaLink="true">https://yourlibrary.bibliocommons.com/events/6a2b26b67550c8bf9f5cab8e</guid>
+<category><![CDATA[Children]]></category>
+<bc:start_date>2026-09-24T18:00:00Z</bc:start_date>
+<bc:end_date>2026-09-24T18:30:00Z</bc:end_date>
+<bc:is_cancelled>false</bc:is_cancelled>
+<bc:location><bc:id>STV</bc:id><bc:name>Steveston Library (Easthope Hub)</bc:name><bc:number>4320</bc:number><bc:street>Moncton St</bc:street><bc:city>Richmond</bc:city><bc:zip>V7E 6T4</bc:zip><bc:state>BC</bc:state><bc:latitude>49.12546</bc:latitude><bc:longitude>-123.1783832</bc:longitude></bc:location>
+</item>
+<item>
+<title><![CDATA[Cancelled Program]]></title>
+<description><![CDATA[<p>Cancelled.</p>]]></description>
+<link>https://yourlibrary.bibliocommons.com/events/6a2b26b67550c8bf9f5cab8f</link>
+<bc:start_date>2026-09-25T18:00:00Z</bc:start_date>
+<bc:is_cancelled>true</bc:is_cancelled>
+<bc:location><bc:name>Brighouse</bc:name><bc:latitude>49.163814</bc:latitude><bc:longitude>-123.1409957</bc:longitude></bc:location>
+</item>
+</channel>
+</rss>`;
+
+  it('migrates RPL to the ToS-permitted RSS feed (not the JSON gateway) and parses venue geo from the feed', async () => {
+    const rpl = getLibrarySystem('rpl')!;
+    // Migration invariant: RSS is configured and the JSON gateway URL is gone,
+    // so RPL can never silently fall back onto the ToS-ambiguous gateway path.
+    expect(rpl.rssEventsUrl).toContain('gateway.bibliocommons.com/v2/libraries/yourlibrary/rss/events');
+    expect(rpl.gatewayEventsUrl).toBeUndefined();
+
     process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'rpl';
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => RPL_RSS_FIXTURE,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const adapter = new LibraryAdapter(rpl);
+    const records = await adapter.extract(await adapter.fetch());
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const firstFetchCall = fetchMock.mock.calls[0] as unknown[];
+    expect(String(firstFetchCall[0])).toContain('gateway.bibliocommons.com/v2/libraries/yourlibrary/rss/events');
+
+    // The cancelled item is skipped.
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      sourceRecordId: '6a2b26b67550c8bf9f5cab8e',
+      title: 'DUPLO Free Play',
+      venueName: 'Steveston Library (Easthope Hub)',
+      venueAddress: '4320 Moncton St, Richmond, BC V7E 6T4',
+      venueLat: 49.12546, // geo from the feed, not the config fallback
+      venueLng: -123.1783832,
+      venueMunicipalityName: 'Richmond',
+      startDatetimeUtc: '2026-09-24T18:00:00.000Z',
+      endDatetimeUtc: '2026-09-24T18:30:00.000Z',
+      costStatus: 'free',
+      categoryHint: 'indoor_play',
+      sourceUrl: 'https://yourlibrary.bibliocommons.com/events/6a2b26b67550c8bf9f5cab8e',
+    });
+    expect(records[0].ageText).toContain('ages 2-5');
+    // Dedup key stays keyed on the RSS event-instance id.
+    expect(adapter.dedupKeys(records[0])).toEqual({
+      key: 'library::rpl::6a2b26b67550c8bf9f5cab8e',
+    });
+  });
+
+  it('retains the generic BiblioCommons JSON gateway parser for any gateway-only system', async () => {
+    // No launch system uses the JSON gateway after Task 8, but the parser is
+    // kept as generic capability; this guards it against silent regression.
+    const gatewaySystem: LibrarySystemConfig = {
+      systemKey: 'gwonly',
+      systemName: 'Gateway-Only Test Library',
+      platform: 'bibliocommons',
+      sourceFamily: 'library_bibliocommons',
+      sourceName: 'Gateway-Only Test Library BiblioEvents',
+      feedBaseUrl: 'https://gwonly.bibliocommons.com/events',
+      gatewayEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/gwonly/events',
+      liveEventsLimit: 20,
+    };
+    process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'gwonly';
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -57,7 +149,7 @@ describe('Library adapter scaffold (G-T9-1/2)', () => {
               },
             },
           },
-          locations: { S: { name: 'Steveston Library (Easthope Hub)' } },
+          locations: { S: { name: 'Central Branch' } },
           eventAudiences: { 'aud-preschool': { name: 'Children-Preschool' } },
           eventTypes: { 'type-child': { name: 'Child Development' } },
         },
@@ -65,31 +157,21 @@ describe('Library adapter scaffold (G-T9-1/2)', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const rpl = getLibrarySystem('rpl')!;
-    const adapter = new LibraryAdapter(rpl);
+    const adapter = new LibraryAdapter(gatewaySystem);
     const records = adapter.extract(await adapter.fetch());
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    const firstFetchCall = fetchMock.mock.calls[0] as unknown[];
-    expect(String(firstFetchCall[0])).toContain('gateway.bibliocommons.com/v2/libraries/yourlibrary/events');
+    const gwFetchCall = fetchMock.mock.calls[0] as unknown[];
+    expect(String(gwFetchCall[0])).toContain('gateway.bibliocommons.com/v2/libraries/gwonly/events');
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       sourceRecordId: 'evt-1',
       title: 'DUPLO Free Play',
-      venueName: 'Steveston Library (Easthope Hub)',
-      venueAddress: '4320 Moncton St, Richmond, BC V7E 6T4',
-      venueLat: 49.12546,
-      venueLng: -123.1783832,
-      venueMunicipalityName: 'Richmond',
-      venueDisplayArea: 'Steveston',
+      venueName: 'Central Branch',
       startDatetimeUtc: '2026-09-24T18:00:00.000Z',
-      endDatetimeUtc: '2026-09-24T18:30:00.000Z',
-      costStatus: 'free',
       categoryHint: 'indoor_play',
-      sourceUrl: 'https://yourlibrary.bibliocommons.com/v2/events/evt-1',
-      locationUrl: 'https://www.google.com/maps/search/?api=1&query=4320%20Moncton%20St%20Richmond%20BC%20V7E%206T4',
+      sourceUrl: 'https://gwonly.bibliocommons.com/v2/events/evt-1',
     });
     expect(records[0].ageText).toContain('Children-Preschool');
-    expect(records[0].ageText).toContain('ages 2-5');
   });
 });
