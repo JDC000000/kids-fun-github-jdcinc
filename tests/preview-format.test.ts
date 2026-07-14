@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ageGuide,
   bookingTag,
   daysSince,
   formatAges,
@@ -7,6 +8,7 @@ import {
   formatCost,
   formatDistance,
   formatWhen,
+  practicalFacts,
   statusMeta,
 } from '../app/preview/_data/format';
 import { mapSearchItemToActivity, searchApiUrl } from '../app/preview/_data/search-api';
@@ -24,6 +26,44 @@ describe('formatAges', () => {
   it('renders wide bands as "All ages" or "Ages n+"', () => {
     expect(formatAges(0, 99)).toBe('All ages');
     expect(formatAges(16, 99)).toBe('Ages 16+');
+  });
+});
+
+describe('ageGuide', () => {
+  it('names a single-band range and calls it one age group', () => {
+    const g = ageGuide(2, 4);
+    expect(g.range).toBe('Ages 2–4');
+    expect(g.band).toBe('Toddlers');
+    expect(g.siblingFit).toContain('one age group');
+    expect(g.unspecified).toBe(false);
+  });
+  it('joins first and last band across a wide range and reads sibling-friendly', () => {
+    const g = ageGuide(0, 12);
+    expect(g.band).toBe('Babies to tweens');
+    expect(g.siblingFit).toContain('siblings of different ages');
+  });
+  it('flags an unspecified (fully open) range without overclaiming', () => {
+    const g = ageGuide(0, 18);
+    expect(g.unspecified).toBe(true);
+    expect(g.siblingFit).toContain("doesn't list an age limit");
+  });
+  it('reads a two-band span as close-in-age siblings', () => {
+    const g = ageGuide(5, 12); // school-age kids + tweens
+    expect(g.band).toBe('School-age kids to tweens');
+    expect(g.siblingFit).toContain('two age groups');
+  });
+});
+
+describe('practicalFacts', () => {
+  it('always states indoor vs outdoor and adds only true qualities', () => {
+    expect(practicalFacts({ indoor: true, rainyDay: true, dropIn: true })).toEqual([
+      'Indoor',
+      'Rainy-day friendly',
+      'No registration needed',
+    ]);
+  });
+  it('drops qualities that are not true and reads outdoor when not indoor', () => {
+    expect(practicalFacts({ indoor: false, rainyDay: false, dropIn: false })).toEqual(['Outdoor']);
   });
 });
 
@@ -150,5 +190,42 @@ describe('search API mapping', () => {
     expect(activity.sourceUrl).toBe('https://yourlibrary.bibliocommons.com/v2/events/live-1');
     expect(activity.area).toBe('Steveston');
     expect(activity.distanceKm).toBeGreaterThan(10);
+    expect(activity.ageNotes).toBeUndefined(); // absent when the source has none
+  });
+
+  it('surfaces source-authored age_notes verbatim when present', () => {
+    const activity = mapSearchItemToActivity({
+      distanceKm: 2,
+      listing: {
+        id: 'live-2',
+        activityName: 'Family Swim',
+        primaryCategoryKey: 'public_swim',
+        categoryTags: ['public_swim'],
+        venueName: 'Templeton Pool',
+        organisation: 'City of Vancouver',
+        descriptionSnippet: 'Warm shallow end.',
+        suitabilityTags: ['indoor'],
+        startDatetimeUtc: '2026-07-19T17:00:00.000Z',
+        endDatetimeUtc: '2026-07-19T18:30:00.000Z',
+        costStatus: 'known',
+        costMinCad: 3,
+        costMaxCad: 4,
+        statusState: 'bookable_open',
+        confidenceLabel: 'official',
+        lastCheckedAtUtc: '2026-07-13T20:00:00.000Z',
+        ageMinMonths: 0,
+        ageMaxMonths: 144,
+        ageNotes: 'Children under 6 must stay within arm’s reach of an adult.',
+        geo: { lat: 49.28, lng: -123.07 },
+        displayArea: 'Hastings-Sunrise',
+        neighbourhood: 'Hastings-Sunrise',
+        municipalityId: 'Vancouver',
+        sourceUrl: 'https://vancouver.ca/templeton',
+        bookingUrl: null,
+        locationUrl: null,
+      },
+    });
+
+    expect(activity.ageNotes).toBe('Children under 6 must stay within arm’s reach of an adult.');
   });
 });

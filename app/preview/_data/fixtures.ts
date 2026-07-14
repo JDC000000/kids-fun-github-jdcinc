@@ -62,6 +62,7 @@ export const ACTIVITIES: Activity[] = [
     rainyDay: true,
     dropIn: false,
     descriptionSnippet: 'Warm shallow end suits toddlers; lifeguards on deck. Book a slot to guarantee entry.',
+    ageNotes: 'Swim Safe ratio: children under 6 must be within arm’s reach of an adult in the water.',
     parentNotes: ['Family change rooms', 'Toddler life jackets available', 'Parking limited — transit easier'],
   },
   {

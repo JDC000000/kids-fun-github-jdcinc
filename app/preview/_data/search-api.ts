@@ -20,6 +20,7 @@ export interface ListingRecordDto {
   lastCheckedAtUtc: string | null;
   ageMinMonths: number | null;
   ageMaxMonths: number | null;
+  ageNotes?: string | null;
   geo: { lat: number; lng: number } | null;
   displayArea: string | null;
   neighbourhood: string | null;
@@ -103,6 +104,7 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     dropIn: tags.has('drop_in'),
     descriptionSnippet: l.descriptionSnippet || `${l.activityName} at ${l.venueName}.`,
     parentNotes: [`Source: ${hostLabel(sourceUrl)}`, `Status: ${mapStatus(l.statusState).replaceAll('_', ' ')}`],
+    ...(l.ageNotes ? { ageNotes: l.ageNotes } : {}),
   };
 }
 

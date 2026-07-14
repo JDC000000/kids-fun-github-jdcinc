@@ -609,6 +609,48 @@
   margin: 0;
   padding-left: 18px;
 }
+
+/* Who it's for — age-band clarity + honest sibling read. */
+.kf-guide__band {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.kf-guide__fit {
+  margin: 0;
+}
+.kf-guide__note {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--playground-sand);
+  background: var(--canvas);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+/* Good to know — practical fact chips (no colour-only meaning; each carries its label). */
+.kf-facts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kf-fact {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--r-chip);
+  border: 1px solid var(--hairline);
+  background: var(--canvas);
+  color: var(--ink-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
 /* Honesty block — amber, only when relevant, above booking. */
 .kf-honesty {
   margin: 16px;
