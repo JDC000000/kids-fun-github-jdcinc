@@ -79,12 +79,27 @@ export interface AnalyticsSummary {
   topSearchFilters: { filter: string; count: number }[];
 }
 
+/** One parent-submitted "Report wrong info" correction, for the dashboard's
+ *  "Corrections reported" list. Read-only visibility for an operator/triager —
+ *  the eventual triage workflow (resolve/archive) is Screen 7's data-health slice. */
+export interface RecentCorrection {
+  id: string;
+  occurrenceId: string;
+  /** activity_occurrence.activity_name, or null if the occurrence was since removed. */
+  activityName: string | null;
+  issueType: string;
+  note: string | null;
+  status: string;
+  createdAt: string | null;
+}
+
 export interface AdminDashboardData {
   generatedAt: string;
   registry: SourceRegistrySummary;
   ingestion: IngestionSourceHealth[];
   analytics: AnalyticsSummary;
   alerts: HealthAlerts;
+  corrections: RecentCorrection[];
 }
 
 /** "Enabled/live" source = terms reviewed and allowed (terms_status = 'allowed'). */
@@ -97,6 +112,8 @@ export const RECENT_FAILURE_LIMIT = 20;
 /** A source is "stale" once its last successful check is older than grace × its cadence.
  *  2 = one full missed cycle is tolerated (could be transient); two missed = a real problem. */
 export const STALE_CADENCE_GRACE = 2;
+/** Cap on rows in the "Corrections reported" list (the dashboard is a scan, not a queue). */
+export const RECENT_CORRECTIONS_LIMIT = 20;
 /** Fallback cadence when a source somehow has none configured (baseline is NOT NULL, so defensive). */
 export const DEFAULT_CADENCE_SECONDS = 24 * 60 * 60;
 
@@ -474,13 +491,58 @@ export async function getHealthAlerts(nowMs: number = Date.now()): Promise<Healt
   };
 }
 
+/**
+ * Recent parent-submitted correction reports (the "Report wrong info" affordance on
+ * the activity detail page). Newest first, non-archived only, joined to the occurrence
+ * for a human label. Read-only visibility — the actual triage (resolve/archive) is a
+ * later data-health slice; this just surfaces that reports are arriving.
+ */
+export async function getRecentCorrections(): Promise<RecentCorrection[]> {
+  const rows = await query<{
+    id: string;
+    occurrence_id: string;
+    activity_name: string | null;
+    issue_type: string;
+    note: string | null;
+    status: string;
+    created_at: Date | null;
+  }>(
+    `
+    SELECT
+      cr.id,
+      cr.occurrence_id,
+      o.activity_name,
+      cr.issue_type,
+      cr.note,
+      cr.status,
+      cr.created_at
+    FROM correction_report cr
+    LEFT JOIN activity_occurrence o ON o.id = cr.occurrence_id
+    WHERE cr.archived_at IS NULL
+    ORDER BY cr.created_at DESC
+    LIMIT $1::int
+    `,
+    [RECENT_CORRECTIONS_LIMIT]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    occurrenceId: r.occurrence_id,
+    activityName: r.activity_name,
+    issueType: r.issue_type,
+    note: r.note,
+    status: r.status,
+    createdAt: toIso(r.created_at),
+  }));
+}
+
 /** One call that assembles everything the dashboard renders. */
 export async function getAdminDashboardData(): Promise<AdminDashboardData> {
-  const [registry, ingestion, analytics, alerts] = await Promise.all([
+  const [registry, ingestion, analytics, alerts, corrections] = await Promise.all([
     getSourceRegistrySummary(),
     getIngestionHealth(),
     getAnalyticsSummary(),
     getHealthAlerts(),
+    getRecentCorrections(),
   ]);
   return {
     generatedAt: new Date().toISOString(),
@@ -488,5 +550,6 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
     ingestion,
     analytics,
     alerts,
+    corrections,
   };
 }

@@ -166,7 +166,7 @@ export default async function DetailPage({ params }: { params: { id: string } })
               ⌖ Open in maps
             </a>
           )}
-          <ReportWrongInfo />
+          <ReportWrongInfo occurrenceId={params.id} />
         </div>
       </section>
 
