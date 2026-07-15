@@ -10,6 +10,8 @@ import { getUserProfile } from '@/lib/db/user-profile';
 import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { SearchBar } from './_components/SearchBar';
 import { FilterRail, type SavedLocationInfo } from './_components/FilterRail';
+import { SearchResultsView } from './_components/SearchResultsView';
+import { buildMarkers, geoIndex } from './_lib/markers';
 import {
   AGE_OPTIONS,
   CLEARED_FILTERS,
@@ -162,6 +164,16 @@ export default async function SearchPage({
   const activities = result.body ? mapSearchResponseToActivities(result.body) : [];
   const { confirmed, expected } = partitionSections(activities);
   const total = confirmed.length + expected.length;
+
+  // Map view (Task 37): coordinates come off the raw /api/search items (the parent-facing
+  // Activity DTO drops geo) and are re-attached by id, so the marker set is exactly the
+  // rendered result set. A PUBLIC Mapbox token (pk.*) is safe in the browser by design —
+  // prefer the dedicated NEXT_PUBLIC_MAP_KEY, and fall back to the verified-public geocoding
+  // key so the map works wherever Task 36's key is already configured. A secret (sk.*) token
+  // must never be placed in either of these vars.
+  const geo = geoIndex(result.body ? [...result.body.results, ...result.body.expected] : []);
+  const markers = buildMarkers(confirmed, expected, geo);
+  const mapToken = (process.env.NEXT_PUBLIC_MAP_KEY ?? process.env.GEOCODING_API_KEY ?? '').trim();
   const sortSentence = SORT_OPTIONS.find((o) => o.key === state.sort)?.sentence ?? '';
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
   const activeFilters = filterSummary(state, savedLocation);
@@ -270,12 +282,14 @@ export default async function SearchPage({
 
             {result.body && <p className="kf-section__note">Source: {sourceNote(result.body)}</p>}
 
-            <Section title="Confirmed from approved sources" items={confirmed} />
-            <Section
-              title="Expected / not yet posted"
-              note="Kept separate from confirmed — we never blur the two. Each card carries its own status and recheck date."
-              items={expected}
-            />
+            <SearchResultsView markers={markers} token={mapToken} totalResults={total}>
+              <Section title="Confirmed from approved sources" items={confirmed} />
+              <Section
+                title="Expected / not yet posted"
+                note="Kept separate from confirmed — we never blur the two. Each card carries its own status and recheck date."
+                items={expected}
+              />
+            </SearchResultsView>
           </>
         )}
       </div>

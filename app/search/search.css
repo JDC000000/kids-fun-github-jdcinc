@@ -329,3 +329,227 @@
   border-radius: 12px;
   text-align: left;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Map view — list/map toggle + Mapbox surface (Task 37, G4).
+ * Civic field-guide: warm-paper chrome, hairline rules, Leaf reserved for the
+ * active toggle; confirmed vs expected never blur — solid vs outlined pins.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── List / Map segmented toggle ── */
+.kf-viewtoggle {
+  display: inline-flex;
+  gap: 4px;
+  margin: 4px 0 14px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: var(--e-100);
+}
+
+.kf-viewtoggle__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 16px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background var(--motion), color var(--motion);
+}
+
+.kf-viewtoggle__btn:hover {
+  color: var(--ink);
+}
+
+.kf-viewtoggle__btn--on {
+  color: #ffffff;
+  background: var(--leaf);
+}
+
+.kf-viewtoggle__btn--on:hover {
+  color: #ffffff;
+}
+
+.kf-viewtoggle__btn:focus-visible {
+  outline: 2px solid var(--anchor);
+  outline-offset: 2px;
+}
+
+.kf-viewtoggle__glyph {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* ── Map surface ── */
+.kf-map__note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+}
+
+.kf-map {
+  position: relative;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--e-200);
+}
+
+.kf-map__canvas {
+  width: 100%;
+  height: 62vh;
+  min-height: 340px;
+  max-height: 560px;
+  background: var(--canvas);
+}
+
+.kf-map--fallback,
+.kf-map--loading {
+  padding: 28px 22px;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.kf-map--loading {
+  color: var(--ink-secondary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.kf-map__fallback-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.kf-map__fallback-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-secondary);
+}
+
+.kf-map__fallback-body code {
+  padding: 1px 5px;
+  font-size: 12px;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+
+.kf-map__error {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--expected-text);
+  background: var(--expected-bg);
+  border: 1px solid var(--expected-text);
+  border-radius: 10px;
+}
+
+/* ── Result pins (DOM markers) ── */
+.kf-map__pin {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--leaf);
+  border: 2px solid #ffffff;
+  box-shadow: var(--e-200);
+  cursor: pointer;
+}
+
+.kf-map__pin::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+  transform: translate(-50%, -50%);
+}
+
+/* Expected / not-yet-posted: outlined amber — visually distinct from confirmed. */
+.kf-map__pin--expected {
+  background: var(--expected-bg);
+  border-color: var(--expected-text);
+}
+
+.kf-map__pin--expected::after {
+  background: var(--expected-text);
+}
+
+.kf-map__pin:focus-visible {
+  outline: 2px solid var(--anchor);
+  outline-offset: 2px;
+}
+
+/* ── Popup (overrides Mapbox defaults, scoped under .kf) ── */
+.kf .mapboxgl-popup-content {
+  padding: 0;
+  font-family: inherit;
+  border-radius: 12px;
+  box-shadow: var(--e-300);
+  overflow: hidden;
+}
+
+.kf-map__pop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  text-decoration: none;
+  background: var(--surface);
+}
+
+.kf-map__pop-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.kf-map__pop-venue {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
+.kf-map__pop-area {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.kf-map__pop-cta {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--leaf-hover);
+}
+
+.kf-map__pop:hover .kf-map__pop-cta {
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kf-viewtoggle__btn {
+    transition: none;
+  }
+}
