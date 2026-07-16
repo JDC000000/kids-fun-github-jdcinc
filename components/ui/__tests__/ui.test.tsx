@@ -46,6 +46,23 @@ describe('Button', () => {
     const html = renderToStaticMarkup(<Button className="kf-home__search-btn">Search</Button>);
     expect(html).toContain('kf-home__search-btn');
   });
+
+  it('supports the danger variant for destructive actions', () => {
+    const html = renderToStaticMarkup(<Button variant="danger">Delete my account</Button>);
+    expect(html).toContain('data-variant="danger"');
+    expect(html).toContain('Delete my account');
+  });
+
+  it('forwards onClick-style usage props for client consumers (name/value/form)', () => {
+    const html = renderToStaticMarkup(
+      <Button name="action" value="save" form="savebar" fullWidth>
+        Save search
+      </Button>,
+    );
+    expect(html).toContain('name="action"');
+    expect(html).toContain('value="save"');
+    expect(html).toContain('form="savebar"');
+  });
 });
 
 describe('Input', () => {

@@ -9,13 +9,15 @@ import styles from './Button.module.css';
  *   primary   = Leaf fill + Forest-ink text (the one action colour, D10)
  *   secondary = white/surface fill + neutral border + ink text
  *   ghost     = transparent, ink text (low-emphasis inline action)
+ *   danger    = red-brown fill + white text for destructive actions
+ *               (e.g. account deletion) — factual, not alarming (Workbook V2 §3)
  *
  * Server-compatible: no hooks, no `use client`. It renders a native <button>,
  * so a parent Server Component (e.g. the home hero's plain <form>) can use it
  * with zero client JS. Attach handlers from a client component if you need them.
  * All native button props (type, disabled, aria-*, form actions…) pass through.
  */
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;

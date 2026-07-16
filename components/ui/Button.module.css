@@ -51,6 +51,18 @@
   background: var(--kf-neutral-100);
 }
 
+/* danger — destructive action (e.g. account deletion). Red-brown fill + white
+ * text: serious but factual, never alarming neon (Workbook V2 §3). */
+.danger {
+  background: var(--kf-danger);
+  border-color: var(--kf-danger);
+  color: var(--kf-white);
+}
+.danger:hover {
+  background: var(--kf-danger-hover);
+  border-color: var(--kf-danger-hover);
+}
+
 .block {
   width: 100%;
 }

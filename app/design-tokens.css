@@ -28,6 +28,11 @@
   /* ── Palette — production token names (kids-fun.json). Fixed brand values. ── */
   --kf-leaf: #48c774;
   --kf-leaf-hover: #36a65a;
+  /* Destructive action fill (Button `danger`) — a dark red-brown that reads as
+   * serious but factual, not an alarming neon red (Workbook V2 §3). White text
+   * on it is ~7.9:1 (passes AA and AAA for normal text). */
+  --kf-danger: #853b20;
+  --kf-danger-hover: #6d301a;
   --kf-forest-ink: #102316;
   --kf-evergreen: #183b24;
   --kf-warm-paper: #f7f2e8;
