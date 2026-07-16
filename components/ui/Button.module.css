@@ -1,0 +1,85 @@
+/* Button primitive — styled entirely from the canonical --kf-* tokens
+ * (app/design-tokens.css). Variants follow Brand Workbook V2 §7. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--kf-space-2);
+  min-height: 48px; /* WCAG 2.5.8 target size; generous for cold/wet one-handed taps */
+  padding: 0 18px;
+  font-family: var(--kf-font-ui);
+  font-size: 15px;
+  font-weight: 700; /* compact CTA emphasis (Workbook §4 weights) */
+  line-height: 1.2;
+  border-radius: var(--kf-r-control);
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--kf-motion), border-color var(--kf-motion), color var(--kf-motion);
+}
+
+/* primary — Leaf action fill; Forest-ink text (never colour-only, D10). */
+.primary {
+  background: var(--kf-leaf);
+  border-color: var(--kf-leaf);
+  color: var(--kf-forest-ink);
+}
+.primary:hover {
+  background: var(--kf-leaf-hover);
+  border-color: var(--kf-leaf-hover);
+}
+
+/* secondary — quiet surface + neutral border. */
+.secondary {
+  background: var(--kf-surface);
+  border-color: var(--kf-neutral-300);
+  color: var(--kf-ink);
+}
+.secondary:hover {
+  background: var(--kf-surface-subtle); /* flips in dark mode → stays AA vs --kf-ink */
+  border-color: var(--kf-park-moss);
+}
+
+/* ghost — low-emphasis inline action. */
+.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--kf-ink);
+}
+.ghost:hover {
+  background: var(--kf-surface-subtle); /* flips in dark mode → stays AA vs --kf-ink */
+}
+
+/* danger — destructive action (e.g. account deletion). Red-brown fill + white
+ * text: serious but factual, never alarming neon (Workbook V2 §3). */
+.danger {
+  background: var(--kf-danger);
+  border-color: var(--kf-danger);
+  color: var(--kf-white);
+}
+.danger:hover {
+  background: var(--kf-danger-hover);
+  border-color: var(--kf-danger-hover);
+}
+
+.block {
+  width: 100%;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Visible, never-obscured focus (WCAG 2.4.7 / 2.4.11). */
+.btn:focus-visible {
+  outline: 3px solid var(--kf-leaf-hover);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none;
+  }
+}

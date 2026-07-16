@@ -1,0 +1,37 @@
+/* Badge primitive — status/label pill, styled from the canonical --kf-* tokens.
+ * Colour always pairs with the text label the caller passes (never colour-only). */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--kf-space-1);
+  padding: 3px 9px;
+  border-radius: var(--kf-r-chip);
+  font-family: var(--kf-font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.confirmed {
+  background: var(--kf-confirmed-bg);
+  color: var(--kf-confirmed-text);
+}
+.info {
+  background: var(--kf-info-bg);
+  color: var(--kf-info-text);
+}
+.expected {
+  background: var(--kf-expected-bg);
+  color: var(--kf-expected-text);
+}
+.cancelled {
+  background: var(--kf-cancelled-bg);
+  color: var(--kf-cancelled-text);
+}
+.neutral {
+  background: var(--kf-surface-subtle); /* flips in dark mode → stays AA vs --kf-ink-secondary */
+  color: var(--kf-ink-secondary);
+}

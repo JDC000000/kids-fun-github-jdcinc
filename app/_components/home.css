@@ -31,41 +31,14 @@
   gap: 8px;
   align-items: stretch;
 }
+/* Layout only: the visual styling of these two controls now comes from the
+ * canonical Input/Button primitives (components/ui). These classes just size
+ * them within the search row (input grows, button hugs its label). */
 .kf-home__search-input {
   flex: 1 1 auto;
-  min-width: 0;
-  min-height: 48px; /* WCAG 2.5.8 target size, generous for cold/wet one-handed taps */
-  padding: 10px 14px;
-  font-family: inherit;
-  font-size: 16px; /* ≥16px stops iOS zoom-on-focus */
-  font-weight: 500;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--neutral-300);
-  border-radius: 12px;
-  box-shadow: var(--e-100);
-}
-.kf-home__search-input::placeholder {
-  color: var(--ink-muted);
-  font-weight: 400;
 }
 .kf-home__search-btn {
   flex: 0 0 auto;
-  min-height: 48px;
-  padding: 0 18px;
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--forest-ink); /* Leaf is an action fill; text stays forest-ink (never colour-only) */
-  background: var(--leaf);
-  border: 1px solid var(--leaf);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: background var(--motion);
-}
-.kf-home__search-btn:hover {
-  background: var(--leaf-hover);
-  border-color: var(--leaf-hover);
 }
 
 /* ── Main column ── */

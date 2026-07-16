@@ -1,0 +1,33 @@
+/* Input primitive — styled from the canonical --kf-* tokens. */
+
+.input {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px; /* WCAG 2.5.8; comfortable one-handed target */
+  padding: 10px 14px;
+  font-family: var(--kf-font-ui);
+  font-size: 16px; /* >=16px stops iOS zoom-on-focus */
+  font-weight: 500;
+  font-feature-settings: var(--kf-font-feature);
+  color: var(--kf-ink);
+  background: var(--kf-surface);
+  border: 1px solid var(--kf-neutral-300);
+  border-radius: var(--kf-r-control);
+  box-shadow: var(--kf-e-100);
+}
+
+.input::placeholder {
+  color: var(--kf-ink-muted);
+  font-weight: 400;
+}
+
+.input:focus-visible {
+  outline: 3px solid var(--kf-leaf-hover);
+  outline-offset: 2px;
+  border-color: var(--kf-park-moss);
+}
+
+.input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

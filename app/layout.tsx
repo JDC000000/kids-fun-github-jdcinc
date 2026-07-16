@@ -1,3 +1,6 @@
+// Canonical design tokens first, so every stylesheet below (and every
+// components/ui primitive) resolves against one --kf-* source of truth.
+import './design-tokens.css';
 import './preview/preview.css';
 import type { ReactNode } from 'react';
 import { AccountNav } from './_components/AccountNav';

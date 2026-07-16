@@ -1,0 +1,28 @@
+/* Card primitive — styled from the canonical --kf-* tokens. */
+
+.card {
+  background: var(--kf-surface);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-card);
+  box-shadow: var(--kf-e-100);
+  padding: var(--kf-space-4);
+}
+
+/* Tappable card: subtle lift + border accent on hover (Elevation 200). */
+.interactive {
+  transition: box-shadow var(--kf-motion), border-color var(--kf-motion), transform var(--kf-motion);
+  cursor: pointer;
+}
+.interactive:hover {
+  box-shadow: var(--kf-e-200);
+  border-color: var(--kf-park-moss);
+}
+.interactive:active {
+  transform: translateY(1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interactive {
+    transition: none;
+  }
+}
