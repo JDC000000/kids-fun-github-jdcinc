@@ -5,12 +5,14 @@ import { partitionSections } from '../preview/_data/filter';
 import { mapSearchResponseToActivities, type SearchResponseDto } from '../preview/_data/search-api';
 import type { Activity } from '../preview/_data/types';
 import { recordSearchPerformed } from '@/lib/analytics/record';
-import { getRequestUser } from '@/lib/db/session-user';
+import { getRequestUser, type RequestUser } from '@/lib/db/session-user';
 import { getUserProfile } from '@/lib/db/user-profile';
+import { listSavedSearches } from '@/lib/db/saved-search';
 import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { SearchBar } from './_components/SearchBar';
 import { FilterRail, type SavedLocationInfo } from './_components/FilterRail';
 import { SearchResultsView } from './_components/SearchResultsView';
+import { SaveSearchButton } from './_components/SaveSearchButton';
 import { buildMarkers, geoIndex } from './_lib/markers';
 import {
   AGE_OPTIONS,
@@ -24,6 +26,8 @@ import {
   hasNearMeCoords,
   hrefFor,
   parseSearchState,
+  savedSearchKey,
+  serializeStateToParams,
   type SavedOrigin,
   type SearchState,
 } from './_lib/params';
@@ -114,12 +118,11 @@ function filterSummary(state: SearchState, savedLocation: SavedLocationInfo | nu
  * (the area label for the chip). NEVER load-bearing: any auth/DB failure, an un-saved or
  * out-of-coverage postal, all degrade to nulls (no chip, no origin) — never an error.
  */
-async function resolveSavedOrigin(): Promise<{
+async function resolveSavedOrigin(user: RequestUser | null): Promise<{
   savedOrigin: SavedOrigin | null;
   savedLocation: SavedLocationInfo | null;
 }> {
   try {
-    const user = await getRequestUser();
     if (!user) return { savedOrigin: null, savedLocation: null };
     const profile = await getUserProfile(user.userId);
     const postal = profile?.home_postal ?? null;
@@ -128,6 +131,23 @@ async function resolveSavedOrigin(): Promise<{
     return { savedOrigin: { postal }, savedLocation: { areaLabel } };
   } catch {
     return { savedOrigin: null, savedLocation: null };
+  }
+}
+
+/**
+ * Canonical keys of the signed-in parent's existing saved searches, so the
+ * "Save this search" button can show "already saved" and never write a duplicate
+ * (the API has no server dedupe). Best-effort: anonymous users and any DB hiccup
+ * degrade to an empty set — the button simply offers to save. Never blocks or
+ * breaks the render. Reads only the owner's own rows (RLS-scoped, Task 38).
+ */
+async function loadSavedSearchKeys(user: RequestUser | null): Promise<Set<string>> {
+  if (!user) return new Set();
+  try {
+    const rows = await listSavedSearches(user.userId);
+    return new Set(rows.map((r) => savedSearchKey(r.params)));
+  } catch {
+    return new Set();
   }
 }
 
@@ -154,9 +174,16 @@ export default async function SearchPage({
   searchParams: Record<string, string | string[] | undefined>;
 }) {
   const state = parseSearchState(searchParams);
+  // Resolve the session once and reuse it for the saved-location origin AND the
+  // "Save this search" control (avoids a second session read).
+  const user = await getRequestUser();
   // Signed-in saved-location origin (Task 29); null for anonymous users (unchanged behaviour).
-  const { savedOrigin, savedLocation } = await resolveSavedOrigin();
-  const result = await runSearch(state, savedOrigin);
+  const { savedOrigin, savedLocation } = await resolveSavedOrigin(user);
+  // The search and the saved-search-keys load are independent — run them together.
+  const [result, savedKeys] = await Promise.all([
+    runSearch(state, savedOrigin),
+    loadSavedSearchKeys(user),
+  ]);
   // A radius only truly applies when there's a real origin: browser coords, or a saved
   // location we actually resolved (a bare ?home=1 with no signed-in profile behind it doesn't).
   const realOrigin = hasNearMeCoords(state) || (state.useSavedLocation && savedOrigin != null);
@@ -178,6 +205,22 @@ export default async function SearchPage({
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
   const activeFilters = filterSummary(state, savedLocation);
   const filtersActive = hasActiveFilters(state);
+
+  // "Save this search" (Round 10 / Task B): the current filter state is serialized
+  // to the same generic `params` envelope Task 38's backend already accepts; a
+  // bare browse serializes to nothing and is not savable.
+  const saveParams = serializeStateToParams(state);
+  // Gate on actual SAVABILITY, not the analytics "is this a search?" test. A
+  // near-me-only search (browser coords, no query/filters) IS a search, but its
+  // coordinates are deliberately NOT persisted (privacy), so it serializes to an
+  // empty params map the API would reject (400). Offer the control iff a save
+  // would actually succeed — button visible ⟺ POST succeeds. (QA F1.)
+  const showSave = Object.keys(saveParams).length > 0;
+  // `savedKey` both dedupes against existing rows and keys the client component so
+  // it remounts fresh per search.
+  const savedKey = savedSearchKey(saveParams);
+  const suggestedName = state.q.trim() || activeFilters.join(' · ');
+  const signInHref = `/auth/signin?next=${encodeURIComponent(hrefFor(state))}`;
 
   // Analytics (M5 / T31): best-effort "search performed" capture. Fires only when a
   // real query or an active filter is present (a bare /search browse is not a search)
@@ -217,6 +260,18 @@ export default async function SearchPage({
 
       <SearchBar state={state} />
       <FilterRail state={state} savedLocation={savedLocation} />
+
+      {showSave && (
+        <SaveSearchButton
+          key={savedKey}
+          params={saveParams}
+          defaultName={suggestedName}
+          isSignedIn={user != null}
+          signInHref={signInHref}
+          accountHref="/account"
+          initialSaved={savedKeys.has(savedKey)}
+        />
+      )}
 
       <div className="kf-results">
         {!result.ok ? (

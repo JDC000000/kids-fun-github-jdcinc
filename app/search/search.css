@@ -280,6 +280,50 @@
   }
 }
 
+/* ── "Save this search" island (Round 10 / Task B) ───────────────────────────
+ * The action itself is the shared <Button variant="primary"> and the "Saved"
+ * confirmation is the shared <Badge variant="confirmed"> (components/ui, Task D) —
+ * so only the island LAYOUT + the surrounding hint/link text live here, not any
+ * hand-rolled button styling. Wraps gracefully: control + hint/link read as one
+ * row on wide screens, stacked on narrow. `__glyph` is the decorative ☆/★ that
+ * rides inside the Button/Badge label (the component owns the icon↔text gap). */
+.kf-savebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 16px 4px;
+}
+
+.kf-savebar__glyph {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.kf-savebar__hint {
+  font-size: 13px;
+  color: var(--ink-secondary);
+  max-width: 42ch;
+}
+
+.kf-savebar__hint--err {
+  color: var(--expected-text);
+}
+
+.kf-savebar__link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--anchor);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.kf-savebar__link:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* ── Results header (Screen 2: query in words + count + transparent sort) ── */
 .kf-browse__summary {
   padding: 14px 16px 2px;
