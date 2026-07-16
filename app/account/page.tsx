@@ -4,6 +4,7 @@ import { ensureUserProfile, getUserProfile, type UserProfile } from '@/lib/db/us
 import { listSavedSearches } from '@/lib/db/saved-search';
 import { AccountForm } from './_components/AccountForm';
 import { SavedSearches, type SavedSearchView } from './_components/SavedSearches';
+import { AccountData } from './_components/AccountData';
 import './account.css';
 
 // Parent-facing account page (Task 24, M4). A signed-in parent can see and edit
@@ -78,12 +79,14 @@ export default async function AccountPage() {
 
         <SavedSearches initial={savedSearches} />
 
+        <AccountData />
+
         <section className="kf-account-page__later" aria-label="Coming later">
           <h2 className="kf-account-page__later-title">Coming later</h2>
           <p>
-            Notification preferences and downloading or deleting your data aren&apos;t here yet — and
-            saving a search straight from the search page is on the way too. For now you can manage your
-            profile and saved searches above.
+            Notification preferences beyond the single email opt-in aren&apos;t here yet, and saving a
+            search straight from the search page is on the way too. For now you can manage your profile
+            and saved searches, download a copy of your data, or delete your account above.
           </p>
         </section>
       </div>
