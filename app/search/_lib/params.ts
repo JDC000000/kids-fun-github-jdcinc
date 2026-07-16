@@ -312,7 +312,11 @@ export function savedSearchKey(params: Record<string, unknown>): string {
     .sort()
     .map((k) => {
       const v = params[k];
-      return `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`;
+      const raw = typeof v === 'string' ? v : JSON.stringify(v);
+      // Escape BOTH sides so a value containing '&' or '=' cannot collide with a
+      // different key/value split (e.g. q='a&region=van' vs {q:'a',region:'van'}).
+      // Transparent for alphanumerics, so keys stay stable/readable. (QA F2.)
+      return `${encodeURIComponent(k)}=${encodeURIComponent(raw)}`;
     })
     .join('&');
 }

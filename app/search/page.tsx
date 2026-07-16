@@ -206,14 +206,18 @@ export default async function SearchPage({
   const activeFilters = filterSummary(state, savedLocation);
   const filtersActive = hasActiveFilters(state);
 
-  // "Save this search" (Round 10 / Task B): offered whenever there is a real
-  // search to save — a text query or any active filter (same "is this a search?"
-  // test the analytics capture uses below), so a bare browse is never savable.
-  // The current filter state is serialized to the same generic `params` envelope
-  // Task 38's backend already accepts; `savedKey` both dedupes against existing
-  // rows and keys the client component so it remounts fresh per search.
-  const showSave = state.q.trim().length > 0 || filtersActive;
+  // "Save this search" (Round 10 / Task B): the current filter state is serialized
+  // to the same generic `params` envelope Task 38's backend already accepts; a
+  // bare browse serializes to nothing and is not savable.
   const saveParams = serializeStateToParams(state);
+  // Gate on actual SAVABILITY, not the analytics "is this a search?" test. A
+  // near-me-only search (browser coords, no query/filters) IS a search, but its
+  // coordinates are deliberately NOT persisted (privacy), so it serializes to an
+  // empty params map the API would reject (400). Offer the control iff a save
+  // would actually succeed — button visible ⟺ POST succeeds. (QA F1.)
+  const showSave = Object.keys(saveParams).length > 0;
+  // `savedKey` both dedupes against existing rows and keys the client component so
+  // it remounts fresh per search.
   const savedKey = savedSearchKey(saveParams);
   const suggestedName = state.q.trim() || activeFilters.join(' · ');
   const signInHref = `/auth/signin?next=${encodeURIComponent(hrefFor(state))}`;

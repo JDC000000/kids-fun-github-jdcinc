@@ -69,6 +69,15 @@ describe('serializeStateToParams', () => {
     expect('radius' in params).toBe(false);
   });
 
+  it('serializes a near-me-ONLY search (no query/filters) to empty params — not savable (QA F1)', () => {
+    const nearMeOnly: SearchState = { ...DEFAULT_STATE, lat: 49.2827, lng: -123.1207, radiusKm: 20 };
+    // Coords are stripped for privacy and there's nothing else, so params is empty.
+    // The page MUST gate the Save control on Object.keys(params).length > 0 so it
+    // never offers a save the API would 400 with "must include at least one field".
+    expect(serializeStateToParams(nearMeOnly)).toEqual({});
+    expect(Object.keys(serializeStateToParams(nearMeOnly)).length).toBe(0);
+  });
+
   it('keeps the saved-location intent + radius (carries no coordinates)', () => {
     const params = serializeStateToParams({
       ...DEFAULT_STATE,
@@ -110,9 +119,16 @@ describe('savedSearchKey', () => {
   });
 
   it('handles non-string values from hand-built /account params', () => {
-    // JSON-encoded so a numeric/object value still yields a stable key.
+    // JSON-encoded so a numeric/object value still yields a stable key. Escaping is
+    // transparent for alphanumerics, so the readable form is unchanged.
     expect(savedSearchKey({ n: 3, region: 'van' })).toBe('n=3&region=van');
     expect(savedSearchKey({ region: 'van', n: 3 })).toBe('n=3&region=van');
+  });
+
+  it('escapes so a value containing & or = cannot collide (QA F2)', () => {
+    expect(savedSearchKey({ q: 'a&region=van' })).not.toBe(savedSearchKey({ q: 'a', region: 'van' }));
+    // And an '=' inside a value can't masquerade as another pair either.
+    expect(savedSearchKey({ q: 'x=1' })).not.toBe(savedSearchKey({ q: 'x', '1': '' }));
   });
 });
 
