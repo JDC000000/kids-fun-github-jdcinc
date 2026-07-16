@@ -1,7 +1,14 @@
 /* account-nav.css — styling for the global account touchpoint (Task 21, M4).
  * Self-contained (not scoped under .kf) so it renders consistently on every
  * route without depending on the preview/search stylesheets. Deliberately small:
- * a right-aligned bar with a session label and a sign-in/out control. */
+ * a right-aligned bar with a session label and a sign-in/out control.
+ *
+ * Round 10 / Task D: colours now consume the canonical global --kf-* tokens
+ * (app/design-tokens.css) instead of hard-coded hexes — same values, one source.
+ * Font is aligned to the brand UI face (Manrope) so the chrome matches the rest
+ * of the product instead of falling back to system-ui. Fixed palette tokens are
+ * used intentionally (not the flipping surface roles) so this bar keeps its
+ * current warm-paper look on every colour scheme, exactly as before. */
 
 .kf-account {
   display: flex;
@@ -10,12 +17,12 @@
   gap: 0.75rem;
   min-height: 2.25rem;
   padding: 0.4rem 1rem;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--kf-font-ui);
   font-size: 0.875rem;
   line-height: 1.2;
-  color: #183b24;
-  background: #f7f2e8;
-  border-bottom: 1px solid #e6eae6;
+  color: var(--kf-evergreen);
+  background: var(--kf-warm-paper);
+  border-bottom: 1px solid var(--kf-neutral-200);
 }
 
 .kf-account__who {
@@ -23,11 +30,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #5f7360;
+  color: var(--kf-park-moss-text);
 }
 
 .kf-account__who strong {
-  color: #183b24;
+  color: var(--kf-evergreen);
   font-weight: 600;
 }
 
@@ -36,23 +43,23 @@
   align-items: center;
   padding: 0.3rem 0.7rem;
   border-radius: 9999px;
-  color: #183b24;
+  color: var(--kf-evergreen);
   text-decoration: none;
-  border: 1px solid #d0d6ce;
-  background: #ffffff;
+  border: 1px solid var(--kf-neutral-300);
+  background: var(--kf-white);
   font-weight: 500;
 }
 
 .kf-account__link:hover {
-  border-color: #758a73;
+  border-color: var(--kf-park-moss);
 }
 
 .kf-account__link--primary {
-  color: #f7f2e8;
-  background: #183b24;
-  border-color: #183b24;
+  color: var(--kf-warm-paper);
+  background: var(--kf-evergreen);
+  border-color: var(--kf-evergreen);
 }
 
 .kf-account__link--primary:hover {
-  background: #102316;
+  background: var(--kf-forest-ink);
 }

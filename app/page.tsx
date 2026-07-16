@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import './_components/home.css';
+import { Button, Input } from '@/components/ui';
 import { CategoryTile } from './preview/_components/CategoryTile';
 import type { Category } from './preview/_data/types';
 import { HomeTodayStrip } from './_components/HomeTodayStrip';
@@ -84,7 +85,9 @@ export default function Home() {
                 What are you looking for?
               </label>
               <div className="kf-home__search-row">
-                <input
+                {/* Canonical primitives (components/ui) proving the design-token
+                    foundation on the app's most-shared, lowest-risk surface. */}
+                <Input
                   id="kf-home-q"
                   className="kf-home__search-input"
                   type="search"
@@ -94,9 +97,9 @@ export default function Home() {
                   enterKeyHint="search"
                   aria-label="Search kids' activities across Metro Vancouver"
                 />
-                <button className="kf-home__search-btn" type="submit">
+                <Button type="submit" variant="primary" className="kf-home__search-btn">
                   Search
-                </button>
+                </Button>
               </div>
             </form>
           </header>

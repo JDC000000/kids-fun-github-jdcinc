@@ -1,91 +1,74 @@
 /*
- * KIDS FUN — mobile fixture shell styles.
- * Design system: Brand Workbook V2 + Visual Blueprint v0.2. Values are the
- * production token names from documents/brand-identities/kids-fun.json.
- * Everything is scoped under `.kf` so this route's styles never leak into the
- * rest of the app (other tracks own app/layout + app/page).
+ * KIDS FUN — mobile fixture shell styles (route: /preview; this stylesheet is
+ * also imported globally via app/layout.tsx, so it is effectively the app shell).
+ * Design system: Brand Workbook V2 + Visual Blueprint v0.2.
+ *
+ * The palette / type / spacing VALUES now live in ONE canonical place —
+ * app/design-tokens.css (global `--kf-*` tokens, loaded first in the layout).
+ * This `.kf` block just ALIASES those tokens to the short local names the
+ * `.kf-*` rules below already use, so there is a single source of truth and the
+ * rendered output is unchanged. Dark mode is inherited automatically: the
+ * surface/semantic roles flip at :root in design-tokens.css, so this file no
+ * longer needs its own `.kf` dark-override block. The Manrope @import also moved
+ * to design-tokens.css so the font is a first-class global asset.
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
-
 .kf {
-  /* ── Palette (production token names) ── */
-  --leaf: #48c774;
-  --leaf-hover: #36a65a;
-  --forest-ink: #102316;
-  --evergreen: #183b24;
-  --warm-paper: #f7f2e8;
-  --playground-sand: #c9b79e;
-  --rainy-fog: #d8e3e0;
-  --park-moss: #758a73;
-  --park-moss-text: #5f7360; /* AA secondary text on white/paper (5.11:1) */
-  --tertiary-text: #6c766b; /* AA metadata (4.73:1) */
-  --museum-lilac: #d9c7ef;
-  --evening-plum: #8d7aad;
+  /* ── Palette — aliased to the canonical --kf-* tokens ── */
+  --leaf: var(--kf-leaf);
+  --leaf-hover: var(--kf-leaf-hover);
+  --forest-ink: var(--kf-forest-ink);
+  --evergreen: var(--kf-evergreen);
+  --warm-paper: var(--kf-warm-paper);
+  --playground-sand: var(--kf-playground-sand);
+  --rainy-fog: var(--kf-rainy-fog);
+  --park-moss: var(--kf-park-moss);
+  --park-moss-text: var(--kf-park-moss-text);
+  --tertiary-text: var(--kf-tertiary-text);
+  --museum-lilac: var(--kf-museum-lilac);
+  --evening-plum: var(--kf-evening-plum);
 
-  --neutral-100: #f4f5f4;
-  --neutral-200: #e6eae6; /* hairline rules */
-  --neutral-300: #d0d6ce;
-  --neutral-700: #535b52;
-  --neutral-900: #222621;
+  --neutral-100: var(--kf-neutral-100);
+  --neutral-200: var(--kf-neutral-200); /* hairline rules */
+  --neutral-300: var(--kf-neutral-300);
+  --neutral-700: var(--kf-neutral-700);
+  --neutral-900: var(--kf-neutral-900);
 
   /* ── Status (paired colour + always used with a text label + icon) ── */
-  --confirmed-text: #375c2d;
-  --confirmed-bg: #eef7ed;
-  --info-text: #30538b;
-  --info-bg: #eef6fe;
-  --expected-text: #6b4e12;
-  --expected-bg: #fbf3de;
-  --cancelled-text: #853b20;
-  --cancelled-bg: #fdf1ed;
+  --confirmed-text: var(--kf-confirmed-text);
+  --confirmed-bg: var(--kf-confirmed-bg);
+  --info-text: var(--kf-info-text);
+  --info-bg: var(--kf-info-bg);
+  --expected-text: var(--kf-expected-text);
+  --expected-bg: var(--kf-expected-bg);
+  --cancelled-text: var(--kf-cancelled-text);
+  --cancelled-bg: var(--kf-cancelled-bg);
 
-  /* ── Surfaces (light) ── */
-  --canvas: var(--warm-paper);
-  --surface: #ffffff;
-  --ink: var(--forest-ink);
-  --ink-secondary: var(--park-moss-text);
-  --ink-muted: var(--tertiary-text);
-  --hairline: var(--neutral-200);
-  --anchor: var(--evergreen);
-  --anchor-text: var(--warm-paper);
+  /* ── Surface roles — aliased; these flip in dark mode at :root ── */
+  --canvas: var(--kf-canvas);
+  --surface: var(--kf-surface);
+  --ink: var(--kf-ink);
+  --ink-secondary: var(--kf-ink-secondary);
+  --ink-muted: var(--kf-ink-muted);
+  --hairline: var(--kf-hairline);
+  --anchor: var(--kf-anchor);
+  --anchor-text: var(--kf-anchor-text);
 
   /* ── Radius / elevation / motion ── */
-  --r-card: 16px;
-  --r-chip: 9999px;
-  --r-sheet: 24px;
-  --e-100: 0 2px 4px rgba(0, 0, 0, 0.14), 0 0 1px rgba(0, 0, 0, 0.3);
-  --e-200: 0 4px 8px rgba(0, 0, 0, 0.18), 0 0 1px rgba(0, 0, 0, 0.3);
-  --e-300: 0 8px 12px rgba(0, 0, 0, 0.15), 0 0 1px rgba(0, 0, 0, 0.3);
-  --motion: 180ms cubic-bezier(0.2, 0, 0, 1);
+  --r-card: var(--kf-r-card);
+  --r-chip: var(--kf-r-chip);
+  --r-sheet: var(--kf-r-sheet);
+  --e-100: var(--kf-e-100);
+  --e-200: var(--kf-e-200);
+  --e-300: var(--kf-e-300);
+  --motion: var(--kf-motion);
 
-  font-family: 'Manrope', 'Avenir Next', 'Segoe UI', Arial, sans-serif;
+  font-family: var(--kf-font-ui);
   /* D2: tabular lining numerals everywhere data appears. */
-  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  font-feature-settings: var(--kf-font-feature);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-}
-
-/* Dark mode via existing dark_* tokens (D12) — a real 9pm one-handed surface. */
-@media (prefers-color-scheme: dark) {
-  .kf {
-    --canvas: #102316; /* dark_primary */
-    --surface: #183b24; /* dark_secondary */
-    --ink: #f7f2e8; /* dark_text */
-    --ink-secondary: #b9c5b7; /* dark_muted */
-    --ink-muted: #9fb09d;
-    --hairline: #223f30; /* dark_elevated */
-    --anchor: #0e110e;
-    --anchor-text: #f7f2e8;
-    --confirmed-bg: #1c3a24;
-    --confirmed-text: #a6e6b4;
-    --info-bg: #16304a;
-    --info-text: #bcd6f5;
-    --expected-bg: #3a2f16;
-    --expected-text: #f2d99a;
-    --cancelled-bg: #3a2018;
-    --cancelled-text: #f2b8a0;
-  }
 }
 
 /* ── Mobile frame: the phone is the primary artboard (blueprint mobile-first) ── */
