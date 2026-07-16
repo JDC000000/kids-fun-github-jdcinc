@@ -2,13 +2,15 @@
 
 // SavedSearches — the "My saved searches" section of /account (Task 38, M4/G5).
 //
-// Lists the parent's saved searches, lets them delete one, and — since /search
-// isn't wired to "save this search" yet (DEFERRED to a later round) — lets them
-// create one here from a name + a query + optional filter JSON. It talks to
-// /api/saved-searches (GET/POST) and /api/saved-searches/:id (DELETE); every call
-// is owner-scoped server-side via RLS, so this component only ever handles the
-// current user's rows.
+// Lists the parent's saved searches, lets them Open one back on /search (Round 10
+// / Task B) or delete it, and lets them build one here by hand from a name + a
+// query + optional filter JSON. The primary way to save is now the "Save this
+// search" button on /search itself; this form remains for advanced/manual entry.
+// It talks to /api/saved-searches (GET/POST) and /api/saved-searches/:id (DELETE);
+// every call is owner-scoped server-side via RLS, so this component only ever
+// handles the current user's rows.
 import { useState, type FormEvent } from 'react';
+import { hrefForParams } from '@/app/search/_lib/params';
 
 export interface SavedSearchView {
   id: string;
@@ -156,15 +158,24 @@ export function SavedSearches({ initial }: { initial: SavedSearchView[] }) {
                   {formatDate(s.created_at)}
                 </span>
               </div>
-              <button
-                type="button"
-                className="kf-saved__delete"
-                onClick={() => onDelete(s.id)}
-                disabled={deletingId === s.id}
-                aria-label={`Delete saved search ${s.name ?? summarize(s.params)}`}
-              >
-                {deletingId === s.id ? 'Removing…' : 'Delete'}
-              </button>
+              <div className="kf-saved__item-actions">
+                <a
+                  className="kf-saved__open"
+                  href={hrefForParams(s.params)}
+                  aria-label={`Open saved search ${s.name ?? summarize(s.params)} in search`}
+                >
+                  Open
+                </a>
+                <button
+                  type="button"
+                  className="kf-saved__delete"
+                  onClick={() => onDelete(s.id)}
+                  disabled={deletingId === s.id}
+                  aria-label={`Delete saved search ${s.name ?? summarize(s.params)}`}
+                >
+                  {deletingId === s.id ? 'Removing…' : 'Delete'}
+                </button>
+              </div>
             </li>
           ))}
         </ul>
@@ -215,8 +226,8 @@ export function SavedSearches({ initial }: { initial: SavedSearchView[] }) {
             onChange={(e) => setFiltersText(e.target.value)}
           />
           <p className="kf-saved__hint">
-            Advanced: paste JSON filter params. Leave blank to save just the query. Saving directly from
-            the search page is coming later.
+            Advanced: paste JSON filter params. Leave blank to save just the query. You can also save a
+            search straight from the <a href="/search">search page</a> — this form is for building one by hand.
           </p>
         </div>
 

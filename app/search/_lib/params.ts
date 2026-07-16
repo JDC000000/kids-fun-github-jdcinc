@@ -271,6 +271,68 @@ export function hiddenStateFields(state: SearchState): { name: string; value: st
   return [...p.entries()].map(([name, value]) => ({ name, value }));
 }
 
+/**
+ * Serialize a search state into the minimal param map persisted as a saved
+ * search's `params` envelope field (Task B, the "save this search" button).
+ *
+ * Same structured, non-default-only shape as the /search page URL (`pageParams`),
+ * with two deliberate omissions so a saved search stays compact AND privacy-safe:
+ *   1. `includeUnknownCost` at its default (on) is dropped — parseSearchState
+ *      restores that default when the key is absent, so the search re-runs
+ *      identically.
+ *   2. Raw near-me coordinates (lat/lng, and their now-origin-less radius) are
+ *      NEVER persisted into a durable DB row — parity with the analytics layer,
+ *      which likewise refuses to store a precise location. The saved-location
+ *      *intent* (`home=1`) carries no coordinates and IS kept; a near-me search
+ *      simply re-runs without a radius origin until the parent taps "Near me"
+ *      again. All values are strings, so the map round-trips cleanly through
+ *      JSON and back into URLSearchParams / parseSearchState.
+ */
+export function serializeStateToParams(state: SearchState): Record<string, string> {
+  const p = pageParams(state);
+  if (state.includeUnknownCost) p.delete('includeUnknownCost');
+  if (p.has('lat') || p.has('lng')) {
+    p.delete('lat');
+    p.delete('lng');
+    // Home intent (if somehow present) keeps its radius; a bare near-me origin does not.
+    if (!p.has('home')) p.delete('radius');
+  }
+  return Object.fromEntries(p.entries());
+}
+
+/**
+ * A canonical, order-independent key for a saved search's `params`, used to
+ * detect "already saved" without a server dedupe (the API intentionally has
+ * none). String values (the shape `serializeStateToParams` produces) compare
+ * directly; any non-string value (e.g. a params object saved via the /account
+ * form) is JSON-encoded so the key is still stable.
+ */
+export function savedSearchKey(params: Record<string, unknown>): string {
+  return Object.keys(params)
+    .sort()
+    .map((k) => {
+      const v = params[k];
+      return `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`;
+    })
+    .join('&');
+}
+
+/**
+ * Rebuild a `/search?…` href from a saved search's stored `params` so a saved
+ * search is re-runnable (the /account list "Open in search" link). Unknown keys
+ * are harmless — parseSearchState ignores anything it doesn't recognise. Null /
+ * undefined values are skipped; non-string values are coerced defensively.
+ */
+export function hrefForParams(params: Record<string, unknown>): string {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null) continue;
+    usp.set(k, typeof v === 'string' ? v : String(v));
+  }
+  const qs = usp.toString();
+  return qs ? `/search?${qs}` : '/search';
+}
+
 /** Does the state carry any structured/intent filter beyond a plain text query? */
 export function hasActiveFilters(state: SearchState): boolean {
   return (

@@ -280,6 +280,101 @@
   }
 }
 
+/* ── "Save this search" island (Round 10 / Task B) ───────────────────────────
+ * Leaf stays reserved for the primary Search CTA; this secondary action uses the
+ * anchor outline (same restraint as the "Near me" island). Wraps gracefully so the
+ * button + hint/status/link read as one row on wide screens, stacked on narrow. */
+.kf-savebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 16px 4px;
+}
+
+.kf-savebar__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 16px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1.5px solid var(--anchor);
+  border-radius: var(--r-chip);
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--motion);
+}
+
+.kf-savebar__btn:hover {
+  background: var(--confirmed-bg);
+}
+
+.kf-savebar__btn:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
+.kf-savebar__btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.kf-savebar__glyph {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Saved confirmation — fill + star + word (never colour alone). */
+.kf-savebar__saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--confirmed-text);
+  background: var(--confirmed-bg);
+  border: 1px solid var(--confirmed-text);
+  border-radius: var(--r-chip);
+}
+
+.kf-savebar__hint {
+  font-size: 13px;
+  color: var(--ink-secondary);
+  max-width: 42ch;
+}
+
+.kf-savebar__hint--err {
+  color: var(--expected-text);
+}
+
+.kf-savebar__link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--anchor);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.kf-savebar__link:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kf-savebar__btn {
+    transition: none;
+  }
+}
+
 /* ── Results header (Screen 2: query in words + count + transparent sort) ── */
 .kf-browse__summary {
   padding: 14px 16px 2px;

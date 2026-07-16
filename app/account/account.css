@@ -236,6 +236,30 @@
   overflow-wrap: anywhere;
 }
 
+.kf-saved__item-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.kf-saved__open {
+  padding: 0.4rem 0.85rem;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--anchor, #2f5d50);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 9999px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.kf-saved__open:hover {
+  background: var(--confirmed-bg, #eaf2ee);
+}
+
 .kf-saved__delete {
   flex: 0 0 auto;
   padding: 0.4rem 0.85rem;

@@ -84,9 +84,10 @@ export default async function AccountPage() {
         <section className="kf-account-page__later" aria-label="Coming later">
           <h2 className="kf-account-page__later-title">Coming later</h2>
           <p>
-            Notification preferences beyond the single email opt-in aren&apos;t here yet, and saving a
-            search straight from the search page is on the way too. For now you can manage your profile
-            and saved searches, download a copy of your data, or delete your account above.
+            Notification preferences beyond the single email opt-in aren&apos;t here yet. For now you can
+            manage your profile and saved searches, download a copy of your data, or delete your account
+            above — and save a new search straight from the{' '}
+            <a href="/search">search page</a>.
           </p>
         </section>
       </div>
