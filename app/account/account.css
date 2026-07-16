@@ -356,6 +356,96 @@
   color: inherit;
 }
 
+/* ── your data: export + delete (Task C) ── */
+.kf-account-data {
+  margin-top: 1.75rem;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+}
+
+.kf-account-data__title {
+  margin: 0 0 1rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.kf-account-data__block {
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.kf-account-data__block:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+
+.kf-account-data__block--danger {
+  margin-top: 1.25rem;
+}
+
+.kf-account-data__subtitle {
+  margin: 0 0 0.35rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.kf-account-data__text {
+  margin: 0 0 0.875rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--park-moss-text);
+}
+
+.kf-account-data__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  flex-wrap: wrap;
+}
+
+/* Buttons + the confirm text field use the shared components/ui primitives
+ * (Button / Input, token-driven) — no local button/input styling here. */
+
+.kf-account-data__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: #fbeee9;
+  border: 1px solid #e6c4b7;
+  border-radius: 12px;
+}
+
+.kf-account-data__confirm-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.kf-account-data__hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--park-moss-text);
+}
+
+.kf-account-data__msg {
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.kf-account-data__msg--ok {
+  color: #375c2d;
+}
+
+.kf-account-data__msg--err {
+  color: #853b20;
+}
+
+.kf-account-data__msg--err a {
+  color: inherit;
+}
+
 /* ── coming-later note ── */
 .kf-account-page__later {
   margin-top: 1.75rem;
@@ -388,6 +478,10 @@
     background: #0e1f14;
     border-color: #2c4a38;
     color: #f7f2e8;
+  }
+  .kf-account-data__confirm {
+    background: #3a241c;
+    border-color: #6b4436;
   }
   .kf-saved__delete {
     color: #f0b6a2;
