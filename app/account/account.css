@@ -405,46 +405,8 @@
   flex-wrap: wrap;
 }
 
-.kf-account-data__btn {
-  padding: 0.55rem 1.15rem;
-  font-family: inherit;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: var(--warm-paper);
-  background: var(--evergreen);
-  border: 1px solid var(--evergreen);
-  border-radius: 9999px;
-  cursor: pointer;
-}
-
-.kf-account-data__btn:hover:not(:disabled) {
-  background: var(--forest-ink);
-}
-
-.kf-account-data__btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.kf-account-data__btn--danger {
-  color: #fff;
-  background: #9c3116;
-  border-color: #9c3116;
-}
-
-.kf-account-data__btn--danger:hover:not(:disabled) {
-  background: #7d2711;
-}
-
-.kf-account-data__btn--ghost {
-  color: var(--forest-ink);
-  background: transparent;
-  border-color: #d0d6ce;
-}
-
-.kf-account-data__btn--ghost:hover:not(:disabled) {
-  background: #eef1ea;
-}
+/* Buttons + the confirm text field use the shared components/ui primitives
+ * (Button / Input, token-driven) — no local button/input styling here. */
 
 .kf-account-data__confirm {
   display: flex;
@@ -459,22 +421,6 @@
 .kf-account-data__confirm-label {
   font-size: 0.875rem;
   font-weight: 600;
-}
-
-.kf-account-data__confirm-input {
-  padding: 0.55rem 0.7rem;
-  font-family: inherit;
-  font-size: 0.9375rem;
-  color: var(--forest-ink);
-  background: #fff;
-  border: 1px solid #d0d6ce;
-  border-radius: 10px;
-}
-
-.kf-account-data__confirm-input:focus {
-  outline: 2px solid #9c3116;
-  outline-offset: 1px;
-  border-color: #9c3116;
 }
 
 .kf-account-data__hint {
@@ -528,8 +474,7 @@
     --hairline: #223f30;
   }
   .kf-account-form__input,
-  .kf-saved__input,
-  .kf-account-data__confirm-input {
+  .kf-saved__input {
     background: #0e1f14;
     border-color: #2c4a38;
     color: #f7f2e8;
@@ -537,13 +482,6 @@
   .kf-account-data__confirm {
     background: #3a241c;
     border-color: #6b4436;
-  }
-  .kf-account-data__btn--ghost {
-    color: #f7f2e8;
-    border-color: #2c4a38;
-  }
-  .kf-account-data__btn--ghost:hover:not(:disabled) {
-    background: #223f30;
   }
   .kf-saved__delete {
     color: #f0b6a2;

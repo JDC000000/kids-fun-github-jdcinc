@@ -14,6 +14,7 @@
 // Every request is owner-scoped server-side via RLS, so this component only ever
 // touches the current user's data.
 import { useState } from 'react';
+import { Button, Input } from '@/components/ui';
 
 // Must match app/api/account/delete/route.ts DELETE_CONFIRM_PHRASE.
 const CONFIRM_PHRASE = 'DELETE';
@@ -120,14 +121,9 @@ export function AccountData() {
           as a JSON file.
         </p>
         <div className="kf-account-data__actions">
-          <button
-            type="button"
-            className="kf-account-data__btn"
-            onClick={onExport}
-            disabled={exportStatus.kind === 'working'}
-          >
+          <Button variant="primary" onClick={onExport} disabled={exportStatus.kind === 'working'}>
             {exportStatus.kind === 'working' ? 'Preparing…' : 'Download my data'}
-          </button>
+          </Button>
           {exportStatus.kind === 'done' && (
             <span className="kf-account-data__msg kf-account-data__msg--ok" role="status">
               Your download has started.
@@ -161,13 +157,9 @@ export function AccountData() {
           </p>
         ) : !showDelete ? (
           <div className="kf-account-data__actions">
-            <button
-              type="button"
-              className="kf-account-data__btn kf-account-data__btn--danger"
-              onClick={() => setShowDelete(true)}
-            >
+            <Button variant="danger" onClick={() => setShowDelete(true)}>
               Delete my account…
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="kf-account-data__confirm">
@@ -178,9 +170,8 @@ export function AccountData() {
             <label className="kf-account-data__confirm-label" htmlFor="kf-delete-confirm">
               Type {CONFIRM_PHRASE} to confirm
             </label>
-            <input
+            <Input
               id="kf-delete-confirm"
-              className="kf-account-data__confirm-input"
               type="text"
               autoComplete="off"
               value={confirmInput}
@@ -188,17 +179,11 @@ export function AccountData() {
               aria-describedby="kf-delete-help"
             />
             <div className="kf-account-data__actions">
-              <button
-                type="button"
-                className="kf-account-data__btn kf-account-data__btn--danger"
-                onClick={onDelete}
-                disabled={!canDelete}
-              >
+              <Button variant="danger" onClick={onDelete} disabled={!canDelete}>
                 {deleteStatus.kind === 'deleting' ? 'Deleting…' : 'Permanently delete my account'}
-              </button>
-              <button
-                type="button"
-                className="kf-account-data__btn kf-account-data__btn--ghost"
+              </Button>
+              <Button
+                variant="ghost"
                 onClick={() => {
                   setShowDelete(false);
                   setConfirmInput('');
@@ -207,7 +192,7 @@ export function AccountData() {
                 disabled={deleteStatus.kind === 'deleting'}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
             <p id="kf-delete-help" className="kf-account-data__hint">
               The button stays disabled until you type {CONFIRM_PHRASE} exactly.
