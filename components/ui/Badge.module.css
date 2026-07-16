@@ -32,6 +32,6 @@
   color: var(--kf-cancelled-text);
 }
 .neutral {
-  background: var(--kf-neutral-100);
+  background: var(--kf-surface-subtle); /* flips in dark mode → stays AA vs --kf-ink-secondary */
   color: var(--kf-ink-secondary);
 }

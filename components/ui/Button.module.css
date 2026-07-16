@@ -37,7 +37,7 @@
   color: var(--kf-ink);
 }
 .secondary:hover {
-  background: var(--kf-neutral-100);
+  background: var(--kf-surface-subtle); /* flips in dark mode → stays AA vs --kf-ink */
   border-color: var(--kf-park-moss);
 }
 
@@ -48,7 +48,7 @@
   color: var(--kf-ink);
 }
 .ghost:hover {
-  background: var(--kf-neutral-100);
+  background: var(--kf-surface-subtle); /* flips in dark mode → stays AA vs --kf-ink */
 }
 
 /* danger — destructive action (e.g. account deletion). Red-brown fill + white

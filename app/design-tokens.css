@@ -77,6 +77,11 @@
   /* ── Surface roles (light). These flip in dark mode. ── */
   --kf-canvas: var(--kf-warm-paper);
   --kf-surface: var(--kf-white);
+  /* Subtle raised/hover surface. MUST be a flipping role (not the fixed
+   * --kf-neutral-100 palette value) so anything that pairs it with a flipping
+   * ink token (Badge `neutral`, Button `secondary`/`ghost` :hover) keeps AA
+   * contrast in BOTH colour schemes — otherwise dark mode gives light-on-light. */
+  --kf-surface-subtle: var(--kf-neutral-100);
   --kf-ink: var(--kf-forest-ink);
   --kf-ink-secondary: var(--kf-park-moss-text);
   --kf-ink-muted: var(--kf-tertiary-text);
@@ -122,6 +127,7 @@
   :root {
     --kf-canvas: var(--kf-dark-primary);
     --kf-surface: var(--kf-dark-secondary);
+    --kf-surface-subtle: var(--kf-dark-elevated); /* subtle raised/hover surface in dark */
     --kf-ink: var(--kf-dark-text);
     --kf-ink-secondary: var(--kf-dark-muted);
     --kf-ink-muted: #9fb09d;
