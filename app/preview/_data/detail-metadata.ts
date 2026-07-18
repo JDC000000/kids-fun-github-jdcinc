@@ -41,7 +41,10 @@ export function describeActivity(activity: Activity): string {
     formatCost(activity),
   ].join(' · ');
   const trust = `Source: ${activity.sourceName} · ${formatChecked(activity.lastCheckedIso)}.`;
-  const full = `${lead}. ${trust}`;
+  // Strip a trailing period from the composed lead before the sentence join so a
+  // cost segment that already ends in a period (e.g. "$7 approx.") does not produce
+  // a double period ("…$7 approx.. Source:") in the share meta-description. (R15/Task R F1)
+  const full = `${lead.replace(/\.$/, '')}. ${trust}`;
   return full.length > 200 ? `${full.slice(0, 199).trimEnd()}…` : full;
 }
 
