@@ -384,6 +384,24 @@
   margin-top: 8px;
 }
 
+/* Primary CTA cue (D-blueprint screen-2 item 9). The whole card is the link; this
+   states the destination — the official source (external) or the in-app detail —
+   so the source CTA is visible, not just an invisible whole-card tap target. Uses
+   the canonical link colour (--info-text); underlines on card hover/focus. */
+.kf-card__cta {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--info-text);
+}
+.kf-card:hover .kf-card__cta,
+.kf-card:focus-visible .kf-card__cta {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* Booking / registration tag */
 .kf-tag {
   display: inline-flex;

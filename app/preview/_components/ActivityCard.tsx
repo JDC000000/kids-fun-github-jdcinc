@@ -3,9 +3,10 @@
 // so a parent can judge it without opening the source. Capped for one-glance scan.
 
 import Link from 'next/link';
+import { Badge } from '@/components/ui';
 import { CategoryTile } from './CategoryTile';
 import { FreshnessStamp } from './FreshnessStamp';
-import { bookingTag, formatAges, formatCost, formatDistance, formatWhen, statusMeta } from '../_data/format';
+import { bookingTag, confidenceMeta, formatAges, formatCost, formatDistance, formatWhen, statusMeta } from '../_data/format';
 import type { Activity } from '../_data/types';
 
 function BookingTag({ activity }: { activity: Activity }) {
@@ -23,10 +24,18 @@ function BookingTag({ activity }: { activity: Activity }) {
 export function ActivityCard({ activity }: { activity: Activity }) {
   const when = formatWhen(activity.startIso, activity.endIso);
   const meta = statusMeta(activity.status, activity.seasonLabel);
+  // Source-authority read (BR-13) — surfaced on the card face so "source confidence" is
+  // visible with a text label + tone (never colour-only), G-T22-2.
+  const conf = confidenceMeta(activity.confidence);
   const cardClass = ['kf-card', meta.tone === 'muted' ? 'kf-card--muted' : '', meta.tone === 'cancelled' ? 'kf-card--cancelled' : '']
     .filter(Boolean)
     .join(' ');
-  const label = `${activity.activityName} at ${activity.venue}, ${when.day} ${when.time}, ${formatAges(activity.ageMin, activity.ageMax)}, ${meta.label}`;
+  // External-source cards leave the site to the official listing; internal cards open the
+  // in-app detail. The CTA states which, honestly, so the whole-card link has a visible,
+  // predictable destination (G-T22-1 "source CTA"; Blueprint screen-2 item 9).
+  const external = Boolean(activity.detailUrl);
+  const ctaLabel = external ? `View on ${activity.sourceName} ↗` : 'See details →';
+  const label = `${activity.activityName} at ${activity.venue}, ${when.day} ${when.time}, ${formatAges(activity.ageMin, activity.ageMax)}, ${meta.label}, ${conf.label}`;
   const body = (
     <>
       <CategoryTile category={activity.category} />
@@ -44,8 +53,10 @@ export function ActivityCard({ activity }: { activity: Activity }) {
         </div>
         <div className="kf-card__tags">
           <BookingTag activity={activity} />
+          <Badge variant={conf.tone}>{conf.label}</Badge>
         </div>
         <FreshnessStamp activity={activity} />
+        <span className="kf-card__cta">{ctaLabel}</span>
       </div>
     </>
   );

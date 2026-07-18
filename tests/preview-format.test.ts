@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ageGuide,
   bookingTag,
+  confidenceMeta,
   daysSince,
   formatAges,
   formatChecked,
@@ -209,6 +210,33 @@ describe('bookingTag', () => {
     expect(bookingTag('drop_in')).toBe('Drop-in');
     expect(bookingTag('registration')).toBe('Registration');
     expect(bookingTag('none')).toBe('');
+  });
+});
+
+describe('confidenceMeta', () => {
+  it('reads official-authority tiers as "Official source" (Blueprint screen-2)', () => {
+    expect(confidenceMeta('confirmed')).toEqual({ label: 'Official source', tone: 'confirmed' });
+    expect(confidenceMeta('official')).toEqual({ label: 'Official source', tone: 'confirmed' });
+  });
+  it('names an editorial aggregator honestly (not "official")', () => {
+    const m = confidenceMeta('editorial');
+    expect(m.label).toBe('Editorial listing');
+    expect(m.tone).toBe('info');
+    expect(m.label.toLowerCase()).not.toContain('official');
+  });
+  it('never dresses an unverified community row up as official', () => {
+    const m = confidenceMeta('candidate');
+    expect(m.label).toBe('Community-listed');
+    expect(m.tone).toBe('neutral');
+    expect(m.label.toLowerCase()).not.toContain('official');
+  });
+  it('always carries a non-empty text label + a valid Badge tone (never colour-only)', () => {
+    const VALID_TONES = new Set(['confirmed', 'info', 'neutral']);
+    for (const c of ['confirmed', 'official', 'editorial', 'candidate'] as const) {
+      const m = confidenceMeta(c);
+      expect(m.label.trim().length, `${c} label`).toBeGreaterThan(0);
+      expect(VALID_TONES.has(m.tone), `${c} tone`).toBe(true);
+    }
   });
 });
 

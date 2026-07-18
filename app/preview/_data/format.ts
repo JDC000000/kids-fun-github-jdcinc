@@ -2,7 +2,7 @@
 // Every number a parent reads (time, age, cost, distance, freshness) is formatted
 // here so it stays consistent and honest across card + detail (D2 tabular numerals).
 
-import type { Activity, StatusMeta, StatusState } from './types';
+import type { Activity, ConfidenceLabel, StatusMeta, StatusState } from './types';
 
 const VANCOUVER_TZ = 'America/Vancouver';
 
@@ -208,6 +208,35 @@ export function statusMeta(status: StatusState, seasonLabel?: string): StatusMet
       // Unreachable for the 16 canonical values above; a defensive honest fallback for any
       // unexpected string so an unknown status is never silently shown as available.
       return { label: 'Unverified', copy: 'Status unclear — check the official source.', section: 'expected', tone: 'muted', icon: '⋯' };
+  }
+}
+
+/** Card/detail-ready source-confidence read: an authority-tier label + a Badge tone. */
+export interface ConfidenceMeta {
+  /** Short, honest card label — the source-authority tier, not the occurrence status. */
+  label: string;
+  /** Badge variant (a subset of the shared `Badge` primitive's variants). */
+  tone: 'confirmed' | 'info' | 'neutral';
+}
+
+/**
+ * Source-confidence → card label + tone (BR-13; Brand V2 §11; Blueprint screen-2 "Confirmed ·
+ * Official source"). This is the SOURCE-AUTHORITY read (who vouches for the listing), distinct
+ * from the occurrence `status` (whether it runs) that `statusMeta` covers — the card surfaces
+ * both so "source confidence" is visible, never colour-only (G-T22-2). Honest by tier: an
+ * official source reads "Official source", an editorial aggregator reads "Editorial listing",
+ * an unverified community row reads "Community-listed" (never dressed up as official).
+ */
+export function confidenceMeta(confidence: ConfidenceLabel): ConfidenceMeta {
+  switch (confidence) {
+    case 'confirmed':
+    case 'official':
+      return { label: 'Official source', tone: 'confirmed' };
+    case 'editorial':
+      return { label: 'Editorial listing', tone: 'info' };
+    case 'candidate':
+    default:
+      return { label: 'Community-listed', tone: 'neutral' };
   }
 }
 
