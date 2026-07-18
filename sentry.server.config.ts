@@ -13,6 +13,17 @@ Sentry.init({
   // keeps local / CI / test runs silent.
   enabled: Boolean(dsn),
   environment: process.env.NEXT_PUBLIC_APP_ENV || 'development',
+  // Issue ownership (G-T37-3): stamp every event with the owning team + the
+  // runtime that raised it, so each Sentry issue is an attributable, owned
+  // internal-bug record. A project Ownership Rule (tags.owner_team:kids-fun
+  // #jdc000000) auto-assigns tagged issues to the owning team, and the runtime
+  // tag lets triage split server/edge/browser failures. Additive, PII-free.
+  initialScope: {
+    tags: {
+      owner_team: 'kids-fun',
+      app_runtime: 'server',
+    },
+  },
   // Scope = error monitoring. Performance tracing is intentionally off to keep
   // the integration focused and avoid consuming the transactions quota on a new
   // Sentry account; raise this (e.g. 0.1) per-environment to enable it later.
