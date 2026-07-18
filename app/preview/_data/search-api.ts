@@ -129,31 +129,59 @@ function mapCost(status: ListingRecordDto['costStatus']): CostStatus {
   return 'unknown';
 }
 
+/** The 16 canonical BR-12 status_state values (TSD §6.2), kept in sync with StatusState. */
+const CANONICAL_STATUS: ReadonlySet<StatusState> = new Set<StatusState>([
+  'confirmed',
+  'bookable_open',
+  'not_yet_bookable',
+  'schedule_not_published',
+  'inferred_recurring',
+  'manual_candidate',
+  'seasonal_out_of_season',
+  'seasonal_preseason',
+  'seasonal_active',
+  'suspended',
+  'stale',
+  'cancelled',
+  'postponed',
+  'full',
+  'waitlist',
+  'needs_review',
+]);
+
+/**
+ * Pass a canonical status through verbatim so the UI can render its true, honest copy
+ * (see statusMeta). Previously this COLLAPSED distinct states into approximations —
+ * full/waitlist → "Opens soon", seasonal_active/preseason → "Usually weekly",
+ * manual_candidate → "Not posted yet" — which overstated availability and violated the
+ * confirmed/expected honesty rule (UXR-06 / T-07). Any unexpected string degrades to
+ * `needs_review` ("Unverified — check the source"), never to a confirmed-looking state.
+ */
 function mapStatus(status: string): StatusState {
-  switch (status) {
-    case 'confirmed':
-    case 'bookable_open':
-    case 'not_yet_bookable':
-    case 'schedule_not_published':
-    case 'inferred_recurring':
-    case 'seasonal_out_of_season':
-    case 'stale':
-    case 'cancelled':
-    case 'postponed':
-      return status;
-    case 'seasonal_preseason':
-    case 'seasonal_active':
-      return 'inferred_recurring';
-    case 'full':
-    case 'waitlist':
-      return 'not_yet_bookable';
-    default:
-      return 'schedule_not_published';
-  }
+  return CANONICAL_STATUS.has(status as StatusState) ? (status as StatusState) : 'needs_review';
 }
+
+/**
+ * Statuses that must never present a book / register / drop-in affordance, because the
+ * spot is not actually open (full, waitlist, suspended, cancelled, postponed) or the
+ * listing itself is unverified/out of season. The source CTA still remains the authority
+ * on the detail page (Appendix C) — this only suppresses the misleading card chip.
+ */
+const NON_BOOKABLE_STATUSES: ReadonlySet<StatusState> = new Set<StatusState>([
+  'full',
+  'waitlist',
+  'suspended',
+  'cancelled',
+  'postponed',
+  'seasonal_out_of_season',
+  'seasonal_preseason',
+  'manual_candidate',
+  'needs_review',
+]);
 
 function mapBooking(status: string, bookingUrl: string | null, tags: Set<string>): BookingType {
   if (status === 'bookable_open') return 'bookable_now';
+  if (NON_BOOKABLE_STATUSES.has(mapStatus(status))) return 'none';
   if (tags.has('drop_in')) return 'drop_in';
   if (bookingUrl) return 'registration';
   return 'none';

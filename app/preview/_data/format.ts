@@ -100,36 +100,114 @@ export function formatChecked(lastCheckedIso: string, nowIso: string = FIXTURE_N
 
 /**
  * Single source of truth for status → user-facing label, honest copy, section, tone, icon.
- * Never colour-only: every entry carries a text label + an icon.
+ * Covers ALL 16 canonical `status_state` values (TSD §6.2, Appendix C UX Copy Rules), so no
+ * live status ever falls through to a generic "Unknown". Two honesty invariants hold across
+ * every entry (UXR-06 / T-07 / Appendix D "never show stale/expected/seasonal as confirmed"):
+ *   1. Only `confirmed` and `bookable_open` carry `section: 'confirmed'`. Everything else —
+ *      including a currently-in-season seasonal item or a full class — sits in the `expected`
+ *      section, so nothing unverified is ever blurred into the confirmed list.
+ *   2. Copy never overstates live availability: `full`/`waitlist` read as full (not "opens
+ *      soon"), `suspended` reads as suspended (not "not posted yet"), seasonal states name
+ *      their season phase honestly.
+ * Never colour-only: every entry carries a text label + a paired icon. Tones are limited to
+ * the five the stamp/card CSS defines (confirmed | info | expected | cancelled | muted).
  */
 export function statusMeta(status: StatusState, seasonLabel?: string): StatusMeta {
   switch (status) {
+    // ── Confirmed section — verified and actionable right now. ───────────────────
     case 'confirmed':
       return { label: 'Confirmed', copy: 'Confirmed on the official source.', section: 'confirmed', tone: 'confirmed', icon: '✓' };
     case 'bookable_open':
       return { label: 'Bookable now', copy: 'Booking is open on the source site.', section: 'confirmed', tone: 'confirmed', icon: '✓' };
+
+    // ── Expected section — real, but not a confirmed-for-this-date event. ─────────
     case 'not_yet_bookable':
       return { label: 'Opens soon', copy: 'Not yet bookable — booking opens closer to the date.', section: 'expected', tone: 'info', icon: '◷' };
     case 'schedule_not_published':
       return { label: 'Not posted yet', copy: "Schedule not posted yet — we'll recheck.", section: 'expected', tone: 'expected', icon: '◴' };
     case 'inferred_recurring':
       return { label: 'Usually weekly', copy: 'Usually runs weekly — confirm the date on the source.', section: 'expected', tone: 'info', icon: '↻' };
+    case 'manual_candidate':
+      return {
+        label: 'Unverified',
+        copy: 'Community-listed — not yet checked against an official source.',
+        section: 'expected',
+        tone: 'muted',
+        icon: '⋯',
+      };
+    case 'needs_review':
+      return {
+        label: 'Unverified',
+        copy: 'Not yet verified — check the official source before you rely on it.',
+        section: 'expected',
+        tone: 'muted',
+        icon: '⋯',
+      };
+
+    // ── Seasonal — named by season phase, always in the expected section (T-07). ──
     case 'seasonal_out_of_season':
       return {
-        label: 'Seasonal',
+        label: 'Out of season',
         copy: seasonLabel ? `Seasonal — closed until ${seasonLabel}.` : 'Seasonal — closed for now.',
         section: 'expected',
         tone: 'expected',
         icon: '✵',
       };
+    case 'seasonal_preseason':
+      return {
+        label: 'Season starts soon',
+        copy: seasonLabel ? `Seasonal — the season starts ${seasonLabel}.` : "Seasonal — the season hasn't started yet.",
+        section: 'expected',
+        tone: 'info',
+        icon: '✵',
+      };
+    case 'seasonal_active':
+      return {
+        label: 'In season now',
+        copy: 'Running this season — confirm the day and time on the source.',
+        section: 'expected',
+        tone: 'info',
+        icon: '✵',
+      };
+
+    // ── Capacity / availability — honest about there being no open spot. ─────────
+    case 'full':
+      return {
+        label: 'Full',
+        copy: 'Full — no spots left right now; check the source in case one opens up.',
+        section: 'expected',
+        tone: 'muted',
+        icon: '⊘',
+      };
+    case 'waitlist':
+      return {
+        label: 'Waitlist only',
+        copy: 'Full — waitlist only. You can add your name on the source.',
+        section: 'expected',
+        tone: 'info',
+        icon: '⊘',
+      };
+
+    // ── Freshness / lifecycle. ───────────────────────────────────────────────────
     case 'stale':
-      return { label: 'May be stale', copy: 'Last check is a few days old — may be stale.', section: 'expected', tone: 'muted', icon: '⧖' };
+      return { label: 'May be stale', copy: 'Last check is a few days old — may be out of date.', section: 'expected', tone: 'muted', icon: '⧖' };
+    case 'suspended':
+      return {
+        label: 'Suspended',
+        copy: 'Temporarily suspended — check the source before you go.',
+        section: 'expected',
+        tone: 'cancelled',
+        icon: '‖',
+      };
     case 'cancelled':
       return { label: 'Cancelled', copy: 'This occurrence was cancelled.', section: 'expected', tone: 'cancelled', icon: '✕' };
     case 'postponed':
       return { label: 'Postponed', copy: 'This occurrence was postponed.', section: 'expected', tone: 'cancelled', icon: '✕' };
+
     default:
-      return { label: 'Unknown', copy: 'Status unknown — check the source.', section: 'expected', tone: 'muted', icon: '?' };
+      // Unreachable for the 16 canonical values above; a defensive honest fallback for any
+      // unexpected string so an unknown status is never silently shown as available.
+      return { label: 'Unverified', copy: 'Status unclear — check the official source.', section: 'expected', tone: 'muted', icon: '⋯' };
   }
 }
 
