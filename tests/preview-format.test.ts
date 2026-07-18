@@ -11,7 +11,8 @@ import {
   practicalFacts,
   statusMeta,
 } from '../app/preview/_data/format';
-import { mapSearchItemToActivity, searchApiUrl } from '../app/preview/_data/search-api';
+import { mapSearchItemToActivity, searchApiUrl, type ListingRecordDto } from '../app/preview/_data/search-api';
+import type { StatusState } from '../app/preview/_data/types';
 
 describe('formatAges', () => {
   it('formats a normal band', () => {
@@ -118,16 +119,80 @@ describe('formatWhen (America/Vancouver)', () => {
 });
 
 describe('statusMeta', () => {
-  it('routes confirmed + bookable to the confirmed section', () => {
-    expect(statusMeta('confirmed').section).toBe('confirmed');
-    expect(statusMeta('bookable_open').section).toBe('confirmed');
+  // The 16 canonical BR-12 status_state values (TSD §6.2, Appendix C). Every one MUST
+  // resolve to honest, non-empty copy — no live status may fall through to "Unknown".
+  const ALL_STATUSES: StatusState[] = [
+    'confirmed',
+    'bookable_open',
+    'not_yet_bookable',
+    'schedule_not_published',
+    'inferred_recurring',
+    'manual_candidate',
+    'seasonal_out_of_season',
+    'seasonal_preseason',
+    'seasonal_active',
+    'suspended',
+    'stale',
+    'cancelled',
+    'postponed',
+    'full',
+    'waitlist',
+    'needs_review',
+  ];
+  const VALID_TONES = new Set(['confirmed', 'info', 'expected', 'cancelled', 'muted']);
+
+  it('covers all 16 canonical states with non-empty label + copy + icon (T25-1)', () => {
+    expect(ALL_STATUSES).toHaveLength(16);
+    for (const status of ALL_STATUSES) {
+      const m = statusMeta(status);
+      expect(m.label.trim().length, `${status} label`).toBeGreaterThan(0);
+      expect(m.copy.trim().length, `${status} copy`).toBeGreaterThan(0);
+      expect(m.icon.trim().length, `${status} icon`).toBeGreaterThan(0);
+      expect(VALID_TONES.has(m.tone), `${status} tone`).toBe(true);
+      expect(['confirmed', 'expected']).toContain(m.section);
+      // No live status is ever labelled the generic pre-fix placeholder.
+      expect(m.label).not.toBe('Unknown');
+    }
   });
+
+  it('marks ONLY confirmed + bookable_open as the confirmed section (UXR-06 / T-07)', () => {
+    const confirmedStates = ALL_STATUSES.filter((s) => statusMeta(s).section === 'confirmed');
+    expect(confirmedStates.sort()).toEqual(['bookable_open', 'confirmed']);
+  });
+
   it('routes not-yet-posted / seasonal / stale / cancelled to expected', () => {
     expect(statusMeta('schedule_not_published').section).toBe('expected');
     expect(statusMeta('seasonal_out_of_season').section).toBe('expected');
     expect(statusMeta('stale').section).toBe('expected');
     expect(statusMeta('cancelled').section).toBe('expected');
   });
+
+  it('never overstates availability for full / waitlist (not "opens soon")', () => {
+    const full = statusMeta('full');
+    expect(full.label.toLowerCase()).toContain('full');
+    expect(full.copy.toLowerCase()).toContain('full');
+    expect(full.label.toLowerCase()).not.toContain('opens soon');
+    const waitlist = statusMeta('waitlist');
+    expect(waitlist.label.toLowerCase()).toContain('waitlist');
+    expect(waitlist.copy.toLowerCase()).not.toContain('opens soon');
+  });
+
+  it('names the seasonal phase honestly (active is not "usually weekly")', () => {
+    const active = statusMeta('seasonal_active');
+    expect(active.label.toLowerCase()).toContain('season');
+    expect(active.copy.toLowerCase()).not.toContain('usually runs weekly');
+    const pre = statusMeta('seasonal_preseason', 'in May');
+    expect(pre.copy).toContain('in May');
+    expect(pre.copy.toLowerCase()).not.toContain('usually runs weekly');
+  });
+
+  it('reads suspended and unverified states plainly, not "not posted yet"', () => {
+    expect(statusMeta('suspended').label.toLowerCase()).toContain('suspend');
+    expect(statusMeta('manual_candidate').label.toLowerCase()).toContain('unverified');
+    expect(statusMeta('needs_review').label.toLowerCase()).toContain('unverified');
+    expect(statusMeta('suspended').copy.toLowerCase()).not.toContain('not posted yet');
+  });
+
   it('interpolates the season label', () => {
     expect(statusMeta('seasonal_out_of_season', 'December').copy).toContain('December');
   });
@@ -227,5 +292,92 @@ describe('search API mapping', () => {
     });
 
     expect(activity.ageNotes).toBe('Children under 6 must stay within arm’s reach of an adult.');
+  });
+
+  // Minimal listing DTO factory — only the fields the status/booking mapping reads matter.
+  function listingWith(statusState: string, bookingUrl: string | null = null): ListingRecordDto {
+    return {
+      id: `s-${statusState}`,
+      activityName: 'Public Swim',
+      primaryCategoryKey: 'public_swim',
+      categoryTags: ['public_swim'],
+      venueName: 'Kitsilano Pool',
+      organisation: 'City of Vancouver',
+      descriptionSnippet: '',
+      suitabilityTags: [],
+      startDatetimeUtc: '2026-07-20T17:00:00.000Z',
+      endDatetimeUtc: '2026-07-20T18:00:00.000Z',
+      costStatus: 'free',
+      costMinCad: null,
+      costMaxCad: null,
+      statusState,
+      confidenceLabel: 'official',
+      lastCheckedAtUtc: '2026-07-13T20:00:00.000Z',
+      ageMinMonths: 0,
+      ageMaxMonths: 144,
+      geo: { lat: 49.27, lng: -123.15 },
+      displayArea: 'Kitsilano',
+      neighbourhood: 'Kitsilano',
+      municipalityId: 'Vancouver',
+      sourceUrl: 'https://vancouver.ca/kits',
+      bookingUrl,
+      locationUrl: null,
+    };
+  }
+
+  it('passes every canonical status through verbatim — no collapsing (T25)', () => {
+    const canonical: StatusState[] = [
+      'confirmed',
+      'bookable_open',
+      'not_yet_bookable',
+      'schedule_not_published',
+      'inferred_recurring',
+      'manual_candidate',
+      'seasonal_out_of_season',
+      'seasonal_preseason',
+      'seasonal_active',
+      'suspended',
+      'stale',
+      'cancelled',
+      'postponed',
+      'full',
+      'waitlist',
+      'needs_review',
+    ];
+    for (const status of canonical) {
+      const activity = mapSearchItemToActivity({ distanceKm: 1, listing: listingWith(status) });
+      expect(activity.status, status).toBe(status);
+    }
+  });
+
+  it('no longer disguises full/waitlist/seasonal_active as other states', () => {
+    expect(mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('full') }).status).toBe('full');
+    expect(mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('waitlist') }).status).toBe('waitlist');
+    expect(mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('seasonal_active') }).status).toBe(
+      'seasonal_active',
+    );
+  });
+
+  it('degrades an unexpected status string to needs_review, never a confirmed-looking state', () => {
+    const activity = mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('totally_unknown_state') });
+    expect(activity.status).toBe('needs_review');
+  });
+
+  it('suppresses the book/register chip for genuinely non-bookable statuses', () => {
+    // A full class with a booking URL must NOT advertise "Registration" on the card.
+    expect(mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('full', 'https://book.example') }).booking).toBe(
+      'none',
+    );
+    expect(
+      mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('waitlist', 'https://book.example') }).booking,
+    ).toBe('none');
+    expect(
+      mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('suspended', 'https://book.example') }).booking,
+    ).toBe('none');
+    // Bookable-open and a confirmed registration still present their affordance.
+    expect(mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('bookable_open') }).booking).toBe('bookable_now');
+    expect(
+      mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('confirmed', 'https://book.example') }).booking,
+    ).toBe('registration');
   });
 });

@@ -5,17 +5,31 @@
 // search/ranking API (Track D) later with minimal reshaping. This is fixture-only
 // data — no database, no network, no secrets.
 
-/** Subset of the 16 canonical BR-12 status states that the parent-facing UI renders. */
+/**
+ * The 16 canonical BR-12 `status_state` values (TSD §6.2, Appendix C), in the same
+ * order as the DB enum (migration 0002) and `lib/search/types.ts`. The parent-facing
+ * UI renders EVERY one of them with honest copy (see `statusMeta`) — no live status may
+ * fall through to a generic "Unknown", and none but `confirmed`/`bookable_open` is ever
+ * shown as confirmed (UXR-06 / T-07). Mirrored here (not imported) so the fixture/demo
+ * layer stays self-contained, but the value set is identical to the search lib's.
+ */
 export type StatusState =
   | 'confirmed'
   | 'bookable_open'
   | 'not_yet_bookable'
   | 'schedule_not_published'
   | 'inferred_recurring'
+  | 'manual_candidate'
   | 'seasonal_out_of_season'
+  | 'seasonal_preseason'
+  | 'seasonal_active'
+  | 'suspended'
   | 'stale'
   | 'cancelled'
-  | 'postponed';
+  | 'postponed'
+  | 'full'
+  | 'waitlist'
+  | 'needs_review';
 
 /** How a parent actually acts on the listing (drives the booking/registration tag). */
 export type BookingType = 'bookable_now' | 'drop_in' | 'registration' | 'none';
