@@ -39,54 +39,14 @@
   color: var(--ink-secondary);
 }
 
-.kf-sbar__input {
-  width: 100%;
-  min-height: 44px; /* WCAG 2.5.8 target size */
-  padding: 10px 14px;
-  font-family: inherit;
-  font-size: 16px; /* ≥16px stops iOS zoom-on-focus */
-  font-weight: 500;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--neutral-300);
-  border-radius: 12px;
-  box-shadow: var(--e-100);
-}
-
-.kf-sbar__input::placeholder {
-  color: var(--ink-muted);
-  font-weight: 400;
-}
-
-.kf-sbar__input:focus-visible {
-  outline: 2px solid var(--leaf);
-  outline-offset: 1px;
-  border-color: var(--leaf);
-}
-
+/* The search field + submit now use the shared components/ui Input + Button
+ * primitives (Round 10 / Task D system; Round 13 / Task K rollout). The primitives
+ * own all visual styling (token-driven border/radius/elevation, 48px target, focus
+ * ring, and the brand-correct Leaf + Forest-ink primary button — replacing the old
+ * hand-rolled white-on-Leaf submit, which failed WCAG AA). Only the submit's layout
+ * remains here — it bottom-aligns the Button with the field's input, not its label. */
 .kf-sbar__submit {
   align-self: flex-end;
-  min-height: 44px;
-  min-width: 44px;
-  padding: 0 18px;
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  color: #ffffff;
-  background: var(--leaf);
-  border: 1px solid var(--leaf-hover);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: background var(--motion);
-}
-
-.kf-sbar__submit:hover {
-  background: var(--leaf-hover);
-}
-
-.kf-sbar__submit:focus-visible {
-  outline: 2px solid var(--anchor);
-  outline-offset: 2px;
 }
 
 /* ── Sort + cost chip rail (D6 transparent sort; tap-to-change, no JS needed) ── */

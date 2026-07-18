@@ -79,6 +79,10 @@ const PAIRINGS: [string, string, string][] = [
   ['Badge info', '--kf-info-text', '--kf-info-bg'],
   ['Badge expected', '--kf-expected-text', '--kf-expected-bg'],
   ['Badge cancelled', '--kf-cancelled-text', '--kf-cancelled-bg'],
+  // Text fields — Input and its multi-line twin Textarea share these pairings
+  // (same tokens), so the guard covers both. Placeholder is held to AA too.
+  ['Input/Textarea text', '--kf-ink', '--kf-surface'],
+  ['Input/Textarea placeholder', '--kf-ink-muted', '--kf-surface'],
 ];
 
 describe('design-token contrast (WCAG AA, both schemes)', () => {

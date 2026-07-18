@@ -63,6 +63,15 @@
   border-color: var(--kf-danger-hover);
 }
 
+/* sm — compact list-row density (e.g. a matched "Open" link + "Delete" button pair)
+ * without the full 48px CTA inflating the row height. Colour, radius, focus ring and
+ * disabled treatment all inherit from .btn + the variant, so a sm button stays on-brand. */
+.sm {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
 .block {
   width: 100%;
 }

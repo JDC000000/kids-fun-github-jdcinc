@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Button, Input } from '@/components/ui';
 import { SORT_OPTIONS, hiddenStateFields, hrefFor, type SearchState } from '../_lib/params';
 
 // The primary, always-visible search control (Blueprint Screen 1/2, UXR-01). A plain
@@ -17,9 +18,8 @@ export function SearchBar({ state }: { state: SearchState }) {
           <label className="kf-sbar__label" htmlFor="kf-q">
             What are you looking for?
           </label>
-          <input
+          <Input
             id="kf-q"
-            className="kf-sbar__input"
             type="search"
             name="q"
             defaultValue={state.q}
@@ -34,9 +34,11 @@ export function SearchBar({ state }: { state: SearchState }) {
         {carried.map((field) => (
           <input key={field.name} type="hidden" name={field.name} value={field.value} />
         ))}
-        <button className="kf-sbar__submit" type="submit">
+        {/* The shared components/ui Button (Leaf fill + Forest-ink text, D10) owns the visual
+            styling; .kf-sbar__submit is layout-only (bottom-aligns it with the input). */}
+        <Button variant="primary" type="submit" className="kf-sbar__submit">
           Search
-        </button>
+        </Button>
       </form>
 
       <div className="kf-sbar__controls" role="group" aria-label="Sort and cost options">

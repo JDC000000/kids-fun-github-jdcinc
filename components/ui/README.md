@@ -16,21 +16,39 @@ per-route bespoke CSS.
 
 | Component | Element | Variants | Use |
 |---|---|---|---|
-| `Button` | `<button>` | `primary` (Leaf), `secondary`, `ghost`, `danger` | CTAs and actions. `fullWidth` for action bars. `danger` = red-brown destructive fill for account deletion etc. |
-| `Input`  | `<input>`  | — | Text fields. 48px target, 16px font (no iOS zoom), tabular numerals. |
+| `Button` | `<button>` or `as` (`a`/`Link`/…) | `primary` (Leaf), `secondary`, `ghost`, `danger` · `size` `md`/`sm` | CTAs and actions. `fullWidth` for action bars. `danger` = red-brown destructive fill for account deletion etc. `as="a"`/`as={Link}` for a real navigation link (keeps right-/middle-click, open-in-new-tab). `size="sm"` for compact list-row density. |
+| `Input`  | `<input>`  | — | Single-line text fields. 48px target, 16px font (no iOS zoom), tabular numerals. |
+| `Textarea` | `<textarea>` | — | Multi-line text fields. Input's twin — same border/radius/elevation/focus, `resize: vertical`. |
 | `Card`   | `as` (div/li/…) | `interactive` | Content surfaces — hairline + Elevation-100. |
 | `Badge`  | `<span>` | `confirmed`, `info`, `expected`, `cancelled`, `neutral` | Status/label pills. Colour ALWAYS pairs with the text label you pass (never colour-only). |
 
 ```tsx
-import { Button, Input, Card, Badge } from '@/components/ui';
+import { Button, Input, Textarea, Card, Badge } from '@/components/ui';
 ```
+
+**Polymorphic / compact `Button`.** A matched action pair where one item must stay a
+real link and the other a real button can now both adopt the primitive:
+
+```tsx
+import Link from 'next/link';
+// "Open" is navigation (must be an <a> — new-tab, middle-click); "Delete" is an action.
+<Button as={Link} href={hrefForParams(s.params)} variant="secondary" size="sm">Open</Button>
+<Button variant="danger" size="sm" onClick={onDelete}>Delete</Button>
+```
+
+`size="sm"` changes only the density (36px height, tighter padding/font); colour, radius,
+focus ring and disabled treatment are inherited, so shape stays a design decision the
+caller can layer via `className` (e.g. a pill radius) without the primitive imposing one.
 
 All primitives are server-compatible (no `use client`), so they add zero client
 JS when used in Server Components.
 
-## Adopted so far (Round 10 / Task D)
+## Adopted so far
 
-- **Home hero search** (`app/page.tsx`): `Input` + `Button`.
+- **Home hero search** (`app/page.tsx`, Round 10 / Task D): `Input` + `Button`.
+- **Account** (`AccountForm` / `AccountData` / `SavedSearches`, Rounds 10–12): `Button` (primary/danger/ghost) + `Input`.
+- **Search save bar + resume** (`app/search/**`, Rounds 10/12): `Button` + `Badge`.
+- **Search bar** (`app/search/_components/SearchBar.tsx`, Round 13 / Task K): `Input` (query) + `Button variant="primary"` (submit — replaces the old white-on-Leaf submit, which failed AA).
 
 ## Known near-term consumers (Round 10 parallel streams)
 
@@ -45,10 +63,18 @@ Pattern for consumers: keep your layout class, add the primitive —
 native button/input props (onClick, disabled, type, form, aria-*) pass through;
 the primitives are server-compatible but work in client components too.
 
-## Not yet adopted (future rounds — see the Task D findings doc)
+## Not yet adopted (future rounds)
 
-The status surfaces where `Badge` / `Card` belong live under `app/preview/**` and
-`app/search/**`, which were **out of scope** this round to avoid collisions with
-the parallel saved-search and account streams. Next round: swap the freshness /
-booking chips on the activity card + detail page to `Badge`, and the card/tile
-shells to `Card`. The tokens are already there — the migration is mechanical.
+- **Preview status surfaces** — the freshness / booking chips on the activity card +
+  detail page → `Badge`, and the card/tile shells → `Card` (`app/preview/**`).
+- **Search chip/toggle system** (`.kf-fchip`, `.kf-sbar__chip`, `.kf-viewtoggle__btn`)
+  is a bespoke **selection** vocabulary (aria-current/aria-pressed + checkmark, scroll-snap
+  rails, segmented on/off). It is deliberately NOT force-fit onto `Button` (a CTA, not a
+  toggle) — it wants a future dedicated `Chip` / segmented-toggle primitive. See the Round 13
+  / Task K findings doc.
+- **`Textarea`** ships here but has no in-app consumer yet: its intended first adopter is the
+  account "Save a new search" **Filters** `<textarea>` (`app/account/**`), which Round 12 / Task I
+  left native pending this primitive. `/search` has no multi-line field.
+- **Polymorphic / compact `Button`** (`as` + `size="sm"`) ships here for the account saved-search
+  **Open** (link) + **Delete** (button) pair that Task I left un-migrated; the migration is a future
+  account-scope task.
