@@ -315,26 +315,8 @@
   flex-wrap: wrap;
 }
 
-.kf-saved__submit {
-  padding: 0.55rem 1.15rem;
-  font-family: inherit;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  color: var(--warm-paper);
-  background: var(--evergreen);
-  border: 1px solid var(--evergreen);
-  border-radius: 9999px;
-  cursor: pointer;
-}
-
-.kf-saved__submit:hover:not(:disabled) {
-  background: var(--forest-ink);
-}
-
-.kf-saved__submit:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
+/* The "Save search" submit uses the shared components/ui Button primitive
+ * (variant="primary", Leaf, token-driven) — no local button styling here. */
 
 .kf-saved__msg {
   font-size: 0.9375rem;

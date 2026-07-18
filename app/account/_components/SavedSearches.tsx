@@ -10,6 +10,7 @@
 // every call is owner-scoped server-side via RLS, so this component only ever
 // handles the current user's rows.
 import { useState, type FormEvent } from 'react';
+import { Button, Input } from '@/components/ui';
 import { hrefForParams } from '@/app/search/_lib/params';
 
 export interface SavedSearchView {
@@ -188,9 +189,8 @@ export function SavedSearches({ initial }: { initial: SavedSearchView[] }) {
           <label className="kf-saved__label" htmlFor="ss-name">
             Name <span className="kf-saved__optional">(optional)</span>
           </label>
-          <input
+          <Input
             id="ss-name"
-            className="kf-saved__input"
             type="text"
             placeholder="e.g. Toddler swim near home"
             maxLength={120}
@@ -203,9 +203,8 @@ export function SavedSearches({ initial }: { initial: SavedSearchView[] }) {
           <label className="kf-saved__label" htmlFor="ss-query">
             Search query
           </label>
-          <input
+          <Input
             id="ss-query"
-            className="kf-saved__input"
             type="text"
             placeholder="e.g. open gym"
             value={queryText}
@@ -232,9 +231,9 @@ export function SavedSearches({ initial }: { initial: SavedSearchView[] }) {
         </div>
 
         <div className="kf-saved__actions">
-          <button className="kf-saved__submit" type="submit" disabled={saving}>
+          <Button variant="primary" type="submit" disabled={saving}>
             {saving ? 'Saving…' : 'Save search'}
-          </button>
+          </Button>
           {status.kind === 'error' && (
             <span className="kf-saved__msg kf-saved__msg--err" role="alert">
               {status.message}
