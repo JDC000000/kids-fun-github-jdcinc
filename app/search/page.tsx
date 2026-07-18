@@ -13,6 +13,7 @@ import { SearchBar } from './_components/SearchBar';
 import { FilterRail, type SavedLocationInfo } from './_components/FilterRail';
 import { SearchResultsView } from './_components/SearchResultsView';
 import { SaveSearchButton } from './_components/SaveSearchButton';
+import { ResumeSearch } from './_components/ResumeSearch';
 import { buildMarkers, geoIndex } from './_lib/markers';
 import {
   AGE_OPTIONS,
@@ -260,6 +261,16 @@ export default async function SearchPage({
 
       <SearchBar state={state} />
       <FilterRail state={state} savedLocation={savedLocation} />
+
+      {/* Anon memory (T26): on an active search this quietly refreshes the on-device "last
+          search"; on a bare landing it offers an explicit, dismissible resume of it. Rendered
+          unconditionally so the memory write still happens while searching; it renders no UI
+          unless a bare-landing resume is being offered. Coordinates are never persisted. */}
+      <ResumeSearch
+        currentParams={saveParams}
+        currentLabel={suggestedName}
+        hasActiveState={state.q.trim().length > 0 || filtersActive}
+      />
 
       {showSave && (
         <SaveSearchButton

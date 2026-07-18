@@ -597,3 +597,94 @@
     transition: none;
   }
 }
+
+/* ── Anon memory: "pick up where you left off" resume suggestion (T26 / G-T26-3) ──
+   A returning anonymous visitor's dismissible offer to re-run their last search. Soft
+   confirmed-tone panel so it reads as helpful, not an alert; token-driven for light/dark. */
+.kf-resume {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  margin: 4px 16px 10px;
+  padding: 12px 14px;
+  background: var(--confirmed-bg);
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--leaf);
+  border-radius: 12px;
+  box-shadow: var(--e-100);
+}
+
+.kf-resume__body {
+  min-width: 0;
+}
+
+.kf-resume__eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--confirmed-text);
+}
+
+.kf-resume__text {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.kf-resume__label {
+  font-weight: 700;
+}
+
+.kf-resume__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.kf-resume__glyph {
+  font-size: 14px;
+  line-height: 1;
+  margin-right: 4px;
+}
+
+/* Secondary text actions ("Not now" / "Forget this") — WCAG: 44px target, focus ring,
+   never colour-only state. */
+.kf-resume__btn {
+  min-height: 44px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--anchor);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color var(--motion);
+}
+
+.kf-resume__btn:hover {
+  color: var(--leaf-hover);
+}
+
+.kf-resume__btn--muted {
+  color: var(--ink-secondary);
+}
+
+.kf-resume__btn:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kf-resume__btn {
+    transition: none;
+  }
+}
