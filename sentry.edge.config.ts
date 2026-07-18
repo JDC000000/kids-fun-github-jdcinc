@@ -5,6 +5,8 @@
 // still captured via the SDK's automatic build-time instrumentation.
 import * as Sentry from '@sentry/nextjs';
 
+import { scrubEvent } from './sentry.scrub';
+
 const dsn = process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
 
 Sentry.init({
@@ -14,4 +16,11 @@ Sentry.init({
   // Error monitoring only (see sentry.server.config.ts for rationale).
   tracesSampleRate: 0,
   sendDefaultPii: false,
+  // Explicit PII deny-list (defense-in-depth on top of sendDefaultPii:false):
+  // redact email / IP / phone-shaped values and strip identity + auth data
+  // before any event leaves the edge runtime. See sentry.scrub.ts. Pure
+  // string/object work only — no Node built-ins, so it is Edge-safe.
+  beforeSend: (event) => scrubEvent(event),
+  // Applies the same deny-list to transactions if tracing is ever enabled.
+  beforeSendTransaction: (event) => scrubEvent(event),
 });
