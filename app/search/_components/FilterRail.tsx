@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { Chip as UIChip } from '@/components/ui';
 import type { AgeBandKey } from '@/lib/search/types';
 import {
   AGE_OPTIONS,
@@ -33,21 +34,21 @@ export interface SavedLocationInfo {
 // groups (When, Radius) use aria-current; multi-select toggles (Areas, Ages, quick filters)
 // use aria-pressed. Rails scroll-snap horizontally for one-thumb use.
 
+// A URL-driven filter chip: a real <Link> (shareable, back-button-safe, works with JS
+// off) on the shared Chip primitive. Selection is fill + ✓ (owned by the primitive) and
+// the EXACT aria kept: radio-like groups (When, Radius) → aria-current; multi-select
+// toggles (Ages, Areas, quick filters) → aria-pressed.
 function Chip({ href, active, pressed, children }: { href: string; active: boolean; pressed?: boolean; children: ReactNode }) {
   return (
-    <Link
-      className="kf-fchip"
+    <UIChip
+      as={Link}
       href={href}
+      selected={active}
       aria-current={pressed === undefined && active ? 'true' : undefined}
       aria-pressed={pressed === undefined ? undefined : active}
     >
-      {active && (
-        <span className="kf-fchip__check" aria-hidden="true">
-          ✓
-        </span>
-      )}
       {children}
-    </Link>
+    </UIChip>
   );
 }
 
@@ -135,27 +136,21 @@ export function FilterRail({
         {savedLocation &&
           (savedActive ? (
             <>
-              <span className="kf-fchip kf-fchip--near" aria-current="true">
-                <span className="kf-fchip__check" aria-hidden="true">
-                  ✓
-                </span>
+              <UIChip as="span" selected aria-current="true">
                 Near {savedLocation.areaLabel}
-              </span>
-              <Link
-                className="kf-fchip"
+              </UIChip>
+              <UIChip
+                as={Link}
                 href={hrefFor(state, { useSavedLocation: false })}
                 aria-label="Clear saved-location search"
               >
                 Clear saved location
-              </Link>
+              </UIChip>
             </>
           ) : (
-            <Link
-              className="kf-fchip kf-fchip--action"
-              href={hrefFor(state, { useSavedLocation: true, lat: null, lng: null })}
-            >
+            <UIChip as={Link} action href={hrefFor(state, { useSavedLocation: true, lat: null, lng: null })}>
               <span aria-hidden="true">🏠</span> Near my saved location
-            </Link>
+            </UIChip>
           ))}
         {originActive &&
           RADIUS_OPTIONS.map((km) => (

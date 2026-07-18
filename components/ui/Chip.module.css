@@ -1,0 +1,119 @@
+/* Chip primitive — the KIDS FUN SELECTION vocabulary (filter / sort / cost rail
+ * pills + the list/map segmented toggle), styled entirely from the canonical
+ * --kf-* tokens. Distinct from Button (a CTA): a chip carries a selected/pressed
+ * STATE, not a one-shot action. Every fg/bg pairing here clears WCAG AA in BOTH
+ * schemes and is guarded by components/ui/__tests__/contrast.test.ts. */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--kf-space-1);
+  font-family: var(--kf-font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: background var(--kf-motion), border-color var(--kf-motion), color var(--kf-motion);
+}
+
+/* A non-interactive rendering (as="span", e.g. the "Near you" status chip) must not
+ * imply a tap. `:where()` keeps this at .chip specificity so it cleanly overrides the
+ * base cursor only for the span case, leaving <button>/<a> chips tappable. */
+.chip:not(:where(a, button)) {
+  cursor: default;
+}
+
+/* ── rail — the standalone scroll-snap pill (filter / sort / cost). ── */
+.rail {
+  /* Rail participation: hold size and snap to the rail start. Both are inert outside a
+   * scroll-snap / flex parent, so a rail chip used elsewhere is unaffected. */
+  scroll-snap-align: start;
+  flex: 0 0 auto;
+  min-height: 40px; /* generous one-handed target for cold/wet taps (≈WCAG 2.5.8) */
+  padding: 8px 14px;
+  color: var(--kf-ink-secondary);
+  background: var(--kf-surface);
+  border-color: var(--kf-neutral-300);
+  border-radius: var(--kf-r-chip);
+}
+
+/* sm — the tighter sort/cost density (was .kf-sbar__chip). */
+.rail.sm {
+  min-height: 32px;
+  padding: 5px 12px;
+}
+
+/* Selected rail = pale-confirmed fill + dark-confirmed text + border + the ✓. The
+ * confirmed pair is AA in BOTH schemes (contrast guard: Badge confirmed). */
+.rail.selected {
+  color: var(--kf-confirmed-text);
+  background: var(--kf-confirmed-bg);
+  border-color: var(--kf-confirmed-text);
+}
+
+/* action — the "Near me" affordance. Anchor outline; Leaf stays reserved for the one
+ * primary Search CTA (Workbook §7). Text is --kf-ink on --kf-surface (AA both schemes). */
+.rail.action {
+  color: var(--kf-ink);
+  border-color: var(--kf-anchor);
+  border-width: 1.5px;
+}
+.rail.action:hover {
+  background: var(--kf-confirmed-bg);
+}
+
+/* ── segmented — a segment inside the shared list/map view-toggle container. ── */
+.segmented {
+  min-height: 36px;
+  padding: 6px 16px;
+  gap: 6px; /* glyph ↔ label */
+  font-weight: 700;
+  color: var(--kf-ink-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+}
+.segmented:hover {
+  color: var(--kf-ink);
+}
+
+/* Selected/on segment. THE FIX: the old toggle used white on Leaf = 2.17:1 (FAILS
+ * AA). Forest-ink on Leaf = 7.61:1 — a FIXED brand pair, so AA in light AND dark. */
+.segmented.selected {
+  color: var(--kf-forest-ink);
+  background: var(--kf-leaf);
+}
+.segmented.selected:hover {
+  color: var(--kf-forest-ink);
+}
+
+.check {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* Visible, never-obscured focus ring — the house standard shared with Button/Input
+ * (WCAG 2.4.7 / 2.4.11). */
+.chip:focus-visible {
+  outline: 3px solid var(--kf-leaf-hover);
+  outline-offset: 2px;
+}
+
+/* Disabled dims; the "locating…" busy state (aria-busy) shows a progress cursor —
+ * matches the old .kf-fchip--action[disabled]. */
+.chip:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.chip[aria-busy='true'] {
+  cursor: progress;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip {
+    transition: none;
+  }
+}

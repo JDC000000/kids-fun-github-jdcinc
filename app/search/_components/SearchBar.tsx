@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Button, Input } from '@/components/ui';
+import { Button, Chip, Input } from '@/components/ui';
 import { SORT_OPTIONS, hiddenStateFields, hrefFor, type SearchState } from '../_lib/params';
 
 // The primary, always-visible search control (Blueprint Screen 1/2, UXR-01). A plain
@@ -43,36 +43,33 @@ export function SearchBar({ state }: { state: SearchState }) {
 
       <div className="kf-sbar__controls" role="group" aria-label="Sort and cost options">
         <span className="kf-sbar__controls-label">Sort</span>
+        {/* Sort (radio-like → aria-current) and the cost toggle (aria-pressed) on the shared
+            Chip primitive, compact rail density. Fill + ✓ owned by the chip; selection
+            semantics unchanged. */}
         {SORT_OPTIONS.map((opt) => {
           const active = state.sort === opt.key;
           return (
-            <Link
+            <Chip
               key={opt.key}
-              className="kf-sbar__chip"
+              as={Link}
+              size="sm"
               href={hrefFor(state, { sort: opt.key })}
+              selected={active}
               aria-current={active ? 'true' : undefined}
             >
-              {active && (
-                <span className="kf-sbar__check" aria-hidden="true">
-                  ✓
-                </span>
-              )}
               {opt.label}
-            </Link>
+            </Chip>
           );
         })}
-        <Link
-          className="kf-sbar__chip"
+        <Chip
+          as={Link}
+          size="sm"
           href={hrefFor(state, { includeUnknownCost: !state.includeUnknownCost })}
+          selected={state.includeUnknownCost}
           aria-pressed={state.includeUnknownCost}
         >
-          {state.includeUnknownCost && (
-            <span className="kf-sbar__check" aria-hidden="true">
-              ✓
-            </span>
-          )}
           Include unknown cost
-        </Link>
+        </Chip>
       </div>
     </div>
   );

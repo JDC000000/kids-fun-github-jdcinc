@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { Chip } from '@/components/ui';
 import { hasNearMeCoords, hrefFor, type SearchState } from '../_lib/params';
 
 // "Near me" is the one control that can't be a plain link: it needs the browser
@@ -48,31 +49,22 @@ export function NearMeButton({ state }: { state: SearchState }) {
   if (active) {
     return (
       <>
-        <span className="kf-fchip kf-fchip--near" aria-current="true">
-          <span className="kf-fchip__check" aria-hidden="true">
-            ✓
-          </span>
+        <Chip as="span" selected aria-current="true">
           Near you
-        </span>
-        <Link className="kf-fchip" href={hrefFor(state, { lat: null, lng: null })} aria-label="Clear near-me location">
+        </Chip>
+        <Chip as={Link} href={hrefFor(state, { lat: null, lng: null })} aria-label="Clear near-me location">
           Clear location
-        </Link>
+        </Chip>
       </>
     );
   }
 
   return (
     <>
-      <button
-        type="button"
-        className="kf-fchip kf-fchip--action"
-        onClick={locate}
-        disabled={status === 'locating'}
-        aria-busy={status === 'locating'}
-      >
+      <Chip action onClick={locate} disabled={status === 'locating'} aria-busy={status === 'locating'}>
         <span aria-hidden="true">📍</span>
         {status === 'locating' ? 'Locating…' : 'Near me'}
-      </button>
+      </Chip>
       {status === 'error' && (
         <span className="kf-fchip__hint" role="status">
           Couldn&apos;t get your location — pick an area instead.
