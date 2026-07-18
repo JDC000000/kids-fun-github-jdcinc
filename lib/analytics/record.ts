@@ -1,12 +1,19 @@
-// lib/analytics/record.ts — server-component convenience recorders.
+// lib/analytics/record.ts — server-side convenience recorders (one per event).
 //
-// Thin wrappers a server component can call in a single additive line. They read
-// the anonymous session id (kf_anon_id cookie, read-only — allowed in server
-// components) for `user_or_session`, then delegate to the best-effort writer.
-// Server-only: imports next/headers + the pg-backed write helper.
+// Thin, typed wrappers a server component / route / worker can call in a single
+// additive line. The anonymous recorders read the kf_anon_id cookie (read-only —
+// allowed in server components) for `user_or_session`; the account/system
+// recorders take an explicit pseudonymous actor (a user id or "system"). All
+// delegate to emitEvent (best-effort — never throws or blocks the caller).
+//
+// PRIVACY DISCIPLINE (same bar as Tasks 13/38/B/H): only what the stated analytics
+// purpose needs is captured — never raw PII (name/email/note text), never raw
+// precise coordinates. See each recorder's doc for exactly what it stores.
+//
+// Server-only: imports next/headers + the pg-backed emitter.
 import { cookies } from 'next/headers';
 import { ANON_SESSION_COOKIE, getOrCreateAnonId } from '@/lib/db/session';
-import { writeAnalyticsEvent } from './events';
+import { emitEvent } from './emit';
 
 function currentAnonId(): string {
   try {
@@ -28,18 +35,19 @@ export async function recordListingView(
   occurrenceId: string,
   meta: { activityName?: string; category?: string; sourceName?: string; backend?: string } = {}
 ): Promise<void> {
-  await writeAnalyticsEvent({
-    eventType: 'listing_viewed',
-    userOrSession: currentAnonId(),
-    occurrenceId,
-    resultSummary: {
+  await emitEvent(
+    'listing_viewed',
+    null,
+    {
       id: occurrenceId,
       activityName: meta.activityName ?? null,
       category: meta.category ?? null,
       sourceName: meta.sourceName ?? null,
       backend: meta.backend ?? (process.env.KIDS_FUN_SEARCH_BACKEND === 'database' ? 'database' : 'fixture'),
     },
-  });
+    currentAnonId(),
+    { occurrenceId }
+  );
 }
 
 /** Cap the free-text query stored on a search event — a defensive bound on the
@@ -93,10 +101,9 @@ export async function recordSearchPerformed(
   const regions = (context.regions ?? []).filter((r) => typeof r === 'string' && r.length > 0);
   const filters = (context.filters ?? []).filter((f) => typeof f === 'string' && f.length > 0);
 
-  await writeAnalyticsEvent({
-    eventType: 'search_performed',
-    userOrSession: currentAnonId(),
-    searchContext: {
+  await emitEvent(
+    'search_performed',
+    {
       q,
       sort: context.sort ?? null,
       regions,
@@ -104,7 +111,7 @@ export async function recordSearchPerformed(
       radiusKm: context.radiusKm ?? null,
       includeUnknownCost: context.includeUnknownCost ?? null,
     },
-    resultSummary: {
+    {
       total: summary.total,
       confirmed: summary.confirmed ?? null,
       expected: summary.expected ?? null,
@@ -112,5 +119,111 @@ export async function recordSearchPerformed(
       broadened: summary.broadened ?? false,
       hasQuery: q.length > 0,
     },
-  });
+    currentAnonId()
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Additional launch-scoped recorders (full PRD §9 set). These fire from files
+// owned by OTHER streams this round (auth callback, corrections API, account
+// settings, saved-search API, ingestion worker) — see lib/analytics/catalog.ts.
+// T31 ships the typed, privacy-safe capture path; the owning stream adds the
+// one-line call. All are best-effort and never throw.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Trim any stable token to a defensive length (not a PII scrub — these are ids/enums). */
+const MAX_TOKEN_CHARS = 64;
+function token(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v.slice(0, MAX_TOKEN_CHARS) : null;
+}
+function tokens(v: unknown): string[] {
+  return Array.isArray(v) ? v.map(token).filter((t): t is string => t !== null) : [];
+}
+
+/**
+ * `saved_search_created` — a parent saved a search (TSD §12.5 KPI #10,12).
+ * Captures only the search's stable, non-PII shape (regions + filter tokens +
+ * whether a free-text query was present), NEVER coordinates and NEVER the raw
+ * query text (a saved search can be re-run from the account UI — analytics only
+ * needs the shape, not the content). `actor` is the pseudonymous signed-in user id.
+ */
+export async function recordSavedSearchCreated(
+  actor: string,
+  context: { regions?: string[]; filters?: string[]; hasQuery?: boolean; sort?: string | null } = {}
+): Promise<void> {
+  await emitEvent(
+    'saved_search_created',
+    {
+      regions: tokens(context.regions),
+      filters: tokens(context.filters),
+      hasQuery: Boolean(context.hasQuery),
+      sort: token(context.sort),
+    },
+    null,
+    actor
+  );
+}
+
+/**
+ * `weekly_email_opt_in` — a parent toggled the weekly digest opt-in (KPI #10,12).
+ * Stores ONLY the pseudonymous user id + the new boolean state; never the email
+ * address (that lives solely in Supabase auth.users).
+ */
+export async function recordWeeklyEmailOptIn(actor: string, optedIn: boolean): Promise<void> {
+  await emitEvent('weekly_email_opt_in', null, { optedIn: Boolean(optedIn) }, actor);
+}
+
+/**
+ * `account_signed_in` — a Google sign-in completed (KPI #10 returning-signed-in).
+ * Stores ONLY the pseudonymous user id + coarse method/returning flags; never the
+ * name/email/profile from the OAuth identity.
+ */
+export async function recordAccountSignedIn(
+  actor: string,
+  meta: { method?: string; returning?: boolean } = {}
+): Promise<void> {
+  await emitEvent('account_signed_in', null, {
+    method: token(meta.method) ?? 'google',
+    returning: meta.returning ?? null,
+  }, actor);
+}
+
+/**
+ * `correction_report_submitted` — a "wrong info" report was filed (KPI #8 trust).
+ * Captures the occurrence reference + the controlled issue_type ONLY — never the
+ * free-text note (which can contain arbitrary parent-typed PII). `actor` is the
+ * reporter's anon session or user id.
+ */
+export async function recordCorrectionReport(
+  occurrenceId: string,
+  issueType: string,
+  actor?: string | null
+): Promise<void> {
+  await emitEvent(
+    'correction_report_submitted',
+    { issueType: token(issueType) },
+    null,
+    actor ?? null,
+    { occurrenceId }
+  );
+}
+
+/**
+ * `listing_status_changed` — an occurrence's status_state transitioned (PRD §9).
+ * A SYSTEM event emitted by the ingestion worker; stores the occurrence/source
+ * refs + the from/to status states only. No user, no PII.
+ */
+export async function recordListingStatusChanged(
+  occurrenceId: string,
+  fromStatus: string | null,
+  toStatus: string,
+  sourceId?: string | null
+): Promise<void> {
+  await emitEvent(
+    'listing_status_changed',
+    null,
+    { from: token(fromStatus), to: token(toStatus) },
+    'system',
+    { occurrenceId, sourceId: sourceId ?? null }
+  );
 }

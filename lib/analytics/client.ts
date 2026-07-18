@@ -8,7 +8,7 @@
 // the intended caller for future client-side events (search, outbound click).
 'use client';
 
-import type { AnalyticsEventType } from './types';
+import type { ClientEventType } from './types';
 
 export interface TrackEventPayload {
   occurrenceId?: string;
@@ -19,8 +19,12 @@ export interface TrackEventPayload {
 
 const ENDPOINT = '/api/analytics/event';
 
-/** Fire an analytics event from the browser. Returns immediately; never throws. */
-export function trackEvent(eventType: AnalyticsEventType, payload: TrackEventPayload = {}): void {
+/**
+ * Fire an analytics event from the browser. Returns immediately; never throws.
+ * Only client-fireable events (ClientEventType) are accepted — server-only events
+ * are emitted by trusted server code and would be rejected by the route anyway.
+ */
+export function trackEvent(eventType: ClientEventType, payload: TrackEventPayload = {}): void {
   try {
     if (typeof window === 'undefined') return;
     const body = JSON.stringify({ eventType, ...payload });

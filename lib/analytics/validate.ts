@@ -9,7 +9,7 @@
 import {
   type AnalyticsEventType,
   type AnalyticsEventWrite,
-  KNOWN_EVENT_TYPES,
+  CLIENT_EVENT_TYPES,
   MAX_JSON_FIELD_BYTES,
   UUID_RE,
 } from './types';
@@ -25,8 +25,11 @@ export function parseAnalyticsEventBody(raw: unknown): AnalyticsEventParseResult
   }
   const body = raw as Record<string, unknown>;
 
+  // Only client-fireable events are accepted on the public route. Server-only
+  // events (sign-in, opt-in, corrections, status changes) are emitted by trusted
+  // server code and must never be injectable by an untrusted browser caller.
   const eventType = firstString(body.eventType, body.event_type);
-  if (eventType == null || !(KNOWN_EVENT_TYPES as readonly string[]).includes(eventType)) {
+  if (eventType == null || !(CLIENT_EVENT_TYPES as readonly string[]).includes(eventType)) {
     return { ok: false, error: 'missing or unknown eventType' };
   }
 
