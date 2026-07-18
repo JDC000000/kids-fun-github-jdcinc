@@ -8,6 +8,7 @@
 // Server-only: touches `pg`. Do not import from client/browser code.
 import { query } from '@/lib/db/client';
 import { type AnalyticsEventWrite, isUuid } from './types';
+import { retainedUntil } from './config';
 
 /**
  * Write one analytics event. Never throws — DB/validation hiccups resolve to
@@ -22,11 +23,22 @@ export async function writeAnalyticsEvent(event: AnalyticsEventWrite): Promise<{
     const searchContext = event.searchContext ? JSON.stringify(event.searchContext) : null;
     const resultSummary = event.resultSummary ? JSON.stringify(event.resultSummary) : null;
 
+    // Stamp retained_until from the app-owned retention window rather than relying
+    // solely on the DB DEFAULT, so the window is a single-sourced, env-tunable
+    // property and the retention job (lib/analytics/retention.ts) can enforce it.
     await query(
       `INSERT INTO analytics_event
-         (event_type, user_or_session, occurrence_id, source_id, search_context_json, result_summary_json)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [event.eventType, event.userOrSession ?? null, occurrenceId, sourceId, searchContext, resultSummary]
+         (event_type, user_or_session, occurrence_id, source_id, search_context_json, result_summary_json, retained_until)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        event.eventType,
+        event.userOrSession ?? null,
+        occurrenceId,
+        sourceId,
+        searchContext,
+        resultSummary,
+        retainedUntil().toISOString(),
+      ]
     );
     return { ok: true };
   } catch (err) {

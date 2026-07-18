@@ -1,24 +1,71 @@
-// lib/analytics/types.ts — Analytics event-capture foundation (M5 / T31 first slice).
+// lib/analytics/types.ts — Analytics event-capture foundation (M5 / T31).
 //
-// Typed contract shared by the server write helper (events.ts), the request
-// validator (validate.ts), the POST /api/analytics/event route, and the
-// fire-and-forget browser helper (client.ts). Rows land in the existing
-// `analytics_event` table (supabase/migrations/0006_provenance_ops.sql):
+// Typed contract shared by the server write helper (events.ts), the generic
+// emitter (emit.ts), the request validator (validate.ts), the POST
+// /api/analytics/event route, and the fire-and-forget browser helper (client.ts).
+// Rows land in the existing `analytics_event` table
+// (supabase/migrations/0006_provenance_ops.sql):
 //   event_type · search_context_json · result_summary_json · user_or_session ·
-//   source_id · occurrence_id · created_at · retained_until (13-month default).
-// The table already fits basic event capture — no migration is added by this task.
+//   source_id · occurrence_id · created_at · retained_until.
+// event_type is a free-form text column, so the full catalog below needs no
+// migration — see lib/analytics/catalog.ts for per-event provenance + wiring.
+//
+// `retained_until` is stamped at insert time from the app-owned retention window
+// (lib/analytics/config.ts::retentionDays), and the retention job
+// (lib/analytics/retention.ts) enforces it by deleting rows once it has passed.
 
-/** The small, known set of events this first slice can capture. Extend as M5 grows. */
+/**
+ * The full launch-scoped analytics event catalog (PRD/TSD §9). Every member maps
+ * to a documented event or KPI in lib/analytics/catalog.ts. `search_autocomplete_selected`
+ * is intentionally ABSENT — autocomplete is not built at launch, so that PRD §9
+ * event is formally deferred (N/A); see DEFERRED_EVENT_TYPES in catalog.ts.
+ */
 export type AnalyticsEventType =
+  // ── client-fireable engagement signals (accepted by the public POST route) ──
+  | 'search_performed' // a search/browse query was run (PRD §9 `search_submitted`)
   | 'listing_viewed' // parent opened a real occurrence detail page (Screen 3)
-  | 'search_performed' // a search/browse query was run
-  | 'outbound_source_click'; // parent clicked through to an official source/booking page
+  | 'outbound_source_click' // parent clicked through to an official source/booking page
+  // ── server-only events (emitted by trusted server code; never via the public route) ──
+  | 'saved_search_created' // parent saved a search (repeat-use / account-value KPI)
+  | 'weekly_email_opt_in' // parent opted in to the weekly digest email
+  | 'account_signed_in' // a Google account sign-in completed (returning-user KPI)
+  | 'correction_report_submitted' // a "wrong info" correction was filed (trust KPI)
+  | 'listing_status_changed'; // an occurrence's status_state transitioned (ingestion)
 
 export const KNOWN_EVENT_TYPES: readonly AnalyticsEventType[] = [
-  'listing_viewed',
   'search_performed',
+  'listing_viewed',
+  'outbound_source_click',
+  'saved_search_created',
+  'weekly_email_opt_in',
+  'account_signed_in',
+  'correction_report_submitted',
+  'listing_status_changed',
+];
+
+/**
+ * The subset the PUBLIC POST /api/analytics/event route will accept from a
+ * browser. These are low-stakes engagement signals where a spoofed row is
+ * harmless. Everything else is SERVER-ONLY: it is emitted from trusted server
+ * code (auth callback, corrections API, ingestion worker, saved-search API) and
+ * must never be injectable by an untrusted client, so the validator rejects it.
+ */
+export type ClientEventType = 'search_performed' | 'listing_viewed' | 'outbound_source_click';
+
+export const CLIENT_EVENT_TYPES: readonly ClientEventType[] = [
+  'search_performed',
+  'listing_viewed',
   'outbound_source_click',
 ];
+
+/** Events that are only ever written by trusted server code (the complement of CLIENT_EVENT_TYPES). */
+export const SERVER_EVENT_TYPES: readonly AnalyticsEventType[] = KNOWN_EVENT_TYPES.filter(
+  (t) => !(CLIENT_EVENT_TYPES as readonly string[]).includes(t)
+);
+
+export function isClientFireableEvent(type: string): type is ClientEventType {
+  return (CLIENT_EVENT_TYPES as readonly string[]).includes(type);
+}
 
 /** Whole-request payload cap for the API route — a sanity ceiling against abuse. */
 export const MAX_ANALYTICS_PAYLOAD_BYTES = 8 * 1024; // 8 KB
