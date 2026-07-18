@@ -28,6 +28,8 @@ import {
   type StaleSource,
 } from '@/lib/admin/dashboard';
 import { formatAge, formatCadence, formatCount, formatDurationMs, formatTimestampUtc } from '@/lib/admin/format';
+import { getProductHealthKpis } from '@/lib/analytics/kpi';
+import { KpiTiles } from './_components/KpiTiles';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // pg pool needs the Node runtime, not edge.
@@ -170,7 +172,9 @@ export default async function AdminDashboardPage({
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
 
-  const data = await getAdminDashboardData();
+  // Product-health KPIs (T32) are fetched alongside the existing ops payload; both
+  // are independent read-only rollups, so run them concurrently.
+  const [data, kpis] = await Promise.all([getAdminDashboardData(), getProductHealthKpis()]);
   const nowMs = Date.parse(data.generatedAt);
   const { registry, ingestion, analytics, alerts, corrections } = data;
   const allHealthy = alerts.staleSources.length === 0 && alerts.recentFailures.length === 0;
@@ -200,6 +204,17 @@ export default async function AdminDashboardPage({
           <StatTile label="Analytics events" value={formatCount(analytics.totalEvents)} sub={`${formatCount(analytics.listingViewed)} listing views`} />
           <StatTile label="Searches" value={formatCount(analytics.searchPerformed)} sub="search_performed events" />
         </div>
+      </section>
+
+      <section className="adm-section">
+        <h2>Product-health KPIs</h2>
+        <p className="adm-hint">
+          The launch product-health metrics (TSD §12.5), computed live from{' '}
+          <span className="mono">analytics_event</span>. Tiles use the shared brand UI primitives. Metrics the current
+          event data cannot support (e.g. relevance-graded search success) are intentionally omitted rather than faked;
+          account-value tiles read 0 until their §9 events are wired by the owning streams.
+        </p>
+        <KpiTiles kpis={kpis} />
       </section>
 
       <section className="adm-section">

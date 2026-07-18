@@ -1,0 +1,69 @@
+/* Product-health KPI tiles — layout only. All colour/typography/spacing comes
+ * from the canonical --kf-* design tokens (app/design-tokens.css), and the tile
+ * surface itself is the shared <Card> primitive, so nothing here hard-codes brand
+ * values. The value/label/sub inks are token roles that flip in dark mode with the
+ * Card, keeping the whole section internally consistent in both colour schemes. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-5);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+}
+
+.groupTitle {
+  font: 600 13px/1.2 var(--kf-font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--kf-ink-secondary);
+  margin: 0;
+}
+
+.groupHint {
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  max-width: 72ch;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--kf-space-3);
+}
+
+/* .tile is passed to <Card>, which already supplies surface/border/radius/shadow
+ * and 16px padding — we only lay out the inner rows. */
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-1);
+}
+
+.label {
+  color: var(--kf-ink-secondary);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.value {
+  font: 700 28px/1.1 var(--kf-font-ui);
+  color: var(--kf-ink);
+  font-feature-settings: var(--kf-font-feature); /* tabular lining numerals for data */
+}
+
+.sub {
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.badgeRow {
+  margin-top: var(--kf-space-1);
+}
