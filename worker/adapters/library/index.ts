@@ -262,7 +262,12 @@ const AGE_RANGE_RE = /(?:ages?|grades?)\s*[\dK][^.<\n]{0,40}/i;
 const AGE_HINT_RE =
   /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers)?|kindergarten|family|all ages)[^.<\n]{0,40}/i;
 
-function rssLocation(itemXml: string): LibraryBranchLocation | undefined {
+/** Case/punctuation-insensitive key so a feed branch name matches a config key. */
+function normalizeBranchKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function rssLocation(system: LibrarySystemConfig, itemXml: string): LibraryBranchLocation | undefined {
   const [locBlock] = tagBlocks(itemXml, 'bc:location');
   if (!locBlock) return undefined;
   const name = firstTag(locBlock, 'bc:name');
@@ -271,22 +276,52 @@ function rssLocation(itemXml: string): LibraryBranchLocation | undefined {
   const city = firstTag(locBlock, 'bc:city');
   const state = firstTag(locBlock, 'bc:state') || 'BC';
   const zip = firstTag(locBlock, 'bc:zip');
-  const lat = finiteFloat(firstTag(locBlock, 'bc:latitude'));
-  const lng = finiteFloat(firstTag(locBlock, 'bc:longitude'));
-  if (lat === undefined || lng === undefined) return undefined;
+  let lat = finiteFloat(firstTag(locBlock, 'bc:latitude'));
+  let lng = finiteFloat(firstTag(locBlock, 'bc:longitude'));
 
   const streetLine = [number, street].filter(Boolean).join(' ');
-  const address = [streetLine, city, [state, zip].filter(Boolean).join(' ')]
+  const feedAddress = [streetLine, city, [state, zip].filter(Boolean).join(' ')]
     .filter(Boolean)
     .join(', ');
-  const displayArea = (name ?? '').replace(/\s+Branch$/i, '').trim() || (city ?? '');
+  const feedDisplayArea = (name ?? '').replace(/\s+Branch$/i, '').trim() || (city ?? '');
+
+  // Deterministic fallback: when the feed's bc:location block is incomplete (most
+  // often a missing bc:latitude/longitude for an online / desk / virtual item),
+  // fill the gaps from the curated branchLocations entry for that branch, matched
+  // case/punctuation-insensitively on the branch name. Revives the intentionally
+  // retained config fallback so a geo-less item still lands with coordinates,
+  // address and municipality where we have them — never calling an external
+  // geocoder.
+  const fallback =
+    name && system.branchLocations
+      ? Object.entries(system.branchLocations).find(
+          ([key]) => normalizeBranchKey(key) === normalizeBranchKey(name)
+        )?.[1]
+      : undefined;
+
+  if ((lat === undefined || lng === undefined) && fallback?.lat !== undefined && fallback?.lng !== undefined) {
+    lat = fallback.lat;
+    lng = fallback.lng;
+  }
+
+  const address = feedAddress || fallback?.address || (name ?? '');
+  const municipalityName = city || fallback?.municipalityName || '';
+  const displayArea = fallback?.displayArea || feedDisplayArea;
+
+  // Keep the location as long as ANY provenance survives (name, address, or geo).
+  // Previously a missing lat/lng dropped the whole block — losing the branch
+  // address AND municipality (region filter) even when the feed carried them.
+  if (!name && !feedAddress && lat === undefined) return undefined;
+
   return {
     address,
     lat,
     lng,
-    municipalityName: city ?? '',
+    municipalityName,
     displayArea,
-    locationUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`,
+    locationUrl: address
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+      : '',
   };
 }
 
@@ -305,7 +340,7 @@ function parseBiblioCommonsRss(system: LibrarySystemConfig, xml: string): Biblio
     const descriptionHtml = firstTag(item, 'description') ?? '';
     const descriptionText = stripHtml(descriptionHtml);
     const categories = tagBlocks(item, 'category').map((c) => decodeXmlText(c)).filter(Boolean);
-    const location = rssLocation(item);
+    const location = rssLocation(system, item);
     const branch = firstTag(tagBlocks(item, 'bc:location')[0] ?? '', 'bc:name') || `${system.systemName} branch`;
     const ageText =
       descriptionText.match(AGE_RANGE_RE)?.[0]?.trim() ||

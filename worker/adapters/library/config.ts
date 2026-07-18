@@ -33,8 +33,15 @@ export interface LibrarySystemConfig {
 
 export interface LibraryBranchLocation {
   address: string;
-  lat: number;
-  lng: number;
+  /**
+   * Curated `branchLocations` entries always carry coordinates; a location parsed
+   * live from an RSS item may not (e.g. an online / desk / virtual location whose
+   * bc:location block omits bc:latitude/longitude). Coords are therefore optional
+   * so a geo-less item still keeps its name / address / municipality provenance
+   * instead of being dropped entirely.
+   */
+  lat?: number;
+  lng?: number;
   municipalityName: string;
   displayArea: string;
   locationUrl: string;

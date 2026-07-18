@@ -134,6 +134,95 @@ describe('CityCalendar adapter — City of Vancouver Trumba feed (Task 9)', () =
     expect(fifa.sourceUrl).toContain('trumba.com/calendars/city-of-vancouver-events');
   });
 
+  // KIDS FUN Round 13 / Task J — deepen the Trumba adapter on already-live data:
+  // (1) venue names split on <br> so the street number never glues onto the name;
+  // (2) structured "Audiences" custom field drives ageText; (3) structured
+  // "Neighbourhoods" fills displayArea for unmapped venues; (4) deterministic geo
+  // match tolerates punctuation/spacing variants.
+  const TASKJ_FIXTURE = [
+    {
+      // <br> separates venue from address -> venue name must be just the first line.
+      eventID: 300000001,
+      title: 'Lunar New Year Family Craft',
+      description: 'Drop-in craft.',
+      location:
+        '<a href="http://maps.google.com/?q=168+E+Pender+St%2C+Vancouver%2C+BC+V6A+1T3%2C+Canada" target="_blank">Chinatown Storytelling Centre<br />168 E Pender St, Vancouver</a>',
+      locationType: 'In-Person',
+      startDateTime: '2026-08-01T10:00:00',
+      startTimeZoneOffset: '-0700',
+      canceled: false,
+      requiresPayment: false,
+      permaLinkUrl: 'https://www.trumba.com/calendars/city-of-vancouver-events/-/300000001',
+      customFields: [
+        { label: 'Event type', value: 'Community' },
+        { label: 'Neighbourhoods', value: 'Chinatown' },
+        { label: 'Audiences', value: 'Families' },
+      ],
+    },
+    {
+      // Unmapped one-off venue + structured neighbourhood -> displayArea from feed.
+      eventID: 300000002,
+      title: 'Preschool Storytime',
+      description: 'Come sing along.',
+      location: '<a href="http://maps.google.com/?q=1755+Barclay+St%2C+Vancouver%2C+BC">King George Secondary School</a>',
+      locationType: 'In-Person',
+      startDateTime: '2026-08-02T10:00:00',
+      startTimeZoneOffset: '-0700',
+      canceled: false,
+      requiresPayment: false,
+      permaLinkUrl: 'https://www.trumba.com/calendars/city-of-vancouver-events/-/300000002',
+      customFields: [
+        { label: 'Neighbourhoods', value: 'West End' },
+        { label: 'Audiences', value: 'Preschoolers' },
+      ],
+    },
+    {
+      // Mapped venue with a punctuation variant + a citywide neighbourhood:
+      // geo still resolves (normalized match) and the curated displayArea wins.
+      eventID: 300000003,
+      title: 'Community Skate',
+      description: 'Free skate.',
+      location: '<a href="http://maps.google.com/?q=6260+Killarney+St%2C+Vancouver%2C+BC">Killarney Community Centre.</a>',
+      locationType: 'In-Person',
+      startDateTime: '2026-08-03T10:00:00',
+      startTimeZoneOffset: '-0700',
+      canceled: false,
+      requiresPayment: false,
+      permaLinkUrl: 'https://www.trumba.com/calendars/city-of-vancouver-events/-/300000003',
+      customFields: [{ label: 'Neighbourhoods', value: 'All of Vancouver' }],
+    },
+  ];
+
+  it('splits the venue name on <br>, uses structured Audiences/Neighbourhoods, and matches geo tolerantly (Task J)', async () => {
+    process.env.KIDS_FUN_LIVE_CITY_CALENDARS = 'vancouver';
+    stubFetchJson(TASKJ_FIXTURE);
+    const adapter = new CityCalendarAdapter(getCityCalendar('vancouver')!);
+    const records = await adapter.extract(await adapter.fetch());
+    expect(records).toHaveLength(3);
+
+    // (1) <br> no longer glues the street number onto the venue name.
+    const chinatown = records[0];
+    expect(chinatown.venueName).toBe('Chinatown Storytelling Centre');
+    expect(chinatown.venueAddress).toContain('168 E Pender St');
+    // (2) Audiences -> ageText (structured, not a noisy prose window).
+    expect(chinatown.ageText).toBe('Families');
+    // (3) Neighbourhoods -> displayArea for this unmapped venue.
+    expect(chinatown.venueDisplayArea).toBe('Chinatown');
+
+    const school = records[1];
+    expect(school.venueName).toBe('King George Secondary School');
+    expect(school.ageText).toBe('Preschoolers');
+    expect(school.venueDisplayArea).toBe('West End'); // unmapped -> from feed neighbourhood
+    expect(school.venueLat).toBeUndefined(); // not in the deterministic geo map
+
+    // (4) Punctuation variant "Killarney Community Centre." still hits the geo map;
+    // the curated display area wins over the citywide neighbourhood value.
+    const skate = records[2];
+    expect(skate.venueLat).toBeCloseTo(49.2214, 3);
+    expect(skate.venueLng).toBeCloseTo(-123.0398, 3);
+    expect(skate.venueDisplayArea).toBe('Killarney'); // curated, not "All of Vancouver"
+  });
+
   it('does not make a live request when the calendar is not enabled (fixture-only)', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
