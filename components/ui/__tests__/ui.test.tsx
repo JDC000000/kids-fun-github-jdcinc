@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { Button, Input, Card, Badge, cx } from '../index';
+import { Button, Input, Textarea, Card, Badge, cx } from '../index';
 
 // Node-env test (no jsdom): render the primitives to static markup and assert on
 // the produced HTML. Assertions avoid CSS-module class hashing — they check the
@@ -62,6 +62,60 @@ describe('Button', () => {
     expect(html).toContain('name="action"');
     expect(html).toContain('value="save"');
     expect(html).toContain('form="savebar"');
+  });
+
+  it('defaults to size=md and honours the compact size=sm', () => {
+    expect(renderToStaticMarkup(<Button>Go</Button>)).toContain('data-size="md"');
+    const sm = renderToStaticMarkup(
+      <Button size="sm" variant="secondary">
+        Open
+      </Button>,
+    );
+    expect(sm).toContain('data-size="sm"');
+    expect(sm).toContain('data-variant="secondary"');
+  });
+
+  it('renders a real anchor via as="a" (keeps navigation semantics) with no button type', () => {
+    const html = renderToStaticMarkup(
+      <Button as="a" href="/account" variant="secondary" size="sm">
+        Open
+      </Button>,
+    );
+    expect(html).toMatch(/^<a/);
+    expect(html).toContain('href="/account"');
+    expect(html).toContain('data-variant="secondary"');
+    expect(html).toContain('data-size="sm"');
+    // A polymorphic anchor must NOT inherit the <button> type="button" default.
+    expect(html).not.toContain('type="button"');
+  });
+
+  it('still renders a native <button> (type=button) when as is omitted', () => {
+    const html = renderToStaticMarkup(<Button>Search</Button>);
+    expect(html).toMatch(/^<button/);
+    expect(html).toContain('type="button"');
+  });
+});
+
+describe('Textarea', () => {
+  it('renders a <textarea> and forwards name/rows/placeholder/aria', () => {
+    const html = renderToStaticMarkup(
+      <Textarea name="filters" rows={2} placeholder="e.g. under $20" aria-label="Filters" />,
+    );
+    expect(html).toContain('<textarea');
+    expect(html).toContain('name="filters"');
+    expect(html).toContain('rows="2"');
+    expect(html).toContain('placeholder="e.g. under $20"');
+    expect(html).toContain('aria-label="Filters"');
+  });
+
+  it('passes through a caller className and forwards native props / defaultValue', () => {
+    const html = renderToStaticMarkup(
+      <Textarea className="kf-saved__textarea" name="filters" defaultValue="under $20" disabled />,
+    );
+    expect(html).toContain('kf-saved__textarea');
+    expect(html).toContain('name="filters"');
+    expect(html).toContain('disabled');
+    expect(html).toContain('under $20'); // defaultValue renders as textarea content
   });
 });
 

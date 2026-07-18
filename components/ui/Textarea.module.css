@@ -1,0 +1,37 @@
+/* Textarea primitive — the multi-line twin of Input, styled from the SAME canonical
+ * --kf-* tokens so the two read as one field family (identical border, radius,
+ * elevation and focus ring in both colour schemes). */
+
+.textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 96px; /* ~3 comfortable lines; grows with rows/content */
+  padding: 10px 14px;
+  font-family: var(--kf-font-ui);
+  font-size: 16px; /* >=16px stops iOS zoom-on-focus */
+  font-weight: 500;
+  line-height: 1.5; /* readable multi-line body */
+  font-feature-settings: var(--kf-font-feature);
+  color: var(--kf-ink);
+  background: var(--kf-surface);
+  border: 1px solid var(--kf-neutral-300);
+  border-radius: var(--kf-r-control);
+  box-shadow: var(--kf-e-100);
+  resize: vertical; /* let a parent grow it for a long paste; never horizontal (breaks layout) */
+}
+
+.textarea::placeholder {
+  color: var(--kf-ink-muted);
+  font-weight: 400;
+}
+
+.textarea:focus-visible {
+  outline: 3px solid var(--kf-leaf-hover);
+  outline-offset: 2px;
+  border-color: var(--kf-park-moss);
+}
+
+.textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
