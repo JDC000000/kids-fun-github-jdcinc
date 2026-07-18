@@ -13,6 +13,16 @@ Sentry.init({
   dsn,
   enabled: Boolean(dsn),
   environment: process.env.NEXT_PUBLIC_APP_ENV || 'development',
+  // Issue ownership (G-T37-3): stamp every event with the owning team + runtime
+  // so each Sentry issue is an attributable, owned internal-bug record. The
+  // project Ownership Rule (tags.owner_team:kids-fun #jdc000000) auto-assigns
+  // these to the owning team. Additive, PII-free, Edge-safe (plain strings).
+  initialScope: {
+    tags: {
+      owner_team: 'kids-fun',
+      app_runtime: 'edge',
+    },
+  },
   // Error monitoring only (see sentry.server.config.ts for rationale).
   tracesSampleRate: 0,
   sendDefaultPii: false,

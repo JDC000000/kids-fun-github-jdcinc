@@ -13,6 +13,16 @@ Sentry.init({
   // No-op unless a DSN is present for this environment.
   enabled: Boolean(dsn),
   environment: process.env.NEXT_PUBLIC_APP_ENV || 'development',
+  // Issue ownership (G-T37-3): stamp every event with the owning team + runtime
+  // so each Sentry issue is an attributable, owned internal-bug record. The
+  // project Ownership Rule (tags.owner_team:kids-fun #jdc000000) auto-assigns
+  // these to the owning team. Additive, PII-free.
+  initialScope: {
+    tags: {
+      owner_team: 'kids-fun',
+      app_runtime: 'browser',
+    },
+  },
   // Error monitoring only (no performance tracing / no Session Replay) — keeps
   // the client bundle lean and scope tight. See sentry.server.config.ts.
   tracesSampleRate: 0,

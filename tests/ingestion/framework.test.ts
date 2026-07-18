@@ -17,6 +17,27 @@ import { getPool, query, closePool } from '../../lib/db/client';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
+// ── Test isolation for the DB-backed job-queue suites ────────────────────────
+// dequeue() and enqueueDueJobs() operate on the GLOBAL job_queue table — by
+// design they claim/inspect the oldest DUE pending job across the whole table,
+// not rows scoped to a caller. These suites therefore assume job_queue holds
+// only the rows they just created; any *residual* `pending` row makes dequeue()
+// claim the wrong job (observed as `expected 'pending' to be 'dead_letter'` and
+// mismatched job ids). That residue appears whenever the database is reused
+// between runs (normal in local dev and in CI that reuses a Postgres service),
+// after an aborted run, or from this file's own scheduler suite, which enqueues
+// a job it never completes. The tests are green in isolation / on a pristine DB
+// and only flake once residue exists — a test-isolation defect, not a race in
+// the production queue code. Clearing job_queue before each affected test
+// establishes the clean precondition the tests assume, making them deterministic
+// under DB reuse AND parallel execution. framework.test.ts is the sole test-suite
+// writer of job_queue, so truncating the whole table here is safe and races
+// nothing; if another test file ever begins using job_queue it must adopt the
+// same per-suite reset (or scope by source_id).
+async function resetJobQueue(): Promise<void> {
+  await query('DELETE FROM job_queue');
+}
+
 // G-T5-1 — adapter contract (pure, no DB): compiles + NoopAdapter satisfies it.
 describe('Adapter contract (G-T5-1)', () => {
   it('NoopAdapter satisfies the Adapter interface end-to-end', async () => {
@@ -113,6 +134,8 @@ describe.skipIf(!hasDb)('Job queue + no-op ingest pipeline (G-T5-2, G-T5-4)', ()
   let seriesId: string;
 
   beforeEach(async () => {
+    // Isolate from any residual job_queue rows (see resetJobQueue rationale).
+    await resetJobQueue();
     const suffix = crypto.randomUUID();
     const [source] = await query<{ id: string }>(
       `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
@@ -199,6 +222,12 @@ describe.skipIf(!hasDb)('Job queue + no-op ingest pipeline (G-T5-2, G-T5-4)', ()
 
 // G-T5-3 — tiered scheduler, DB-backed.
 describe.skipIf(!hasDb)('Tiered scheduler (G-T5-3)', () => {
+  // Start from an empty queue so enqueueDueJobs()'s "already has a pending job"
+  // dedup and the "second tick is a no-op" assertion are residue-independent.
+  beforeEach(async () => {
+    await resetJobQueue();
+  });
+
   afterAll(async () => {
     await closePool();
   });
