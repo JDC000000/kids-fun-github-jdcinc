@@ -4,6 +4,8 @@
 // The DSN must be a NEXT_PUBLIC_* var so Next.js inlines it into the client bundle.
 import * as Sentry from '@sentry/nextjs';
 
+import { scrubEvent } from './sentry.scrub';
+
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
 Sentry.init({
@@ -15,6 +17,12 @@ Sentry.init({
   // the client bundle lean and scope tight. See sentry.server.config.ts.
   tracesSampleRate: 0,
   sendDefaultPii: false,
+  // Explicit PII deny-list (defense-in-depth on top of sendDefaultPii:false):
+  // redact email / IP / phone-shaped values and strip identity + auth data
+  // before any event leaves the browser. See sentry.scrub.ts.
+  beforeSend: (event) => scrubEvent(event),
+  // Applies the same deny-list to transactions if tracing is ever enabled.
+  beforeSendTransaction: (event) => scrubEvent(event),
 });
 
 // App Router navigation-instrumentation hook. Wired by Next.js >= 15.3; a no-op
