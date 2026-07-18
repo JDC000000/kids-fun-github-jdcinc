@@ -7,6 +7,7 @@
 // error / not-signed-in / server error). Children's ages are stored in MONTHS
 // (the schema's canonical unit), entered here as a comma-separated list.
 import { useState, type FormEvent } from 'react';
+import { Button, Input } from '@/components/ui';
 
 interface InitialProfile {
   home_postal: string | null;
@@ -102,10 +103,9 @@ export function AccountForm({ initial }: { initial: InitialProfile }) {
         <label className="kf-account-form__label" htmlFor="home_postal">
           Saved postal code
         </label>
-        <input
+        <Input
           id="home_postal"
           name="home_postal"
-          className="kf-account-form__input"
           type="text"
           inputMode="text"
           autoComplete="postal-code"
@@ -122,10 +122,9 @@ export function AccountForm({ initial }: { initial: InitialProfile }) {
         <label className="kf-account-form__label" htmlFor="saved_child_ages">
           Children&apos;s ages (in months)
         </label>
-        <input
+        <Input
           id="saved_child_ages"
           name="saved_child_ages"
-          className="kf-account-form__input"
           type="text"
           inputMode="numeric"
           placeholder="e.g. 18, 36, 60"
@@ -152,9 +151,9 @@ export function AccountForm({ initial }: { initial: InitialProfile }) {
       </div>
 
       <div className="kf-account-form__actions">
-        <button className="kf-account-form__submit" type="submit" disabled={saving}>
+        <Button variant="primary" type="submit" disabled={saving}>
           {saving ? 'Saving…' : 'Save changes'}
-        </button>
+        </Button>
 
         {status.kind === 'saved' && (
           <span className="kf-account-form__msg kf-account-form__msg--ok" role="status">
