@@ -83,6 +83,18 @@ const PAIRINGS: [string, string, string][] = [
   // (same tokens), so the guard covers both. Placeholder is held to AA too.
   ['Input/Textarea text', '--kf-ink', '--kf-surface'],
   ['Input/Textarea placeholder', '--kf-ink-muted', '--kf-surface'],
+  // Chip primitive (Round 14 / Task O) — the selection vocabulary. Rail base text +
+  // the segmented (view/map) UNSELECTED segment share this pairing (new to the guard).
+  ['Chip rail/segmented base text', '--kf-ink-secondary', '--kf-surface'],
+  // The list/map segmented ON-state — THE FIX. The old .kf-viewtoggle__btn--on was
+  // white-on-Leaf (2.17:1, FAILED AA); this is Forest-ink on Leaf. Leaf + Forest-ink
+  // are FIXED brand values, so it is identical (and AA) in BOTH schemes.
+  ['Chip segmented selected (view/map on)', '--kf-forest-ink', '--kf-leaf'],
+  // The "Near me" action chip's hover: text (--kf-ink) on the pale confirmed hover fill.
+  ['Chip action :hover', '--kf-ink', '--kf-confirmed-bg'],
+  // (Chip rail SELECTED reuses --kf-confirmed-text/-bg = "Badge confirmed" above, and the
+  //  action/segmented-hover base reuses --kf-ink/--kf-surface = "Input/Textarea text" — both
+  //  already guarded, so they are not duplicated here.)
 ];
 
 describe('design-token contrast (WCAG AA, both schemes)', () => {
@@ -101,6 +113,19 @@ describe('design-token contrast (WCAG AA, both schemes)', () => {
     const l = contrast(light, '--kf-white', '--kf-danger');
     console.log(`Button danger: ${l.toFixed(2)}:1`);
     expect(l).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('Chip segmented on-state FIXES the view/map toggle contrast bug (was white-on-Leaf)', () => {
+    // BEFORE (Round 13 / Task K QA): .kf-viewtoggle__btn--on = color:#ffffff on
+    // background:var(--leaf) — white on Leaf. AFTER: <Chip variant="segmented"> on-state =
+    // --kf-forest-ink on --kf-leaf. Leaf is a fixed brand value, so both schemes are identical.
+    const before = contrast(light, '--kf-white', '--kf-leaf');
+    const after = contrast(light, '--kf-forest-ink', '--kf-leaf');
+    console.log(`view/map toggle on-state: before ${before.toFixed(2)}:1 (white) → after ${after.toFixed(2)}:1 (forest-ink)`);
+    // The OLD on-state must be a genuine AA failure — this encodes the bug so it can't return.
+    expect(before, 'old white-on-Leaf must fail AA (the documented bug)').toBeLessThan(AA);
+    // The NEW on-state must clear AA (and does so identically in dark, being a fixed brand pair).
+    expect(after, 'new forest-ink-on-Leaf must pass AA').toBeGreaterThanOrEqual(AA);
   });
 
   it('regression: --kf-surface-subtle must flip between schemes (else light-on-light)', () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { Button, Input, Textarea, Card, Badge, cx } from '../index';
+import { Button, Input, Textarea, Card, Badge, Chip, cx } from '../index';
 
 // Node-env test (no jsdom): render the primitives to static markup and assert on
 // the produced HTML. Assertions avoid CSS-module class hashing — they check the
@@ -168,5 +168,108 @@ describe('Badge', () => {
   it('defaults to the neutral variant', () => {
     const html = renderToStaticMarkup(<Badge>Info</Badge>);
     expect(html).toContain('data-variant="neutral"');
+  });
+});
+
+describe('Chip', () => {
+  it('renders a <button>, defaults type=button, variant=rail, size=md', () => {
+    const html = renderToStaticMarkup(<Chip>Today</Chip>);
+    expect(html).toMatch(/^<button/);
+    expect(html).toContain('type="button"');
+    expect(html).toContain('data-variant="rail"');
+    expect(html).toContain('data-size="md"');
+    expect(html).toContain('Today');
+  });
+
+  it('renders the ✓ and data-selected when a rail chip is selected (fill AND check, never colour-only)', () => {
+    const html = renderToStaticMarkup(<Chip selected>Free</Chip>);
+    expect(html).toContain('data-selected="true"');
+    expect(html).toContain('✓');
+    expect(html).toContain('aria-hidden="true"'); // the check span is decorative
+  });
+
+  it('renders NO ✓ and no data-selected when a rail chip is unselected', () => {
+    const html = renderToStaticMarkup(<Chip>Free</Chip>);
+    expect(html).not.toContain('data-selected');
+    expect(html).not.toContain('✓');
+  });
+
+  it('preserves the caller aria selection semantics (never invents them)', () => {
+    // radio-like group → aria-current; the primitive must forward exactly what it is given.
+    const current = renderToStaticMarkup(
+      <Chip selected aria-current="true">
+        Soonest
+      </Chip>,
+    );
+    expect(current).toContain('aria-current="true"');
+    expect(current).not.toContain('aria-pressed');
+    // multi-select toggle → aria-pressed.
+    const pressed = renderToStaticMarkup(
+      <Chip selected aria-pressed>
+        Include unknown cost
+      </Chip>,
+    );
+    expect(pressed).toContain('aria-pressed="true"');
+    expect(pressed).not.toContain('aria-current');
+  });
+
+  it('segmented variant: sets data-variant, shows the on-state WITHOUT a ✓ (fill + aria-pressed)', () => {
+    const on = renderToStaticMarkup(
+      <Chip variant="segmented" selected aria-pressed>
+        List
+      </Chip>,
+    );
+    expect(on).toContain('data-variant="segmented"');
+    expect(on).toContain('data-selected="true"');
+    expect(on).toContain('aria-pressed="true"');
+    expect(on).not.toContain('✓'); // the segmented on-state is fill-only, not a checkmark
+    expect(on).not.toContain('data-size'); // size is a rail-only concern
+  });
+
+  it('honours the compact rail size=sm (sort/cost density)', () => {
+    const html = renderToStaticMarkup(
+      <Chip size="sm" selected aria-current="true">
+        Nearest
+      </Chip>,
+    );
+    expect(html).toContain('data-size="sm"');
+    expect(html).toContain('data-variant="rail"');
+  });
+
+  it('renders a real anchor via as="a" (URL-driven filter) with href and NO button type', () => {
+    const html = renderToStaticMarkup(
+      <Chip as="a" href="/search?when=today" selected aria-current="true">
+        Today
+      </Chip>,
+    );
+    expect(html).toMatch(/^<a/);
+    expect(html).toContain('href="/search?when=today"');
+    expect(html).toContain('data-selected="true"');
+    expect(html).toContain('✓'); // rail selected → check even as an anchor
+    expect(html).not.toContain('type="button"');
+  });
+
+  it('renders a static, non-interactive indicator via as="span" (e.g. "Near you")', () => {
+    const html = renderToStaticMarkup(
+      <Chip as="span" selected aria-current="true">
+        Near you
+      </Chip>,
+    );
+    expect(html).toMatch(/^<span/);
+    expect(html).toContain('aria-current="true"');
+    expect(html).toContain('✓');
+    expect(html).not.toContain('type="button"');
+  });
+
+  it('supports the action affordance and forwards disabled / aria-busy / className', () => {
+    const html = renderToStaticMarkup(
+      <Chip action disabled aria-busy className="kf-nearme">
+        Near me
+      </Chip>,
+    );
+    expect(html).toContain('disabled');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain('kf-nearme'); // caller className passes through
+    expect(html).not.toContain('data-selected'); // an action chip is not a selected state
   });
 });

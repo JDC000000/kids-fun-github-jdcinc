@@ -17,5 +17,7 @@ export { Card } from './Card';
 export type { CardProps } from './Card';
 export { Badge } from './Badge';
 export type { BadgeProps, BadgeVariant } from './Badge';
+export { Chip } from './Chip';
+export type { ChipProps, ChipVariant, ChipSize } from './Chip';
 export { cx } from './cx';
 export type { ClassValue } from './cx';

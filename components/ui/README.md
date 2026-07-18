@@ -21,9 +21,10 @@ per-route bespoke CSS.
 | `Textarea` | `<textarea>` | — | Multi-line text fields. Input's twin — same border/radius/elevation/focus, `resize: vertical`. |
 | `Card`   | `as` (div/li/…) | `interactive` | Content surfaces — hairline + Elevation-100. |
 | `Badge`  | `<span>` | `confirmed`, `info`, `expected`, `cancelled`, `neutral` | Status/label pills. Colour ALWAYS pairs with the text label you pass (never colour-only). |
+| `Chip`   | `<button>` or `as` (`a`/`Link`/`span`) | `rail` (filter/sort/cost pill) · `segmented` (list/map toggle) · `size` `md`/`sm` · `selected` · `action` | SELECTION controls — NOT a Button variant. Caller supplies `aria-current`/`aria-pressed`; the chip owns the fill + ✓ only. `segmented` selected = Forest-ink on Leaf (7.61:1, both schemes) — replaces the old white-on-Leaf toggle that failed AA. |
 
 ```tsx
-import { Button, Input, Textarea, Card, Badge } from '@/components/ui';
+import { Button, Input, Textarea, Card, Badge, Chip } from '@/components/ui';
 ```
 
 **Polymorphic / compact `Button`.** A matched action pair where one item must stay a
@@ -40,6 +41,20 @@ import Link from 'next/link';
 focus ring and disabled treatment are inherited, so shape stays a design decision the
 caller can layer via `className` (e.g. a pill radius) without the primitive imposing one.
 
+**Chip — the selection vocabulary (distinct from `Button`).** A `Button` is a CTA; a
+`Chip` carries a selected/pressed *state*. The caller keeps its exact `aria-current`
+(radio-like) / `aria-pressed` (multi-select) semantics; the chip owns only the fill + ✓.
+
+```tsx
+import Link from 'next/link';
+// A URL-driven filter chip (radio-like group) — a real link, selected fill + ✓.
+<Chip as={Link} href={hrefFor(state, { when: opt.key })} selected={state.when === opt.key}
+      aria-current={state.when === opt.key ? 'true' : undefined}>Today</Chip>
+// The list/map segmented toggle — a real button, on-state = Forest-ink on Leaf (AA both schemes).
+<Chip variant="segmented" selected={view === 'list'} aria-pressed={view === 'list'}
+      onClick={() => setView('list')}>List</Chip>
+```
+
 All primitives are server-compatible (no `use client`), so they add zero client
 JS when used in Server Components.
 
@@ -49,6 +64,7 @@ JS when used in Server Components.
 - **Account** (`AccountForm` / `AccountData` / `SavedSearches`, Rounds 10–12): `Button` (primary/danger/ghost) + `Input`.
 - **Search save bar + resume** (`app/search/**`, Rounds 10/12): `Button` + `Badge`.
 - **Search bar** (`app/search/_components/SearchBar.tsx`, Round 13 / Task K): `Input` (query) + `Button variant="primary"` (submit — replaces the old white-on-Leaf submit, which failed AA).
+- **Search chip/toggle system** (`app/search/**`, Round 14 / Task O): `Chip` across the filter chips (`FilterRail`), the sort/cost chips (`SearchBar`) and the list/map segmented toggle (`SearchResultsView`). The view/map toggle on-state moves white-on-Leaf (2.17:1, FAILED AA) → Forest-ink-on-Leaf (7.61:1) — the same class of contrast fix Task K made on the submit, now closed for good.
 
 ## Known near-term consumers (Round 10 parallel streams)
 
@@ -67,11 +83,6 @@ the primitives are server-compatible but work in client components too.
 
 - **Preview status surfaces** — the freshness / booking chips on the activity card +
   detail page → `Badge`, and the card/tile shells → `Card` (`app/preview/**`).
-- **Search chip/toggle system** (`.kf-fchip`, `.kf-sbar__chip`, `.kf-viewtoggle__btn`)
-  is a bespoke **selection** vocabulary (aria-current/aria-pressed + checkmark, scroll-snap
-  rails, segmented on/off). It is deliberately NOT force-fit onto `Button` (a CTA, not a
-  toggle) — it wants a future dedicated `Chip` / segmented-toggle primitive. See the Round 13
-  / Task K findings doc.
 - **`Textarea`** ships here but has no in-app consumer yet: its intended first adopter is the
   account "Save a new search" **Filters** `<textarea>` (`app/account/**`), which Round 12 / Task I
   left native pending this primitive. `/search` has no multi-line field.

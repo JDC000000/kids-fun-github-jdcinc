@@ -67,39 +67,9 @@
   margin-right: 2px;
 }
 
-.kf-sbar__chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 32px;
-  padding: 5px 12px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-secondary);
-  background: var(--surface);
-  border: 1px solid var(--neutral-300);
-  border-radius: var(--r-chip);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.kf-sbar__chip[aria-current='true'],
-.kf-sbar__chip[aria-pressed='true'] {
-  color: var(--confirmed-text);
-  background: var(--confirmed-bg);
-  border-color: var(--confirmed-text);
-}
-
-.kf-sbar__chip:focus-visible {
-  outline: 2px solid var(--leaf);
-  outline-offset: 2px;
-}
-
-.kf-sbar__check {
-  font-size: 12px;
-  line-height: 1;
-}
+/* The sort/cost chips are the shared components/ui <Chip variant="rail" size="sm">
+ * (Round 14 / Task O). Only the rail LAYOUT (.kf-sbar__controls above) lives here now;
+ * the chip fill / selected state / ✓ / focus are the primitive's. */
 
 /* ── Filter rails (Screen 2 + Screen 5 groups; scroll-snap chips, D10 restraint) ── */
 .kf-filters {
@@ -141,65 +111,11 @@
   display: none;
 }
 
-.kf-fchip {
-  scroll-snap-align: start;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 40px; /* generous touch target for cold/wet one-handed taps (≈WCAG 2.5.8) */
-  padding: 8px 14px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-secondary);
-  background: var(--surface);
-  border: 1px solid var(--neutral-300);
-  border-radius: var(--r-chip);
-  cursor: pointer;
-  white-space: nowrap;
-  text-decoration: none;
-  transition: background var(--motion), border-color var(--motion);
-}
-
-/* Selected = fill AND checkmark (never colour alone). */
-.kf-fchip[aria-current='true'],
-.kf-fchip[aria-pressed='true'] {
-  color: var(--confirmed-text);
-  background: var(--confirmed-bg);
-  border-color: var(--confirmed-text);
-}
-
-.kf-fchip:focus-visible {
-  outline: 2px solid var(--leaf);
-  outline-offset: 2px;
-}
-
-.kf-fchip__check {
-  font-size: 12px;
-  line-height: 1;
-}
-
-/* "Near me" action island (leaf stays reserved for the primary Search CTA — anchor outline here). */
-.kf-fchip--action {
-  color: var(--ink);
-  border-color: var(--anchor);
-  border-width: 1.5px;
-}
-
-.kf-fchip--action:hover {
-  background: var(--confirmed-bg);
-}
-
-.kf-fchip--action[disabled] {
-  opacity: 0.6;
-  cursor: progress;
-}
-
-.kf-fchip--near {
-  cursor: default;
-}
-
+/* The filter chips — including the "Near me" action affordance and the "Near you" /
+ * "Near <area>" selected indicators — are the shared components/ui <Chip variant="rail">
+ * (Round 14 / Task O). The rail LAYOUT (.kf-fgroup__rail scroll-snap) stays here; the
+ * chip fill / selected state / ✓ / action outline / focus are all the primitive's.
+ * Only the non-chip error hint keeps its own rule: */
 .kf-fchip__hint {
   flex: 0 0 auto;
   font-size: 12px;
@@ -232,12 +148,6 @@
   margin: 6px 0 0;
   font-size: 13px;
   color: var(--ink-secondary);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .kf-fchip {
-    transition: none;
-  }
 }
 
 /* ── "Save this search" island (Round 10 / Task B) ───────────────────────────
@@ -352,41 +262,11 @@
   box-shadow: var(--e-100);
 }
 
-.kf-viewtoggle__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 36px;
-  padding: 6px 16px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--ink-secondary);
-  background: transparent;
-  border: none;
-  border-radius: 9px;
-  cursor: pointer;
-  transition: background var(--motion), color var(--motion);
-}
-
-.kf-viewtoggle__btn:hover {
-  color: var(--ink);
-}
-
-.kf-viewtoggle__btn--on {
-  color: #ffffff;
-  background: var(--leaf);
-}
-
-.kf-viewtoggle__btn--on:hover {
-  color: #ffffff;
-}
-
-.kf-viewtoggle__btn:focus-visible {
-  outline: 2px solid var(--anchor);
-  outline-offset: 2px;
-}
-
+/* The list/map toggle segments are the shared components/ui <Chip variant="segmented">
+ * (Round 14 / Task O). The container (.kf-viewtoggle above) + the decorative glyph stay
+ * here as layout; the segment fill / selected on-state / focus are the primitive's. The
+ * old .kf-viewtoggle__btn--on was white-on-Leaf (2.17:1, FAILED AA) — the primitive's
+ * on-state is Forest-ink-on-Leaf (7.61:1), fixing it in both schemes. */
 .kf-viewtoggle__glyph {
   font-size: 13px;
   line-height: 1;
@@ -550,12 +430,6 @@
 
 .kf-map__pop:hover .kf-map__pop-cta {
   text-decoration: underline;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .kf-viewtoggle__btn {
-    transition: none;
-  }
 }
 
 /* ── Anon memory: "pick up where you left off" resume suggestion (T26 / G-T26-3) ──

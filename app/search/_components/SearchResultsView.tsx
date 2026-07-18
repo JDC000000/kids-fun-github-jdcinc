@@ -8,6 +8,7 @@
 
 import dynamic from 'next/dynamic';
 import { useState, type ReactNode } from 'react';
+import { Chip } from '@/components/ui';
 import type { SearchMarker } from '../_lib/markers';
 
 const ResultsMap = dynamic(() => import('./ResultsMap').then((m) => m.ResultsMap), {
@@ -38,10 +39,14 @@ export function SearchResultsView({ markers, token, totalResults, children }: Se
 
   return (
     <>
+      {/* List/Map view toggle. The segmented on-state is the shared Chip primitive:
+          Forest-ink on Leaf (7.61:1, both schemes) — replaces the old white-on-Leaf
+          .kf-viewtoggle__btn--on, which was 2.17:1 and failed WCAG AA. aria-pressed
+          selection semantics + keyboard behaviour are unchanged. */}
       <div className="kf-viewtoggle" role="group" aria-label="Choose how to view results">
-        <button
-          type="button"
-          className={`kf-viewtoggle__btn${view === 'list' ? ' kf-viewtoggle__btn--on' : ''}`}
+        <Chip
+          variant="segmented"
+          selected={view === 'list'}
           aria-pressed={view === 'list'}
           onClick={() => setView('list')}
         >
@@ -49,10 +54,10 @@ export function SearchResultsView({ markers, token, totalResults, children }: Se
             ▤
           </span>
           List
-        </button>
-        <button
-          type="button"
-          className={`kf-viewtoggle__btn${view === 'map' ? ' kf-viewtoggle__btn--on' : ''}`}
+        </Chip>
+        <Chip
+          variant="segmented"
+          selected={view === 'map'}
           aria-pressed={view === 'map'}
           onClick={() => setView('map')}
         >
@@ -60,7 +65,7 @@ export function SearchResultsView({ markers, token, totalResults, children }: Se
             ◉
           </span>
           Map
-        </button>
+        </Chip>
       </div>
 
       {view === 'map' ? (
