@@ -24,3 +24,10 @@ supabase/.temp/
 .DS_Store
 coverage/
 *.tsbuildinfo
+
+# playwright / e2e (reports, traces, minted session state — never commit tokens)
+playwright-report/
+test-results/
+/tests/e2e/.auth/
+/tests/e2e/.artifacts/
+.playwright/
