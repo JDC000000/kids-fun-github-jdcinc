@@ -96,6 +96,58 @@ describe('Library adapter — VPL BiblioCommons RSS live path (Task 5)', () => {
     expect(records[0].ageText).toContain('ages 0-2');
   });
 
+  // KIDS FUN Round 13 / Task J — location hardening. A geo-less bc:location block
+  // (e.g. an online / desk item whose feed entry omits bc:latitude/longitude) must
+  // still keep its branch name, address and MUNICIPALITY (the region filter) rather
+  // than being dropped entirely; and a known branch falls back to the curated
+  // branchLocations coordinates by name — never calling a geocoder.
+  const RPL_NOGEO_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:bc="http://bibliocommons.com/rss">
+<channel>
+<item>
+<title><![CDATA[Board Game Afternoon]]></title>
+<description><![CDATA[<p>Drop in and play. For all ages.</p>]]></description>
+<link>https://yourlibrary.bibliocommons.com/events/700000000000000000000001</link>
+<bc:start_date>2026-07-20T20:00:00Z</bc:start_date>
+<bc:is_cancelled>false</bc:is_cancelled>
+<bc:location><bc:name>Cambie Branch</bc:name><bc:street>Cambie Rd</bc:street><bc:city>Richmond</bc:city><bc:state>BC</bc:state><bc:zip>V6X 3L5</bc:zip></bc:location>
+</item>
+<item>
+<title><![CDATA[Steveston Story Walk]]></title>
+<description><![CDATA[<p>Outdoor stories for children ages 3-5.</p>]]></description>
+<link>https://yourlibrary.bibliocommons.com/events/700000000000000000000002</link>
+<bc:start_date>2026-07-21T18:00:00Z</bc:start_date>
+<bc:is_cancelled>false</bc:is_cancelled>
+<bc:location><bc:name>Steveston Library (Easthope Hub)</bc:name></bc:location>
+</item>
+</channel>
+</rss>`;
+
+  it('keeps address + municipality when a feed item omits coordinates (Task J)', async () => {
+    process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'rpl';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK', text: async () => RPL_NOGEO_FIXTURE }))
+    );
+    const adapter = new LibraryAdapter(getLibrarySystem('rpl')!);
+    const records = await adapter.extract(await adapter.fetch());
+
+    // Cambie: no feed geo, no config fallback -> still keeps name/address/municipality.
+    const cambie = records.find((r) => r.sourceRecordId === '700000000000000000000001')!;
+    expect(cambie.venueName).toBe('Cambie Branch');
+    expect(cambie.venueMunicipalityName).toBe('Richmond');
+    expect(cambie.venueAddress).toContain('Cambie Rd');
+    expect(cambie.venueLat).toBeUndefined();
+    expect(cambie.venueLng).toBeUndefined();
+
+    // Steveston: no feed geo, but the curated branchLocations entry supplies coords.
+    const steveston = records.find((r) => r.sourceRecordId === '700000000000000000000002')!;
+    expect(steveston.venueName).toBe('Steveston Library (Easthope Hub)');
+    expect(steveston.venueLat).toBeCloseTo(49.12546, 4);
+    expect(steveston.venueLng).toBeCloseTo(-123.1783832, 4);
+    expect(steveston.venueMunicipalityName).toBe('Richmond');
+  });
+
   it('builds a stable per-system dedup key from the event id', async () => {
     process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'vpl';
     vi.stubGlobal(

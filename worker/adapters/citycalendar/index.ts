@@ -14,7 +14,7 @@
 // gate (source terms_status='allowed' + robots_status='allowed') AND the
 // env allow-list KIDS_FUN_LIVE_CITY_CALENDARS=<calendarKey>.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
-import { CITY_CALENDARS, getCityCalendar, type CityCalendarConfig } from './config';
+import { CITY_CALENDARS, getCityCalendar, type CityCalendarConfig, type CityCalendarVenueGeo } from './config';
 
 const DEFAULT_LIMIT = 40;
 const USER_AGENT = 'KidsFunBot/0.1 (+https://kids-fun-staging-jdci-nc.vercel.app; contact: jon@crhq.ai)';
@@ -102,23 +102,89 @@ interface ParsedLocation {
   locationUrl?: string;
 }
 
+/** Inner markup of the location anchor (falls back to the raw string if no <a>). */
+function anchorInner(html: string): string {
+  return /<a\b[^>]*>([\s\S]*?)<\/a>/i.exec(html)?.[1] ?? html;
+}
+
 function parseLocation(html?: string): ParsedLocation {
   if (!html) return {};
   const href = /href="([^"]+)"/i.exec(html)?.[1];
-  const text = decodeEntities(html).replace(/,\s*$/, '').trim();
   const addressFromLink = addressFromMapsHref(href);
-  if (!text && !addressFromLink) return {};
-  // Venue label = the leading segment before the first venue/address delimiter —
-  // a comma ("Renfrew Pool, 2929 East 22nd Ave, …") or a " - " ("Connaught Park -
-  // 2690 Larch Street"); the full street address (when present) comes from the
-  // maps link. Concatenated feed values with no delimiter fall through as-is.
-  const venueName = (text.split(/\s*,\s*|\s+-\s+/)[0] || text).trim() || undefined;
+
+  // The Trumba location anchor frequently puts the venue name and the street
+  // address on SEPARATE LINES joined by <br>, e.g.
+  //   "Chinatown Storytelling Centre<br />168 E Pender St, Vancouver"
+  //   "City Hall<br />Vancouver City Hall<br />453 W 12th Ave, Vancouver, BC".
+  // Split on <br> FIRST so the street number can never glue onto the venue name
+  // (which polluted venue rows, fragmented series identity, and blocked the
+  // deterministic geo-map lookup). The venue label is the first line; the full
+  // address comes from the maps link (or the whole anchor text as a fallback).
+  const inner = anchorInner(html);
+  const firstLine = decodeEntities(inner.split(/<br\s*\/?>/i)[0]).replace(/,\s*$/, '').trim();
+  const fullText = decodeEntities(inner).replace(/,\s*$/, '').trim();
+  if (!firstLine && !addressFromLink) return {};
+
+  // Within the first line, still drop a trailing inline address ("Renfrew Pool,
+  // 2929 East 22nd Ave, …" / "Connaught Park - 2690 Larch Street") to keep just
+  // the venue label.
+  const venueName = (firstLine.split(/\s*,\s*|\s+-\s+/)[0] || firstLine).trim() || undefined;
   const locationUrl = href && /^https?:\/\//i.test(href) ? href : undefined;
   return {
     venueName,
-    venueAddress: addressFromLink ?? (text || undefined),
+    venueAddress: addressFromLink ?? (fullText || undefined),
     locationUrl,
   };
+}
+
+/** Case/punctuation/whitespace-insensitive key for deterministic geo matching. */
+function normalizeVenueKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * Resolve deterministic venue geo tolerant of punctuation/casing/spacing variants
+ * (e.g. "Killarney Community Centre" vs "killarney  community centre"). Exact keys
+ * still win; the normalized index is a safety net so a real venue is not missed —
+ * and, unlike a geocoder, it only ever attaches coordinates already vetted in
+ * config, so it cannot mis-locate an event.
+ */
+function lookupVenueGeo(
+  config: CityCalendarConfig,
+  venueName?: string
+): CityCalendarVenueGeo | undefined {
+  if (!venueName || !config.venueGeo) return undefined;
+  const direct = config.venueGeo[venueName.toLowerCase().trim()];
+  if (direct) return direct;
+  const want = normalizeVenueKey(venueName);
+  for (const [key, geo] of Object.entries(config.venueGeo)) {
+    if (normalizeVenueKey(key) === want) return geo;
+  }
+  return undefined;
+}
+
+/** Structured custom-field value by (case-insensitive) label. */
+function customField(event: TrumbaEvent, label: string): string | undefined {
+  const field = (event.customFields ?? []).find(
+    (f) => (f.label ?? '').trim().toLowerCase() === label.toLowerCase()
+  );
+  const value = field?.value ? decodeEntities(field.value).trim() : '';
+  return value || undefined;
+}
+
+/**
+ * A specific, searchable neighbourhood from the feed's structured "Neighbourhoods"
+ * custom field — skipping citywide / non-specific values that aren't an "area".
+ * Used to give unmapped venues a display area they otherwise wouldn't have.
+ */
+function specificNeighbourhood(event: TrumbaEvent): string | undefined {
+  const raw = customField(event, 'Neighbourhoods');
+  if (!raw) return undefined;
+  const first = raw.split(/\s*[;,]\s*/)[0]?.trim();
+  if (!first || /^(all of vancouver|citywide|various|multiple|city[-\s]?wide)$/i.test(first)) {
+    return undefined;
+  }
+  return first;
 }
 
 function eventTypeValue(event: TrumbaEvent): string | undefined {
@@ -145,6 +211,13 @@ const AGE_HINT_RE =
   /(?:for\s+)?(?:kids|children|families|family|all\s+ages|youth|teens?|tweens?|toddlers?|babies|baby|preschool(?:ers)?|seniors?|adults?)[^.<\n]{0,30}/i;
 
 function ageText(event: TrumbaEvent): string | undefined {
+  // Prefer the feed's STRUCTURED "Audiences" custom field ("All ages", "Families",
+  // "Children", "Preschoolers", "Youth", …) over a prose keyword scan. It is a
+  // clean, unambiguous token that worker/core/age.ts resolves into an age band
+  // accurately, avoiding the misfires a 30-char description window produces
+  // (e.g. "kids" inside "Kids' Place desk for a chance to win").
+  const audience = customField(event, 'Audiences');
+  if (audience) return audience;
   const hay = `${decodeEntities(event.title)} ${decodeEntities(event.description ?? '')}`;
   const m = AGE_HINT_RE.exec(hay);
   return m ? m[0].trim() : undefined;
@@ -187,10 +260,7 @@ export class CityCalendarAdapter implements Adapter {
       .filter((e) => e && !e.canceled && e.title && e.startDateTime)
       .map((e) => {
         const loc = parseLocation(e.location);
-        const geo =
-          loc.venueName && this.config.venueGeo
-            ? this.config.venueGeo[loc.venueName.toLowerCase().trim()]
-            : undefined;
+        const geo = lookupVenueGeo(this.config, loc.venueName);
         const requiresPayment = e.requiresPayment === true;
         return {
           sourceRecordId: String(e.eventID),
@@ -200,7 +270,9 @@ export class CityCalendarAdapter implements Adapter {
           venueLat: geo?.lat,
           venueLng: geo?.lng,
           venueMunicipalityName: loc.venueName ? this.config.municipality : undefined,
-          venueDisplayArea: geo?.displayArea,
+          // Curated geo-map display area wins; otherwise fall back to the feed's
+          // structured neighbourhood so unmapped venues still get a searchable area.
+          venueDisplayArea: geo?.displayArea ?? specificNeighbourhood(e),
           startDatetimeUtc: toUtcIso(e.startDateTime, e.startTimeZoneOffset),
           endDatetimeUtc: toUtcIso(e.endDateTime, e.endTimeZoneOffset),
           costMinCad: requiresPayment ? undefined : 0,
