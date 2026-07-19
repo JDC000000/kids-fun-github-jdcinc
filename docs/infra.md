@@ -15,6 +15,10 @@ Source: TSD v1.2 §3A.1 / §3A.3 / §3.5 · scope-to-task v1.1 §C (G-T1-1..G-T1
 - Worker: long-running/containerised Node + headless Chromium (Fly.io/Railway-class or
   satellite-hosted process). **Not** Vercel serverless (TSD §3A.1). See `worker/`.
 - Migrations: single tool, forward-only with reversible steps (`scripts/migrate.sh`).
+  App code auto-deploys (Vercel git); migrations are applied manually — so a
+  read-only drift check (`scripts/check-migration-drift.sh`) + scheduled workflow
+  guard against the live DB silently falling behind the committed head. See
+  `docs/migration-drift.md`.
 
 ## Provider accounts (confirmed access — reused MyZone credentials)
 
