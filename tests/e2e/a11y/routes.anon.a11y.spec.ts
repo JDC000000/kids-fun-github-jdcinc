@@ -56,14 +56,26 @@ test.describe('a11y audit — anonymous routes', () => {
 test.describe('a11y audit — admin (gated; audit gap this round)', () => {
   const adminToken = process.env.ADMIN_DASHBOARD_TOKEN;
 
-  test('axe: /admin/dashboard', async ({ page }, testInfo) => {
-    test.skip(
-      !adminToken,
-      'AUDIT GAP: the E2E harness does not provision ADMIN_DASHBOARD_TOKEN, so ' +
-        '/admin/dashboard fails closed (404). Wiring the admin token is out of scope for ' +
-        'this audit-only round — set ADMIN_DASHBOARD_TOKEN in the app + test env to enable ' +
-        'this audit in a follow-up round. See docs/a11y-audit.md.',
-    );
-    await auditRoute(page, testInfo, `/admin/dashboard?token=${adminToken}`, 'admin dashboard');
-  });
+  // Every token-gated admin surface. /admin/product-health (T32) is the new benchmark
+  // + trend-chart page — with hand-rolled SVG charts it's the highest-value new axe
+  // target of this milestone, so it's registered here alongside the dashboard. Same
+  // gating: without ADMIN_DASHBOARD_TOKEN the route fails closed (404), so the audit
+  // records a visible SKIP rather than being silently omitted.
+  const ADMIN_ROUTES: { route: string; label: string }[] = [
+    { route: '/admin/dashboard', label: 'admin dashboard' },
+    { route: '/admin/product-health', label: 'admin product-health' },
+  ];
+
+  for (const { route, label } of ADMIN_ROUTES) {
+    test(`axe: ${route}`, async ({ page }, testInfo) => {
+      test.skip(
+        !adminToken,
+        `AUDIT GAP: the E2E harness does not provision ADMIN_DASHBOARD_TOKEN, so ${route} ` +
+          'fails closed (404). Wiring the admin token is out of scope for this audit-only ' +
+          'round — set ADMIN_DASHBOARD_TOKEN in the app + test env to enable this audit in a ' +
+          'follow-up round. See docs/a11y-audit.md.',
+      );
+      await auditRoute(page, testInfo, `${route}?token=${adminToken}`, label);
+    });
+  }
 });

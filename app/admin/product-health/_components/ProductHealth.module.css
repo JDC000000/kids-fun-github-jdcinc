@@ -1,0 +1,265 @@
+/* Product-health dashboard — layout only. All colour/type/spacing comes from the
+ * canonical --kf-* design tokens (app/design-tokens.css); tile surfaces are the
+ * shared <Card> primitive and status pills the shared <Badge>, and chart marks use
+ * the validated --kf-chart-* tokens — so the whole page reads consistently with the
+ * rest of the admin console in light and dark mode. Mirrors DataHealth.module.css. */
+
+/* ── Page shell ────────────────────────────────────────────────────────────── */
+.page {
+  /* Own the page background from the flipping canvas role. layout.tsx sets no body
+   * background, so a page that only sets `color` would render its dark-mode ink
+   * (cream) on the browser-default WHITE body — a WCAG 1.4.3 contrast failure axe
+   * catches. Painting the canvas here keeps text-on-surface AA in BOTH schemes
+   * (dark ink on warm paper in light; cream ink on dark primary in dark). */
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  box-sizing: border-box;
+  color: var(--kf-ink);
+  font-family: var(--kf-font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: var(--kf-space-6) var(--kf-space-5) var(--kf-space-9);
+}
+
+/* Inner content column stays centred and width-capped, independent of the
+ * full-bleed canvas background above. */
+.page > * {
+  max-width: 1120px;
+  margin-inline: auto;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-1);
+}
+
+.navRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-4);
+}
+
+.backLink {
+  /* The accessible link/info text token (flips: #30538b on light canvas → ~7:1;
+   * #bcd6f5 on dark canvas → high contrast). NOT --kf-anchor-text, which is the
+   * cream text meant to sit ON the dark anchor FILL — as a link colour on the page
+   * canvas it is ~1.1:1 (a WCAG 1.4.3 failure). */
+  color: var(--kf-info-text);
+  font-size: 13px;
+  text-decoration: none;
+}
+.backLink:hover {
+  text-decoration: underline;
+}
+
+.pageTitle {
+  font: 700 20px/1.2 var(--kf-font-display, var(--kf-font-ui));
+  margin: var(--kf-space-1) 0 0;
+  color: var(--kf-ink);
+}
+
+.sub {
+  margin: 0;
+  color: var(--kf-ink-secondary);
+  font-size: 13px;
+}
+
+.note {
+  margin: var(--kf-space-2) 0 0;
+  padding: var(--kf-space-2) var(--kf-space-3);
+  background: var(--kf-expected-bg);
+  color: var(--kf-expected-text);
+  border-radius: var(--kf-r-card);
+  font-size: 13px;
+}
+.note a {
+  color: inherit;
+  font-weight: 600;
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-7);
+  margin-top: var(--kf-space-6);
+}
+
+.foot {
+  margin-top: var(--kf-space-7);
+  border-top: 1px solid var(--kf-hairline);
+  padding-top: var(--kf-space-3);
+  color: var(--kf-ink-muted);
+  font-size: 13px;
+}
+
+/* ── Section scaffolding ───────────────────────────────────────────────────── */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+}
+
+.sectionTitle {
+  font: 700 16px/1.2 var(--kf-font-ui);
+  color: var(--kf-ink);
+  margin: 0;
+  padding-bottom: var(--kf-space-2);
+  border-bottom: 1px solid var(--kf-hairline);
+}
+
+.subhead {
+  font: 600 12px/1.2 var(--kf-font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--kf-ink-secondary);
+  margin: var(--kf-space-4) 0 var(--kf-space-1);
+}
+
+.hint {
+  color: var(--kf-ink-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+  max-width: 82ch;
+}
+.hint strong {
+  color: var(--kf-ink-secondary);
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--kf-ink-secondary);
+}
+
+.dim {
+  color: var(--kf-ink-muted);
+}
+
+/* ── Benchmark tiles (G-T32-5) ─────────────────────────────────────────────── */
+.tileRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--kf-space-3);
+  margin-top: var(--kf-space-1);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-1);
+}
+
+.tileLabel {
+  color: var(--kf-ink-secondary);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.tileValue {
+  font: 700 28px/1.1 var(--kf-font-ui);
+  color: var(--kf-ink);
+  font-feature-settings: var(--kf-font-feature);
+}
+
+.tileSub {
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.badgeRow {
+  margin-top: var(--kf-space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-1);
+}
+
+/* ── Flagship query card ───────────────────────────────────────────────────── */
+.flagship {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-3);
+}
+
+.flagshipHead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--kf-space-3);
+  align-items: flex-start;
+}
+
+.flagshipLabel {
+  color: var(--kf-ink-secondary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flagshipQuery {
+  font: 700 20px/1.2 var(--kf-font-ui);
+  color: var(--kf-ink);
+}
+
+.flagshipBadges {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-1);
+  align-items: flex-end;
+}
+
+.flagshipBadgeItem {
+  display: flex;
+  align-items: center;
+  gap: var(--kf-space-2);
+}
+
+.flagshipBadgeLabel {
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+}
+
+.flagshipStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--kf-space-3);
+  padding: var(--kf-space-3) 0;
+  border-top: 1px solid var(--kf-hairline);
+  border-bottom: 1px solid var(--kf-hairline);
+}
+
+.flagshipStat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.flagshipStatValue {
+  font: 700 22px/1.1 var(--kf-font-ui);
+  color: var(--kf-ink);
+  font-feature-settings: var(--kf-font-feature);
+}
+
+.flagshipStatLabel {
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+}
+
+/* ── Trend charts (G-T32-6) ────────────────────────────────────────────────── */
+.chartGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: var(--kf-space-4);
+  margin-top: var(--kf-space-2);
+}
+
+.chartCard {
+  background: var(--kf-surface);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-card);
+  box-shadow: var(--kf-e-100);
+  padding: var(--kf-space-4);
+}

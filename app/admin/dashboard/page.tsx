@@ -221,7 +221,8 @@ export default async function AdminDashboardPage({
           The launch product-health metrics (TSD §12.5), computed live from{' '}
           <span className="mono">analytics_event</span>. Tiles use the shared brand UI primitives. Metrics the current
           event data cannot support (e.g. relevance-graded search success) are intentionally omitted rather than faked;
-          account-value tiles read 0 until their §9 events are wired by the owning streams.
+          account-value tiles read 0 until their §9 events are wired by the owning streams. Target-vs-actual benchmarks
+          and DAU/WAU/MAU trend charts live on <Link href="/admin/product-health">/admin/product-health</Link>.
         </p>
         <KpiTiles kpis={kpis} />
       </section>
