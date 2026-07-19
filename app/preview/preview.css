@@ -47,6 +47,7 @@
   /* ── Surface roles — aliased; these flip in dark mode at :root ── */
   --canvas: var(--kf-canvas);
   --surface: var(--kf-surface);
+  --surface-subtle: var(--kf-surface-subtle); /* subtle raised chip; flips in dark mode */
   --ink: var(--kf-ink);
   --ink-secondary: var(--kf-ink-secondary);
   --ink-muted: var(--kf-ink-muted);
@@ -455,17 +456,22 @@
   color: var(--cancelled-text);
   background: var(--cancelled-bg);
 }
+/* Muted freshness stamp. Uses FLIPPING role tokens (not the fixed --tertiary-text /
+ * --neutral-100 palette values) so it themes correctly in dark mode — a dark chip with
+ * light text — instead of staying a light-grey chip on a dark surface. Round 18
+ * a11y-remediation: --ink-secondary on --surface-subtle clears AA in both schemes even
+ * inside the .kf-card--muted opacity-0.9 blend (≈4.92:1 light, ≈5.63:1 dark). */
 .kf-stamp--muted {
-  color: var(--tertiary-text);
-  background: var(--neutral-100);
+  color: var(--ink-secondary);
+  background: var(--surface-subtle);
   border-style: dashed;
 }
 .kf-stamp__icon {
   font-weight: 800;
 }
-.kf-stamp__src {
-  opacity: 0.85;
-}
+/* NB: the source name intentionally carries NO extra opacity. A prior `opacity: 0.85`
+ * here compounded with the .kf-card--muted 0.9 (→0.765 effective) and dragged the source
+ * text to 2.85:1 — the worst light-mode contrast offender (Round 18 a11y-remediation). */
 
 /* ── Category illustration tile (D4: flat, two-tone, category-coded glyph) ── */
 .kf-tile {
@@ -686,6 +692,11 @@
   font-weight: 600;
   font-size: 14px;
   color: var(--info-text);
+  /* Explicit transparent bg so the <button class="kf-link"> (Report wrong info) composites
+   * onto the panel --surface instead of falling back to the UA `buttonface` (light #efefef),
+   * which clashed with the dark-mode light-blue --info-text at 1.29:1. Round 18 a11y-remediation.
+   * On --surface: 7.68:1 (light) / 8.33:1 (dark). */
+  background: transparent;
 }
 
 /* Sticky bottom action bar (thumb zone) — Book on source = primary. */
@@ -716,6 +727,14 @@
 }
 .kf-btn--primary {
   background: var(--leaf);
+  color: var(--forest-ink);
+}
+/* The primary CTA renders as an <a> (booking/source link). `.kf a { color: inherit }`
+ * (specificity 0,1,1) otherwise beats `.kf-btn--primary` (0,1,0) and flips the label to the
+ * body ink — cream (#f7f2e8) in dark mode — which is only 1.94:1 on the fixed Leaf fill.
+ * This higher-specificity rule (0,2,1) pins it to Forest ink = 7.61:1 in BOTH schemes
+ * (Leaf is a fixed brand value, so Forest ink is always correct). Round 18 a11y-remediation. */
+.kf a.kf-btn--primary {
   color: var(--forest-ink);
 }
 .kf-btn--primary:hover {

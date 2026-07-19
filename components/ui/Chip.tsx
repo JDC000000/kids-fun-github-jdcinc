@@ -8,11 +8,17 @@ import styles from './Chip.module.css';
  *
  * This is a distinct vocabulary from `Button`, NOT a Button variant. A `Button`
  * is a one-shot CTA (Leaf action fill, D10); a `Chip` carries a SELECTED / PRESSED
- * *state* — the selection is expressed with `aria-current` (radio-like: one of a
- * group) or `aria-pressed` (multi-select on/off), which the *caller* supplies so
- * each real usage keeps its exact semantics. The primitive owns only the visual
- * state + the checkmark, never the aria — so it can never quietly change a
- * control's meaning (Workbook V2 §7 "Button and chip states").
+ * *state* — the selection is expressed with `aria-current` or `aria-pressed`, which
+ * the *caller* supplies so each real usage keeps its exact semantics. The primitive
+ * owns only the visual state + the checkmark, never the aria — so it can never quietly
+ * change a control's meaning (Workbook V2 §7 "Button and chip states").
+ *
+ * ⚠️ ARIA-by-element: `aria-pressed` is a BUTTON-only toggle state — only pass it on the
+ * default `<button>` / `segmented` variant (e.g. the list/map view toggle). When the chip
+ * renders as a link (`as={Link}` / `as="a"`, implicit `role="link"`), the ONLY valid
+ * selected-state attribute is `aria-current` — passing `aria-pressed` on an anchor is a
+ * WCAG 4.1.2 / axe `aria-allowed-attr` violation. The URL-driven filter chips therefore use
+ * `aria-current` uniformly for both radio-like and multi-select groups.
  *
  * Two shapes:
  *   rail       = the standalone scroll-snap pill (filter / sort / cost). Selected =

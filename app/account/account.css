@@ -14,6 +14,11 @@
   --park-moss-text: #5f7360;
   --hairline: #e6eae6;
   --surface: #ffffff;
+  /* Themed link/accent (green family) — flips in dark mode (see @media block). Round 18
+   * a11y-remediation: replaces the UA default #0000ee on inline links (1.32–1.75:1 in dark)
+   * and the un-flipped #2f5d50 saved-search "Open" pill (1.65:1 in dark). Contrast on the
+   * account surfaces: light 6.43:1 (paper) / 7.18:1 (white); dark 9.31:1 (canvas) / 7.02:1 (surface). */
+  --link: #1a6349;
 
   min-height: 100vh;
   padding: 2rem 1rem 4rem;
@@ -217,7 +222,7 @@
   font-family: inherit;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--anchor, #2f5d50);
+  color: var(--link);
   background: transparent;
   border: 1px solid var(--hairline);
   border-radius: 9999px;
@@ -440,6 +445,17 @@
   line-height: 1.5;
 }
 
+/* Inline body links ("search page" in the Coming-later note and the saved-search hint).
+ * These were bare <a> with no class → UA default #0000ee, which fails AA in dark mode
+ * (1.32–1.75:1 on the dark surfaces). Give them the themed, scheme-flipping --link colour +
+ * an underline so they still read as links without relying on colour alone. Round 18. */
+.kf-account-page__later a,
+.kf-saved__hint a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 @media (prefers-color-scheme: dark) {
   .kf-account-page {
     --warm-paper: #102316;
@@ -447,6 +463,9 @@
     --forest-ink: #f7f2e8;
     --park-moss-text: #b9c5b7;
     --hairline: #223f30;
+    /* Light leaf-green link/accent for dark surfaces (Round 18 a11y-remediation):
+     * 9.31:1 on the page canvas (#102316), 7.02:1 on the card surface (#183b24). */
+    --link: #82d3ab;
   }
   .kf-saved__input {
     background: #0e1f14;

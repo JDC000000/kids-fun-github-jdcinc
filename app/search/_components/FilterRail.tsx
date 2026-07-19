@@ -32,23 +32,23 @@ export interface SavedLocationInfo {
 // geolocation API and so is a small client island (NearMeButton); its result still lands in
 // the URL (?lat&lng) so a shared near-me link resolves without re-prompting.
 //
-// Chips: selected state is fill AND a checkmark (never colour alone — WCAG, D10). Radio-like
-// groups (When, Radius) use aria-current; multi-select toggles (Areas, Ages, quick filters)
-// use aria-pressed. Rails scroll-snap horizontally for one-thumb use.
+// Chips: selected state is fill AND a checkmark (never colour alone — WCAG, D10). Because
+// every chip here is a real <a> (implicit role="link"), selection is conveyed uniformly with
+// aria-current="true" — the only selected-state attribute ARIA permits on a link. aria-pressed
+// is a button-only toggle state; carrying it on an anchor is a WCAG 4.1.2 (aria-allowed-attr)
+// violation, which is exactly what the Round 18 a11y-remediation fixed. The multi-select vs
+// radio-like nuance is now carried by the group labels + the multi/single toggle behaviour of
+// the links, not by a link-invalid ARIA state. Rails scroll-snap horizontally for one-thumb use.
 
 // A URL-driven filter chip: a real <Link> (shareable, back-button-safe, works with JS
-// off) on the shared Chip primitive. Selection is fill + ✓ (owned by the primitive) and
-// the EXACT aria kept: radio-like groups (When, Radius) → aria-current; multi-select
-// toggles (Ages, Areas, quick filters) → aria-pressed.
-function Chip({ href, active, pressed, children }: { href: string; active: boolean; pressed?: boolean; children: ReactNode }) {
+// off) on the shared Chip primitive. Selection is fill + ✓ (owned by the primitive) plus
+// aria-current="true" — valid on the anchor's implicit role="link" for BOTH the radio-like
+// groups (When, Time of day, Max price, Radius) and the multi-select toggles (Ages, Areas,
+// quick filters). aria-pressed is deliberately NOT used: it is button-only and invalid on a
+// link (axe aria-allowed-attr / WCAG 4.1.2 Name, Role, Value).
+function Chip({ href, active, children }: { href: string; active: boolean; children: ReactNode }) {
   return (
-    <UIChip
-      as={Link}
-      href={href}
-      selected={active}
-      aria-current={pressed === undefined && active ? 'true' : undefined}
-      aria-pressed={pressed === undefined ? undefined : active}
-    >
+    <UIChip as={Link} href={href} selected={active} aria-current={active ? 'true' : undefined}>
       {children}
     </UIChip>
   );
@@ -106,7 +106,6 @@ export function FilterRail({
               key={opt.key}
               href={hrefFor(state, { ages: toggleAge(state, opt.key as AgeBandKey) })}
               active={active}
-              pressed={active}
             >
               {opt.label}
             </Chip>
@@ -119,7 +118,7 @@ export function FilterRail({
         {REGION_CHIPS.map((r) => {
           const active = state.regions.includes(r.id);
           return (
-            <Chip key={r.id} href={hrefFor(state, { regions: toggleRegion(state, r.id) })} active={active} pressed={active}>
+            <Chip key={r.id} href={hrefFor(state, { regions: toggleRegion(state, r.id) })} active={active}>
               {r.label}
             </Chip>
           );
@@ -128,16 +127,16 @@ export function FilterRail({
 
       {/* Quick filters — status / suitability / cost chips (multi-select toggles). */}
       <Group label="Quick filters" id="kf-fg-quick">
-        <Chip href={hrefFor(state, { bookableNow: !state.bookableNow })} active={state.bookableNow} pressed={state.bookableNow}>
+        <Chip href={hrefFor(state, { bookableNow: !state.bookableNow })} active={state.bookableNow}>
           Bookable now
         </Chip>
-        <Chip href={hrefFor(state, { dropIn: !state.dropIn })} active={state.dropIn} pressed={state.dropIn}>
+        <Chip href={hrefFor(state, { dropIn: !state.dropIn })} active={state.dropIn}>
           Drop-in
         </Chip>
-        <Chip href={hrefFor(state, { rainyDay: !state.rainyDay })} active={state.rainyDay} pressed={state.rainyDay}>
+        <Chip href={hrefFor(state, { rainyDay: !state.rainyDay })} active={state.rainyDay}>
           Rainy-day
         </Chip>
-        <Chip href={hrefFor(state, { free: !state.free })} active={state.free} pressed={state.free}>
+        <Chip href={hrefFor(state, { free: !state.free })} active={state.free}>
           Free
         </Chip>
       </Group>

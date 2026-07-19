@@ -189,3 +189,74 @@ Running 26 tests using 2 workers
 Per-route raw axe JSON: `tests/e2e/.artifacts/a11y/*.json` (git-ignored run output — regenerate
 with the commands in §2). Machine-readable, one file per route × colour-scheme, containing the
 complete violation set with node-level selectors and failure summaries.
+
+---
+
+## 6. Round 18 remediation (2026-07-19, Task Y — `overnight/t38-a11y-fixes`)
+
+> **Fixes applied.** This section documents the follow-up round that resolved the two §3
+> findings. It does **not** rewrite the Round 17 audit above (that stays the historical record).
+> Re-running the **exact same** audit spec (axe-core `4.12.1`, WCAG AA, both schemes, same route
+> list) after these fixes reports **0 `aria-allowed-attr` + 0 `color-contrast`** violations across
+> every previously-flagged route × scheme. Every changed colour's new ratio was **computed**, not
+> eyeballed. Functional public/authed E2E specs still pass unmodified; a JS-off SSR smoke confirms
+> the URL-driven FilterRail still renders filters as applied.
+
+### Finding A — `aria-pressed` on `<a>` chips → **fixed with `aria-current`**
+
+- **Root cause:** the URL-driven filter chips render as real `<a>` (`as={Link}`), but the
+  multi-select groups (Ages, Areas, Bookable-now/Drop-in/Rainy-day/Free) and the "Include unknown
+  cost" chip in `SearchBar` passed `aria-pressed`. `aria-pressed` is a **button-only** toggle
+  state; on a link's implicit `role="link"` it is unsupported → axe `aria-allowed-attr` (critical),
+  a flat **14 nodes** on every `/search` scan.
+- **Decision (documented):** convey selection **uniformly with `aria-current="true"`** — the only
+  selected-state attribute ARIA permits on a link (`aria-pressed`/`aria-checked`/`aria-selected`
+  are all role-gated to button/checkbox/option, not link). The chips **stay real `<a href>` links**
+  — FilterRail's URL-driven/shareable/works-with-JS-off design is preserved (verified by SSR smoke:
+  a directly-loaded filtered URL renders `data-selected`/`aria-current` chips + "Clear filters"
+  with no client JS). This extends the pattern the radio-like groups already used to the
+  multi-select groups too.
+- **Trade-off considered:** this drops the ARIA-level radio-vs-toggle nuance. Accepted because
+  (1) that nuance was **never expressible on a link** — `aria-pressed` there was invalid, not
+  merely lossy; (2) the multi/single distinction is still carried by the group labels + the
+  multi-select toggle behaviour of the links + the fill/✓ affordance; and (3) the alternative
+  (`role="button"` on the anchor) would require re-implementing button keyboard/activation
+  semantics on a link and was rejected as a real regression risk. The `Chip` primitive's
+  `aria-pressed` pass-through is retained for the genuinely-button `segmented` list/map view toggle
+  (which axe confirms is valid — 0 `aria-allowed-attr` there).
+- **Files:** `app/search/_components/FilterRail.tsx`, `app/search/_components/SearchBar.tsx`,
+  `components/ui/Chip.tsx` (doc guard-rail).
+
+### Finding B — insufficient contrast → **fixed, all pairs now ≥ 4.5:1**
+
+Computed with an axe-matching sRGB alpha-compositing model (validated to ±0.03 against the Round 17
+ratios, incl. the `.kf-card--muted { opacity: 0.9 }` blend). All colours stay in the Brand V2 hue
+family.
+
+| # | Element(s) | Before (fg→bg / ratio) | Fix | After ratio |
+|---|---|---|---|---|
+| 1 | `.kf-card__meta`, Badge `neutral`, muted-card secondary text | `#5f7360` blended → `#6e806e` / **4.18 / 3.85** | Darkened token `--kf-park-moss-text` `#5f7360`→**`#4d604c`** | 5.33 (meta ×0.9), 4.92 (badge ×0.9), 6.08 (paper) |
+| 2 | `.kf-section__count`, `.kf-card__type`, `.kf-control__label`, `.kf-detail__type` | `#6c766b` / **4.23** (paper) & `#7a8278` / **3.93** (muted) | Darkened token `--kf-tertiary-text` `#6c766b`→**`#555e54`** | 6.04 (paper), 5.31 (type ×0.9) |
+| 3 | `.kf-stamp--muted` (light-on-light in dark; worst light offender `#8c948a`/2.85) | `#8c948a` / **2.85** & dark `#757f75`→`#dde0de` / **3.12** | Use **flipping** role tokens (`--ink-secondary` on `--surface-subtle`) instead of fixed `--tertiary-text`/`--neutral-100`; **removed** the compounding `.kf-stamp__src { opacity: 0.85 }` | 4.92 (light), 5.63 (dark) |
+| 4 | `.kf-btn--primary` CTA, dark mode | `#f7f2e8` on Leaf `#48c774` / **1.94** | Higher-specificity `.kf a.kf-btn--primary { color: var(--forest-ink) }` (was clobbered by `.kf a { color: inherit }`) | **7.61** (both schemes) |
+| 5 | "⚑ Report wrong info" `.kf-link` `<button>`, dark | `#bcd6f5` on UA buttonface `#efefef` / **1.29** | `.kf-link { background: transparent }` (composite onto panel `--surface`, not UA `buttonface`) | 7.68 (light), 8.33 (dark) |
+| 6 | `/account` un-themed inline links ("search page"), dark | UA `#0000ee` on `#183b24`/`#102316` / **1.32 / 1.75** | New themed, scheme-flipping `--link` (`#1a6349` light / `#82d3ab` dark) + underline | 6.43–7.18 (light), 9.31 / 7.02 (dark) |
+| 7 | `.kf-saved__open` "Open" pill, dark | un-flipped `#2f5d50` on `#183b24` / **1.65** | Retheme to `--link` | 7.18 (light), 7.02 (dark) |
+
+- **Files:** `app/design-tokens.css` (tokens 1–2), `app/preview/preview.css` (3–5),
+  `app/account/account.css` (6–7).
+
+### Verification
+
+`npm run e2e:setup` + `bash scripts/e2e/run-e2e.sh` (real built app, local Supabase, both schemes):
+
+```
+[a11y] every route (home / search ×2 / preview shell / preview[id] / activity[id] / account) — light + dark
+       -> 0 violated rule(s) — clean   (was: aria-allowed-attr ×14, color-contrast ×24/9/26/…)
+24 passed  ·  2 skipped (admin — audit gap unchanged, see §4)
+```
+
+Also green: `tsc --noEmit`, `eslint .`, `next build`, and the public/authed functional E2E specs
+(unchanged). Harness note: the local E2E harness pins `E2E_BASE_URL` to `:3000`; if a stale
+`next-server` already holds that port, Playwright silently tests the stale build — run on a free
+port (`E2E_PORT` + matching `E2E_BASE_URL`) to test your actual build.

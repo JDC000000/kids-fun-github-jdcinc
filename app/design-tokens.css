@@ -39,8 +39,16 @@
   --kf-playground-sand: #c9b79e;
   --kf-rainy-fog: #d8e3e0;
   --kf-park-moss: #758a73; /* fill/border/icon only — fails AA as body text on white */
-  --kf-park-moss-text: #5f7360; /* AA secondary text on white/paper (5.11:1) */
-  --kf-tertiary-text: #6c766b; /* AA metadata on white (4.73:1) */
+  /* Secondary/muted text (also used, faded, inside .kf-card--muted at opacity 0.9). Darkened
+   * in Round 18 a11y-remediation so it clears AA even after the 0.9 muted-card blend:
+   * 6.79:1 on white, 6.08:1 on warm paper; 5.33:1 as muted card-meta, 4.92:1 as muted Badge
+   * neutral (was #5f7360 = 5.11:1 / 4.58:1, which the 0.9 blend pushed to 4.18/3.85 — below AA). */
+  --kf-park-moss-text: #4d604c;
+  /* Metadata / tertiary muted text (section counts, card type, control labels, muted stamp).
+   * Darkened in Round 18 a11y-remediation: 6.74:1 on white, 6.04:1 on warm paper; 5.31:1 as
+   * muted card-type, 4.90:1 as muted stamp (was #6c766b = 4.73:1 / 4.23:1 — below AA on paper
+   * and pushed to 3.62–3.93 by the 0.9 muted-card blend). */
+  --kf-tertiary-text: #555e54;
   --kf-museum-lilac: #d9c7ef;
   --kf-evening-plum: #8d7aad;
 
