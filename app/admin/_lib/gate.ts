@@ -77,6 +77,24 @@ export async function resolveAdminAccess(req: AdminGateRequest): Promise<AdminAc
 }
 
 /**
+ * Resolve the acting admin for a MUTATION — the signed-in session + active
+ * admin_user row ONLY (never the interim token). Returns the AdminUser (whose
+ * `userId` satisfies the admin_audit_log FK) or `null` for anyone else.
+ *
+ * Why session-only for writes, unlike {@link resolveAdminAccess} (which also
+ * accepts the interim token for READS): every admin mutation must be attributable
+ * in admin_audit_log, and admin_audit_log.admin_user_id is a NOT NULL FK to
+ * admin_user — the token path carries no admin identity, so a token-authorised
+ * write could not be audited. A token holder therefore gets read-only access to the
+ * console; making changes requires a real, seeded admin session. This is the same
+ * `trySessionAdmin` path the read gate prefers, exposed for the write path to reuse
+ * (one identity resolver, not a fork). Never throws.
+ */
+export async function resolveSessionAdmin(): Promise<AdminUser | null> {
+  return trySessionAdmin();
+}
+
+/**
  * Attempt the session+role path, resolving to the AdminUser on success or `null`
  * on ANY failure (anonymous, non-admin, Supabase unconfigured, DB error). Never
  * throws — the caller must always be able to fall through to the token path.

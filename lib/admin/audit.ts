@@ -20,18 +20,36 @@
 // (lib/admin/access.ts) has NO admin identity, so token access CANNOT be audited
 // here — a further reason that token gate is interim and should be retired once
 // real admins are seeded. Callers on the token path must not attempt an audit write.
-import { query } from '../db/client';
+import type { PoolClient } from 'pg';
+import { getPool, query } from '../db/client';
 
 /**
  * Canonical admin audit actions. Kept as string constants (not an enum) so the
  * column stays free-text/forward-compatible while giving callers a typo-proof set.
- * Phase-1 (T34) only needs the access/view events; mutation actions land with the
- * no-code CRUD console (Phase 2+).
+ * Phase-1 (T34) added the access/view event; Phase-2 (T34 Phase 2, the no-code CRUD
+ * console) adds the first real MUTATION verbs below — every source/listing/correction
+ * write goes through {@link writeAdminAudit} with one of these.
  */
 export const ADMIN_AUDIT_ACTIONS = {
   /** A real admin (session + role) viewed an admin surface. Groundwork usage. */
   VIEW: 'admin.view',
+  /** No-code source registry: a new `source` row was created. (G-T34-3) */
+  SOURCE_CREATE: 'source.create',
+  /** No-code source registry: an existing `source` row was edited. (G-T34-3) */
+  SOURCE_UPDATE: 'source.update',
+  /** Manual-curation lane: a manually-entered listing (series+occurrence) was created. (G-T34-3) */
+  LISTING_CREATE: 'listing.create',
+  /** Correction workflow: an open correction_report was resolved (+ occurrence state updated). (G-T34-7) */
+  CORRECTION_RESOLVE: 'correction.resolve',
 } as const;
+
+/**
+ * The minimal surface both a pg `Pool` and a checked-out `PoolClient` expose. Lets
+ * {@link writeAdminAudit} join a caller's OPEN TRANSACTION (pass the client) so a
+ * multi-table admin mutation and its audit row commit or roll back together — while
+ * the default (no client) path still uses the shared service pool for single writes.
+ */
+type SqlExecutor = Pick<PoolClient, 'query'>;
 
 export interface AdminAuditEntry {
   /** The acting admin's user id. MUST be an active admin_user (FK-enforced). */
@@ -54,29 +72,68 @@ export interface AdminAuditEntry {
 }
 
 /**
- * Insert one admin_audit_log row via the service pool and return its id.
+ * Insert one admin_audit_log row and return its id.
  *
  * THROWS on failure (bad FK, DB down, …). Use this from mutation paths where a
  * failed audit write should abort the mutation (no un-audited admin change). For
  * the non-critical access-logging path, use {@link recordAdminAccess}, which
  * swallows failures so a logging hiccup can never block a legitimate admin.
+ *
+ * @param exec  Optional SQL executor. Pass a checked-out `PoolClient` that is mid
+ *              transaction (e.g. from {@link withAdminTransaction}) to make the audit
+ *              row part of the SAME atomic unit as the mutation it records — so the
+ *              change and its audit trail are never persisted apart. Omit it to use
+ *              the shared service pool for a standalone write (Phase-1 behaviour).
  */
-export async function writeAdminAudit(entry: AdminAuditEntry): Promise<string> {
-  const rows = await query<{ id: string }>(
-    `INSERT INTO admin_audit_log
+export async function writeAdminAudit(entry: AdminAuditEntry, exec?: SqlExecutor): Promise<string> {
+  const sql = `INSERT INTO admin_audit_log
        (admin_user_id, action, target_table, target_id, before_json, after_json)
      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
-     RETURNING id`,
-    [
-      entry.adminUserId,
-      entry.action,
-      entry.targetTable,
-      entry.targetId ?? null,
-      entry.before === undefined ? null : JSON.stringify(entry.before),
-      entry.after === undefined ? null : JSON.stringify(entry.after),
-    ]
-  );
+     RETURNING id`;
+  const params = [
+    entry.adminUserId,
+    entry.action,
+    entry.targetTable,
+    entry.targetId ?? null,
+    entry.before === undefined ? null : JSON.stringify(entry.before),
+    entry.after === undefined ? null : JSON.stringify(entry.after),
+  ];
+  if (exec) {
+    const res = await exec.query<{ id: string }>(sql, params);
+    return res.rows[0].id;
+  }
+  const rows = await query<{ id: string }>(sql, params);
   return rows[0].id;
+}
+
+/**
+ * Run `fn` inside a single service-pool transaction (BEGIN/COMMIT, ROLLBACK on any
+ * throw), handing it the checked-out client. The admin-console mutations use this to
+ * make a multi-table change (e.g. flip a correction_report AND update the underlying
+ * activity_occurrence) atomic together with their {@link writeAdminAudit} row — pass
+ * the same `client` to writeAdminAudit inside `fn`. There is no generic transaction
+ * wrapper on the service pool (lib/db/client.ts `query` is per-statement), and the
+ * only other one (lib/db/user-scoped-client.ts) is bound to the low-privilege RLS
+ * pool — wrong for these service-level, RLS-exempt admin tables. Hence this helper,
+ * co-located with the audit writer every admin mutation already depends on.
+ */
+export async function withAdminTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      /* ignore rollback error — surface the original */
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
