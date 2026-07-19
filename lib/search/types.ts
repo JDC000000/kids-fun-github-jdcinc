@@ -145,9 +145,18 @@ export interface SearchContext {
 
 /** Resolved date intent. `kind` describes how it was expressed; `isoDate` is America/Vancouver local date (YYYY-MM-DD). */
 export interface DateIntent {
-  kind: 'today' | 'tomorrow' | 'weekend' | 'weekday' | 'explicit';
-  /** For 'weekday'/'explicit': the local target date. For 'weekend': Saturday of the target week. */
+  kind: 'today' | 'tomorrow' | 'weekend' | 'weekday' | 'explicit' | 'range';
+  /**
+   * For 'weekday'/'explicit': the local target date. For 'weekend': Saturday of the target
+   * week. For 'range' (T26 / FR-04): the inclusive START date of the range.
+   */
   isoDate: string | null;
+  /**
+   * For 'range' only: the inclusive END date (YYYY-MM-DD, America/Vancouver local). Absent /
+   * null for all single-day kinds. A range with `endIsoDate` matches every day in
+   * [isoDate, endIsoDate] and drives the "grouped by day" results view (FR-04).
+   */
+  endIsoDate?: string | null;
   /** Weekday 0=Sun..6=Sat when kind==='weekday'. */
   weekday: number | null;
 }

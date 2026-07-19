@@ -125,6 +125,7 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   const origin = buildOriginRequest(p);
   const regionChipIds = (p.get('region') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const includeUnknownCost = ['1', 'true', 'yes'].includes((p.get('includeUnknownCost') ?? '').toLowerCase());
+  const dateRange = buildDateRange(p);
   const limit = clampInt(p.get('limit'), 1, 100);
   const minResults = clampInt(p.get('minResults'), 0, 100);
 
@@ -135,9 +136,21 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
     regionChipIds,
     sort,
     includeUnknownCost,
+    ...(dateRange != null ? { dateRange } : {}),
     ...(limit != null ? { limit } : {}),
     ...(minResults != null ? { minResults } : {}),
   };
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Custom date range (T26 / FR-04): `from`/`to` are structured YYYY-MM-DD params (like region,
+ * not text in `q`). Both ends must be present and well-formed, else no range is applied. */
+function buildDateRange(p: URLSearchParams): { from: string; to: string } | null {
+  const from = p.get('from');
+  const to = p.get('to');
+  if (from && to && ISO_DATE_RE.test(from) && ISO_DATE_RE.test(to)) return { from, to };
+  return null;
 }
 
 /** Derive an origin resolution request from query params (near me / area chip / saved home). */

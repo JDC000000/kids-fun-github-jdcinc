@@ -522,3 +522,79 @@
     transition: none;
   }
 }
+
+/* ── Custom date-range control (T26 / FR-04) ──────────────────────────────────────
+ * A native GET <form> (two <input type="date"> + Apply) that sits in the filter rail.
+ * Not a chip rail: it lays out its labelled date fields + submit in a wrapping row. The
+ * inputs + button are the shared Input/Button primitives (tested tokens, AA contrast in
+ * both schemes), so this control adds no new colour-contrast surface. */
+.kf-daterange {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 2px 16px;
+}
+
+.kf-daterange__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.kf-daterange__lbl {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
+/* Override the Input primitive's width:100% so two date fields + Apply sit on one row. */
+.kf-daterange__input {
+  width: auto;
+  min-width: 150px;
+}
+
+.kf-daterange__apply {
+  flex: 0 0 auto;
+}
+
+.kf-daterange__clear {
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--anchor);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.kf-daterange__clear:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Per-day results group (range active): each day the parent's range spans gets its own
+ * h3 subheading under the "Confirmed" h2, then its cards. Spacing separates one day's block
+ * from the next. --ink / --ink-muted are the same tokens the section head uses (audited AA). */
+.kf-daygroup {
+  margin-top: 14px;
+}
+
+.kf-daygroup__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.kf-daygroup__count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}

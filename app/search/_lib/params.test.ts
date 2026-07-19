@@ -3,7 +3,9 @@ import {
   DEFAULT_STATE,
   analyticsFilterTokens,
   apiQuery,
+  dateRangeFormFields,
   hasActiveFilters,
+  hasDateRange,
   hasNearMeCoords,
   hasOrigin,
   hiddenStateFields,
@@ -116,6 +118,63 @@ describe('apiQuery', () => {
 
   it('omits coords when the origin is incomplete', () => {
     expect(apiParams(st({ lat: 49.26 })).has('lat')).toBe(false);
+  });
+});
+
+describe('custom date range (T26 / G-T26-1, FR-04)', () => {
+  it('parses a complete from/to range and reports it active', () => {
+    const s = parseSearchState({ from: '2026-07-18', to: '2026-07-20' });
+    expect(s.dateFrom).toBe('2026-07-18');
+    expect(s.dateTo).toBe('2026-07-20');
+    expect(hasDateRange(s)).toBe(true);
+  });
+
+  it('canonicalises a reversed range so dateFrom<=dateTo', () => {
+    const s = parseSearchState({ from: '2026-07-20', to: '2026-07-18' });
+    expect(s.dateFrom).toBe('2026-07-18');
+    expect(s.dateTo).toBe('2026-07-20');
+  });
+
+  it('rejects malformed dates and treats a partial range as inactive', () => {
+    expect(parseSearchState({ from: 'nope', to: '2026-07-20' }).dateFrom).toBeNull();
+    const partial = parseSearchState({ from: '2026-07-18' });
+    expect(partial.dateFrom).toBe('2026-07-18');
+    expect(partial.dateTo).toBeNull();
+    expect(hasDateRange(partial)).toBe(false);
+  });
+
+  it('a complete range clears the WHEN quick-pick (mutually exclusive date intent)', () => {
+    const s = parseSearchState({ when: 'weekend', from: '2026-07-18', to: '2026-07-20' });
+    expect(s.when).toBe('any');
+    expect(hasDateRange(s)).toBe(true);
+  });
+
+  it('forwards from/to to the API as STRUCTURED params, never composed into q', () => {
+    const p = apiParams(st({ q: 'swim', dateFrom: '2026-07-18', dateTo: '2026-07-20' }));
+    expect(p.get('from')).toBe('2026-07-18');
+    expect(p.get('to')).toBe('2026-07-20');
+    expect(p.get('q')).toBe('swim'); // the ISO dates never leak into the free-text query
+  });
+
+  it('serialises from/to into the shareable page URL and counts as an active filter', () => {
+    const href = hrefFor(st({ dateFrom: '2026-07-18', dateTo: '2026-07-20' }));
+    const p = new URLSearchParams(href.split('?')[1]);
+    expect(p.get('from')).toBe('2026-07-18');
+    expect(p.get('to')).toBe('2026-07-20');
+    expect(hasActiveFilters(st({ dateFrom: '2026-07-18', dateTo: '2026-07-20' }))).toBe(true);
+    expect(analyticsFilterTokens(st({ dateFrom: '2026-07-18', dateTo: '2026-07-20' }))).toContain('date_range');
+  });
+
+  it('date-form hidden fields carry the rest of the search but omit from/to/when', () => {
+    const fields = dateRangeFormFields(
+      st({ q: 'swim', when: 'weekend', regions: ['van'], dateFrom: '2026-07-18', dateTo: '2026-07-20' }),
+    );
+    const names = fields.map((f) => f.name);
+    expect(names).toContain('q');
+    expect(names).toContain('region');
+    expect(names).not.toContain('from');
+    expect(names).not.toContain('to');
+    expect(names).not.toContain('when');
   });
 });
 
