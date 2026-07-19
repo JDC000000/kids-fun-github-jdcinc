@@ -26,6 +26,25 @@ describe('time-of-day filter (FR-09, G-T16-4)', () => {
     const open = makeListing({ openHours: true });
     expect(matchesDate(open, { kind: 'today', isoDate: '2026-07-14', weekday: null })).toBe(true);
   });
+
+  it('matchesDate range (T26/FR-04) includes every local day in [start, end] inclusive', () => {
+    const d13 = makeListing({ startDatetimeUtc: '2026-07-13T17:00:00Z' }); // 2026-07-13 local
+    const d14 = makeListing({ startDatetimeUtc: '2026-07-14T17:00:00Z' }); // 2026-07-14 local
+    const d16 = makeListing({ startDatetimeUtc: '2026-07-16T17:00:00Z' }); // 2026-07-16 local
+    const range = { kind: 'range' as const, isoDate: '2026-07-13', endIsoDate: '2026-07-15', weekday: null };
+    expect(matchesDate(d13, range)).toBe(true); // start boundary
+    expect(matchesDate(d14, range)).toBe(true); // interior
+    expect(matchesDate(d16, range)).toBe(false); // past the end
+    // Open-hours attractions are available every day → always inside a range.
+    expect(matchesDate(makeListing({ openHours: true }), range)).toBe(true);
+  });
+
+  it('matchesDate range matches a single-day [X, X] range only on that day', () => {
+    const d14 = makeListing({ startDatetimeUtc: '2026-07-14T17:00:00Z' });
+    const single = { kind: 'range' as const, isoDate: '2026-07-14', endIsoDate: '2026-07-14', weekday: null };
+    expect(matchesDate(d14, single)).toBe(true);
+    expect(matchesDate(makeListing({ startDatetimeUtc: '2026-07-15T17:00:00Z' }), single)).toBe(false);
+  });
 });
 
 describe('cost filter (FR-10/BR-11, G-T16-5)', () => {

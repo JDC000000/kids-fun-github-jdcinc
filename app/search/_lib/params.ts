@@ -4,12 +4,18 @@
 // Two kinds of param flow to the backend, and they are NOT the same:
 //   1. STRUCTURED params the /api/search route reads directly (app/api/search/route.ts
 //      `buildSearchRequest`): q, sort, includeUnknownCost, limit, minResults, region
-//      (csv region-chip ids), lat/lng (near-me origin).
+//      (csv region-chip ids), lat/lng (near-me origin), and from/to (a custom date RANGE,
+//      T26 / FR-04).
 //   2. INTENT the route only understands as parent-language text inside `q`: the query
 //      parser (lib/search/parse.ts) extracts date / status / cost / age / radius from
 //      the free-text query and STRIPS those phrases so they never pollute text relevance.
-//      The route accepts no structured param for those, so the date/quick-filter/age/
-//      radius chips compose their phrases into `q` at the API-call boundary (`apiQuery`).
+//      The route accepts no structured param for those, so the date-quick-pick/quick-filter/
+//      age/radius chips compose their phrases into `q` at the API-call boundary (`apiQuery`).
+//
+// The custom date RANGE is deliberately in group (1), not (2): an ISO date can't survive the
+// text pipeline — normalize() replaces every non-alphanumeric run with a space, so
+// "2026-07-20" tokenises to "2026 07 20" and the parser's date regex never fires. So a range
+// is passed structurally (from/to), read directly by the route, and OVERRIDES any text date.
 //
 // This keeps the page URL clean and structured (e.g. ?when=weekend&bookable=1&age=5-9)
 // while the backend still receives exactly what it already supports today — no backend
@@ -55,6 +61,26 @@ export const WHEN_OPTIONS: { key: WhenKey; label: string; phrase: string }[] = [
   { key: 'weekend', label: 'This weekend', phrase: 'this weekend' },
 ];
 const WHEN_KEYS = new Set(WHEN_OPTIONS.map((w) => w.key));
+
+// ── Custom date range (FR-04, T26 / G-T26-1) ─────────────────────────────────────
+// A start + end date (America/Vancouver local YYYY-MM-DD) that the WHEN quick-picks can't
+// express. Unlike the rest of the rail, the range is a STRUCTURED param pair (`from`/`to`)
+// the /api/search route reads directly — an ISO date can't round-trip through the free-text
+// pipeline (normalize() strips the hyphens). A range is "active" only when BOTH ends are set
+// and from<=to; when active it filters to that inclusive interval AND groups the results by
+// day (see app/search/_lib/day-groups.ts). The range and the WHEN quick-pick are mutually
+// exclusive in the UI (picking one clears the other).
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A YYYY-MM-DD string, or null if the raw value is absent/malformed. */
+function parseIsoDate(raw: string | undefined): string | null {
+  return raw && ISO_DATE_RE.test(raw) ? raw : null;
+}
+
+/** True when a full, correctly-ordered custom date range is in play (drives filter + day grouping). */
+export function hasDateRange(state: SearchState): boolean {
+  return state.dateFrom != null && state.dateTo != null && state.dateFrom <= state.dateTo;
+}
 
 // ── Age bands (BR-01..04) ────────────────────────────────────────────────────────
 // Multi-select. Each band maps to a SINGLE-band parent phrase so a selection resolves
@@ -108,8 +134,12 @@ export interface SearchState {
   includeUnknownCost: boolean;
   /** Additive region-chip ids (structured `region=` param). */
   regions: string[];
-  /** Date quick-pick (composed into `q`). */
+  /** Date quick-pick (composed into `q`). Mutually exclusive with a custom date range. */
   when: WhenKey;
+  /** Custom date-range start (America/Vancouver local YYYY-MM-DD); null → no range start. Structured `from=`. */
+  dateFrom: string | null;
+  /** Custom date-range end (America/Vancouver local YYYY-MM-DD); null → no range end. Structured `to=`. */
+  dateTo: string | null;
   /** Time-of-day quick-pick (composed into `q`; radio-like, one at a time). */
   timeOfDay: TimeOfDayKey;
   /** Bookable-Now quick filter (composed into `q`). */
@@ -142,6 +172,8 @@ export interface SearchState {
 export const CLEARED_FILTERS: Partial<SearchState> = {
   regions: [],
   when: 'any',
+  dateFrom: null,
+  dateTo: null,
   timeOfDay: 'any',
   bookableNow: false,
   rainyDay: false,
@@ -161,6 +193,8 @@ export const DEFAULT_STATE: SearchState = {
   includeUnknownCost: true,
   regions: [],
   when: 'any',
+  dateFrom: null,
+  dateTo: null,
   timeOfDay: 'any',
   bookableNow: false,
   rainyDay: false,
@@ -229,7 +263,18 @@ export function parseSearchState(sp: RawParams): SearchState {
   const includeUnknownCost = costRaw === '' ? DEFAULT_STATE.includeUnknownCost : parseBool(costRaw);
 
   const whenRaw = first(sp.when) as WhenKey | undefined;
-  const when = whenRaw && WHEN_KEYS.has(whenRaw) ? whenRaw : 'any';
+  const whenPick = whenRaw && WHEN_KEYS.has(whenRaw) ? whenRaw : 'any';
+
+  // Custom date range (T26 / FR-04). Canonicalise a reversed range so dateFrom<=dateTo always
+  // holds (mirrors the engine, which also orders from/to) — keeps URL, filter, and day grouping
+  // consistent. A complete range and a WHEN quick-pick both express date intent; the range wins,
+  // so a valid range clears the quick-pick (mutually exclusive by construction).
+  let dateFrom = parseIsoDate(first(sp.from));
+  let dateTo = parseIsoDate(first(sp.to));
+  if (dateFrom != null && dateTo != null && dateFrom > dateTo) {
+    [dateFrom, dateTo] = [dateTo, dateFrom];
+  }
+  const when = dateFrom != null && dateTo != null ? 'any' : whenPick;
 
   const timeRaw = first(sp.time);
   const timeOfDay = (timeRaw && TIME_OF_DAY_KEYS.has(timeRaw) ? timeRaw : 'any') as TimeOfDayKey;
@@ -249,6 +294,8 @@ export function parseSearchState(sp: RawParams): SearchState {
     includeUnknownCost,
     regions: parseOrderedCsv(first(sp.region), REGION_ORDER),
     when,
+    dateFrom,
+    dateTo,
     timeOfDay,
     bookableNow: parseBool(first(sp.bookable)),
     rainyDay: parseBool(first(sp.rainy)),
@@ -288,6 +335,12 @@ function pageParams(state: SearchState): URLSearchParams {
   p.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
   if (state.regions.length) p.set('region', state.regions.join(','));
   if (state.when !== 'any') p.set('when', state.when);
+  // Custom date range (T26 / FR-04) — a structured `from`/`to` pair, emitted only when the
+  // range is complete and ordered (parseSearchState guarantees dateFrom<=dateTo when both set).
+  if (state.dateFrom != null && state.dateTo != null && state.dateFrom <= state.dateTo) {
+    p.set('from', state.dateFrom);
+    p.set('to', state.dateTo);
+  }
   if (state.timeOfDay !== 'any') p.set('time', state.timeOfDay);
   if (state.bookableNow) p.set('bookable', '1');
   if (state.rainyDay) p.set('rainy', '1');
@@ -321,6 +374,21 @@ export function hrefFor(state: SearchState, overrides: Partial<SearchState> = {}
 export function hiddenStateFields(state: SearchState): { name: string; value: string }[] {
   const p = pageParams(state);
   p.delete('q');
+  return [...p.entries()].map(([name, value]) => ({ name, value }));
+}
+
+/**
+ * Hidden fields for the custom date-range GET `<form>` (T26 / FR-04). Carries every current
+ * param EXCEPT the range itself (`from`/`to` — the two date inputs supply those) and the WHEN
+ * quick-pick (`when` — submitting a custom range clears it; they're mutually exclusive). Keeps
+ * `q` and every other filter so applying dates never drops the rest of the search. Unlike
+ * `hiddenStateFields` (the text form, where `q` is the visible input), `q` IS kept here.
+ */
+export function dateRangeFormFields(state: SearchState): { name: string; value: string }[] {
+  const p = pageParams(state);
+  p.delete('from');
+  p.delete('to');
+  p.delete('when');
   return [...p.entries()].map(([name, value]) => ({ name, value }));
 }
 
@@ -395,6 +463,7 @@ export function hasActiveFilters(state: SearchState): boolean {
   return (
     state.regions.length > 0 ||
     state.when !== 'any' ||
+    hasDateRange(state) ||
     state.timeOfDay !== 'any' ||
     state.bookableNow ||
     state.rainyDay ||
@@ -439,6 +508,8 @@ export function intentPhrases(state: SearchState): string[] {
 export function analyticsFilterTokens(state: SearchState): string[] {
   const tokens: string[] = [];
   if (state.when !== 'any') tokens.push(`when:${state.when}`);
+  // Flat, non-PII token: records THAT a custom range was used, never the specific dates.
+  if (hasDateRange(state)) tokens.push('date_range');
   if (state.timeOfDay !== 'any') tokens.push(`time:${state.timeOfDay}`);
   if (state.bookableNow) tokens.push('bookable_now');
   if (state.rainyDay) tokens.push('rainy_day');
@@ -470,6 +541,12 @@ export function apiQuery(state: SearchState, savedOrigin?: SavedOrigin | null): 
   params.set('sort', state.sort);
   params.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
   if (state.regions.length) params.set('region', state.regions.join(','));
+  // Custom date range (T26 / FR-04): forwarded as structured `from`/`to`, NOT composed into `q`
+  // — an ISO date can't survive normalize() (its hyphens become spaces). Only when complete.
+  if (state.dateFrom != null && state.dateTo != null && state.dateFrom <= state.dateTo) {
+    params.set('from', state.dateFrom);
+    params.set('to', state.dateTo);
+  }
   if (hasNearMeCoords(state)) {
     params.set('lat', String(state.lat));
     params.set('lng', String(state.lng));

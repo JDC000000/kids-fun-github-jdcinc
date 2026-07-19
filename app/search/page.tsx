@@ -15,6 +15,8 @@ import { SearchResultsView } from './_components/SearchResultsView';
 import { SaveSearchButton } from './_components/SaveSearchButton';
 import { ResumeSearch } from './_components/ResumeSearch';
 import { buildMarkers, geoIndex } from './_lib/markers';
+import { groupActivitiesByDay, formatRangeLabel, type DayGroup } from './_lib/day-groups';
+import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
   AGE_OPTIONS,
   CLEARED_FILTERS,
@@ -26,6 +28,7 @@ import {
   analyticsFilterTokens,
   apiQuery,
   hasActiveFilters,
+  hasDateRange,
   hasNearMeCoords,
   hrefFor,
   parseSearchState,
@@ -96,6 +99,9 @@ function sourceNote(body: SearchApiResponse): string {
 function filterSummary(state: SearchState, savedLocation: SavedLocationInfo | null): string[] {
   const parts: string[] = [];
   if (state.when !== 'any') parts.push(WHEN_OPTIONS.find((w) => w.key === state.when)?.label ?? '');
+  if (hasDateRange(state) && state.dateFrom && state.dateTo) {
+    parts.push(formatRangeLabel(state.dateFrom, state.dateTo));
+  }
   if (state.timeOfDay !== 'any') parts.push(TIME_OF_DAY_OPTIONS.find((t) => t.key === state.timeOfDay)?.label ?? '');
   if (state.ages.length) {
     const labels = state.ages.map((band) => AGE_OPTIONS.find((a) => a.key === band)?.label ?? band);
@@ -176,6 +182,50 @@ function Section({ title, note, items }: { title: string; note?: string; items: 
   );
 }
 
+/**
+ * Confirmed results grouped by day for a custom date range (T26 / FR-04). Keeps the same
+ * "Confirmed from approved sources" h2 as the flat view (the confirmed/expected honesty
+ * framing must never be lost — UXR-06), then nests one h3 subsection per day the parent's
+ * range spans, in ascending date order, plus a trailing "Available any day" group for
+ * open-hours attractions (which belong to no single day). h1 → h2 → h3 keeps heading order
+ * clean; the Expected h2 that still renders below stays a sibling of this section's h2.
+ */
+function DayGroupedResults({ groups, total }: { groups: DayGroup[]; total: number }) {
+  if (groups.length === 0) return null;
+  return (
+    <section>
+      <div className="kf-section__head">
+        <h2 className="kf-section__title">Confirmed from approved sources</h2>
+        <span className="kf-section__count">{total}</span>
+        <span className="kf-section__rule" aria-hidden="true" />
+      </div>
+      {groups.map((g) => (
+        <div className="kf-daygroup" key={g.isoDate ?? '__open__'}>
+          <h3 className="kf-daygroup__title">
+            {g.label}
+            <span className="kf-daygroup__count">{g.items.length}</span>
+          </h3>
+          {g.items.map((a) => (
+            <ActivityCard key={a.id} activity={a} />
+          ))}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** listing id → America/Vancouver local day (YYYY-MM-DD), or null for open-hours / undated
+ *  listings — built from the RAW API items so day grouping matches the real occurrence dates. */
+function buildDayIndex(body: SearchApiResponse | undefined): Map<string, string | null> {
+  const map = new Map<string, string | null>();
+  if (!body) return map;
+  for (const item of [...body.results, ...body.expected]) {
+    const start = item.listing.startDatetimeUtc;
+    map.set(item.listing.id, start ? localIsoDate(new Date(start)) : null);
+  }
+  return map;
+}
+
 export default async function SearchPage({
   searchParams,
 }: {
@@ -213,6 +263,11 @@ export default async function SearchPage({
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
   const activeFilters = filterSummary(state, savedLocation);
   const filtersActive = hasActiveFilters(state);
+  // Custom date range (T26 / FR-04): when a range is active the confirmed results are grouped
+  // by day (one dated subsection per day, open-hours attractions last). The day-by-id lookup is
+  // built from the raw API items so grouping reflects each occurrence's true local date.
+  const rangeActive = hasDateRange(state);
+  const confirmedGroups = rangeActive ? groupActivitiesByDay(confirmed, buildDayIndex(result.body)) : [];
 
   // "Save this search" (Round 10 / Task B): the current filter state is serialized
   // to the same generic `params` envelope Task 38's backend already accepts; a
@@ -356,7 +411,11 @@ export default async function SearchPage({
             {result.body && <p className="kf-section__note">Source: {sourceNote(result.body)}</p>}
 
             <SearchResultsView markers={markers} token={mapToken} totalResults={total}>
-              <Section title="Confirmed from approved sources" items={confirmed} />
+              {rangeActive ? (
+                <DayGroupedResults groups={confirmedGroups} total={confirmed.length} />
+              ) : (
+                <Section title="Confirmed from approved sources" items={confirmed} />
+              )}
               <Section
                 title="Expected / not yet posted"
                 note="Kept separate from confirmed — we never blur the two. Each card carries its own status and recheck date."

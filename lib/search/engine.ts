@@ -52,6 +52,13 @@ export interface SearchRequest {
   regionChipIds?: string[];
   sort?: SortKey;
   includeUnknownCost?: boolean;
+  /**
+   * Explicit custom date RANGE from the UI (T26 / FR-04), YYYY-MM-DD America/Vancouver
+   * local dates. A structured param (like region / lat-lng), NOT text composed into `q`:
+   * the query parser can't reliably read an ISO date because normalize() strips its
+   * hyphens, so a range is passed structurally and OVERRIDES any text-parsed single date.
+   */
+  dateRange?: { from: string; to: string } | null;
   /** Broaden when the primary result count is below this (default 3). */
   minResults?: number;
   limit?: number;
@@ -104,6 +111,15 @@ export class SearchEngine {
       sort: req.sort,
       includeUnknownCost: req.includeUnknownCost,
     });
+
+    // Structured custom date range (T26 / FR-04): an explicit start+end from the UI is
+    // the source of truth for date intent and overrides anything the text parser resolved
+    // (e.g. a stray "today" phrase). Ordered defensively so isoDate<=endIsoDate always
+    // holds; an invalid/partial range is ignored (no date constraint).
+    const range = normalizeDateRange(req.dateRange);
+    if (range) {
+      ctx0.date = { kind: 'range', isoDate: range.from, endIsoDate: range.to, weekday: null };
+    }
 
     // Resolve origin (geo filter/ranking only applies when we have one).
     let origin: ResolvedOrigin | null = null;
@@ -233,6 +249,20 @@ export class SearchEngine {
 }
 
 const nullGeocoder: Geocoder = { geocodePostal: () => null };
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Validate + canonicalise a custom date range (T26 / FR-04). Both ends must be well-formed
+ * YYYY-MM-DD; a reversed range is swapped so the result always satisfies from<=to. Anything
+ * malformed or partial returns null → the engine applies no range constraint.
+ */
+function normalizeDateRange(range?: { from: string; to: string } | null): { from: string; to: string } | null {
+  if (!range) return null;
+  const { from, to } = range;
+  if (!ISO_DATE_RE.test(from) || !ISO_DATE_RE.test(to)) return null;
+  return from <= to ? { from, to } : { from: to, to: from };
+}
 
 function toItem(s: ScoredListing): SearchResultItem {
   const matchedAliases = (s.candidate as MatchCandidate & { _matchedAliases?: string[] })._matchedAliases ?? [];

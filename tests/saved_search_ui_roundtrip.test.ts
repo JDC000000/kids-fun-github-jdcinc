@@ -28,6 +28,8 @@ const RICH_STATE: SearchState = {
   includeUnknownCost: false,
   regions: ['van', 'bby'],
   when: 'weekend',
+  dateFrom: null,
+  dateTo: null,
   timeOfDay: 'morning',
   bookableNow: true,
   rainyDay: false,

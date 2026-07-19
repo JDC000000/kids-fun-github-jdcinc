@@ -45,12 +45,21 @@ export function matchesTimeOfDay(listing: ListingRecord, timeOfDay: DayPart | nu
 }
 
 /**
- * Does a listing occur on the requested local date?
+ * Does a listing occur on the requested local date (or within a local date RANGE)?
  * Open-hours attractions are available every day → always match a date filter.
+ *
+ * A range intent (`kind === 'range'` with an `endIsoDate`, T26 / FR-04) matches every
+ * occurrence whose local day falls in the inclusive interval [isoDate, endIsoDate].
+ * YYYY-MM-DD strings compare lexicographically identically to chronologically, so the
+ * range test needs no Date arithmetic.
  */
 export function matchesDate(listing: ListingRecord, date: DateIntent | null): boolean {
   if (!date || !date.isoDate) return true;
   if (listing.openHours) return true;
   if (!listing.startDatetimeUtc) return false;
-  return localIsoDate(new Date(listing.startDatetimeUtc)) === date.isoDate;
+  const day = localIsoDate(new Date(listing.startDatetimeUtc));
+  if (date.kind === 'range' && date.endIsoDate) {
+    return day >= date.isoDate && day <= date.endIsoDate;
+  }
+  return day === date.isoDate;
 }

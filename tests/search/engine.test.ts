@@ -50,6 +50,38 @@ describe('SearchEngine.search (FR-02)', () => {
     expect(capped.results.map((r) => r.listing.id)).not.toContain('l-aquarium-van'); // $40 > $20 → excluded
   });
 
+  it('honours a custom date range end-to-end — only in-range days survive, open-hours always (T26/FR-04)', () => {
+    const res = engine.search({
+      q: '',
+      now: FIXTURE_NOW,
+      dateRange: { from: '2026-07-13', to: '2026-07-14' },
+      minResults: 0,
+      limit: 100,
+    });
+    expect(res.context.date).toMatchObject({ kind: 'range', isoDate: '2026-07-13', endIsoDate: '2026-07-14' });
+    const ids = res.results.map((r) => r.listing.id);
+    expect(ids).toContain('l-opengym-van'); // 2026-07-13 local → inside range
+    expect(ids).toContain('l-familydropin-bby'); // 2026-07-14 local → inside range
+    expect(ids).not.toContain('l-skate-rmd'); // 2026-07-15 local → outside range
+    expect(ids).toContain('l-aquarium-van'); // open-hours → available every day, always in range
+  });
+
+  it('canonicalises a reversed date range (from>to) before filtering (T26)', () => {
+    const res = engine.search({
+      q: '',
+      now: FIXTURE_NOW,
+      dateRange: { from: '2026-07-14', to: '2026-07-13' },
+      minResults: 0,
+      limit: 100,
+    });
+    expect(res.context.date).toMatchObject({ kind: 'range', isoDate: '2026-07-13', endIsoDate: '2026-07-14' });
+  });
+
+  it('ignores a malformed date range (no date constraint applied) (T26)', () => {
+    const res = engine.search({ q: '', now: FIXTURE_NOW, dateRange: { from: 'not-a-date', to: '2026-07-14' }, minResults: 0, limit: 100 });
+    expect(res.context.date).toBeNull();
+  });
+
   it('honours the drop-in chip end-to-end — only drop_in-tagged listings survive (G-T21-3)', () => {
     const res = engine.search({ q: 'open gym drop-in', now: FIXTURE_NOW, minResults: 0 });
     expect(res.results.length).toBeGreaterThan(0);
