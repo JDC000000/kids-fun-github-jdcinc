@@ -18,8 +18,10 @@ import { buildMarkers, geoIndex } from './_lib/markers';
 import {
   AGE_OPTIONS,
   CLEARED_FILTERS,
+  COST_MAX_OPTIONS,
   REGION_CHIPS,
   SORT_OPTIONS,
+  TIME_OF_DAY_OPTIONS,
   WHEN_OPTIONS,
   analyticsFilterTokens,
   apiQuery,
@@ -94,6 +96,7 @@ function sourceNote(body: SearchApiResponse): string {
 function filterSummary(state: SearchState, savedLocation: SavedLocationInfo | null): string[] {
   const parts: string[] = [];
   if (state.when !== 'any') parts.push(WHEN_OPTIONS.find((w) => w.key === state.when)?.label ?? '');
+  if (state.timeOfDay !== 'any') parts.push(TIME_OF_DAY_OPTIONS.find((t) => t.key === state.timeOfDay)?.label ?? '');
   if (state.ages.length) {
     const labels = state.ages.map((band) => AGE_OPTIONS.find((a) => a.key === band)?.label ?? band);
     parts.push(`Ages ${labels.join(' & ')}`);
@@ -102,8 +105,12 @@ function filterSummary(state: SearchState, savedLocation: SavedLocationInfo | nu
     parts.push(state.regions.map((id) => REGION_CHIPS.find((r) => r.id === id)?.label ?? id).join(' + '));
   }
   if (state.bookableNow) parts.push('Bookable now');
+  if (state.dropIn) parts.push('Drop-in');
   if (state.rainyDay) parts.push('Rainy-day');
   if (state.free) parts.push('Free');
+  if (state.costMaxCad != null) {
+    parts.push(COST_MAX_OPTIONS.find((c) => c.maxCad === state.costMaxCad)?.label ?? `Under $${state.costMaxCad}`);
+  }
   if (hasNearMeCoords(state)) parts.push(`within ${state.radiusKm} km of you`);
   else if (state.useSavedLocation && savedLocation) {
     parts.push(`within ${state.radiusKm} km of ${savedLocation.areaLabel}`);

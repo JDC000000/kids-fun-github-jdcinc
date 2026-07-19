@@ -47,4 +47,24 @@ describe('parseQuery', () => {
     expect(ctx.timeOfDay).toBe('afternoon');
     expect(ctx.date?.kind).toBe('today');
   });
+
+  it('parses an "under $N" max-price ceiling into costMaxCad and strips it (G-T21-4)', () => {
+    const ctx = parseQuery('swim under $20', { now: FIXTURE_NOW });
+    expect(ctx.costMaxCad).toBe(20);
+    expect(ctx.terms).toEqual(['swim']); // ceiling phrase stripped, not leaked to text
+    expect(parseQuery('up to 50 gym', { now: FIXTURE_NOW }).costMaxCad).toBe(50);
+  });
+
+  it('the "under 2" AGE phrase is NOT swallowed by the cost ceiling (single digit)', () => {
+    const ctx = parseQuery('under 2 swim', { now: FIXTURE_NOW });
+    expect(ctx.costMaxCad).toBeNull(); // requires 2+ digits, so "under 2" stays an age band
+    expect(ctx.ageBands).toEqual(['under2']);
+  });
+
+  it('parses the "drop-in" chip phrase into dropIn and strips it (G-T21-3)', () => {
+    const ctx = parseQuery('drop-in gym', { now: FIXTURE_NOW });
+    expect(ctx.dropIn).toBe(true);
+    expect(ctx.terms).toEqual(['gym']);
+    expect(parseQuery('drop in skate', { now: FIXTURE_NOW }).dropIn).toBe(true);
+  });
 });

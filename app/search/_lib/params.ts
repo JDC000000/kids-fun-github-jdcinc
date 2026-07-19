@@ -15,7 +15,7 @@
 // while the backend still receives exactly what it already supports today — no backend
 // change, no invented params.
 
-import type { AgeBandKey } from '@/lib/search/types';
+import type { AgeBandKey, DayPart } from '@/lib/search/types';
 
 /** Sort keys the search API validates (route.ts VALID_SORTS). */
 export const VALID_SORTS = ['best_match', 'distance', 'soonest', 'lowest_cost', 'newest'] as const;
@@ -68,6 +68,35 @@ export const AGE_OPTIONS: { key: AgeBandKey; label: string; phrase: string }[] =
 ];
 const AGE_ORDER = AGE_OPTIONS.map((a) => a.key);
 
+// ── Time of day (FR-09 day-part windows) ─────────────────────────────────────────
+// Radio-like single-select. Each option maps to the backend `DayPart` the query parser
+// already resolves (morning/afternoon/evening — lib/search/filters/time.ts), composed as
+// a parent-language phrase into `q`. 'any' adds nothing. (G-T21-4.)
+export type TimeOfDayKey = 'any' | DayPart;
+export const TIME_OF_DAY_OPTIONS: { key: TimeOfDayKey; label: string; phrase: string }[] = [
+  { key: 'any', label: 'Any time', phrase: '' },
+  { key: 'morning', label: 'Morning', phrase: 'morning' },
+  { key: 'afternoon', label: 'Afternoon', phrase: 'afternoon' },
+  { key: 'evening', label: 'Evening', phrase: 'evening' },
+];
+const TIME_OF_DAY_KEYS = new Set<string>(TIME_OF_DAY_OPTIONS.map((t) => t.key));
+
+// ── Max price / cost ceiling (P1 cost range, G-T21-4) ────────────────────────────
+// Radio-like single-select preset bands mapping to a max-price ceiling in CAD. Composed
+// into `q` as an "under $N" phrase the parser resolves to ctx.costMaxCad (lib/search/parse.ts
+// + filters/cost.ts `maxCad`). The binary "Free" quick-filter (costFree) is kept separate —
+// these bands are the ">$0 but capped" story that, together with Free, expose "cost range/free"
+// (G-T21-4). A preset-chip control (not a slider) keeps the whole rail one consistent, 44px /
+// AA-contrast Chip vocabulary. `costMaxCad` is the single source of truth (null → no ceiling).
+export const COST_MAX_OPTIONS: { key: string; label: string; maxCad: number | null }[] = [
+  { key: 'any', label: 'Any price', maxCad: null },
+  { key: '20', label: 'Under $20', maxCad: 20 },
+  { key: '50', label: 'Under $50', maxCad: 50 },
+];
+const COST_MAX_VALUES = new Set<number>(
+  COST_MAX_OPTIONS.map((c) => c.maxCad).filter((v): v is number => v != null),
+);
+
 // ── Distance / radius (BR-06, TSD §5B) ───────────────────────────────────────────
 export const RADIUS_OPTIONS = [5, 10, 20] as const;
 export type RadiusKm = (typeof RADIUS_OPTIONS)[number];
@@ -81,12 +110,18 @@ export interface SearchState {
   regions: string[];
   /** Date quick-pick (composed into `q`). */
   when: WhenKey;
+  /** Time-of-day quick-pick (composed into `q`; radio-like, one at a time). */
+  timeOfDay: TimeOfDayKey;
   /** Bookable-Now quick filter (composed into `q`). */
   bookableNow: boolean;
   /** Rainy-day / indoor quick filter (composed into `q`). */
   rainyDay: boolean;
+  /** Drop-in quick filter (composed into `q`). */
+  dropIn: boolean;
   /** Free-only quick filter (composed into `q`). */
   free: boolean;
+  /** Max-price ceiling in CAD (composed into `q` as "under $N"); null → no ceiling. */
+  costMaxCad: number | null;
   /** Selected age bands (composed into `q`). */
   ages: AgeBandKey[];
   /** Near-me origin coords (structured lat/lng). Radius search is active iff both set. */
@@ -107,9 +142,12 @@ export interface SearchState {
 export const CLEARED_FILTERS: Partial<SearchState> = {
   regions: [],
   when: 'any',
+  timeOfDay: 'any',
   bookableNow: false,
   rainyDay: false,
+  dropIn: false,
   free: false,
+  costMaxCad: null,
   ages: [],
   lat: null,
   lng: null,
@@ -123,9 +161,12 @@ export const DEFAULT_STATE: SearchState = {
   includeUnknownCost: true,
   regions: [],
   when: 'any',
+  timeOfDay: 'any',
   bookableNow: false,
   rainyDay: false,
+  dropIn: false,
   free: false,
+  costMaxCad: null,
   ages: [],
   lat: null,
   lng: null,
@@ -190,6 +231,12 @@ export function parseSearchState(sp: RawParams): SearchState {
   const whenRaw = first(sp.when) as WhenKey | undefined;
   const when = whenRaw && WHEN_KEYS.has(whenRaw) ? whenRaw : 'any';
 
+  const timeRaw = first(sp.time);
+  const timeOfDay = (timeRaw && TIME_OF_DAY_KEYS.has(timeRaw) ? timeRaw : 'any') as TimeOfDayKey;
+
+  const costMaxRaw = Number(first(sp.cost));
+  const costMaxCad = COST_MAX_VALUES.has(costMaxRaw) ? costMaxRaw : null;
+
   const lat = parseCoord(first(sp.lat));
   const lng = parseCoord(first(sp.lng));
   const bothCoords = lat != null && lng != null;
@@ -202,9 +249,12 @@ export function parseSearchState(sp: RawParams): SearchState {
     includeUnknownCost,
     regions: parseOrderedCsv(first(sp.region), REGION_ORDER),
     when,
+    timeOfDay,
     bookableNow: parseBool(first(sp.bookable)),
     rainyDay: parseBool(first(sp.rainy)),
+    dropIn: parseBool(first(sp.dropin)),
     free: parseBool(first(sp.free)),
+    costMaxCad,
     ages: parseOrderedCsv(first(sp.age), AGE_ORDER as AgeBandKey[]),
     lat: bothCoords ? lat : null,
     lng: bothCoords ? lng : null,
@@ -238,9 +288,12 @@ function pageParams(state: SearchState): URLSearchParams {
   p.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
   if (state.regions.length) p.set('region', state.regions.join(','));
   if (state.when !== 'any') p.set('when', state.when);
+  if (state.timeOfDay !== 'any') p.set('time', state.timeOfDay);
   if (state.bookableNow) p.set('bookable', '1');
   if (state.rainyDay) p.set('rainy', '1');
+  if (state.dropIn) p.set('dropin', '1');
   if (state.free) p.set('free', '1');
+  if (state.costMaxCad != null) p.set('cost', String(state.costMaxCad));
   if (state.ages.length) p.set('age', state.ages.join(','));
   // Origin: near-me coords OR the saved-location intent flag (never the postal itself).
   if (hasNearMeCoords(state)) {
@@ -342,9 +395,12 @@ export function hasActiveFilters(state: SearchState): boolean {
   return (
     state.regions.length > 0 ||
     state.when !== 'any' ||
+    state.timeOfDay !== 'any' ||
     state.bookableNow ||
     state.rainyDay ||
+    state.dropIn ||
     state.free ||
+    state.costMaxCad != null ||
     state.ages.length > 0 ||
     hasOrigin(state)
   );
@@ -355,9 +411,14 @@ export function intentPhrases(state: SearchState): string[] {
   const phrases: string[] = [];
   const whenPhrase = WHEN_OPTIONS.find((w) => w.key === state.when)?.phrase;
   if (whenPhrase) phrases.push(whenPhrase);
+  const timePhrase = TIME_OF_DAY_OPTIONS.find((t) => t.key === state.timeOfDay)?.phrase;
+  if (timePhrase) phrases.push(timePhrase);
   if (state.bookableNow) phrases.push('bookable now');
   if (state.rainyDay) phrases.push('rainy day');
+  if (state.dropIn) phrases.push('drop-in');
   if (state.free) phrases.push('free');
+  // "under $N" — the parser strips the "$" (normalize) and reads N as the cost ceiling.
+  if (state.costMaxCad != null) phrases.push(`under $${state.costMaxCad}`);
   for (const band of state.ages) {
     const phrase = AGE_OPTIONS.find((a) => a.key === band)?.phrase;
     if (phrase) phrases.push(phrase);
@@ -378,9 +439,12 @@ export function intentPhrases(state: SearchState): string[] {
 export function analyticsFilterTokens(state: SearchState): string[] {
   const tokens: string[] = [];
   if (state.when !== 'any') tokens.push(`when:${state.when}`);
+  if (state.timeOfDay !== 'any') tokens.push(`time:${state.timeOfDay}`);
   if (state.bookableNow) tokens.push('bookable_now');
   if (state.rainyDay) tokens.push('rainy_day');
+  if (state.dropIn) tokens.push('drop_in');
   if (state.free) tokens.push('free');
+  if (state.costMaxCad != null) tokens.push(`cost_max:${state.costMaxCad}`);
   for (const band of state.ages) tokens.push(`age:${band}`);
   if (hasNearMeCoords(state)) tokens.push('near_me');
   else if (state.useSavedLocation) tokens.push('saved_home');
