@@ -26,6 +26,13 @@
    `chat.completions` / `messages.create` / `new OpenAI(` / `new Anthropic(` /
    `generateText` / `createEmbedding` / `temperature` / `max_tokens`.
    **Result: no runtime LLM call sites anywhere in `app/`, `lib/`, or `worker/`.**
+   *Noted and dismissed:* the only `openai`/`OPENAI_API_KEY` string in the tree is
+   `openai_api_key = "env(OPENAI_API_KEY)"` in `supabase/config.toml` under the
+   `[studio]` block — standard Supabase-scaffold local-dev **Studio** tooling that
+   is disabled (`[studio] enabled = false`) and is *not* an application runtime
+   path; it does not affect the "zero runtime LLM calls" finding. (The adjacent
+   `# [storage.vector.buckets.documents-openai]` line in the same file is a
+   commented-out template stanza, likewise inert.)
 3. **Scope cross-reference.** The three atomic tasks the canonical
    `scope-to-task-v1.1` marks `(P)` and lists as this task's deps — **G-T13-5**
    (LLM free-text/OCR normalise fallback), **G-T14-2** (fuzzy dedup conflict
