@@ -70,6 +70,39 @@ export default defineConfig({
       dependencies: ['setup'],
       use: { ...devices['Desktop Chrome'], colorScheme: 'dark', storageState: STORAGE_STATE },
     },
+
+    // --- WCAG AA accessibility audit (Round 17 / Task W → G-T38-4) ------------
+    // AUDIT-ONLY axe-core sweep. New `*.a11y.spec.ts` extension keeps these disjoint
+    // from the functional public/authed suites: the regexes above never match
+    // `.anon.a11y.spec.ts` / `.authed.a11y.spec.ts`, and the four projects below run
+    // ONLY the a11y specs. Every audited route runs in BOTH light and dark, reusing
+    // the same colour-scheme split and injected session as the authed projects.
+
+    // Anonymous (unauthenticated) routes — no Supabase admin access required.
+    {
+      name: 'a11y-anon',
+      testMatch: /.*\.anon\.a11y\.spec\.ts$/,
+      use: { ...devices['Desktop Chrome'], colorScheme: 'light' },
+    },
+    {
+      name: 'a11y-anon-dark',
+      testMatch: /.*\.anon\.a11y\.spec\.ts$/,
+      use: { ...devices['Desktop Chrome'], colorScheme: 'dark' },
+    },
+
+    // Authenticated routes — reuse the real injected session (storageState) + setup.
+    {
+      name: 'a11y-authed',
+      testMatch: /.*\.authed\.a11y\.spec\.ts$/,
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'], colorScheme: 'light', storageState: STORAGE_STATE },
+    },
+    {
+      name: 'a11y-authed-dark',
+      testMatch: /.*\.authed\.a11y\.spec\.ts$/,
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'], colorScheme: 'dark', storageState: STORAGE_STATE },
+    },
   ],
 
   webServer: process.env.E2E_WEBSERVER_COMMAND

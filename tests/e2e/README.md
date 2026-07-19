@@ -29,12 +29,27 @@ If you already have the app running against the local Supabase env, just:
 - `authed/*.authed.spec.ts` — authenticated `/account` + saved-search rendering,
   plus a live check that the auth user carries the audit marker. Runs under both
   `authed` (light) and `authed-dark` (dark) projects.
+- `a11y/*.a11y.spec.ts` — project-wide **WCAG AA accessibility audit** (axe-core via
+  `@axe-core/playwright`). AUDIT-ONLY: records every violation, never asserts
+  zero-and-fails. `routes.anon.a11y.spec.ts` audits the unauthenticated routes
+  (`/`, `/search` ±query, `/preview`, `/preview/[id]`, `/activity/[id]`);
+  `routes.authed.a11y.spec.ts` audits `/account` with the injected session. Each runs
+  in both light and dark. Findings live in `docs/a11y-audit.md`; raw per-route axe
+  JSON is written to `.artifacts/a11y/` (git-ignored). See `axe-helper.ts`.
 - `helpers/db.ts` — Postgres fixtures (seed/clear a saved_search; read the auth
   user's audit marker).
 
 ## Naming contract
 Playwright owns `*.spec.ts` / `*.setup.ts`; Vitest owns `*.test.ts`. The
 extensions are disjoint so `npm test` never runs Playwright specs and vice-versa.
+
+The accessibility audit extends this with a dedicated infix so its specs stay
+disjoint from the functional suites: `*.anon.a11y.spec.ts` runs only under the
+`a11y-anon` / `a11y-anon-dark` projects, and `*.authed.a11y.spec.ts` only under
+`a11y-authed` / `a11y-authed-dark`. The existing `public` / `authed` project
+regexes (`*.public.spec.ts`, `*.authed.spec.ts`) never match the `.a11y.spec.ts`
+files, so the a11y sweep runs *in addition to* — never instead of — the functional
+specs.
 
 ## Writing new tests
 - Unauthenticated page → `public/<name>.public.spec.ts`.
