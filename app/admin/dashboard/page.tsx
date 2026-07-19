@@ -6,20 +6,20 @@
 // deliberately plain, not brand-polished. All numbers are queried live from the
 // same tables the worker and analytics writer populate.
 //
-// ACCESS CONTROL IS TEMPORARY: gated by a shared secret (ADMIN_DASHBOARD_TOKEN)
-// presented via the `x-admin-token` header or `?token=` query param. This is a
-// stopgap until real role-based admin auth (lib/db/admin-guard.ts) ships from the
-// account/session stream — see lib/admin/access.ts. An unauthenticated/incorrect
-// caller gets a 404 (the route's existence is not advertised).
+// ACCESS CONTROL (G-T34-1): the real role-based gate is now primary — a signed-in
+// session whose user is an active admin_user row (lib/db/admin-guard.ts requireAdmin
+// over lib/db/session-user.ts getRequestUser). The INTERIM shared-secret token
+// (ADMIN_DASHBOARD_TOKEN via `x-admin-token` header or `?token=` query param) is
+// retained ONLY as a coexistence fallback so wiring the real gate cannot lock out
+// the current token holder before the first admin_user row is seeded. Both paths are
+// composed in one place — app/admin/_lib/gate.ts resolveAdminAccess(). An
+// unauthenticated/incorrect caller still gets a 404 (the route's existence is not
+// advertised) — the same fail-closed posture as before.
 import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import {
-  ADMIN_TOKEN_HEADER,
-  ADMIN_TOKEN_QUERY_PARAM,
-  checkAdminDashboardAccess,
-  resolvePresentedToken,
-} from '@/lib/admin/access';
+import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
+import { resolveAdminAccess } from '../_lib/gate';
 import {
   getAdminDashboardData,
   STALE_CADENCE_GRACE,
@@ -166,10 +166,13 @@ export default async function AdminDashboardPage({
 }: {
   searchParams: Record<string, string | string[] | undefined>;
 }) {
-  // --- temporary access gate -------------------------------------------------
-  const headerToken = headers().get(ADMIN_TOKEN_HEADER);
-  const presented = resolvePresentedToken(headerToken, searchParams[ADMIN_TOKEN_QUERY_PARAM]);
-  if (!checkAdminDashboardAccess(presented).ok) {
+  // --- admin access gate (G-T34-1): real session+role gate OR interim token ----
+  const grant = await resolveAdminAccess({
+    surface: 'admin_dashboard',
+    headerToken: headers().get(ADMIN_TOKEN_HEADER),
+    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
+  });
+  if (!grant.ok) {
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
 
@@ -193,7 +196,8 @@ export default async function AdminDashboardPage({
           Internal operations view · read-only · generated <span className="mono">{formatTimestampUtc(data.generatedAt)}</span>
         </p>
         <p className="adm-note">
-          ⚠️ Temporary access gate (shared secret). Real role-based admin auth replaces this once the account/session work lands.
+          🔒 Access gate: real role-based admin sign-in (session + admin role). The interim shared-secret token is
+          retained only as a coexistence fallback until the first admin is seeded, then it will be retired.
         </p>
         <p className="adm-hint">
           Full data-health detail — source-freshness SLA, the region × activity-family coverage-or-gap board, and the
