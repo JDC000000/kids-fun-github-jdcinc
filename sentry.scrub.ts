@@ -26,6 +26,7 @@ import type { Breadcrumb, Event } from '@sentry/nextjs';
 export const EMAIL_MASK = '[redacted-email]';
 export const IP_MASK = '[redacted-ip]';
 export const PHONE_MASK = '[redacted-phone]';
+export const POSTAL_MASK = '[redacted-postal]';
 
 // --- Patterns ----------------------------------------------------------------
 // Email: local@domain.tld, case-insensitive, global. The `@` alternation also
@@ -71,10 +72,23 @@ const PHONE_INTL_RE = /\+\d(?:[\d\s().-]{5,13})\d/g;
 const PHONE_GROUPED_RE =
   /(?<![\d.])\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?![\d.])/g;
 
+// Canadian postal code — this product's most location-sensitive free-text value
+// (a parent's home postal, `user_profile.home_postal`, may be typed into the
+// search box or a correction note). Format is `A1A 1A1`: the FSA first letter
+// excludes D/F/I/O/Q/U/W/Z, and the interior letters exclude D/F/I/O/Q/U. The
+// separator is an optional single space or dash (also matches the run-together
+// `A1A1A1`). Word-bounded so it does not clip inside a longer alphanumeric id.
+// Letters make it disjoint from the email/IP/phone shapes, so ordering with
+// those is irrelevant; per the module's over-redaction bias, an occasional
+// look-alike token (e.g. a hex-ish `A1B2C3`) getting masked is acceptable.
+const POSTAL_RE =
+  /\b[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z][ -]?\d[ABCEGHJ-NPRSTV-Z]\d\b/gi;
+
 /**
  * Redact PII-shaped substrings from a single string. Order matters: email is
  * masked first (its local part may contain digits that would otherwise be seen
- * as a phone), then IPv6 before IPv4, then phone shapes.
+ * as a phone), then IPv6 before IPv4, then phone shapes, then postal codes
+ * (disjoint from the rest — letters make it non-overlapping).
  */
 export function redactString(input: string): string {
   return input
@@ -82,7 +96,8 @@ export function redactString(input: string): string {
     .replace(IPV6_RE, IP_MASK)
     .replace(IPV4_RE, IP_MASK)
     .replace(PHONE_INTL_RE, PHONE_MASK)
-    .replace(PHONE_GROUPED_RE, PHONE_MASK);
+    .replace(PHONE_GROUPED_RE, PHONE_MASK)
+    .replace(POSTAL_RE, POSTAL_MASK);
 }
 
 // Object keys whose *value* is dropped wholesale (rather than pattern-redacted)
@@ -115,6 +130,18 @@ const DENY_KEYS = new Set<string>([
   'ip',
   'ip_address',
   'x-forwarded-for',
+  // This product's own sensitive account PII (F-2). The two live schema fields
+  // are `home_postal` and `saved_child_ages` on `user_profile`; the plainer
+  // aliases (`postal`, `postal_code`, `child_ages`) and DOB variants are added
+  // as forward-looking defense-in-depth so any future carrier of the same class
+  // of value is dropped by key name, not just pattern-masked.
+  'postal',
+  'home_postal',
+  'postal_code',
+  'child_ages',
+  'saved_child_ages',
+  'dob',
+  'birthdate',
 ]);
 
 // Request headers stripped entirely — they routinely carry credentials or the

@@ -57,9 +57,14 @@ export function AccountNav() {
         <a className="kf-account__link" href="/account">
           Account
         </a>
-        <a className="kf-account__link" href="/auth/signout">
-          Sign out
-        </a>
+        {/* Sign-out is a state change → POST, not a GET link (CSRF hardening,
+            security-review F-3). A same-site <form> submit reaches the POST-only
+            /auth/signout route; native form POST needs no client JS. */}
+        <form className="kf-account__signout" method="post" action="/auth/signout">
+          <button className="kf-account__link kf-account__button" type="submit">
+            Sign out
+          </button>
+        </form>
       </nav>
     );
   }
