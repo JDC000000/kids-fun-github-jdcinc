@@ -2,24 +2,28 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '../../../lib/db/auth';
 
-// Sign-out (Task 21, M4). Clears the Supabase session (which removes the auth
-// cookies via the cookie adapter) and redirects back into the app. GET is
-// supported to mirror the existing /auth/signin GET-link convention so the
-// account nav can link to it directly; POST is also accepted for callers that
-// prefer a non-navigational sign-out. CSRF hardening (POST-only + token) is a
-// deferred account-hardening item, not part of this first slice.
+// Sign-out (Task 21, M4 · CSRF-hardened Round 21 / Task JJ, security-review F-3).
+//
+// Sign-out is a real state change (it revokes the Supabase session), so it is
+// **POST-only**. A GET that mutates state is the classic "logout CSRF" vector:
+// any third-party page could force a logout with no interaction at all —
+// `<img src=".../auth/signout">`, a prefetched link, a redirect. Requiring POST
+// removes that: a bare image/link tag cannot issue a POST, and browsers will not
+// attach the SameSite=Lax session cookies to a cross-site, non-top-level POST,
+// so a cross-origin form auto-submit can't carry an authenticated session
+// either. The account nav reaches this route with a same-site
+// `<form method="post">` (see app/_components/AccountNav.tsx).
+//
+// GET is intentionally NOT exported — Next returns 405 (Allow: POST) for it, so
+// the old image-tag attack is inert.
+//
+// The redirect uses 303 (See Other) so the browser re-requests the landing page
+// with GET after the POST, instead of re-POSTing to it (a default 307 would
+// forward the POST method to the destination).
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-export function GET(request: Request): Promise<Response> {
-  return signOut(request);
-}
-
-export function POST(request: Request): Promise<Response> {
-  return signOut(request);
-}
-
-async function signOut(request: Request): Promise<Response> {
+export async function POST(request: Request): Promise<Response> {
   const { origin, searchParams } = new URL(request.url);
   const next = searchParams.get('next') ?? '/';
 
@@ -39,5 +43,5 @@ async function signOut(request: Request): Promise<Response> {
     // can never crash on a misconfigured environment.
   }
 
-  return NextResponse.redirect(`${origin}${next}`);
+  return NextResponse.redirect(`${origin}${next}`, 303);
 }

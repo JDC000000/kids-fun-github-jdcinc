@@ -63,3 +63,19 @@
 .kf-account__link--primary:hover {
   background: var(--kf-forest-ink);
 }
+
+/* Sign-out is a POST <form> (CSRF hardening) rather than a link. The form is a
+ * plain flex item so it keeps the same 0.75rem gap as the sibling controls, and
+ * the submit button inherits the .kf-account__link pill look — the only extras
+ * are the resets a <button> needs to render identically to an <a>. */
+.kf-account__signout {
+  display: inline-flex;
+  margin: 0;
+}
+
+.kf-account__button {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}

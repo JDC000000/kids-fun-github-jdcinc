@@ -8,6 +8,7 @@ import {
   EMAIL_MASK,
   IP_MASK,
   PHONE_MASK,
+  POSTAL_MASK,
 } from '@/sentry.scrub';
 
 // Fake, obviously-synthetic PII test values (never real). RFC-5737 / RFC-3849
@@ -17,6 +18,10 @@ const FAKE_IPV4 = '203.0.113.7';
 const FAKE_IPV6 = '2001:db8:85a3::8a2e:370:7334';
 const FAKE_PHONE_INTL = '+44 7911 123456';
 const FAKE_PHONE_US = '(555) 123-4567';
+// Synthetic Canadian postal codes (valid format, not a real address) — this
+// product's most location-sensitive field (`user_profile.home_postal`).
+const FAKE_POSTAL = 'V6B 4Y8';
+const FAKE_POSTAL_NOSPACE = 'V6B4Y8';
 
 describe('redactString', () => {
   it('masks an email address', () => {
@@ -33,21 +38,33 @@ describe('redactString', () => {
     expect(redactString(`call ${FAKE_PHONE_US}`)).toBe(`call ${PHONE_MASK}`);
   });
 
+  it('masks a Canadian postal code (spaced and run-together, any casing)', () => {
+    expect(redactString(`home ${FAKE_POSTAL} area`)).toBe(`home ${POSTAL_MASK} area`);
+    expect(redactString(`home ${FAKE_POSTAL_NOSPACE} area`)).toBe(`home ${POSTAL_MASK} area`);
+    expect(redactString('lives at v6b 4y8')).toBe(`lives at ${POSTAL_MASK}`);
+    // dash-separated variant is also covered by the optional [ -] separator.
+    expect(redactString('postal T2X-1V4 noted')).toBe(`postal ${POSTAL_MASK} noted`);
+  });
+
   it('masks several PII shapes in one string', () => {
-    const out = redactString(`${FAKE_EMAIL} @ ${FAKE_IPV4} tel ${FAKE_PHONE_US}`);
-    expect(out).toBe(`${EMAIL_MASK} @ ${IP_MASK} tel ${PHONE_MASK}`);
+    const out = redactString(`${FAKE_EMAIL} @ ${FAKE_IPV4} tel ${FAKE_PHONE_US} pc ${FAKE_POSTAL}`);
+    expect(out).toBe(`${EMAIL_MASK} @ ${IP_MASK} tel ${PHONE_MASK} pc ${POSTAL_MASK}`);
     expect(out).not.toContain('example.com');
     expect(out).not.toContain('203.0.113');
+    expect(out).not.toContain('V6B 4Y8');
   });
 
   it('leaves ordinary strings and short numeric ids untouched', () => {
     expect(redactString('venue id 4821 near the park')).toBe('venue id 4821 near the park');
     expect(redactString('semantic version 14.2.35')).toBe('semantic version 14.2.35');
     expect(redactString('Search failed for "soft play"')).toBe('Search failed for "soft play"');
+    // A bare FSA (3-char prefix, no local delivery unit) is NOT a full postal
+    // code and must stay readable in region/debug strings.
+    expect(redactString('region fsa V6B centroid')).toBe('region fsa V6B centroid');
   });
 
   it('is idempotent', () => {
-    const once = redactString(`${FAKE_EMAIL} ${FAKE_IPV4}`);
+    const once = redactString(`${FAKE_EMAIL} ${FAKE_IPV4} ${FAKE_POSTAL}`);
     expect(redactString(once)).toBe(once);
   });
 });
@@ -79,6 +96,36 @@ describe('deepRedact', () => {
     expect(out).not.toHaveProperty('password');
     expect(out).not.toHaveProperty('cookie');
     expect(out.keep_this).toBe('ok');
+  });
+
+  it("drops this product's PII keys (postal + child-age fields, F-2)", () => {
+    const out = deepRedact({
+      // exact live schema field names on user_profile…
+      home_postal: FAKE_POSTAL,
+      saved_child_ages: [3, 5, 84],
+      // …plus the additive defense-in-depth aliases.
+      postal: FAKE_POSTAL,
+      postal_code: FAKE_POSTAL,
+      child_ages: [4],
+      dob: '2019-06-01',
+      birthdate: '2019-06-01',
+      keep_this: 'ok',
+    }) as Record<string, unknown>;
+    for (const denied of [
+      'home_postal',
+      'saved_child_ages',
+      'postal',
+      'postal_code',
+      'child_ages',
+      'dob',
+      'birthdate',
+    ]) {
+      expect(out, `expected "${denied}" to be dropped`).not.toHaveProperty(denied);
+    }
+    expect(out.keep_this).toBe('ok');
+    // Nothing PII survived anywhere in the serialized output.
+    expect(JSON.stringify(out)).not.toContain('V6B');
+    expect(JSON.stringify(out)).not.toContain('84');
   });
 });
 
@@ -191,6 +238,26 @@ describe('scrubEvent', () => {
   it('handles a minimal event with no PII containers', () => {
     const scrubbed = scrubEvent({ message: 'no pii here' } as Event);
     expect(scrubbed.message).toBe('no pii here');
+  });
+
+  it("scrubs this product's PII end-to-end (postal in message, deny-keys in extra)", () => {
+    const scrubbed = scrubEvent({
+      message: `geocode failed for ${FAKE_POSTAL}`,
+      extra: {
+        home_postal: FAKE_POSTAL,
+        saved_child_ages: [3, 5, 84],
+        note: `parent typed ${FAKE_POSTAL} into the box`,
+        attempt: 2,
+      },
+    } as unknown as Event);
+    expect(scrubbed.message).toBe(`geocode failed for ${POSTAL_MASK}`);
+    const extra = scrubbed.extra as Record<string, unknown>;
+    expect(extra).not.toHaveProperty('home_postal');
+    expect(extra).not.toHaveProperty('saved_child_ages');
+    expect(extra.note).toBe(`parent typed ${POSTAL_MASK} into the box`);
+    expect(extra.attempt).toBe(2);
+    // Belt and braces: no fragment of the postal survives anywhere.
+    expect(JSON.stringify(scrubbed)).not.toContain('V6B');
   });
 
   it('redacts local-variable snapshots on stack frames but leaves source context', () => {
