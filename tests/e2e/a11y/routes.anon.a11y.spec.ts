@@ -16,6 +16,21 @@ const ANON_ROUTES: { route: string; label: string }[] = [
   { route: '/', label: 'home' },
   { route: '/search', label: 'search (no query)' },
   { route: '/search?q=swim&region=van', label: 'search (query + region filter)' },
+  // Active custom date range (T26 / FR-04, G-T26-1). With both `from` and `to` set the
+  // /search page switches from the flat "Confirmed" list to the grouped-by-day view
+  // (app/search/page.tsx `DayGroupedResults` → one <h3> day subsection per in-range day
+  // plus a trailing "Available any day" open-hours group). This route makes that grouped
+  // DOM a DURABLE, committed axe target — the fixture engine (the default search backend,
+  // KIDS_FUN_SEARCH_BACKEND unset) seeds listings on FIXED local days 2026-07-13/14/15
+  // (lib/search/__fixtures__/listings.ts), so 07-13→07-15 always renders real day
+  // subsections + the open-hours group regardless of DB state or the clock. Native
+  // `<input type=date>` controls carry no aria-pressed/aria-current, so — unlike the
+  // Round-18 link-chip regression — this view introduces no new ARIA attributes; the
+  // audit here proves the day-grouped heading/section structure stays WCAG-AA clean.
+  {
+    route: '/search?from=2026-07-13&to=2026-07-15',
+    label: 'search (active date range — grouped by day)',
+  },
   { route: '/preview', label: 'preview shell' },
   { route: '/preview/templeton-family-swim', label: 'preview detail /preview/[id]' },
   { route: '/activity/templeton-family-swim', label: 'activity detail /activity/[id]' },
