@@ -1,0 +1,70 @@
+name: Migration Drift (staging)
+
+# WHY: app code auto-deploys to staging via Vercel's git integration on merge to
+# main, but DB migrations are applied MANUALLY (scripts/migrate.sh). Those two
+# channels drift silently — Round 20 ran a whole round with staging behind the
+# committed migration head (ledger 0016 vs main 0018) and nobody noticed until a
+# security fix tripped over it. This workflow makes that drift LOUD and visible:
+#   • on every merge that changes the migration set → checks staging immediately
+#     (goes RED until someone applies the migration — a self-clearing "apply me"
+#      reminder, NOT a broken build; ci.yml is the build gate, this is separate);
+#   • every 6h as a backstop for out-of-band drift (rogue/reverted migrations);
+#   • on-demand via the Actions "Run workflow" button.
+#
+# It is DETECTION ONLY. It never applies migrations (that stays a deliberate
+# human step). See docs/migration-drift.md.
+#
+# ACTIVATION: set the repo secret STAGING_DATABASE_URL to the staging Supabase
+# Postgres connection string (a read-capable role is sufficient — the check only
+# runs SELECTs). Until that secret exists this workflow is a no-op that annotates
+# a warning, so it never sits perpetually red before it's wired up.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'      # backstop: 4×/day (schedule fires on default branch only)
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - 'scripts/migrate.sh'
+      - 'scripts/check-migration-drift.sh'
+      - '.github/workflows/migration-drift.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: migration-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: staging schema_migrations vs committed migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure psql client
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+
+      - name: Check staging migration drift
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::warning title=Migration drift check inactive::STAGING_DATABASE_URL secret is not set — the drift check is a NO-OP. Provision it (system-administrator, from vault kids-fun-supabase-staging) to activate. See docs/migration-drift.md."
+            echo "STAGING_DATABASE_URL not set — skipping (neutral, not a failure)."
+            exit 0
+          fi
+          # Read-only comparison. Non-zero exit here fails the job on purpose:
+          # a red check means 'a committed migration is not applied to staging —
+          # run scripts/migrate.sh against staging', it does NOT mean main is broken.
+          # (Fail-closed alternative: replace the guard above with `exit 1` if you
+          #  prefer an unwired check to be loud rather than a silent no-op.)
+          bash scripts/check-migration-drift.sh
