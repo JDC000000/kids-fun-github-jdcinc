@@ -126,6 +126,31 @@
 
   /* ── Motion ── */
   --kf-motion: 180ms cubic-bezier(0.2, 0, 0, 1);
+
+  /* ── Data-viz — categorical chart series (M5 / T32 trend charts, G-T32-6). ──
+   * A 3-slot categorical palette (identity, not magnitude) for the admin
+   * product-health trend lines: slot 1 = DAU (blue, info family), slot 2 = WAU
+   * (green, the KIDS FUN leaf/forest identity), slot 3 = MAU (warm orange).
+   * NOT free-hand: every value was validated with the dataviz skill's
+   * scripts/validate_palette.js against the ACTUAL chart surface (the <Card>
+   * --kf-surface: #ffffff light / #183b24 dark) in categorical mode with
+   * --pairs all. Light passes all six checks (contrast >=3:1, worst adjacent/all-
+   * pairs CVD deltaE 16.8). The dark steps are re-chosen for the dark-green surface
+   * and the dark lightness band (OKLCH L 0.48-0.67), validated as their own set
+   * (contrast >=3:1, worst all-pairs CVD deltaE 16.1) — a selected dark palette,
+   * never an auto-flip. Series identity is ALSO carried by the legend + direct
+   * end-labels + the table-view twin, so colour is never the sole channel (WCAG
+   * 1.4.1) and the floor-band CVD rule is satisfied. These are chart-MARK colours
+   * only; chart TEXT stays on the --kf-ink* roles, and target/status uses the
+   * semantic Badge tokens above — a status colour never impersonates a series. */
+  --kf-chart-1: #2a78d6; /* DAU — blue   */
+  --kf-chart-2: #178a4e; /* WAU — green  */
+  --kf-chart-3: #d1631a; /* MAU — orange */
+  /* Single-series area wash (~10% of slot 1) + recessive chart chrome, from the
+   * flipping surface roles so the plot reads on both canvases. */
+  --kf-chart-1-wash: rgba(42, 120, 214, 0.12);
+  --kf-chart-grid: var(--kf-hairline); /* hairline gridlines (one step off surface) */
+  --kf-chart-axis: var(--kf-neutral-300); /* baseline / axis rule */
 }
 
 /* Dark mode (D12) — flip surface roles + semantic pairs to the dark_* set.
@@ -151,5 +176,15 @@
     --kf-expected-text: #f2d99a;
     --kf-cancelled-bg: #3a2018;
     --kf-cancelled-text: #f2b8a0;
+
+    /* Data-viz series — dark steps chosen for the dark-green Card surface
+     * (#183b24) and the dark lightness band, validated as their own set
+     * (dataviz validate_palette.js --mode dark --surface #183b24 --pairs all:
+     * all checks pass, contrast >=3:1, worst all-pairs CVD deltaE 16.1). */
+    --kf-chart-1: #3f8fe6; /* DAU — blue   */
+    --kf-chart-2: #33a862; /* WAU — green  */
+    --kf-chart-3: #d26a2c; /* MAU — orange */
+    --kf-chart-1-wash: rgba(63, 143, 230, 0.16);
+    --kf-chart-axis: var(--kf-dark-elevated);
   }
 }

@@ -1,0 +1,236 @@
+/* TrendChart — hand-rolled SVG trend chart (M5 / T32, G-T32-6). Layout + recessive
+ * chrome only; every colour is a --kf-* token (series marks use the validated
+ * --kf-chart-* palette, chrome uses the flipping surface/ink roles, and TEXT uses
+ * ink tokens — never a series colour). Uniform SVG scaling keeps circular markers
+ * round and the 2px lines even at any width. */
+
+.figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+}
+
+.caption {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  font: 700 15px/1.2 var(--kf-font-ui);
+  color: var(--kf-ink);
+}
+
+.sub {
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ── Legend (line keys, never boxes — these are lines) ─────────────────────── */
+.legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-3);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--kf-space-2);
+  color: var(--kf-ink-secondary);
+  font-size: 12px;
+}
+
+.legendKey {
+  display: inline-block;
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+/* ── Plot ─────────────────────────────────────────────────────────────────── */
+.plot {
+  position: relative;
+  border-radius: var(--kf-r-control);
+}
+
+.plot:focus-visible {
+  outline: 2px solid var(--kf-anchor, var(--kf-info-text));
+  outline-offset: 2px;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.grid {
+  stroke: var(--kf-chart-grid);
+  stroke-width: 1;
+}
+
+.baseline {
+  stroke: var(--kf-chart-axis);
+  stroke-width: 1;
+}
+
+.crosshair {
+  stroke: var(--kf-ink-muted);
+  stroke-width: 1;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.yTick {
+  fill: var(--kf-ink-muted);
+  font: 11px/1 var(--kf-font-ui);
+  font-feature-settings: var(--kf-font-feature);
+  text-anchor: end;
+}
+
+.xTick {
+  fill: var(--kf-ink-muted);
+  font: 11px/1 var(--kf-font-ui);
+  text-anchor: middle;
+}
+
+.endLabel {
+  fill: var(--kf-ink-secondary);
+  font: 600 11px/1 var(--kf-font-ui);
+  font-feature-settings: var(--kf-font-feature);
+  text-anchor: start;
+}
+
+/* ── Tooltip ──────────────────────────────────────────────────────────────── */
+.tooltip {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  min-width: 132px;
+  max-width: 220px;
+  background: var(--kf-surface);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-control);
+  box-shadow: var(--kf-e-200);
+  padding: var(--kf-space-2) var(--kf-space-3);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.tooltipDate {
+  color: var(--kf-ink-muted);
+  font-size: 11px;
+  font-feature-settings: var(--kf-font-feature);
+  margin-bottom: var(--kf-space-1);
+}
+
+.tooltipList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tooltipRow {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: var(--kf-space-2);
+  font-size: 12px;
+}
+
+.tooltipKey {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.tooltipLabel {
+  color: var(--kf-ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Values lead in the tooltip — strong, high-contrast, tabular. */
+.tooltipValue {
+  color: var(--kf-ink);
+  font-weight: 700;
+  text-align: right;
+  font-feature-settings: var(--kf-font-feature);
+}
+
+/* ── Table-view twin ──────────────────────────────────────────────────────── */
+.tableWrap {
+  margin-top: var(--kf-space-1);
+}
+
+.tableSummary {
+  cursor: pointer;
+  color: var(--kf-ink-secondary);
+  font-size: 12px;
+  padding: var(--kf-space-1) 0;
+}
+
+.tableScroll {
+  overflow-x: auto;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-top: var(--kf-space-2);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-control);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tableCaption {
+  caption-side: top;
+  text-align: left;
+  padding: var(--kf-space-2) var(--kf-space-3);
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--kf-space-1) var(--kf-space-3);
+  border-bottom: 1px solid var(--kf-hairline);
+  white-space: nowrap;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--kf-surface-subtle);
+  font: 600 11px/1.4 var(--kf-font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--kf-ink-secondary);
+}
+
+.dateCell {
+  font-weight: 600;
+  color: var(--kf-ink);
+  font-feature-settings: var(--kf-font-feature);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: var(--kf-font-feature);
+  color: var(--kf-ink);
+}
