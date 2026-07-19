@@ -43,9 +43,10 @@ export function SearchBar({ state }: { state: SearchState }) {
 
       <div className="kf-sbar__controls" role="group" aria-label="Sort and cost options">
         <span className="kf-sbar__controls-label">Sort</span>
-        {/* Sort (radio-like → aria-current) and the cost toggle (aria-pressed) on the shared
-            Chip primitive, compact rail density. Fill + ✓ owned by the chip; selection
-            semantics unchanged. */}
+        {/* Sort and the cost toggle are both real <a> links (role="link"), so selection is
+            conveyed with aria-current="true" — the only selected-state attribute ARIA allows on
+            a link. (aria-pressed is button-only and is invalid on an anchor: axe aria-allowed-attr
+            / WCAG 4.1.2 — fixed in Round 18.) Fill + ✓ owned by the chip. */}
         {SORT_OPTIONS.map((opt) => {
           const active = state.sort === opt.key;
           return (
@@ -66,7 +67,7 @@ export function SearchBar({ state }: { state: SearchState }) {
           size="sm"
           href={hrefFor(state, { includeUnknownCost: !state.includeUnknownCost })}
           selected={state.includeUnknownCost}
-          aria-pressed={state.includeUnknownCost}
+          aria-current={state.includeUnknownCost ? 'true' : undefined}
         >
           Include unknown cost
         </Chip>
