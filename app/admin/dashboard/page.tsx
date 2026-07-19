@@ -12,6 +12,7 @@
 // account/session stream — see lib/admin/access.ts. An unauthenticated/incorrect
 // caller gets a 404 (the route's existence is not advertised).
 import { headers } from 'next/headers';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   ADMIN_TOKEN_HEADER,
@@ -193,6 +194,10 @@ export default async function AdminDashboardPage({
         </p>
         <p className="adm-note">
           ⚠️ Temporary access gate (shared secret). Real role-based admin auth replaces this once the account/session work lands.
+        </p>
+        <p className="adm-hint">
+          Full data-health detail — source-freshness SLA, the region × activity-family coverage-or-gap board, and the
+          corrections queue — lives on <Link href="/admin/data-health">/admin/data-health</Link>.
         </p>
       </header>
 
