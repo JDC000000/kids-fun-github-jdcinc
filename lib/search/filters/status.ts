@@ -37,11 +37,16 @@ export const STATUS_CLASS: Record<StatusState, StatusClass> = {
 // Accept either so the predicate is robust across both vocabularies.
 const RAINY_DAY_TAGS = ['rainy_day', 'indoor'] as const;
 
+/** Context tag denoting a drop-in (no-booking, just-show-up) activity. */
+const DROP_IN_TAG = 'drop_in';
+
 export interface StatusFilter {
   /** Bookable-Now chip — only listings that can be booked right now. */
   bookableNow: boolean;
   /** Rainy-day chip — indoor suitability. */
   rainyDay: boolean;
+  /** Drop-in chip — activities you can just show up to (no booking). */
+  dropIn?: boolean;
 }
 
 /** Bookable-Now predicate (chip). */
@@ -53,6 +58,12 @@ export function isBookableNow(listing: ListingRecord): boolean {
 export function isRainyDayFriendly(listing: ListingRecord): boolean {
   const tags = [...listing.suitabilityTags, ...listing.categoryTags];
   return RAINY_DAY_TAGS.some((t) => tags.includes(t));
+}
+
+/** Drop-in predicate (chip) — the `drop_in` suitability/context tag (no booking needed). */
+export function isDropIn(listing: ListingRecord): boolean {
+  const tags = [...listing.suitabilityTags, ...listing.categoryTags];
+  return tags.includes(DROP_IN_TAG);
 }
 
 /** Belongs in the primary result list. */
@@ -74,5 +85,6 @@ export function isHidden(listing: ListingRecord): boolean {
 export function matchesStatus(listing: ListingRecord, filter: StatusFilter): boolean {
   if (filter.bookableNow && !isBookableNow(listing)) return false;
   if (filter.rainyDay && !isRainyDayFriendly(listing)) return false;
+  if (filter.dropIn && !isDropIn(listing)) return false;
   return true;
 }

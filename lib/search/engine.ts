@@ -213,8 +213,8 @@ export class SearchEngine {
       // Strict temporal + cost + status chips for the primary list.
       if (!matchesDate(listing, ctx.date)) return false;
       if (!matchesTimeOfDay(listing, ctx.timeOfDay)) return false;
-      if (!matchesCost(listing, { free: ctx.costFree, includeUnknown: ctx.includeUnknownCost })) return false;
-      if (!matchesStatus(listing, { bookableNow: ctx.bookableNow, rainyDay: ctx.rainyDay })) return false;
+      if (!matchesCost(listing, { free: ctx.costFree, includeUnknown: ctx.includeUnknownCost, maxCad: ctx.costMaxCad })) return false;
+      if (!matchesStatus(listing, { bookableNow: ctx.bookableNow, rainyDay: ctx.rainyDay, dropIn: ctx.dropIn })) return false;
     }
     return true;
   }

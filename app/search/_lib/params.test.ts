@@ -14,6 +14,7 @@ import {
   toggleRegion,
   type SearchState,
 } from './params';
+import { parseQuery } from '@/lib/search/parse';
 
 /** Build a state from partial overrides on top of the defaults. */
 function st(overrides: Partial<SearchState> = {}): SearchState {
@@ -239,5 +240,58 @@ describe('saved-location origin (Task 29)', () => {
     const p = apiParams(st({ useSavedLocation: true, lat: 49.26, lng: -123.07 }), { postal: 'V6K 1A1' });
     expect(p.get('lat')).toBe('49.26');
     expect(p.has('postal')).toBe(false);
+  });
+});
+
+describe('time-of-day, drop-in and max-price filters (Round 17 / T21 — G-T21-3/4)', () => {
+  it('parses ?time / ?cost / ?dropin and rejects invalid values', () => {
+    expect(parseSearchState({ time: 'morning' }).timeOfDay).toBe('morning');
+    expect(parseSearchState({ time: 'midnight' }).timeOfDay).toBe('any');
+    expect(parseSearchState({ cost: '20' }).costMaxCad).toBe(20);
+    expect(parseSearchState({ cost: '999' }).costMaxCad).toBeNull(); // not a preset band
+    expect(parseSearchState({ dropin: '1' }).dropIn).toBe(true);
+  });
+
+  it('serialises only non-default values into the shareable page URL', () => {
+    const p = new URLSearchParams(hrefFor(st({ timeOfDay: 'evening', costMaxCad: 50, dropIn: true })).split('?')[1]);
+    expect(p.get('time')).toBe('evening');
+    expect(p.get('cost')).toBe('50');
+    expect(p.get('dropin')).toBe('1');
+    const bare = new URLSearchParams(hrefFor(st({})).split('?')[1] ?? '');
+    expect(bare.has('time')).toBe(false);
+    expect(bare.has('cost')).toBe(false);
+    expect(bare.has('dropin')).toBe(false);
+  });
+
+  it('a page URL round-trips through serialise → parse identically', () => {
+    const state = st({ timeOfDay: 'afternoon', costMaxCad: 20, dropIn: true });
+    const parsed = parseSearchState(Object.fromEntries(new URLSearchParams(hrefFor(state).split('?')[1])));
+    expect(parsed.timeOfDay).toBe('afternoon');
+    expect(parsed.costMaxCad).toBe(20);
+    expect(parsed.dropIn).toBe(true);
+  });
+
+  it('counts each as an active filter and is reset by CLEARED_FILTERS shape', () => {
+    expect(hasActiveFilters(st({ timeOfDay: 'morning' }))).toBe(true);
+    expect(hasActiveFilters(st({ costMaxCad: 20 }))).toBe(true);
+    expect(hasActiveFilters(st({ dropIn: true }))).toBe(true);
+  });
+
+  it('emits stable, non-PII analytics tokens', () => {
+    const tokens = analyticsFilterTokens(st({ timeOfDay: 'evening', costMaxCad: 50, dropIn: true }));
+    expect(tokens).toEqual(expect.arrayContaining(['time:evening', 'cost_max:50', 'drop_in']));
+  });
+
+  it('composes parent-language phrases the backend query parser resolves (full UI→API wiring)', () => {
+    const state = st({ q: 'swim', timeOfDay: 'morning', costMaxCad: 20, dropIn: true });
+    expect(intentPhrases(state)).toEqual(expect.arrayContaining(['morning', 'under $20', 'drop-in']));
+    // Decisive end-to-end check: the q string apiQuery builds parses back into the exact
+    // backend SearchContext fields the engine filters on (timeOfDay / costMaxCad / dropIn).
+    const q = new URLSearchParams(apiQuery(state)).get('q') ?? '';
+    const ctx = parseQuery(q);
+    expect(ctx.timeOfDay).toBe('morning');
+    expect(ctx.costMaxCad).toBe(20);
+    expect(ctx.dropIn).toBe(true);
+    expect(ctx.terms).toContain('swim');
   });
 });

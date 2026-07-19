@@ -55,8 +55,10 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
     nearMe: false,
     costFree: false,
     includeUnknownCost: opts.includeUnknownCost ?? false,
+    costMaxCad: null,
     bookableNow: false,
     rainyDay: false,
+    dropIn: false,
     sort: opts.sort ?? 'best_match',
   };
 
@@ -87,6 +89,14 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
     ctx.costFree = true;
     strip(/\bfree\b|\bno cost\b|\bno charge\b/g);
   }
+  // Max-price ceiling (P1 cost range, G-T21-4). normalize() has already stripped the "$",
+  // so we match the digits after under/up-to/below. Requiring 2+ digits keeps this from
+  // ever swallowing the "under 2" AGE phrase (a single digit), which parses below.
+  const maxPriceMatch = s.match(/\b(?:under|up to|below) (\d{2,4})\b/);
+  if (maxPriceMatch) {
+    ctx.costMaxCad = Number(maxPriceMatch[1]);
+    strip(/\b(?:under|up to|below) \d{2,4}\b/g);
+  }
 
   // --- Status chips ---
   if (/\bbookable now\b|\bbookable\b|\bbook now\b/.test(s)) {
@@ -100,6 +110,11 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
   if (/\bindoor\b|\bindoors\b/.test(s)) {
     ctx.rainyDay = true; // Rainy-day chip == indoor suitability (TSD §5A.4)
     strip(/\bindoor\b|\bindoors\b/g);
+  }
+  // normalize() collapses "drop-in" → "drop in", so match the two-word / joined forms.
+  if (/\bdrop in\b|\bdropin\b/.test(s)) {
+    ctx.dropIn = true; // Drop-in suitability chip (G-T21-3): just show up, no booking.
+    strip(/\bdrop in\b|\bdropin\b/g);
   }
 
   // --- Time-of-day (FR-09) ---

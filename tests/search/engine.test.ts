@@ -41,6 +41,24 @@ describe('SearchEngine.search (FR-02)', () => {
     expect(withUnknown.results.map((r) => r.listing.id)).toContain('l-storytime-unknown');
   });
 
+  it('honours the max-price ceiling end-to-end — "under $N" drops pricier listings (G-T21-4)', () => {
+    // minResults:0 disables the broadening ladder so we observe the raw filtered set
+    // (otherwise "drop the most restrictive chip" would re-add the excluded listing).
+    const base = engine.search({ q: 'aquarium', now: FIXTURE_NOW, minResults: 0 });
+    expect(base.results.map((r) => r.listing.id)).toContain('l-aquarium-van'); // $40, shown with no ceiling
+    const capped = engine.search({ q: 'aquarium under $20', now: FIXTURE_NOW, minResults: 0 });
+    expect(capped.results.map((r) => r.listing.id)).not.toContain('l-aquarium-van'); // $40 > $20 → excluded
+  });
+
+  it('honours the drop-in chip end-to-end — only drop_in-tagged listings survive (G-T21-3)', () => {
+    const res = engine.search({ q: 'open gym drop-in', now: FIXTURE_NOW, minResults: 0 });
+    expect(res.results.length).toBeGreaterThan(0);
+    expect(
+      res.results.every((r) => [...r.listing.suitabilityTags, ...r.listing.categoryTags].includes('drop_in')),
+    ).toBe(true);
+    expect(res.results.map((r) => r.listing.id)).not.toContain('l-rank-confirmed'); // open_gym but not drop_in
+  });
+
   it('applies the distance sort control over the same filtered set', () => {
     const res = engine.search({
       q: 'open gym', now: FIXTURE_NOW, origin: { mode: 'near_me', coords: eastVan }, sort: 'distance', minResults: 1,

@@ -5,8 +5,10 @@ import type { AgeBandKey } from '@/lib/search/types';
 import {
   AGE_OPTIONS,
   CLEARED_FILTERS,
+  COST_MAX_OPTIONS,
   RADIUS_OPTIONS,
   REGION_CHIPS,
+  TIME_OF_DAY_OPTIONS,
   WHEN_OPTIONS,
   hasActiveFilters,
   hasNearMeCoords,
@@ -86,6 +88,15 @@ export function FilterRail({
         ))}
       </Group>
 
+      {/* Time of day — day-part quick-pick (radio-like: one at a time; maps to DayPart). */}
+      <Group label="Time of day" id="kf-fg-time">
+        {TIME_OF_DAY_OPTIONS.map((opt) => (
+          <Chip key={opt.key} href={hrefFor(state, { timeOfDay: opt.key })} active={state.timeOfDay === opt.key}>
+            {opt.label}
+          </Chip>
+        ))}
+      </Group>
+
       {/* Ages — multi-select ("Pick every child — we'll match either age"). */}
       <Group label="Ages" id="kf-fg-ages">
         {AGE_OPTIONS.map((opt) => {
@@ -115,10 +126,13 @@ export function FilterRail({
         })}
       </Group>
 
-      {/* Quick filters — status / suitability / cost chips. */}
+      {/* Quick filters — status / suitability / cost chips (multi-select toggles). */}
       <Group label="Quick filters" id="kf-fg-quick">
         <Chip href={hrefFor(state, { bookableNow: !state.bookableNow })} active={state.bookableNow} pressed={state.bookableNow}>
           Bookable now
+        </Chip>
+        <Chip href={hrefFor(state, { dropIn: !state.dropIn })} active={state.dropIn} pressed={state.dropIn}>
+          Drop-in
         </Chip>
         <Chip href={hrefFor(state, { rainyDay: !state.rainyDay })} active={state.rainyDay} pressed={state.rainyDay}>
           Rainy-day
@@ -126,6 +140,16 @@ export function FilterRail({
         <Chip href={hrefFor(state, { free: !state.free })} active={state.free} pressed={state.free}>
           Free
         </Chip>
+      </Group>
+
+      {/* Max price — cost ceiling (radio-like: one at a time). Sits alongside the binary
+          "Free" quick-filter so "cost range / free" is fully exposed (G-T21-4). */}
+      <Group label="Max price" id="kf-fg-cost">
+        {COST_MAX_OPTIONS.map((opt) => (
+          <Chip key={opt.key} href={hrefFor(state, { costMaxCad: opt.maxCad })} active={state.costMaxCad === opt.maxCad}>
+            {opt.label}
+          </Chip>
+        ))}
       </Group>
 
       {/* Near me — origin + travel radius (radius shown once an origin is set). Two origins:

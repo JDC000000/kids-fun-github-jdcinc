@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { matchesTimeOfDay, matchesDate } from '../../lib/search/filters/time';
 import { matchesCost, isFree, isUnknownCost } from '../../lib/search/filters/cost';
-import { isBookableNow, isRainyDayFriendly, isPrimaryResult, isExpectedSection, isHidden } from '../../lib/search/filters/status';
+import { isBookableNow, isRainyDayFriendly, isDropIn, isPrimaryResult, isExpectedSection, isHidden, matchesStatus } from '../../lib/search/filters/status';
 import { makeListing } from '../../lib/search/__fixtures__/factory';
 
 describe('time-of-day filter (FR-09, G-T16-4)', () => {
@@ -69,5 +69,17 @@ describe('status predicates (G-T16-6)', () => {
     expect(isPrimaryResult(makeListing({ statusState: 'confirmed' }))).toBe(true);
     expect(isExpectedSection(makeListing({ statusState: 'seasonal_out_of_season' }))).toBe(true);
     expect(isHidden(makeListing({ statusState: 'cancelled' }))).toBe(true);
+  });
+
+  it('Drop-in returns only listings carrying the drop_in tag, via either tag array (G-T21-3)', () => {
+    expect(isDropIn(makeListing({ suitabilityTags: ['drop_in'] }))).toBe(true);
+    expect(isDropIn(makeListing({ categoryTags: ['drop_in'] }))).toBe(true);
+    expect(isDropIn(makeListing({ suitabilityTags: ['indoor'] }))).toBe(false);
+    // The dropIn StatusFilter predicate gates a listing only when the chip is on.
+    const dropIn = makeListing({ suitabilityTags: ['drop_in'] });
+    const notDropIn = makeListing({ suitabilityTags: ['indoor'] });
+    expect(matchesStatus(dropIn, { bookableNow: false, rainyDay: false, dropIn: true })).toBe(true);
+    expect(matchesStatus(notDropIn, { bookableNow: false, rainyDay: false, dropIn: true })).toBe(false);
+    expect(matchesStatus(notDropIn, { bookableNow: false, rainyDay: false })).toBe(true); // off → no gate
   });
 });

@@ -124,10 +124,14 @@ export interface SearchContext {
   // Cost intent.
   costFree: boolean; // "free" requested
   includeUnknownCost: boolean; // explicit include unknown/check-source flag (FR-10)
+  /** Optional max-price ceiling in CAD (P1 cost range, G-T21-4). null → no ceiling. */
+  costMaxCad: number | null;
 
   // Status intent (quick chips).
   bookableNow: boolean;
   rainyDay: boolean;
+  /** Drop-in suitability chip (G-T21-3) — activities you can just show up to (no booking). */
+  dropIn: boolean;
 
   // Sort.
   sort: SortKey;
