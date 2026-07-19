@@ -45,7 +45,7 @@ M3 milestone status per the local task ledger: **37/37 SP — first KIDS FUN mil
 
 ### T23 — Map view · 5 SP · exit AC (G-T23-3): *map optional, filters persist list↔map, search usable without map*
 - **Merge:** `808a5a5` — Task 37: search map view (feat, `overnight/search-map-view`).
-- **Independent QA:** Track-F overnight QA = **PASS**; Mapbox tiles light/dark both HTTP 200 (public `pk.*` token, value never printed); list/map toggle preserves filters; **map lazy-loaded via `next/dynamic ssr:false`** so `mapbox-gl` stays out of the initial payload — search fully usable map-hidden (keyboard/SR users operate entirely from the list). R11/Task F research independently re-confirmed all three G-T23 gates already shipped and declined redundant rework.
+- **Independent QA:** Task 37 map-view QA (`kids-fun-task37-search-map-view`, 2026-07-14) = **PASS**; Mapbox tiles light/dark both HTTP 200 (public `pk.*` token, value never printed); list/map toggle preserves filters; **map lazy-loaded via `next/dynamic ssr:false`** so `mapbox-gl` stays out of the initial payload — search fully usable map-hidden (keyboard/SR users operate entirely from the list). R11/Task F research independently re-confirmed all three G-T23 gates already shipped and declined redundant rework.
 - **Verdict: exit-AC MET.**
 
 ### T24 — Detail / source page · 5 SP · exit AC (G-T24-3): *provenance-backed transparency; distinct source/booking/location CTAs; source always exposed; last-checked + confidence*
