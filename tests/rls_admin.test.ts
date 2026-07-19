@@ -43,21 +43,32 @@ describe.skipIf(!hasDb)('admin_user / admin_audit_log RLS (security regression)'
   });
 
   // ── Control: the two denials above are 0014-specific, NOT a blank harness ─────
-  // Without this control the Layer-1 tests are ambiguous: the local-dev stub used
-  // to grant the API roles NO table access, so `authenticated` got a generic
-  // "permission denied" on EVERY public table — the same error with or without
-  // 0014. The stub now models Supabase's default table grants, so `authenticated`
-  // CAN read an ordinary RLS-free public table (region). That it can read region
-  // but not admin_user/admin_audit_log proves those denials come from 0014's
-  // ENABLE RLS + REVOKE, not from a role that simply can't see anything.
-  it('control: authenticated CAN read a normal RLS-free public table (region)', async () => {
-    const client = new Client({ connectionString: authenticatedConnectionString() });
-    await client.connect();
+  // Without this control the Layer-1 tests are ambiguous: a harness that granted
+  // the API roles NO table access would deny `authenticated` on EVERY public table
+  // — the same "permission denied" with or without 0014. The local-dev stub
+  // instead models Supabase's DEFAULT table grants (ALTER DEFAULT PRIVILEGES), so a
+  // throwaway table the owner creates IS readable by `authenticated`. That it can
+  // read that table but not admin_user/admin_audit_log proves those denials come
+  // from 0014's ENABLE RLS + REVOKE, not from a role that simply can't see anything.
+  // NB: this control used to read the real `region` table, but 0018
+  // (0018_public_tables_default_deny_rls.sql) now default-denies every ordinary
+  // public table — region included — so no seeded app table is readable by the API
+  // roles anymore. A throwaway table (rolled back) keeps the control's intent
+  // without depending on any table staying open.
+  it('control: authenticated CAN read a fresh owner table granted by default', async () => {
+    const client = await getPool().connect();
     try {
-      const res = await client.query<{ c: number }>('SELECT count(*)::int AS c FROM region');
-      expect(res.rows[0].c).toBeGreaterThan(0); // reads seeded rows, no permission error
+      await client.query('BEGIN');
+      await client.query('DROP TABLE IF EXISTS kf_rls0014_control');
+      await client.query('CREATE TABLE kf_rls0014_control (id int)');
+      await client.query('INSERT INTO kf_rls0014_control (id) VALUES (1)');
+      await client.query('SET LOCAL ROLE authenticated');
+      const res = await client.query<{ c: number }>('SELECT count(*)::int AS c FROM kf_rls0014_control');
+      expect(res.rows[0].c).toBe(1); // default GRANT is visible => harness grants API roles
+      await client.query('RESET ROLE');
     } finally {
-      await client.end();
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
     }
   });
 
