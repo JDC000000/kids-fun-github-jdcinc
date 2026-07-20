@@ -17,8 +17,9 @@ import { anthropicApiKey, batchDryRunForced, batchEnabled } from './config';
 import { createBatchClientFromEnv, type AnthropicBatchClient } from './anthropic-client';
 import { runDedupUseCase, type DedupRunResult } from './dedup';
 import { runAgeUseCase, type AgeRunResult } from './age-fallback';
+import { runCategoryCostUseCase, type CategoryCostRunResult } from './category-cost-fallback';
 
-export type UseCaseName = 'dedup' | 'age';
+export type UseCaseName = 'dedup' | 'age' | 'category_cost';
 
 export interface LlmBatchRunOptions {
   /** Force dry-run (detection-only). */
@@ -38,7 +39,7 @@ export interface LlmBatchRunReport {
   enabled: boolean;
   live: boolean;
   useCases: UseCaseName[];
-  results: Array<DedupRunResult | AgeRunResult>;
+  results: Array<DedupRunResult | AgeRunResult | CategoryCostRunResult>;
 }
 
 export async function runLlmBatchJob(opts: LlmBatchRunOptions = {}): Promise<LlmBatchRunReport> {
@@ -57,14 +58,17 @@ export async function runLlmBatchJob(opts: LlmBatchRunOptions = {}): Promise<Llm
   }
 
   const dryRun = batchDryRunForced() || opts.dryRun === true || (!injected && (!enabled || !live));
-  const useCases: UseCaseName[] = opts.useCases && opts.useCases.length > 0 ? opts.useCases : ['dedup', 'age'];
+  const useCases: UseCaseName[] =
+    opts.useCases && opts.useCases.length > 0 ? opts.useCases : ['dedup', 'age', 'category_cost'];
 
-  const results: Array<DedupRunResult | AgeRunResult> = [];
+  const results: Array<DedupRunResult | AgeRunResult | CategoryCostRunResult> = [];
   for (const useCase of useCases) {
     if (useCase === 'dedup') {
       results.push(await runDedupUseCase(client, { dryRun, pollIntervalMs: opts.pollIntervalMs, maxCandidates: opts.maxCandidates }));
     } else if (useCase === 'age') {
       results.push(await runAgeUseCase(client, { dryRun, pollIntervalMs: opts.pollIntervalMs, maxCandidates: opts.maxCandidates }));
+    } else if (useCase === 'category_cost') {
+      results.push(await runCategoryCostUseCase(client, { dryRun, pollIntervalMs: opts.pollIntervalMs, maxCandidates: opts.maxCandidates }));
     }
   }
 

@@ -58,6 +58,25 @@ export const DEDUP_BLOCKING_MIN_SIMILARITY = 0.4;
  */
 export const AGE_APPLY_MIN_CONFIDENCE = 0.8;
 
+/**
+ * Apply an LLM-resolved PRIMARY CATEGORY ONLY when the model is this confident (≥). Same bar
+ * as age: the action is non-destructive and reversible — it only ever replaces the generic
+ * 'class_program' fallback (or a null category) with a MORE specific category, never a
+ * confident deterministic classification. Below it, the record keeps its fallback category
+ * (no-op). (G-T13-5 category extension; conservative first version.)
+ */
+export const CATEGORY_APPLY_MIN_CONFIDENCE = 0.8;
+
+/**
+ * Apply an LLM-resolved COST ONLY when the model is this confident (≥). Same bar as age: it
+ * only ever fills a previously-unknown cost (cost_status='unknown'); the search "unknown →
+ * don't hide" rule bounds the harm of a wrong fill. Below it, cost stays 'unknown' (no-op).
+ * We additionally only ever write the CONCRETE outcomes ('free' / 'known'); a bare
+ * 'check_source' hint is treated as a no-op in this conservative first version.
+ * (G-T13-5 cost extension.)
+ */
+export const COST_APPLY_MIN_CONFIDENCE = 0.8;
+
 /** Default safety cap on candidate records submitted per batch run (per use case). */
 export const DEFAULT_MAX_CANDIDATES = 500;
 
@@ -65,6 +84,7 @@ export const DEFAULT_MAX_CANDIDATES = 500;
 export const JOB_NAMES = {
   dedup: 'llm_dedup_adjudication',
   age: 'llm_age_fallback',
+  categoryCost: 'llm_category_cost_fallback',
 } as const;
 
 function env(name: string): string | undefined {

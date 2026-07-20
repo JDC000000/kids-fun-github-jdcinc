@@ -36,7 +36,7 @@ function secretOk(presented: string | null, expected: string): boolean {
 
 function parseUseCases(raw: unknown): UseCaseName[] | undefined {
   if (!Array.isArray(raw)) return undefined;
-  const out = raw.filter((v): v is UseCaseName => v === 'dedup' || v === 'age');
+  const out = raw.filter((v): v is UseCaseName => v === 'dedup' || v === 'age' || v === 'category_cost');
   return out.length > 0 ? out : undefined;
 }
 
