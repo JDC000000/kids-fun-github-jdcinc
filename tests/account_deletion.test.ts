@@ -25,7 +25,7 @@ describe.skipIf(!hasUserDb)('deleteUserData — self-service account deletion (2
   beforeAll(async () => {
     for (const u of [userA, userB]) {
       await ensureUserProfile(u, `${u}@example.com`);
-      await updateUserProfile(u, { home_postal: 'V6B 1A1', saved_child_ages: [24] });
+      await updateUserProfile(u, { home_postal: 'V6B 1A1' });
       await createSavedSearch(u, { name: 'keep-1', params: { q: 'x' } });
       await createSavedSearch(u, { name: 'keep-2', params: { q: 'y' } });
     }

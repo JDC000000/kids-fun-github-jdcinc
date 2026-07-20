@@ -1,11 +1,6 @@
 // tests/profile_validate.test.ts — pure validation for the profile PATCH body.
 import { describe, it, expect } from 'vitest';
-import {
-  parseProfilePatch,
-  normalizePostal,
-  MAX_CHILD_AGES,
-  AGE_MAX_MONTHS,
-} from '../lib/user/profile-validate';
+import { parseProfilePatch, normalizePostal } from '../lib/user/profile-validate';
 
 describe('normalizePostal', () => {
   it('normalizes case and spacing to canonical A1A 1A1', () => {
@@ -42,6 +37,18 @@ describe('parseProfilePatch', () => {
     if (!r.ok) expect(r.error).toMatch(/unknown/i);
   });
 
+  it('rejects saved_child_ages as an unknown field (F-8 — no longer collected)', () => {
+    const r = parseProfilePatch({ saved_child_ages: [24] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/unknown/i);
+  });
+
+  it('rejects saved_child_ages even alongside a valid field', () => {
+    const r = parseProfilePatch({ home_postal: 'V6B 1A1', saved_child_ages: [24] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/unknown field\(s\): saved_child_ages/i);
+  });
+
   it('accepts and normalizes a valid home_postal', () => {
     const r = parseProfilePatch({ home_postal: 'v6b1a1' });
     expect(r).toEqual({ ok: true, value: { home_postal: 'V6B 1A1' } });
@@ -61,29 +68,6 @@ describe('parseProfilePatch', () => {
     expect(parseProfilePatch({ home_postal: 123 }).ok).toBe(false);
   });
 
-  it('accepts a valid saved_child_ages array (months)', () => {
-    const r = parseProfilePatch({ saved_child_ages: [0, 18, 216] });
-    expect(r).toEqual({ ok: true, value: { saved_child_ages: [0, 18, 216] } });
-  });
-
-  it('accepts an empty saved_child_ages array (clear)', () => {
-    const r = parseProfilePatch({ saved_child_ages: [] });
-    expect(r).toEqual({ ok: true, value: { saved_child_ages: [] } });
-  });
-
-  it('rejects non-integer, negative, or out-of-range ages', () => {
-    expect(parseProfilePatch({ saved_child_ages: [12.5] }).ok).toBe(false);
-    expect(parseProfilePatch({ saved_child_ages: [-1] }).ok).toBe(false);
-    expect(parseProfilePatch({ saved_child_ages: [AGE_MAX_MONTHS + 1] }).ok).toBe(false);
-    expect(parseProfilePatch({ saved_child_ages: ['3'] }).ok).toBe(false);
-    expect(parseProfilePatch({ saved_child_ages: 3 }).ok).toBe(false); // not an array
-  });
-
-  it('rejects too many children', () => {
-    const many = Array.from({ length: MAX_CHILD_AGES + 1 }, () => 12);
-    expect(parseProfilePatch({ saved_child_ages: many }).ok).toBe(false);
-  });
-
   it('accepts a boolean email_opt_in and rejects non-booleans', () => {
     expect(parseProfilePatch({ email_opt_in: true })).toEqual({ ok: true, value: { email_opt_in: true } });
     expect(parseProfilePatch({ email_opt_in: 'yes' }).ok).toBe(false);
@@ -91,10 +75,10 @@ describe('parseProfilePatch', () => {
   });
 
   it('accepts a combined multi-field patch', () => {
-    const r = parseProfilePatch({ home_postal: 'V6B 1A1', saved_child_ages: [24], email_opt_in: false });
+    const r = parseProfilePatch({ home_postal: 'V6B 1A1', email_opt_in: false });
     expect(r).toEqual({
       ok: true,
-      value: { home_postal: 'V6B 1A1', saved_child_ages: [24], email_opt_in: false },
+      value: { home_postal: 'V6B 1A1', email_opt_in: false },
     });
   });
 
@@ -102,7 +86,6 @@ describe('parseProfilePatch', () => {
     const r = parseProfilePatch({ email_opt_in: true });
     if (r.ok) {
       expect('home_postal' in r.value).toBe(false);
-      expect('saved_child_ages' in r.value).toBe(false);
     }
   });
 });

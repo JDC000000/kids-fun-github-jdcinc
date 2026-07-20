@@ -2,16 +2,19 @@
 
 // AccountForm — the edit form for /account (Task 24, M4).
 //
-// A minimal controlled form over the three editable user_profile fields. On
-// submit it PATCHes /api/me and reflects the result inline (saved / validation
-// error / not-signed-in / server error). Children's ages are stored in MONTHS
-// (the schema's canonical unit), entered here as a comma-separated list.
+// A minimal controlled form over the editable user_profile fields (home postal
+// code + email opt-in). On submit it PATCHes /api/me and reflects the result
+// inline (saved / validation error / not-signed-in / server error).
+//
+// F-8 (PIPEDA / Round 25 Task WW): the children's-ages input was REMOVED — the
+// app no longer collects children's ages. The field had no functional consumer,
+// so dropping it removes an unnecessary PII collection point. (Any legacy value
+// already stored stays exportable/deletable via the account tools below.)
 import { useState, type FormEvent } from 'react';
 import { Button, Input } from '@/components/ui';
 
 interface InitialProfile {
   home_postal: string | null;
-  saved_child_ages: number[];
   email_opt_in: boolean;
 }
 
@@ -21,27 +24,8 @@ type Status =
   | { kind: 'saved' }
   | { kind: 'error'; message: string; signin?: boolean };
 
-/** Parse the comma-separated ages field into whole months. Returns an error
- *  string (not throwing) so the form can surface it before hitting the server. */
-function parseAges(text: string): { ok: true; ages: number[] } | { ok: false; error: string } {
-  const trimmed = text.trim();
-  if (trimmed === '') return { ok: true, ages: [] };
-  const ages: number[] = [];
-  for (const piece of trimmed.split(',')) {
-    const token = piece.trim();
-    if (token === '') continue;
-    const n = Number(token);
-    if (!Number.isInteger(n) || n < 0) {
-      return { ok: false, error: `"${token}" isn't a whole number of months` };
-    }
-    ages.push(n);
-  }
-  return { ok: true, ages };
-}
-
 export function AccountForm({ initial }: { initial: InitialProfile }) {
   const [postal, setPostal] = useState(initial.home_postal ?? '');
-  const [agesText, setAgesText] = useState(initial.saved_child_ages.join(', '));
   const [optIn, setOptIn] = useState(initial.email_opt_in);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
 
@@ -49,15 +33,8 @@ export function AccountForm({ initial }: { initial: InitialProfile }) {
     e.preventDefault();
     setStatus({ kind: 'saving' });
 
-    const parsedAges = parseAges(agesText);
-    if (!parsedAges.ok) {
-      setStatus({ kind: 'error', message: parsedAges.error });
-      return;
-    }
-
     const body = {
       home_postal: postal.trim() === '' ? null : postal.trim(),
-      saved_child_ages: parsedAges.ages,
       email_opt_in: optIn,
     };
 
@@ -86,7 +63,6 @@ export function AccountForm({ initial }: { initial: InitialProfile }) {
       // Reflect the server-normalized values (e.g. tidied postal code).
       if (data.profile) {
         setPostal(data.profile.home_postal ?? '');
-        setAgesText((data.profile.saved_child_ages ?? []).join(', '));
         setOptIn(Boolean(data.profile.email_opt_in));
       }
       setStatus({ kind: 'saved' });
@@ -115,24 +91,6 @@ export function AccountForm({ initial }: { initial: InitialProfile }) {
         />
         <p className="kf-account-form__hint">
           Used to remember your area. Leave blank to clear it.
-        </p>
-      </div>
-
-      <div className="kf-account-form__field">
-        <label className="kf-account-form__label" htmlFor="saved_child_ages">
-          Children&apos;s ages (in months)
-        </label>
-        <Input
-          id="saved_child_ages"
-          name="saved_child_ages"
-          type="text"
-          inputMode="numeric"
-          placeholder="e.g. 18, 36, 60"
-          value={agesText}
-          onChange={(e) => setAgesText(e.target.value)}
-        />
-        <p className="kf-account-form__hint">
-          Comma-separated, in months (24 = 2 years). Leave blank if you&apos;d rather not say.
         </p>
       </div>
 

@@ -62,6 +62,13 @@ describe('PATCH /api/me', () => {
     expect(mockUpdateUserProfile).not.toHaveBeenCalled();
   });
 
+  it('returns 400 on saved_child_ages (F-8 — no longer collected) and never writes', async () => {
+    mockGetRequestUser.mockResolvedValue({ userId: UID, email: 'p@example.com' });
+    const res = await PATCH(patchReq(JSON.stringify({ saved_child_ages: [24] })));
+    expect(res.status).toBe(400);
+    expect(mockUpdateUserProfile).not.toHaveBeenCalled();
+  });
+
   it('returns 400 on an invalid postal code', async () => {
     mockGetRequestUser.mockResolvedValue({ userId: UID, email: 'p@example.com' });
     const res = await PATCH(patchReq(JSON.stringify({ home_postal: '90210' })));
@@ -71,19 +78,21 @@ describe('PATCH /api/me', () => {
 
   it('writes a validated, normalized patch and returns 200 with the profile', async () => {
     mockGetRequestUser.mockResolvedValue({ userId: UID, email: 'p@example.com' });
-    const updated = { id: UID, home_postal: 'V6B 1A1', saved_child_ages: [24], email_opt_in: true };
+    // The DB read model still carries saved_child_ages (legacy read); the route
+    // echoes whatever updateUserProfile returns. What matters is that the WRITE
+    // below never includes it.
+    const updated = { id: UID, home_postal: 'V6B 1A1', saved_child_ages: [], email_opt_in: true };
     mockUpdateUserProfile.mockResolvedValue(updated);
 
     const res = await PATCH(
-      patchReq(JSON.stringify({ home_postal: 'v6b1a1', saved_child_ages: [24], email_opt_in: true }))
+      patchReq(JSON.stringify({ home_postal: 'v6b1a1', email_opt_in: true }))
     );
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, profile: updated });
-    // Postal was normalized before it reached the DB layer.
+    // Postal was normalized before it reached the DB layer; no saved_child_ages.
     expect(mockUpdateUserProfile).toHaveBeenCalledWith(UID, {
       home_postal: 'V6B 1A1',
-      saved_child_ages: [24],
       email_opt_in: true,
     });
   });

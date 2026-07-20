@@ -22,8 +22,11 @@ export interface UserProfile {
   email_opt_in: boolean;
 }
 
-// Only the columns this first slice reads. Deliberately excludes google_identity
-// (set once at provisioning, never surfaced) and the timestamps (not needed yet).
+// Only the columns this slice reads. Deliberately excludes google_identity (no
+// longer written as of F-9 — email is resolved on-demand from auth.users) and the
+// timestamps (not needed yet). saved_child_ages is still READ here so legacy rows
+// stay visible on /account and remain exportable, even though F-8 stopped
+// collecting new values (it is no longer a writable field — see UPDATABLE_COLUMNS).
 const PROFILE_COLUMNS = 'id, home_postal, saved_child_ages, email_opt_in';
 
 /**
@@ -37,15 +40,21 @@ const PROFILE_COLUMNS = 'id, home_postal, saved_child_ages, email_opt_in';
  */
 export async function ensureUserProfile(
   userId: string,
-  googleIdentity?: string | null
+  // Accepted for signature stability (callers pass the sign-in email), but as of
+  // F-9 (PIPEDA / Round 25 Task WW) it is DELIBERATELY NOT PERSISTED. Storing the
+  // Google email into user_profile.google_identity only duplicated what Supabase
+  // already holds in auth.users; the weekly digest and the data export both
+  // resolve the address on-demand via resolveRecipientEmail() (service-role admin
+  // API), so the second copy bought nothing and added a redundant PII surface.
+  _googleIdentity?: string | null
 ): Promise<{ profile: UserProfile; created: boolean }> {
   return withUserContext(userId, async (db) => {
     const inserted = await db.query<{ id: string }>(
-      `INSERT INTO user_profile (id, google_identity)
-         VALUES ($1, $2)
+      `INSERT INTO user_profile (id)
+         VALUES ($1)
          ON CONFLICT (id) DO NOTHING
          RETURNING id`,
-      [userId, googleIdentity ?? null]
+      [userId]
     );
     const created = inserted.length > 0;
 
@@ -68,7 +77,11 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
 // Editable columns → their patch keys. Order fixed so the generated SQL is stable
 // (aids testing/logging). google_identity, id, home_geo and the timestamps are
 // deliberately absent: identity/geocoded/auto-managed, not user-editable here.
-const UPDATABLE_COLUMNS = ['home_postal', 'saved_child_ages', 'email_opt_in'] as const;
+// saved_child_ages was REMOVED here by F-8 (PIPEDA / Round 25 Task WW): the app no
+// longer collects or writes children's ages. Even if a patch somehow carries the
+// key it is silently ignored (parseProfilePatch already rejects it upstream as an
+// unknown field); legacy values are left untouched and stay exportable/deletable.
+const UPDATABLE_COLUMNS = ['home_postal', 'email_opt_in'] as const;
 
 /**
  * Owner-scoped partial update of the current user's profile.
@@ -85,8 +98,9 @@ const UPDATABLE_COLUMNS = ['home_postal', 'saved_child_ages', 'email_opt_in'] as
  */
 export async function updateUserProfile(userId: string, patch: ProfilePatch): Promise<UserProfile> {
   return withUserContext(userId, async (db) => {
-    // Self-heal: ensure the row exists before updating (mirrors ensureUserProfile
-    // but without needing google_identity — that's set at first-login provisioning).
+    // Self-heal: ensure the row exists before updating. Identical to the
+    // provisioning INSERT in ensureUserProfile (id-only since F-9 stopped writing
+    // google_identity) — an id-only owner INSERT satisfies auth.uid() = id.
     await db.query(
       `INSERT INTO user_profile (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
       [userId]
