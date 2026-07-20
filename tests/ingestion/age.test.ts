@@ -105,6 +105,15 @@ describe.skipIf(!hasDb)('age normalisation wiring into ingest (occurrence_age)',
              WHERE s.source_id = ANY($1::uuid[]))`,
           [createdSourceIds]
         );
+        // G-T13-3: ingest now also writes occurrence_category_tag rows (secondary
+        // categories + suitability tags), which FK-reference activity_occurrence.
+        await query(
+          `DELETE FROM occurrence_category_tag WHERE occurrence_id IN (
+             SELECT o.id FROM activity_occurrence o
+             JOIN activity_series s ON s.id = o.series_id
+             WHERE s.source_id = ANY($1::uuid[]))`,
+          [createdSourceIds]
+        );
         await query(
           `DELETE FROM activity_occurrence WHERE series_id IN (
              SELECT id FROM activity_series WHERE source_id = ANY($1::uuid[]))`,

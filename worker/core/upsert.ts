@@ -15,8 +15,10 @@ export interface UpsertResult {
 export interface UpsertFields {
   primaryCategoryId?: string | null;
   statusState?: string;
-  /** Confidence label placeholder — full scoring (authority x parse quality x
-   *  freshness x volatility, BR-13) lands with the normalisation pipeline (T13). */
+  /** Confidence label ('unscored'|'low'|'medium'|'high'). The BR-13 scoring
+   *  (authority × parse_quality × freshness × volatility) that produces it —
+   *  and the low-confidence → needs_review gate that drives statusState — now
+   *  lives in worker/core/confidence.ts and is wired in by worker/core/ingest.ts. */
   confidenceLabel?: string;
 }
 

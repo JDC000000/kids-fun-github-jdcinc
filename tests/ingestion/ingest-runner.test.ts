@@ -14,7 +14,7 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     await closePool();
   });
 
-  it('resolves a series and writes check-run + occurrence + provenance for a source', async () => {
+  it('routes a low-confidence generic record to needs_review (BR-13 gate), not unconditional confirmed', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
       `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
@@ -28,6 +28,9 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     expect(summary.seriesCreated).toBe(1);
     expect(summary.occurrencesCreated).toBe(1);
     expect(summary.provenanceRows).toBeGreaterThanOrEqual(1);
+    // The gate fired: the generic Noop record (generic category, unknown cost, no
+    // age, unproven source) scores ~0.34 → 'low', so it is held for review.
+    expect(summary.lowConfidenceFlagged).toBe(1);
 
     // check-run recorded as success.
     const [run] = await query<{ status: string; records_found: number }>(
@@ -47,9 +50,61 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     );
     expect(occ.length).toBe(1);
     expect(occ[0].series_id).not.toBeNull();
-    expect(occ[0].status_state).toBe('confirmed');
-    expect(occ[0].confidence_label).toBe('medium');
+    // Was unconditionally 'confirmed'/'medium'; the real BR-13 formula + gate now
+    // hold this low-confidence row for review instead of surfacing it as confirmed.
+    expect(occ[0].status_state).toBe('needs_review');
+    expect(occ[0].confidence_label).toBe('low');
     expect(occ[0].category_key).toBe('class_program');
+  });
+
+  it('lets a fully-structured record on a proven official source through as confirmed/high', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name, authority_tier) VALUES ('library_bibliocommons', $1, 'official') RETURNING id`,
+      [`Confident Ingest Source ${crypto.randomUUID()}`]
+    );
+
+    // Seed two prior successful checks (well within the 1-day cadence so the
+    // source reads as adherent) so it has a proven track record — this drives the
+    // volatility factor up via T15's source-health score.
+    await query(
+      `INSERT INTO source_check_run (source_id, started_at, status, records_found, duration_ms)
+       VALUES ($1, now() - interval '6 hours', 'success', 5, 100),
+              ($1, now() - interval '2 hours', 'success', 6, 100)`,
+      [source.id]
+    );
+
+    const record: StructuredRecord = {
+      sourceRecordId: `confident-${crypto.randomUUID()}`,
+      title: 'Family Public Swim',
+      categoryHint: 'public_swim', // explicit structured category
+      startDatetimeUtc: '2026-09-24T18:00:00.000Z',
+      costStatus: 'free',
+      ageText: '6 months to 5 years', // resolves to a structured band
+      sourceUrl: 'https://yourlibrary.bibliocommons.com/v2/events/confident',
+    };
+    const adapter: Adapter = {
+      family: 'library',
+      fetch: async () => [record],
+      extract: (raw) => raw as StructuredRecord[],
+      dedupKeys: () => ({ key: 'confident' }),
+    };
+
+    const summary = await ingestSource(pool, adapter, source.id);
+    expect(summary.errors).toEqual([]);
+    expect(summary.lowConfidenceFlagged).toBe(0);
+
+    const [occ] = await query<{ status_state: string; confidence_label: string; category_key: string }>(
+      `SELECT o.status_state, o.confidence_label, c.key AS category_key
+       FROM activity_occurrence o
+       JOIN activity_series s ON s.id = o.series_id
+       LEFT JOIN category c ON c.id = o.primary_category_id
+       WHERE s.source_id = $1`,
+      [source.id]
+    );
+    expect(occ.category_key).toBe('public_swim');
+    expect(occ.confidence_label).toBe('high');
+    expect(occ.status_state).toBe('confirmed');
   });
 
   it('is idempotent: a second run reuses the series and updates the occurrence in place', async () => {
