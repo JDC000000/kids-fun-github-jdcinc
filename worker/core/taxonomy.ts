@@ -80,12 +80,13 @@ const SUITABILITY_TAG_RULES: SignalRule[] = [
   { key: 'drop_in', test: /\bdrop[\s-]?in|\bno\s+registration|\bno\s+booking|\bjust\s+show\s+up/ },
   // (?!ry) so "infant(s)"/"infant room" tag but "infantry" (military-history) does not.
   { key: 'stroller_friendly', test: /\bstroller|\bbabytime|\bbaby\b|\binfant(?!ry)/ },
-  // Negative lookbehinds guard the accessibility semantics: "inaccessible",
-  // "un-/un/non-/non-accessible" and "maladaptive" must NOT be tagged accessible.
-  // Both hyphenated and unhyphenated negations need their own lookbehind because
-  // each only inspects the exact chars immediately before "accessible" (so "un-"
-  // and "un", "non-" and "non" are distinct cases).
-  { key: 'accessible', test: /(?<!in)(?<!un)(?<!non)(?<!non-)(?<!un-)accessible|\bwheelchair|(?<!mal)adaptive/ },
+  // Guard the accessibility semantics: a negated form must NOT be tagged accessible.
+  // ONE variable-length negative lookbehind (V8/Node supports these) covers every
+  // separator variant at once — attached, hyphenated OR spaced: "inaccessible",
+  // "in-accessible", "in accessible", and likewise un-/non-/mal-. The inner \b means
+  // only a STANDALONE in/un/non/mal prefix negates, so a word that merely ends in
+  // those letters ("main accessible", "robin") still tags correctly.
+  { key: 'accessible', test: /(?<!\b(?:in|un|non)[-\s]?)\baccessible|\bwheelchair|(?<!\bmal[-\s]?)\badaptive/ },
   { key: 'outdoor', test: /\boutdoor|\bpark|\btrail|\bnature|\bplayground/ },
   { key: 'indoor', test: /\bindoor|\bgymnasium/ },
 ];

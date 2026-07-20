@@ -128,18 +128,33 @@ describe('secondary category + suitability tag classification (G-T13-3)', () => 
   // Regression (adversarial QA, must-fix): the accessible/adaptive suitability rule
   // must not semantically INVERT — a listing describing itself as inaccessible /
   // maladaptive must never be auto-tagged 'accessible'.
-  it('does not tag negated accessibility phrases as accessible', () => {
+  it('does not tag negated accessibility phrases as accessible (all separator variants)', () => {
+    // One variable-length lookbehind must reject the negation attached, hyphenated
+    // AND spaced — for in-/un-/non-/mal-.
     for (const title of [
       'This event is inaccessible to strollers',
-      'A maladaptive behavior workshop',
-      'Non-accessible venue, sorry',
+      'An in-accessible washroom',
+      'The venue is in accessible only by stairs',
       'unaccessible washrooms',
-      'Un-accessible entrance', // hyphenated form needs its own (?<!un-) lookbehind
+      'Un-accessible entrance',
+      'un accessible entrance',
+      'Non-accessible venue, sorry',
+      'non accessible venue',
+      'nonaccessible',
+      'A maladaptive behavior workshop',
+      'A mal-adaptive coping seminar',
+      'A mal adaptive coping seminar',
     ]) {
       expect(classifySuitabilityTags({ title, costStatus: 'unknown' })).not.toContain('accessible');
     }
-    // genuine accessibility signals still tag
-    for (const title of ['Wheelchair Accessible Playground', 'Adaptive Sports Program', 'Fully accessible venue']) {
+    // genuine accessibility signals still tag (incl. a word that merely ends in "in")
+    for (const title of [
+      'Wheelchair Accessible Playground',
+      'Wheelchair-accessible entrance',
+      'Adaptive Sports Program',
+      'Fully accessible venue',
+      'Main accessible route',
+    ]) {
       expect(classifySuitabilityTags({ title, costStatus: 'unknown' })).toContain('accessible');
     }
   });
