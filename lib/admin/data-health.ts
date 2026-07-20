@@ -148,6 +148,14 @@ export function networkShort(family: string): string {
  * Is a source SLA-adherent (meeting its cadence)? True iff it has a successful check
  * within grace × its effective cadence. A source that has NEVER succeeded is NOT
  * adherent (it isn't delivering fresh data), regardless of whether it has run.
+ *
+ * RECONCILIATION (Round 23 / Task RR, G-T15-3): the canonical worker-side health SLA lives
+ * in worker/health/sla.ts (cadenceAdherent), which computes the broader operational health
+ * (adherence + check-success + parse-yield). This function is the /admin/data-health DISPLAY
+ * read path and deliberately stays separate — the Next app does not import from worker/ (that
+ * boundary is enforced by tsconfig excluding worker/ + eslint ignoring it). The two adherence
+ * formulas are identical and pinned together by tests/health/sla-consistency.test.ts, so they
+ * cannot silently diverge. See the Task RR findings doc for the full reasoning.
  */
 export function isCadenceAdherent(
   input: { lastSuccessAtMs: number | null; cadenceSeconds: number | null },

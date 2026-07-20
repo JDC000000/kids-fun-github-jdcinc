@@ -8,6 +8,7 @@
 // approval; the live path uses the public BiblioCommons gateway events endpoint,
 // one paginated request, no login, no headless browser, no CAPTCHA bypass.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
+import { politeFetch } from '../../health/policy';
 import { LIBRARY_SYSTEMS, getLibrarySystem, type LibraryBranchLocation, type LibrarySystemConfig } from './config';
 
 /** BiblioCommons/BiblioEvents-shaped event after normalisation from gateway JSON. */
@@ -68,7 +69,11 @@ interface BiblioCommonsGatewayEvent {
 
 const DEFAULT_BIBLIOCOMMONS_LIMIT = 20;
 const DEFAULT_TIME_ZONE = 'America/Vancouver';
-const USER_AGENT = 'KidsFunBot/0.1 (+https://kids-fun-staging-jdci-nc.vercel.app; contact: jon@crhq.ai)';
+
+/** Stable per-source politeness key (rate-limit + backoff state) for a library system. */
+function libraryPolicyKey(system: LibrarySystemConfig): string {
+  return `${system.sourceFamily}::${system.systemKey}`;
+}
 
 function liveEnabledFor(systemKey: string): boolean {
   const raw = process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS ?? '';
@@ -192,12 +197,13 @@ async function fetchBiblioCommonsEvents(system: LibrarySystemConfig): Promise<Bi
   }
   const url = new URL(system.gatewayEventsUrl);
   url.searchParams.set('limit', String(system.liveEventsLimit ?? DEFAULT_BIBLIOCOMMONS_LIMIT));
-  const response = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      'user-agent': USER_AGENT,
-    },
-  });
+  // Polite fetch seam (G-T15-5): identified UA + conditional headers + rate limit + backoff.
+  const response = await politeFetch(
+    libraryPolicyKey(system),
+    url,
+    { headers: { accept: 'application/json' } },
+    { family: system.sourceFamily }
+  );
   if (!response.ok) {
     throw new Error(`BiblioCommons events fetch failed: ${response.status} ${response.statusText}`);
   }
@@ -370,12 +376,12 @@ async function fetchBiblioCommonsRss(system: LibrarySystemConfig): Promise<Bibli
   if (!system.rssEventsUrl) {
     throw new Error(`No BiblioCommons RSS URL configured for ${system.systemKey}`);
   }
-  const response = await fetch(new URL(system.rssEventsUrl), {
-    headers: {
-      accept: 'application/rss+xml, application/xml, text/xml',
-      'user-agent': USER_AGENT,
-    },
-  });
+  const response = await politeFetch(
+    libraryPolicyKey(system),
+    new URL(system.rssEventsUrl),
+    { headers: { accept: 'application/rss+xml, application/xml, text/xml' } },
+    { family: system.sourceFamily }
+  );
   if (!response.ok) {
     throw new Error(`BiblioCommons RSS fetch failed: ${response.status} ${response.statusText}`);
   }

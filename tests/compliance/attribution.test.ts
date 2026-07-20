@@ -19,12 +19,13 @@
 //      403/429 backoff; conditional (ETag/If-Modified-Since) requests; and a
 //      cadence-gated scheduler that only enqueues terms+robots-approved sources.
 //
-// NOTE (audit finding, see docs/source-register.md): the RateLimiter / backoff /
-// conditional-request PRIMITIVES are correct and tested here, but are not yet
-// wired into the two live adapters' fetch() paths — those send the identified UA
-// inline and rely on the scheduler's daily/near-date cadence + per-request item
-// caps for politeness. This test asserts what is TRUE today; the wiring gap is
-// documented for human review rather than silently passed.
+// UPDATE (Round 23 / Task RR, G-T15-5): the RateLimiter / backoff / conditional-request
+// primitives are now WIRED into the live adapters' fetch() paths via the polite-fetch seam
+// worker/health/policy.ts::politeFetch (citycalendar, library, seasonal all route through it).
+// The identified User-Agent below is therefore supplied by that seam rather than inline in
+// each adapter. The assertions here still hold (every live request carries an identified UA);
+// worker/health/policy runtime enforcement + wiring is proven in tests/health/policy.test.ts.
+// (Historical audit finding: see docs/source-register.md — the earlier wiring gap.)
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';

@@ -11,6 +11,7 @@
 // terms/robots gate is enforced separately by runSeasonalWatch (see below).
 import type { Pool } from 'pg';
 import { evaluateLiveFetchGate, evaluateTermsGate, type Environment } from '../../core/terms-gate';
+import { politeFetch } from '../../health/policy';
 import {
   SEASONAL_SOURCES,
   getSeasonalSource,
@@ -19,8 +20,6 @@ import {
 } from './config';
 import { resolveSeasonState, applySeasonState, type SeasonTransition, type SeasonOverride } from './map';
 
-const USER_AGENT =
-  'KidsFunBot/0.1 (+https://kids-fun-staging-jdci-nc.vercel.app; contact: jon@crhq.ai)';
 const FETCH_TIMEOUT_MS = 10_000;
 
 /** The classified state of a status page — the watcher's only output. */
@@ -117,7 +116,7 @@ export class SeasonalWatcher {
   /** Fetch the raw status-page text — live when gated-on, otherwise the fixture. */
   async fetch(): Promise<{ text: string; live: boolean }> {
     if (this.isLiveFetchEnabled() && this.config.liveStatusUrl) {
-      const text = await fetchStatusPage(this.config.liveStatusUrl);
+      const text = await fetchStatusPage(this.config.liveStatusUrl, `seasonal::${this.config.key}`);
       return { text, live: true };
     }
     return { text: this.config.fixtureStatusText, live: false };
@@ -144,14 +143,17 @@ export class SeasonalWatcher {
   }
 }
 
-async function fetchStatusPage(url: string): Promise<string> {
+async function fetchStatusPage(url: string, policyKey: string): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(new URL(url), {
-      headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': USER_AGENT },
-      signal: controller.signal,
-    });
+    // Polite fetch seam (G-T15-5): identified UA + conditional headers + rate limit + backoff.
+    const res = await politeFetch(
+      policyKey,
+      new URL(url),
+      { headers: { accept: 'text/html,application/xhtml+xml' }, signal: controller.signal },
+      { family: 'seasonal' }
+    );
     if (!res.ok) {
       throw new Error(`seasonal status fetch failed: ${res.status} ${res.statusText}`);
     }
