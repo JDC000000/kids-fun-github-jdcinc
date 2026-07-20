@@ -12,6 +12,10 @@ describe('source→adapter registry (G-T5/G-T7-G-T9)', () => {
     expect(resolveAdapterForSourceRow({ family: 'perfectmind', name: 'City of Richmond PerfectMind' }, registry)?.family).toBe('perfectmind');
     expect(resolveAdapterForSourceRow({ family: 'library_bibliocommons', name: 'Richmond Public Library BiblioEvents' }, registry)?.family).toBe('library');
     expect(resolveAdapterForSourceRow({ family: 'library_communico', name: 'Coquitlam Public Library Communico' }, registry)?.family).toBe('library');
+    // T11: venue_html sources now resolve to the VenueAdapter (Round 22 / Task LL).
+    expect(resolveAdapterForSourceRow({ family: 'venue_html', name: 'H.R. MacMillan Space Centre' }, registry)?.family).toBe('venue_html');
+    expect(resolveAdapterForSourceRow({ family: 'venue_html', name: 'Vancouver Aquarium' }, registry)?.family).toBe('venue_html');
+    // Science World was terms-checked but has no clean machine path — not launched.
     expect(resolveAdapterForSourceRow({ family: 'venue_html', name: 'Science World' }, registry)).toBeNull();
   });
 });

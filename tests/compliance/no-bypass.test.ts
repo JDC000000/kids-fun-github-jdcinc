@@ -30,6 +30,7 @@ import { LibraryAdapter, LIBRARY_SYSTEMS } from '../../worker/adapters/library';
 import { CityCalendarAdapter, CITY_CALENDARS } from '../../worker/adapters/citycalendar';
 import { ActiveNetAdapter, ACTIVENET_TENANTS } from '../../worker/adapters/activenet';
 import { PerfectMindAdapter, PERFECTMIND_TENANTS } from '../../worker/adapters/perfectmind';
+import { VenueAdapter, getVenue } from '../../worker/adapters/venue';
 import type { Adapter } from '../../worker/core/adapter';
 
 const ORIGINAL_ENV = { ...process.env };
@@ -115,6 +116,40 @@ describe('G-T35-2 (A) live adapters issue only credential-free read-only GETs', 
   });
 });
 
+describe('G-T11 venue adapter — live GETs are credential-free; fixture-only venues never touch the network', () => {
+  it('live-capable venue (Space Centre) issues one credential-free GET per configured page', async () => {
+    process.env.KIDS_FUN_LIVE_VENUES = 'hr-macmillan-space-centre';
+    const config = getVenue('hr-macmillan-space-centre');
+    expect(config, 'Space Centre present in venue registry').toBeTruthy();
+    const adapter = new VenueAdapter(config!);
+    expect(adapter.isLiveFetchEnabled()).toBe(true);
+
+    const calls = mockFetchCapture(
+      '<html><head><script type="application/ld+json">{"@type":["EntertainmentBusiness"],"openingHours":["Mo-Su 09:00-17:00"]}</script></head><body></body></html>',
+      'text/html'
+    );
+    await adapter.fetch();
+
+    // Space Centre wires only the schema.org open-hours page (no events page) — one GET.
+    expect(calls.length, 'one GET per configured venue page').toBe(1);
+    for (const c of calls) expectCredentialFreeGet(c);
+    expect(calls[0].url).toMatch(/spacecentre\.ca/);
+    expect(calls[0].url).not.toMatch(/login|signin|account|checkout|cart/i);
+  });
+
+  it('fixture-only venue (Vancouver Aquarium, Akamai-blocked) makes ZERO network calls even if env-enabled', async () => {
+    // vanaqua.org actively blocks bots; the adapter must never live-fetch it,
+    // regardless of the env allow-list, because it is not marked liveCapable.
+    process.env.KIDS_FUN_LIVE_VENUES = 'vancouver-aquarium';
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const adapter = new VenueAdapter(getVenue('vancouver-aquarium')!);
+    expect(adapter.isLiveFetchEnabled(), 'never live').toBe(false);
+    const raw = await adapter.fetch();
+    expect(Array.isArray(raw)).toBe(true);
+    expect(spy, 'Aquarium fetch() made no network request').not.toHaveBeenCalled();
+  });
+});
+
 describe('G-T35-2 (A) fixture-only rec-portal scaffolds make ZERO network calls', () => {
   // ActiveNet + PerfectMind are the BLOCKED T7/T8 rec-portal sources: terms_status
   // 'pending', no live wiring. They must never touch the network — proving there
@@ -159,6 +194,9 @@ const ADAPTER_SOURCES = [
   'worker/adapters/activenet/config.ts',
   'worker/adapters/perfectmind/index.ts',
   'worker/adapters/perfectmind/config.ts',
+  'worker/adapters/venue/index.ts',
+  'worker/adapters/venue/config.ts',
+  'worker/adapters/venue/separate.ts',
 ];
 
 // Fingerprints of an access-control bypass. Deliberately avoids tokens that appear
@@ -188,17 +226,19 @@ describe('G-T35-2 (B) adapter source contains no login/paywall/CAPTCHA-bypass co
     });
   }
 
-  it('only the two ToS-cleared live adapters expose a live-fetch capability', () => {
-    // library + citycalendar implement isLiveFetchEnabled(); the rec-portal
+  it('only the ToS-cleared live adapters (library, city-calendar, venue) expose a live-fetch capability', () => {
+    // library + citycalendar + venue implement isLiveFetchEnabled(); the rec-portal
     // scaffolds do not (they can never flip to live without new code + this test
     // being revisited).
     const liveLibrary = new LibraryAdapter(LIBRARY_SYSTEMS.find((s) => s.systemKey === 'vpl')!);
     const liveCity = new CityCalendarAdapter(CITY_CALENDARS[0]);
+    const liveVenue = new VenueAdapter(getVenue('hr-macmillan-space-centre')!);
     const activenet = new ActiveNetAdapter(ACTIVENET_TENANTS[0]);
     const perfectmind = new PerfectMindAdapter(PERFECTMIND_TENANTS[0]);
 
     expect(typeof liveLibrary.isLiveFetchEnabled).toBe('function');
     expect(typeof liveCity.isLiveFetchEnabled).toBe('function');
+    expect(typeof liveVenue.isLiveFetchEnabled).toBe('function');
     expect((activenet as { isLiveFetchEnabled?: unknown }).isLiveFetchEnabled).toBeUndefined();
     expect((perfectmind as { isLiveFetchEnabled?: unknown }).isLiveFetchEnabled).toBeUndefined();
   });

@@ -17,8 +17,18 @@ VALUES
   ('library_bibliocommons','Vancouver Public Library BiblioEvents','official','auto','1 day', NULL),
   ('library_bibliocommons','Richmond Public Library BiblioEvents', 'official','auto','1 day', NULL),
   ('library_communico',    'Coquitlam Public Library Communico',   'official','auto','1 day', NULL),
-  -- Adapter D — Venue (family 4-5, P0)
-  ('venue_html', 'Vancouver Aquarium',                'official', 'semi', '1 day', NULL),
+  -- Adapter D — Venue (family 4-5, P0). Round 22 / Task LL terms review (see
+  -- docs/source-register.md §2/§6 + worker/adapters/venue/config.ts):
+  --  • H.R. MacMillan Space Centre — robots permits (Disallow /wp-admin/ only) +
+  --    commercial-only ToS + schema.org openingHours → live-capable (open hours).
+  --  • Vancouver Aquarium — vanaqua.org robots.txt is Akamai "Access Denied"
+  --    (active bot-block) → EXCLUDED from live; fixture-only shape example.
+  --  • Science World — robots allows all but WP REST is 401-restricted and its
+  --    events listing is JS-only → no headless-free machine path; not launched.
+  -- terms_status stays 'pending' for all — production enablement is an explicit
+  -- out-of-band ops action gated on G-T5-6, never this seed.
+  ('venue_html', 'Vancouver Aquarium',                 'official', 'semi', '1 day', NULL),
+  ('venue_html', 'H.R. MacMillan Space Centre',        'official', 'semi', '1 day', NULL),
   ('venue_html', 'Science World',                      'official', 'semi', '1 day', NULL),
   -- Adapter E — Seasonal status watcher (family 6, P0 for season-state correctness)
   ('seasonal_watcher', 'Stanley Park Miniature Railway status page', 'official', 'semi', '7 days', '1 day'),
