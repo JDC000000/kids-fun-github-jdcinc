@@ -18,10 +18,24 @@
 //      time. applyOccurrenceCategoryTags() closes that write-side gap.
 //
 // The primary classifier and the multi-match secondary detector share ONE rule
-// table (CATEGORY_SIGNAL_RULES) so they can never drift apart. Patterns are
-// leading-\b anchored so a category word only matches at a word start ("swim",
-// "swimming", "pools") and not embedded in an unrelated word ("Liverpool",
-// "Sparks", "signature").
+// table (CATEGORY_SIGNAL_RULES) so they can never drift apart.
+//
+// Anchoring / precision contract (kept honest — an adversarial QA pass caught an
+// earlier header overclaiming this):
+//   • Every category + suitability pattern is LEADING-\b anchored, so a keyword
+//     only matches at a word START: "swim"/"swimming"/"pools" match, but the same
+//     letters embedded mid-word do NOT ("Liverpool"⊅swim, "Sparks"⊅park,
+//     "history time"⊅storytime, "art display time"⊅play-time).
+//   • Leading-\b still matches INFLECTIONS/PLURALS by design ("park"→"parks"/
+//     "parking", "swim"→"swimming", "story time"→"story times"). This is an
+//     accepted precision tradeoff, NOT exactness — a few benign over-matches
+//     (e.g. "parking lot event"→outdoor_park, "open gymnastics"→open_gym) are
+//     tolerated in exchange for not missing real inflected forms.
+//   • Two places need MORE than a leading \b and say so inline: the miniature-train
+//     rule adds a negative lookahead so "mini train(s)" matches but "mini TRAINing"
+//     does not; the suitability `accessible`/`adaptive` rules add negative
+//     lookbehinds so "inaccessible"/"non-accessible"/"maladaptive" are NOT
+//     tagged accessible (a semantic inversion on a filter families rely on).
 import type { Pool } from 'pg';
 import type { StructuredRecord } from './adapter';
 
@@ -49,24 +63,27 @@ interface SignalRule {
 // tobogganing) are is_primary_eligible=false in the seed: never a primary, but a
 // legitimate secondary facet when the title mentions them.
 const CATEGORY_SIGNAL_RULES: SignalRule[] = [
-  { key: 'storytime', test: /story\s*time|babytime|toddler\s*time/ },
-  { key: 'indoor_play', test: /duplo|lego|free\s+play|play\s+time|indoor\s+play/ },
+  { key: 'storytime', test: /\bstory\s*time|\bbabytime|\btoddler\s*time/ },
+  { key: 'indoor_play', test: /\bduplo|\blego|\bfree\s+play|\bplay\s+time|\bindoor\s+play/ },
   { key: 'public_swim', test: /\bswim|\bpool/ },
   { key: 'skate', test: /\bskat(e|ing)/ },
-  { key: 'open_gym', test: /open\s+gym|gymnasium/ },
+  { key: 'open_gym', test: /\bopen\s+gym|\bgymnasium/ },
   { key: 'outdoor_park', test: /\bpark|\bnature|\bfarm|\btrail/ },
-  { key: 'festival_event', test: /festival|special\s+event/ },
-  { key: 'museum_venue', test: /museum|gallery|exhibit/ },
-  { key: 'miniature_train', test: /miniature\s*train|mini\s*train/ },
-  { key: 'tobogganing', test: /toboggan|tubing|sledding|sled\s+hill/ },
+  { key: 'festival_event', test: /\bfestival|\bspecial\s+event/ },
+  { key: 'museum_venue', test: /\bmuseum|\bgallery|\bexhibit/ },
+  // (?!ing) so "mini train"/"miniature trains" match but "mini training" does not.
+  { key: 'miniature_train', test: /\bminiature\s*train(?!ing)|\bmini\s*train(?!ing)/ },
+  { key: 'tobogganing', test: /\btoboggan|\btubing|\bsledding|\bsled\s+hill/ },
 ];
 
 const SUITABILITY_TAG_RULES: SignalRule[] = [
-  { key: 'drop_in', test: /drop[\s-]?in|no\s+registration|no\s+booking|just\s+show\s+up/ },
-  { key: 'stroller_friendly', test: /stroller|babytime|\bbaby\b|infant/ },
-  { key: 'accessible', test: /accessible|wheelchair|adaptive/ },
-  { key: 'outdoor', test: /outdoor|\bpark|\btrail|\bnature|playground/ },
-  { key: 'indoor', test: /indoor|gymnasium/ },
+  { key: 'drop_in', test: /\bdrop[\s-]?in|\bno\s+registration|\bno\s+booking|\bjust\s+show\s+up/ },
+  { key: 'stroller_friendly', test: /\bstroller|\bbabytime|\bbaby\b|\binfant/ },
+  // Negative lookbehinds guard the accessibility semantics: "inaccessible",
+  // "un/non/non-accessible" and "maladaptive" must NOT be tagged accessible.
+  { key: 'accessible', test: /(?<!in)(?<!un)(?<!non)(?<!non-)accessible|\bwheelchair|(?<!mal)adaptive/ },
+  { key: 'outdoor', test: /\boutdoor|\bpark|\btrail|\bnature|\bplayground/ },
+  { key: 'indoor', test: /\bindoor|\bgymnasium/ },
 ];
 
 type CategoryCertainty = 'specific' | 'generic';

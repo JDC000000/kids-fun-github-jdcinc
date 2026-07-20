@@ -101,4 +101,36 @@ describe('secondary category + suitability tag classification (G-T13-3)', () => 
     expect(detectCategorySignals({ title: 'Riverside Parks Playgroup' })).toContain('outdoor_park');
     expect(detectCategorySignals({ title: 'Swimming Lessons' })).toContain('public_swim');
   });
+
+  // Regression (adversarial QA): every category rule is leading-\b anchored, so a
+  // keyword embedded mid-word must not false-match. Plurals/inflections still match.
+  it('does not misfire on the QA-found unanchored category cases', () => {
+    expect(detectCategorySignals({ title: 'history time with grandpa' })).not.toContain('storytime');
+    expect(detectCategorySignals({ title: 'art display time' })).not.toContain('indoor_play');
+    // miniature_train: "mini train"/"miniature trains" match, "mini training" does not
+    expect(detectCategorySignals({ title: 'mini training session' })).not.toContain('miniature_train');
+    expect(detectCategorySignals({ title: 'Miniature Train Rides' })).toContain('miniature_train');
+    // a "history time" talk must also not get the auto category-implied 'indoor' tag
+    expect(classifySuitabilityTags({ title: 'history time with grandpa', costStatus: 'unknown' })).not.toContain(
+      'indoor'
+    );
+  });
+
+  // Regression (adversarial QA, must-fix): the accessible/adaptive suitability rule
+  // must not semantically INVERT — a listing describing itself as inaccessible /
+  // maladaptive must never be auto-tagged 'accessible'.
+  it('does not tag negated accessibility phrases as accessible', () => {
+    for (const title of [
+      'This event is inaccessible to strollers',
+      'A maladaptive behavior workshop',
+      'Non-accessible venue, sorry',
+      'unaccessible washrooms',
+    ]) {
+      expect(classifySuitabilityTags({ title, costStatus: 'unknown' })).not.toContain('accessible');
+    }
+    // genuine accessibility signals still tag
+    for (const title of ['Wheelchair Accessible Playground', 'Adaptive Sports Program', 'Fully accessible venue']) {
+      expect(classifySuitabilityTags({ title, costStatus: 'unknown' })).toContain('accessible');
+    }
+  });
 });
