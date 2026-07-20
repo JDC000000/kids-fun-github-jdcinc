@@ -58,7 +58,9 @@ describe.skipIf(!hasDb)('age-parse fallback (real Postgres)', () => {
     const found = (await detectAgeCandidates(500)).find((c) => c.occurrenceId === occId);
     expect(found).toBeTruthy();
     expect(found!.rawAgeText).toBe('walkers to grade three-ish');
-    expect(found!.customId).toBe(`age:${occId}`);
+    expect(found!.customId).toBe(`age-${occId}`);
+    // custom_id must satisfy Anthropic's required pattern.
+    expect(/^[a-zA-Z0-9_-]{1,64}$/.test(found!.customId)).toBe(true);
   });
 
   it('APPLIES a confident resolution: writes bounds, overlapping band matches, and a terminal note; idempotent', async () => {

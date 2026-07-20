@@ -10,10 +10,11 @@
 //     there is no HTTP client anywhere in this module, so a real API request is impossible
 //     by accident. The placeholder "key" is a sentinel that fails loudly, never a live key.
 //
-// FAST-FOLLOW (once the `kids-fun-anthropic` credential lands): add ONE small real adapter
-// that wraps `new Anthropic({ apiKey }).messages.batches` behind this same interface and
-// return it from createBatchClientFromEnv() when a key is present. No other file changes —
-// that is the entire point of this seam.
+// The real adapter (makeRealBatchClient) wraps `new Anthropic({ apiKey }).messages.batches`
+// behind this same interface; createBatchClientFromEnv() returns it when a key is present,
+// else the unprovisioned client. Automated tests always inject the fake, so CI never touches
+// the network — only the live production path (credential present) calls Anthropic.
+import Anthropic from '@anthropic-ai/sdk';
 
 /** A prompt-cache breakpoint. ttl '1h' keeps a stable prefix warm across a long batch run. */
 export interface CacheControl {
@@ -219,16 +220,66 @@ export interface ResolvedBatchClient {
   live: boolean;
 }
 
+/** Map one SDK batch result into our transport-neutral BatchResultItem. Exported for unit test. */
+export function mapSdkResult(item: Anthropic.Messages.MessageBatchIndividualResponse): BatchResultItem {
+  const r = item.result;
+  if (r.type === 'succeeded') {
+    const content = r.message.content.map((b) => (b.type === 'text' ? { type: 'text', text: b.text } : { type: b.type }));
+    return { custom_id: item.custom_id, result: { type: 'succeeded', message: { content } } };
+  }
+  if (r.type === 'errored') {
+    return { custom_id: item.custom_id, result: { type: 'errored', error: { type: r.error.error.type } } };
+  }
+  if (r.type === 'canceled') {
+    return { custom_id: item.custom_id, result: { type: 'canceled' } };
+  }
+  return { custom_id: item.custom_id, result: { type: 'expired' } };
+}
+
 /**
- * Resolve the batch client from the environment.
- *
- * TODAY: always returns the unprovisioned client (`live: false`). The real SDK adapter is
- * intentionally NOT wired here yet — that is the fast-follow once `kids-fun-anthropic` is
- * provisioned. The single change then is: `if (apiKey) return { client: makeRealClient(apiKey),
- * live: true }` above the fallback, where makeRealClient wraps `new Anthropic({ apiKey })
- * .messages.batches` behind AnthropicBatchClient. Nothing else changes.
+ * The REAL adapter: wraps the official SDK's Message-Batches surface behind
+ * AnthropicBatchClient. Constructing the SDK client does no I/O; the network is only touched
+ * on create/retrieve/results. Model + cache_control + output_config all ride through the
+ * per-request params unchanged (built in lib/llm/prompts.ts + dedup.ts/age-fallback.ts).
  */
-export function createBatchClientFromEnv(_apiKey: string | null): ResolvedBatchClient {
-  // No real adapter is wired yet; refuse to pretend otherwise.
+export function makeRealBatchClient(apiKey: string): AnthropicBatchClient {
+  const anthropic = new Anthropic({ apiKey });
+  return {
+    messages: {
+      batches: {
+        create: async (body: { requests: BatchRequest[] }): Promise<BatchHandle> => {
+          const batch = await anthropic.messages.batches.create({
+            requests: body.requests.map((req) => ({
+              custom_id: req.custom_id,
+              params: req.params as unknown as Anthropic.Messages.MessageCreateParamsNonStreaming,
+            })),
+          });
+          return { id: batch.id, processing_status: batch.processing_status };
+        },
+        retrieve: async (id: string): Promise<BatchHandle> => {
+          const batch = await anthropic.messages.batches.retrieve(id);
+          return { id: batch.id, processing_status: batch.processing_status };
+        },
+        results: async (id: string): Promise<AsyncIterable<BatchResultItem>> => {
+          const decoder = await anthropic.messages.batches.results(id);
+          async function* gen(): AsyncGenerator<BatchResultItem> {
+            for await (const item of decoder) yield mapSdkResult(item);
+          }
+          return gen();
+        },
+      },
+    },
+  };
+}
+
+/**
+ * Resolve the batch client from the environment. With a key present → the real, LIVE adapter
+ * (production path); without one → the unprovisioned client that throws on use. Automated
+ * tests never call this with a real key (they inject the fake), so CI stays network-free.
+ */
+export function createBatchClientFromEnv(apiKey: string | null): ResolvedBatchClient {
+  if (apiKey) {
+    return { client: makeRealBatchClient(apiKey), live: true };
+  }
   return { client: new UnprovisionedAnthropicBatchClient(), live: false };
 }

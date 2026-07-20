@@ -44,7 +44,7 @@ async function seedOccurrence(opts: {
 }
 
 function candidateFor(leftId: string, rightId: string, det: number): DedupCandidate {
-  const customId = leftId < rightId ? `dedup:${leftId}:${rightId}` : `dedup:${rightId}:${leftId}`;
+  const customId = `dedup-${leftId}`;
   const mk = (id: string, authority: string) => ({
     id,
     name: 'Toddler Storytime Circle',
@@ -90,6 +90,8 @@ describe.skipIf(!hasDb)('dedup adjudication (real Postgres)', () => {
     const mine = candidates.find((c) => [c.left.id, c.right.id].includes(a.occId) && [c.left.id, c.right.id].includes(b.occId));
     expect(mine).toBeTruthy();
     expect(mine!.deterministicScore).toBeGreaterThanOrEqual(0.55);
+    // custom_id must satisfy Anthropic's required pattern.
+    expect(/^[a-zA-Z0-9_-]{1,64}$/.test(mine!.customId)).toBe(true);
   });
 
   it('AUTO-MERGE archives the duplicate, stamps the canonical dedup_key, and is idempotent', async () => {
@@ -144,7 +146,8 @@ describe.skipIf(!hasDb)('dedup adjudication (real Postgres)', () => {
     const start = '2026-09-05T18:00:00.000Z';
     const a = await seedOccurrence({ tag, sourceSuffix: 'a', authority: 'official', name: `Dance ${tag}`, startIso: start });
     const b = await seedOccurrence({ tag, sourceSuffix: 'b', authority: 'partner', name: `Dance ${tag}`, startIso: start });
-    const myKey = a.occId < b.occId ? `dedup:${a.occId}:${b.occId}` : `dedup:${b.occId}:${a.occId}`;
+    // Detection collapses the symmetric pair to the row with the smaller (fresh) left id.
+    const myKey = `dedup-${a.occId < b.occId ? a.occId : b.occId}`;
 
     // Residue-safe responder: only MY pair is a duplicate; everything else is a confident
     // NON-duplicate → skip (no mutation of any other suite's rows).

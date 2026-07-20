@@ -111,7 +111,8 @@ export async function detectAgeCandidates(limit = configMaxCandidates()): Promis
     occurrenceId: r.id,
     activityName: r.activity_name,
     rawAgeText: rawFromNotes(r.age_notes),
-    customId: `age:${r.id}`,
+    // Anthropic requires custom_id to match `^[a-zA-Z0-9_-]{1,64}$`; `age-<uuid>` is 40 chars, all legal.
+    customId: `age-${r.id}`,
   }));
 }
 

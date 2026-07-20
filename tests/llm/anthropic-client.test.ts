@@ -7,8 +7,14 @@ import {
   UnprovisionedAnthropicBatchClient,
   AnthropicClientNotProvisionedError,
   createBatchClientFromEnv,
+  mapSdkResult,
   type BatchRequest,
 } from '../../lib/llm/anthropic-client';
+
+// Minimal helper: build an SDK-shaped MessageBatchIndividualResponse without importing SDK types.
+function sdkItem(custom_id: string, result: unknown) {
+  return { custom_id, result } as unknown as Parameters<typeof mapSdkResult>[0];
+}
 
 function req(customId: string): BatchRequest {
   return {
@@ -63,11 +69,38 @@ describe('UnprovisionedAnthropicBatchClient', () => {
 });
 
 describe('createBatchClientFromEnv', () => {
-  it('returns a non-live, unprovisioned client whether or not a key is present (no real adapter wired yet)', () => {
-    for (const key of [null, 'anything']) {
-      const resolved = createBatchClientFromEnv(key);
-      expect(resolved.live).toBe(false);
-      expect(resolved.client).toBeInstanceOf(UnprovisionedAnthropicBatchClient);
+  it('returns the unprovisioned client (non-live) when no key is present', () => {
+    const resolved = createBatchClientFromEnv(null);
+    expect(resolved.live).toBe(false);
+    expect(resolved.client).toBeInstanceOf(UnprovisionedAnthropicBatchClient);
+  });
+
+  it('returns a LIVE real adapter when a key is present (constructing does no network I/O)', () => {
+    const resolved = createBatchClientFromEnv('sk-ant-fake-not-used-for-network');
+    expect(resolved.live).toBe(true);
+    expect(resolved.client).not.toBeInstanceOf(UnprovisionedAnthropicBatchClient);
+    // Shape check only — we never call a method here, so no request is made.
+    expect(typeof resolved.client.messages.batches.create).toBe('function');
+  });
+});
+
+describe('mapSdkResult (real-API result decoding)', () => {
+  it('maps a succeeded result, keeping only text blocks intact', () => {
+    const out = mapSdkResult(
+      sdkItem('age-1', { type: 'succeeded', message: { content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: '{"resolved":true}' }] } })
+    );
+    expect(out.custom_id).toBe('age-1');
+    expect(out.result.type).toBe('succeeded');
+    if (out.result.type === 'succeeded') {
+      // thinking block preserved as type-only; text block keeps its text (what textOf reads).
+      expect(out.result.message.content).toEqual([{ type: 'thinking' }, { type: 'text', text: '{"resolved":true}' }]);
     }
+  });
+
+  it('maps errored / canceled / expired results to their transport-neutral shapes', () => {
+    const errored = mapSdkResult(sdkItem('a', { type: 'errored', error: { type: 'error', error: { type: 'invalid_request_error' } } }));
+    expect(errored.result).toMatchObject({ type: 'errored', error: { type: 'invalid_request_error' } });
+    expect(mapSdkResult(sdkItem('b', { type: 'canceled' })).result.type).toBe('canceled');
+    expect(mapSdkResult(sdkItem('c', { type: 'expired' })).result.type).toBe('expired');
   });
 });

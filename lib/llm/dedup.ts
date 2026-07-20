@@ -170,9 +170,19 @@ interface DedupCandidateRow {
   start_utc: string | null;
 }
 
-/** Order-independent pair key so A↔B is one custom_id regardless of which side is "left". */
+/** Order-independent, INTERNAL pair key so A↔B collapses to one candidate regardless of side. */
 function pairKey(idA: string, idB: string): string {
-  return idA < idB ? `dedup:${idA}:${idB}` : `dedup:${idB}:${idA}`;
+  return idA < idB ? `${idA}|${idB}` : `${idB}|${idA}`;
+}
+
+/**
+ * The batch request custom_id. Anthropic requires custom_id to match `^[a-zA-Z0-9_-]{1,64}$`,
+ * so it can't be the colon-joined pair key (colons are illegal; two UUIDs exceed 64 chars).
+ * The fresh left occurrence id is unique per candidate row (DISTINCT ON f.id) and is a UUID
+ * (hex + hyphens = 42 chars with the prefix, all legal), so it is a valid, stable key.
+ */
+function dedupCustomId(leftId: string): string {
+  return `dedup-${leftId}`;
 }
 
 /**
@@ -220,9 +230,9 @@ export async function detectDedupCandidates(limit = configMaxCandidates()): Prom
   const seen = new Set<string>();
   const candidates: DedupCandidate[] = [];
   for (const row of rows) {
-    const customId = pairKey(row.left_id, row.right_id);
-    if (seen.has(customId)) continue; // collapse symmetric A-left/B-left rows to one pair
-    seen.add(customId);
+    const key = pairKey(row.left_id, row.right_id);
+    if (seen.has(key)) continue; // collapse symmetric A-left/B-left rows to one pair
+    seen.add(key);
     candidates.push({
       left: {
         id: row.left_id,
@@ -245,7 +255,7 @@ export async function detectDedupCandidates(limit = configMaxCandidates()): Prom
       startUtc: row.start_utc,
       // Authoritative deterministic score for the threshold check (in-app, testable).
       deterministicScore: similarity(row.left_name, row.right_name),
-      customId,
+      customId: dedupCustomId(row.left_id),
     });
   }
   return candidates;
