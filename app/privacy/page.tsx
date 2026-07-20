@@ -21,10 +21,10 @@ export const metadata = {
 // ("no reason to guess it now"). It is not a policy decision left open — it is a
 // publish-time stamp. Until the page is actually published (this branch is handed
 // back to the orchestrator, NOT merged), it is null and the effective-date line is
-// omitted rather than rendering a visible "[set on publish]" placeholder artifact.
+// omitted entirely rather than rendering a visible unresolved-placeholder artifact.
 // The orchestrator sets this to the real publish date (e.g. '2026-07-20') at
 // merge/deploy — a one-line change.
-const EFFECTIVE_DATE: string | null = null;
+const EFFECTIVE_DATE: string | null = '2026-07-20';
 
 export default function PrivacyPage() {
   return (
