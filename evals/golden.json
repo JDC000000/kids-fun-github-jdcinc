@@ -1,0 +1,80 @@
+{
+  "description": "KIDS FUN golden query set (G-T36-2). Each query runs over the REAL search path (evals/harness.ts) with expected top-results asserted. The flagship 'open gym near East Van' reuses the query semantics + thresholds defined once in lib/analytics/benchmark.ts (FLAGSHIP_QUERY): text mentions a gym AND carries an East-Van signal; must never be zero-result (maxZeroResultPct 0) and averages >= 5 results (minResults 5). Expectations are pinned to the current shipped FIXTURE_LISTINGS; see evals/scenarios/golden-db.test.ts + the findings doc for how the SAME set performs over the (currently thin) live ingested catalogue.",
+  "clock": "FIXTURE_NOW = 2026-07-13T19:00:00Z (America/Vancouver reference)",
+  "queries": [
+    {
+      "id": "flagship-open-gym-east-van",
+      "label": "open gym near East Van",
+      "anchor": "KPI #1 flagship benchmark; PRD T-01. Semantics + thresholds from lib/analytics/benchmark.ts FLAGSHIP_QUERY.",
+      "request": { "q": "open gym", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "expect": {
+        "minResults": 5,
+        "maxZeroResultPct": 0,
+        "topResultId": "l-opengym-van",
+        "topResultCategory": "open_gym",
+        "allCategoriesIn": ["open_gym"],
+        "excludesIds": ["l-cancelled-gym", "l-aquarium-van"]
+      }
+    },
+    {
+      "id": "family-swim-east-van",
+      "label": "family swim near East Van",
+      "anchor": "PRD T-02: pools/aquatic-centre swim appear; the Aquarium is not mixed in as a swim source.",
+      "request": { "q": "family swim", "origin": "east_van_near_me", "minResults": 2, "limit": 20 },
+      "expect": {
+        "minResults": 2,
+        "topResultCategory": "public_swim",
+        "containsIds": ["l-publicswim-van"],
+        "excludesIds": ["l-aquarium-van"],
+        "allCategoriesIn": ["public_swim"]
+      }
+    },
+    {
+      "id": "toddler-storytime",
+      "label": "toddler storytime",
+      "anchor": "PRD reference query set (library storytime family fit).",
+      "request": { "q": "toddler storytime", "minResults": 0, "limit": 20 },
+      "expect": {
+        "minResults": 1,
+        "topResultId": "l-storytime-van",
+        "topResultCategory": "storytime",
+        "containsIds": ["l-storytime-van"]
+      }
+    },
+    {
+      "id": "public-skate",
+      "label": "public skate",
+      "anchor": "PRD reference query set ('skating Saturday' family fit).",
+      "request": { "q": "skate", "minResults": 0, "limit": 20 },
+      "expect": {
+        "minResults": 1,
+        "topResultCategory": "skate",
+        "containsIds": ["l-skate-rmd"]
+      }
+    },
+    {
+      "id": "indoor-play",
+      "label": "indoor play",
+      "anchor": "PRD reference query set (rainy-day indoor play).",
+      "request": { "q": "indoor play", "minResults": 0, "limit": 20 },
+      "expect": {
+        "minResults": 1,
+        "topResultId": "l-indoorplay-bby",
+        "topResultCategory": "indoor_play",
+        "containsIds": ["l-indoorplay-bby"]
+      }
+    },
+    {
+      "id": "aquarium",
+      "label": "aquarium",
+      "anchor": "PRD T-02 counterpart: the Aquarium is its own attraction category, distinct from swim.",
+      "request": { "q": "aquarium", "minResults": 0, "limit": 20 },
+      "expect": {
+        "minResults": 1,
+        "topResultId": "l-aquarium-van",
+        "topResultCategory": "aquarium",
+        "containsIds": ["l-aquarium-van"]
+      }
+    }
+  ]
+}
