@@ -53,8 +53,13 @@ interface Rule {
   weather?: boolean;
 }
 
+// Weather-noun alternation accepts both singular and plural forms (wind/winds,
+// storm/storms, rain/rains, snow/snows) so "closed due to high winds" is caught
+// as a weather hold, not left to fall through to the imprecise 'unknown' state.
+// The `closed/suspended` prefix + `due to/because of/owing to` connector are still
+// both required, so widening the noun set cannot upgrade genuinely ambiguous input.
 const WEATHER_HOLD_RE =
-  /\b(?:closed|suspended|on hold|not (?:running|operating))\b[^.<\n]{0,60}\b(?:due to|because of|owing to)\b[^.<\n]{0,40}\b(?:weather|snow|rain|wind|storm|ice|conditions|lightning|fog|heat)\b/i;
+  /\b(?:closed|suspended|on hold|not (?:running|operating))\b[^.<\n]{0,60}\b(?:due to|because of|owing to)\b[^.<\n]{0,40}\b(?:weather|snows?|rains?|winds?|storms?|ice|conditions|lightning|fog|heat)\b/i;
 
 const RULES: Rule[] = [
   // Weather / condition holds — a temporary suspension, flagged separately.
