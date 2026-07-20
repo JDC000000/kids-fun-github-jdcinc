@@ -25,13 +25,13 @@ Assertions below marked **LIVE-VERIFIED** were exercised against a **real epheme
 | **Child ages** (in months) | `user_profile.saved_child_ages integer[]` (`supabase/migrations/0007_user_admin.sql`) | Account (`auth.uid()`) | Optional; entered on `/account` (`AccountForm.tsx`). |
 | **Home postal code** | `user_profile.home_postal text` (0007) | Account | Optional; `home_geo geography` derived point added in `0009_geo_columns.sql`. |
 | **Email opt-in flag** | `user_profile.email_opt_in boolean` (0007, default `false`) | Account | Explicit unchecked-by-default checkbox. |
-| **Email address** | Supabase `auth.users` (managed schema) — **not** in `user_profile` | Account | The app never copies the address into its own tables. |
+| **Email address** | Supabase `auth.users` (managed schema) **AND** `user_profile.google_identity` (0007) — the app persists a copy at first-login (`ensureUserProfile(userId, user.email)`) | Account | Held in **two** places; the copy in `google_identity` is functionally redundant (the weekly-email path re-resolves the address from `auth.users`). See Option C / F-9. |
 | **Saved searches** | `saved_search.query_json jsonb` (0007) | Account | Query params a parent chose to save. |
 | **Search / usage analytics** | `analytics_event` (`0006_provenance_ops.sql`): `event_type`, `search_context_json`, `result_summary_json`, `user_or_session`, `retained_until` | **Anon session cookie `kf_anon_id`** *or* the **pseudonymous account user id** (see F-4/F-5) | `search_context_json` stores the raw typed query (truncated 200 chars), sort, region chips, filter tokens, radius — **deliberately excludes near-me origin coordinates** (`lib/analytics/record.ts`). |
 | **Correction reports** | `correction_report` (0006): `reporter`, `issue_type`, `note` (free-text), `archived_at` | Anon `kf_anon_id` | Parent-facing UI currently submits **no** free-text note (see Principle 4 / F-6). |
 | **Admin audit log** | `admin_audit_log` (0007) | Admin user id | Operator actions only. |
 
-**Identifiers.** `kf_anon_id` is a random UUID v4 (`lib/db/session.ts`) — pseudonymous, `httpOnly`, `SameSite=Lax`, ~13-month lifetime (`middleware.ts`). The account id mirrors `auth.uid()` — also a pseudonymous UUID; the human-identifying value (email) stays in Supabase `auth.users`.
+**Identifiers.** `kf_anon_id` is a random UUID v4 (`lib/db/session.ts`) — pseudonymous, `httpOnly`, `SameSite=Lax`, ~13-month lifetime (`middleware.ts`). The account id mirrors `auth.uid()` — a pseudonymous UUID. The human-identifying value (email) lives in Supabase `auth.users` **and is also duplicated into `user_profile.google_identity`** — the app doesn't functionally need the copy (see Option C / F-9).
 
 ---
 
@@ -52,7 +52,8 @@ Assertions below marked **LIVE-VERIFIED** were exercised against a **real epheme
 
 ### Principle 4 — Limiting Collection (cl. 4.4)
 - **What the app does — GOOD:** Collection is genuinely minimised. Ages are stored as integers (months), not birthdates. Analytics deliberately **omit** near-me coordinates and never store name/email/note text (`lib/analytics/record.ts` "PRIVACY DISCIPLINE"). The parent-facing "Report wrong info" control (`app/preview/_components/ReportWrongInfo.tsx`) submits **only** the occurrence id + anon session — no free-text note, even though `correction_report.note` and the client helper *could* carry one.
-- **Assessment: MEETS.** (One caveat: `search_context_json` stores the raw typed query, which a parent *could* type identifying text into — captured as product signal, not scrubbed; low risk, noted under F-6.)
+- **Notable:** `saved_child_ages` is **collected but currently has no functional consumer** — verified it is not read by search, ranking, or the weekly-email digest; only displayed/edited on `/account` and returned in the export. Collecting a child's age (the app's most sensitive datum) with no present use leans against limiting-collection. See Option A1 / F-8.
+- **Assessment: MEETS overall (analytics/corrections minimisation is strong), with the `saved_child_ages`-is-unused caveat above.** (Also: `search_context_json` stores the raw typed query, which a parent *could* type identifying text into — captured as product signal, not scrubbed; low risk, noted under F-6.)
 
 ### Principle 5 — Limiting Use, Disclosure, and Retention (cl. 4.5)
 - **Use/disclosure:** No third-party disclosure of personal profile data; data is used for the stated product function. No ad/tracking SDKs found.
@@ -86,14 +87,55 @@ Assertions below marked **LIVE-VERIFIED** were exercised against a **real epheme
 
 ---
 
-## 3. Summary
+## 3. Risk-reduction architectural options (decision-ready — for Jon)
+
+> Added at Jon's request (relayed via the operator): go beyond auditing the law in the abstract and evaluate **practical, architecture-specific** ways to *reduce* risk, with honest pros/cons per option. **‹L3›: these are options to react to, not decisions taken or code written.** Each is grounded in this app's *actual* consumers of the data (verified below), so the tradeoffs are real, not generic. Two facts discovered while scoping these drive the analysis: **(i) `saved_child_ages` is stored but has no functional consumer today** (not used by search/ranking/digest — verified), and **(ii) the parent's email is duplicated into `user_profile.google_identity`** even though the app re-resolves the address from `auth.users` when it actually needs it.
+
+### Option A — Minimal-retention: don't persist what isn't earning its keep
+
+The two profile fields have *very different* consumer profiles, so they get different answers — that difference is the whole point.
+
+**A1 · `saved_child_ages` (child ages).** *Consumers today: none functional* — only `/account` display/edit and the export. Options: **(1)** stop persisting it until a feature actually consumes it (YAGNI); or **(2)** move it on-device to the localStorage pattern the app already ships for anonymous users (`app/search/_lib/anon-memory.ts`; the TSD literally specifies "anon child-ages in localStorage").
+- **Pros (this app):** removes *persistent database storage of a child's age* — the single most sensitive datum here — at **near-zero current UX cost, because nothing uses it yet**. It drops out of breach blast-radius, subject-access exports, and the retention conversation entirely. Directly advances Principle 4 (limiting collection) and matches the app's own on-device precedent.
+- **Cons (this app):** when a future *age-matching* feature lands (the field's ostensible purpose), it would need the age at query time — from a localStorage value or re-entry rather than a synced server profile, and cross-device continuity (phone ↔ laptop) is lost. On-device storage clears with site data. But every one of these costs is **deferred and hypothetical today** — there is no such consumer yet.
+- **Net / flag for Jon:** strong candidate — high risk-reduction, ~zero current cost. Decision: is an age-matching feature imminent enough to justify persisting *now*, or defer persistence until that feature exists (and keep it on-device meanwhile)?
+
+**A2 · `home_postal` / `home_geo` (home location).** *Consumers today: real* — (1) the signed-in "saved-location origin" that prefills the search near-me origin + a location chip (`app/search/page.tsx`, Task 29), so a signed-in parent needn't re-grant browser geolocation or retype their area; (2) the weekly-email digest's geo matching (`lib/email/weekly.ts` reads `home_postal`). Anonymous users already get near-me from **browser geolocation** with nothing stored.
+- **Pros of not persisting:** removes a home location (coarse but identifying) from the DB.
+- **Cons (this app):** (1) the digest is a **backend cron send** — there's no cookie/localStorage to read when it runs days later, so geo-matched digests for opted-in users would break (could fall back to region-only, a real quality drop). (2) The signed-in convenience origin — which works even where browser geolocation is denied/unavailable — would be lost; signed-in parents fall back to the anonymous geolocation path.
+- **Net / flag for Jon:** weaker than A1 — `home_postal` *earns* its persistence via the digest. Realistic middle path: **persist `home_postal` only for users who opted into the weekly email** (`email_opt_in = true`); treat location as browser/session-derived for everyone else. Decision: accept that scoping, or keep status quo?
+
+### Option B — Ephemeral / refreshing client storage instead of durable DB rows
+
+The app **already does this** for anonymous users: `anon-memory.ts` persists the last search **client-side only** in `localStorage` (`kf_last_search`), never a DB row, with a hard "never store raw coordinates" invariant and an explicit *dismissible* resume prompt (never silent auto-apply, for shared-device safety). Option B is: extend that same, already-blessed pattern to signed-in **convenience** data.
+- **Good candidates (pure on-device convenience):** `saved_child_ages` (reinforces A1), last-search/resume state, and UI prefs — a session cookie with rolling expiry or localStorage, so it self-expires (retention "for free") and never enters an export or a breach.
+- **Poor candidates (genuinely need server durability):** `saved_search` — the *explicit* "saved" contract; a parent expects these to persist and be there next time, so moving them on-device breaks the feature's promise and loses them on cache-clear. `email_opt_in` + digest inputs — the backend must act on them when the user isn't present. The account/identity row itself.
+- **Pros (this app):** on-device data is outside breach blast-radius and outside the subject-access export the org must produce; rolling expiry enforces retention automatically; consistent with the app's existing privacy discipline.
+- **Cons (this app):** device-local (no cross-device continuity; lost on new device / clear-site-data); shared-device leakage unless it stays the dismissible-suggestion pattern; useless for anything the backend must do unattended (the digest again); slightly more client code and a possible SSR flash.
+- **Net / flag for Jon:** a good fit for the *convenience* fields (it operationalises Option A1), **not** for `saved_search` or digest inputs. Decision: which convenience fields to move on-device.
+
+### Option C — Lean on Google/Supabase for the *identity layer*; store less identity-adjacent data yourself
+
+**Precise scope: this covers only the identity/email layer — NOT the child-specific data.** Ages and postal are app-specific; Google does not hold them and they **cannot** be delegated to Google's compliance posture. So this option deliberately does *not* touch F-1..F-3 for that data. What it *does* touch:
+- **The finding:** the app persists the parent's **email in `user_profile.google_identity`** at first login (`ensureUserProfile(userId, user.email)`) — a duplicate of Supabase `auth.users`. And the app already knows how to fetch the email from `auth.users` on demand (the weekly-email path resolves the recipient via the service-role admin API, **not** from `google_identity`). So the stored copy is **functionally redundant**.
+- **The option:** stop persisting `google_identity` (or null it) and always resolve the email from the auth session / service-role when needed. The app's own tables then key everything to the pseudonymous `auth.uid` only; the human-identifying email lives **solely** in Supabase's auth layer — the party that already authenticates the user and carries that identity-layer compliance.
+- **Pros (this app):** removes an email copy from the app's own schema → smaller PII footprint, one fewer place email can leak or go stale, and **one authoritative email location for deletion** instead of two. The app already proves it doesn't *need* the stored copy (it re-resolves for sends).
+- **Cons (this app):** (1) the export currently surfaces `google_identity` as the user's email — if removed, the export should instead pull the email from the auth session at export time to keep satisfying access (small change, not a capability loss). (2) each email use pays an `auth.users` lookup rather than a local column read (negligible; already done for digests). (3) **It does not reduce exposure for ages/postal** — be precise. (4) It does **not** remove the `auth.users` email itself, so the F-5 best-effort-auth-delete concern still stands; this only stops *duplicating* it.
+- **Net / flag for Jon:** clean, low-cost footprint reduction for the identity layer specifically. Decision: drop the `google_identity` email copy and resolve email on-demand from auth?
+
+### How the options interact
+A1 and C are the **highest-value / lowest-cost** moves (an unused sensitive field; a redundant email copy) and are largely independent — either can be taken alone. B is the *mechanism* that makes A1 concrete for convenience data. A2 and `saved_search` are the cases where persistence is **justified by a real consumer** (digest; the "saved" contract), so the honest recommendation-shaped-observation is: the strongest retention wins here are removing what nothing uses, not stripping the features that do. **All of this remains Jon's call — nothing here is implemented.**
+
+---
+
+## 4. Summary
 
 | # | Principle | Assessment | Flagged finding |
 |---|---|---|---|
 | 1 | Accountability | Partial (strong tech, no policy/owner) | F-7 |
 | 2 | Identifying Purposes | Partial (child-age purpose absent) | F-2, F-1 |
 | 3 | Consent | Partial (Google-only consent) | F-3, F-1 |
-| 4 | Limiting Collection | **Meets** | (F-6 caveat) |
+| 4 | Limiting Collection | **Meets**, with the `saved_child_ages`-unused caveat | F-8 (F-6 caveat) |
 | 5 | Limiting Use/Disclosure/**Retention** | Partial (analytics ✅ verified; correction-report ❌) | F-5, F-6 |
 | 6 | Accuracy | **Meets** | — |
 | 7 | Safeguards | **Meets** | — |
@@ -103,6 +145,8 @@ Assertions below marked **LIVE-VERIFIED** were exercised against a **real epheme
 
 **Verified-working today:** self-service data **export** (Principle 9), self-service account **deletion** (Principle 9), and enforced **analytics retention** (Principle 5) all behave correctly against a real database — the three behaviours G-T38-2 asked to confirm.
 
-**Material gaps flagged for the product owner:** no privacy policy / openness surface (F-1); child-age collection purpose not stated (F-2); consent rests on Google's screen only (F-3); export/deletion scope vs. account-keyed analytics (F-4/F-5); retention not applied to correction_report and not formally justified (F-6); no accountable individual / complaint channel (F-7).
+**Material gaps flagged for the product owner:** no privacy policy / openness surface (F-1); child-age collection purpose not stated (F-2); consent rests on Google's screen only (F-3); export/deletion scope vs. account-keyed analytics (F-4/F-5); retention not applied to correction_report and not formally justified (F-6); no accountable individual / complaint channel (F-7); `saved_child_ages` collected but unused (F-8); email duplicated into `google_identity` (F-9).
 
-*These gaps are documented for a future round to remediate. Per the docs-only scope of this task, no product code was changed here.*
+**Risk-reduction options (§3, decision-ready for Jon):** A — don't persist what has no consumer (`saved_child_ages`, strong; `home_postal` only where the digest needs it, weaker); B — extend the existing on-device localStorage pattern to signed-in convenience data (not to `saved_search`/digest inputs); C — drop the redundant `google_identity` email copy and lean on Supabase/Google for the identity layer only.
+
+*These gaps + options are documented for Jon's decision. Per the docs-only scope of this task, no product code was changed here.*
