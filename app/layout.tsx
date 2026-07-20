@@ -4,6 +4,7 @@ import './design-tokens.css';
 import './preview/preview.css';
 import type { ReactNode } from 'react';
 import { AccountNav } from './_components/AccountNav';
+import { SiteFooter } from './_components/SiteFooter';
 
 export const metadata = {
   title: 'KIDS FUN',
@@ -16,6 +17,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <AccountNav />
         {children}
+        <SiteFooter />
       </body>
     </html>
   );

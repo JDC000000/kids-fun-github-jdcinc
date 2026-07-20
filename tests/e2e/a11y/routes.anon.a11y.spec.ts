@@ -34,6 +34,10 @@ const ANON_ROUTES: { route: string; label: string }[] = [
   { route: '/preview', label: 'preview shell' },
   { route: '/preview/templeton-family-swim', label: 'preview detail /preview/[id]' },
   { route: '/activity/templeton-family-swim', label: 'activity detail /activity/[id]' },
+  // Privacy policy (Round 27, PIPEDA F-1). A real, public, DB-independent content
+  // page (static approved prose — renders identically regardless of DB state), so it
+  // belongs in the anon WCAG-AA sweep in both the light and dark projects.
+  { route: '/privacy', label: 'privacy policy' },
 ];
 
 test.describe('a11y audit — anonymous routes', () => {
