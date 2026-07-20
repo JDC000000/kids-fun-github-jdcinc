@@ -1,10 +1,12 @@
 -- 0019_llm_batch_run.sql — state + audit for the nightly LLM-assisted batch job
 -- (T14-2 fuzzy dedup adjudication, T13-5 age-parse fallback; TSD §5.2).
 --
--- Two tables, both service-role only (RLS default-deny via 0018's public-tables sweep
--- is NOT applied here because these are ops tables never exposed on the anon/auth REST
--- surface — they are read/written exclusively through the service pool by the nightly
--- run route, the same posture as analytics_event's maintenance path).
+-- Two tables, both service-role only. They are locked down IN THIS MIGRATION with the
+-- same default-deny posture as 0017_weekly_email_send.sql / 0018_public_tables_default_deny_rls.sql
+-- (ENABLE RLS with no policies + REVOKE ALL from anon/authenticated — see the lockdown
+-- block after the indexes below). They are read/written exclusively through the service
+-- pool by the nightly run route (DATABASE_URL owner, which BYPASSES RLS by design), and
+-- must NEVER be reachable on the anon/authenticated Supabase REST surface.
 --
 --   llm_batch_run       — one row per job_name; the INCREMENTAL WATERMARK. The job only
 --                         reconsiders records changed since last_watermark, so a re-run
@@ -62,7 +64,28 @@ CREATE TABLE IF NOT EXISTS llm_batch_decision (
 CREATE INDEX IF NOT EXISTS idx_llm_batch_decision_job ON llm_batch_decision (job_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_batch_decision_target ON llm_batch_decision (target_id);
 
+-- ── lockdown: default-deny RLS + REVOKE (service-role only) ────────────────────
+-- Same two-barrier posture as 0017_weekly_email_send.sql / 0014_admin_rls.sql /
+-- 0018_public_tables_default_deny_rls.sql. These are ops/audit tables touched ONLY by
+-- the nightly job's service-role pool (DATABASE_URL owner — bypasses RLS by design), so
+-- every legitimate app path is unaffected; anon/authenticated get NO access at all:
+--   • ENABLE RLS with NO policies  → default-deny for every RLS-subject role; and
+--   • REVOKE ALL default table grants → the deny also holds at the privilege layer.
+-- Without this, Supabase's default public grants (emulated in local/CI by the auth stub's
+-- ALTER DEFAULT PRIVILEGES) would leave both tables wide open — anon could read the audit
+-- trail + watermark, and any authenticated user could tamper the watermark (skip-all /
+-- force-replay = DoS) or forge/delete audit rows — the exact "unlocked public table"
+-- class Round 20 F-1 found and 0018 remediated, and it would defeat the whole point of
+-- llm_batch_decision being the reviewable trail behind an irreversible auto-merge.
+ALTER TABLE llm_batch_run      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE llm_batch_decision ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON llm_batch_run      FROM anon, authenticated;
+REVOKE ALL ON llm_batch_decision FROM anon, authenticated;
+
 -- ── rollback (reversible) ─────────────────────────────────────────────────────
+-- Dropping the tables removes their RLS state + grants with them; no separate revert
+-- of the lockdown is needed.
 --   DROP INDEX IF EXISTS idx_llm_batch_decision_target;
 --   DROP INDEX IF EXISTS idx_llm_batch_decision_job;
 --   DROP TABLE IF EXISTS llm_batch_decision;
