@@ -212,3 +212,166 @@ export async function buildDbEngine(): Promise<{ engine: SearchEngine; listingCo
   });
   return { engine, listingCount: listings.length };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UAT harness (G-T36-3) — realistic parent search journeys over the REAL search
+// path, measuring the two launch-gate quality bars the T-36 exit-AC names:
+//
+//   • Benchmark SEARCH SUCCESS (KPI #1, ≥80%): a journey returns a relevant,
+//     non-empty top-10 (its #1 result is on-topic for what the parent asked).
+//   • Useful result DENSITY (KPI #2, ≥70%): a journey surfaces ≥3 realistic
+//     options the parent can actually choose between.
+//
+// Plus the honesty invariant PRD §9 SC#4 makes non-negotiable — ZERO empty
+// screens on a valid search — and the zero-result RECOVERY rate (KPI #6): a
+// search with no confirmed matches (an out-of-season winter query in July, a
+// genuine no-match) must still recover with expected/seasonal options and/or a
+// broadening explanation, never a bare dead end.
+//
+// Everything runs over defaultEngine()/buildDbEngine() — the same real pipeline
+// the golden set uses — so the fixture path proves the harness + the benchmark
+// journeys, and the live-DB path measures the real (currently thin) catalogue.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** The parent-facing "≥3 realistic options" density threshold (TSD §12.5 KPI #2). */
+export const UAT_MIN_REALISTIC = 3;
+
+/** Which class a journey belongs to. */
+export type UatTier = 'benchmark' | 'realistic';
+
+/** The request half of a UAT journey — the same JSON-serialisable subset a golden query uses. */
+export type UatRequest = GoldenRequest;
+
+/** One realistic parent journey (a row of evals/uat.json). */
+export interface UatJourney {
+  id: string;
+  label: string;
+  /** Why a real East-Van parent (the 2-yr-old + 5-yr-old persona) runs this search. */
+  persona: string;
+  tier: UatTier;
+  request: UatRequest;
+  /**
+   * Categories that count as on-topic for this journey. '*' = a broad
+   * discovery/browse journey where any launch category is a relevant result.
+   */
+  relevantCategories: string[] | '*';
+  /**
+   * A zero-result RECOVERY journey (out-of-season winter search in July, or a
+   * genuine no-match). Success here is not "≥3 primary" but "the parent is not
+   * left with a bare empty screen". Excluded from the search-success + density
+   * denominators; scored under the recovery rate instead.
+   */
+  recovery?: boolean;
+}
+
+/** The normalised outcome of running one UAT journey through an engine. */
+export interface UatRun {
+  id: string;
+  /** Confirmed/primary results the parent sees (post-broaden — what the UI renders). */
+  primaryCount: number;
+  /** …of those, how many are strictly in the journey's relevantCategories ('*' → all). */
+  onTopicCount: number;
+  /** Separate expected/seasonal/evergreen options offered alongside/instead. */
+  expectedCount: number;
+  /** The engine broadened (synonym/radius/drop-chip/expected) to fill a thin set. */
+  broadened: boolean;
+  /** The empty-state ladder produced a named-constraint explanation. */
+  hasExplanation: boolean;
+  /** #1 result's primary category, or null when empty. */
+  topCategory: string | null;
+  /** The #1 result is on-topic for the journey (always true for a '*' discovery journey). */
+  topRelevant: boolean;
+  /** Non-empty top-10 whose #1 is on-topic → KPI #1 search success (searchable journeys). */
+  success: boolean;
+  /** ≥ UAT_MIN_REALISTIC options presented → KPI #2 density (searchable journeys). */
+  densityMet: boolean;
+  /** A parent is never left with nothing: primary OR expected OR an explanation is present. */
+  recovered: boolean;
+  /** The failure PRD §9 SC#4 forbids: no primary, no expected, no explanation. */
+  emptyScreen: boolean;
+}
+
+/** Run one UAT journey through the given engine and normalise the outcome. */
+export function runUat(engine: SearchEngine, journey: UatJourney): UatRun {
+  const response = engine.search(toSearchRequest(journey.request));
+  const primary = response.results;
+  const primaryCount = primary.length;
+  const expectedCount = response.expected.length;
+  const hasExplanation = response.broadening.emptyState != null;
+
+  const onTopic = (cat: string | null | undefined): boolean =>
+    journey.relevantCategories === '*' ? true : cat != null && journey.relevantCategories.includes(cat);
+
+  const onTopicCount = primary.filter((r) => onTopic(r.listing.primaryCategoryKey)).length;
+  const topCategory = primary[0]?.listing.primaryCategoryKey ?? null;
+  const topRelevant = primaryCount > 0 && onTopic(topCategory);
+  const emptyScreen = primaryCount === 0 && expectedCount === 0 && !hasExplanation;
+  const recovered = primaryCount > 0 || expectedCount > 0 || hasExplanation;
+
+  return {
+    id: journey.id,
+    primaryCount,
+    onTopicCount,
+    expectedCount,
+    broadened: response.broadening.applied.length > 0,
+    hasExplanation,
+    topCategory,
+    topRelevant,
+    success: primaryCount > 0 && topRelevant,
+    densityMet: primaryCount >= UAT_MIN_REALISTIC,
+    recovered,
+    emptyScreen,
+  };
+}
+
+/** Aggregate UAT coverage — the honest report the T-36 exit-AC asks the harness to produce. */
+export interface UatSummary {
+  journeys: number;
+  /** Journeys that expect confirmed matches (recovery journeys are excluded from these two rates). */
+  searchable: number;
+  /** KPI #1: searchable journeys with a relevant, non-empty top-10. */
+  searchSuccessCount: number;
+  searchSuccessPct: number;
+  /** KPI #2: searchable journeys surfacing ≥ UAT_MIN_REALISTIC options. */
+  densityMetCount: number;
+  densityPct: number;
+  /** KPI #6: zero-result (recovery) journeys that recovered rather than dead-ending. */
+  recoveryJourneys: number;
+  recoveredCount: number;
+  recoveryPct: number;
+  /** PRD §9 SC#4: journeys left with a bare empty screen (must be 0). */
+  emptyScreens: number;
+  /** Mean confirmed/primary results across searchable journeys. */
+  avgPrimary: number;
+  /** Mean options presented (primary + expected) across all journeys. */
+  avgPresented: number;
+}
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
+
+/** Compute the aggregate UAT summary given each journey and its run outcome. */
+export function summarizeUat(pairs: { journey: UatJourney; run: UatRun }[]): UatSummary {
+  const searchable = pairs.filter((p) => !p.journey.recovery);
+  const recoveries = pairs.filter((p) => p.journey.recovery);
+  const searchSuccess = searchable.filter((p) => p.run.success).length;
+  const densityMet = searchable.filter((p) => p.run.densityMet).length;
+  const recovered = recoveries.filter((p) => p.run.recovered).length;
+  const primaryTotal = searchable.reduce((a, p) => a + p.run.primaryCount, 0);
+  const presentedTotal = pairs.reduce((a, p) => a + p.run.primaryCount + p.run.expectedCount, 0);
+  const pctOf = (n: number, d: number) => (d ? round1((n / d) * 100) : 0);
+
+  return {
+    journeys: pairs.length,
+    searchable: searchable.length,
+    searchSuccessCount: searchSuccess,
+    searchSuccessPct: pctOf(searchSuccess, searchable.length),
+    densityMetCount: densityMet,
+    densityPct: pctOf(densityMet, searchable.length),
+    recoveryJourneys: recoveries.length,
+    recoveredCount: recovered,
+    recoveryPct: pctOf(recovered, recoveries.length),
+    emptyScreens: pairs.filter((p) => p.run.emptyScreen).length,
+    avgPrimary: searchable.length ? round1(primaryTotal / searchable.length) : 0,
+    avgPresented: pairs.length ? round1(presentedTotal / pairs.length) : 0,
+  };
+}

@@ -1,0 +1,129 @@
+{
+  "description": "KIDS FUN UAT parent-journey catalogue (G-T36-3). Realistic searches the primary persona — an East-Vancouver parent with a 2-year-old and a 5-year-old (PRD §10) — actually runs, exercised over the REAL search path (evals/harness.ts → runUat). The harness measures the two launch-gate quality bars the T-36 exit-AC names: benchmark SEARCH SUCCESS (KPI #1, relevant non-empty top-10, ≥80%) and useful result DENSITY (KPI #2, ≥3 realistic options, ≥70%), plus zero-result RECOVERY (KPI #6) and the PRD §9 SC#4 no-empty-screen invariant. 'benchmark' journeys are the flagship-class searches the launch benchmark is defined on and that the shipped catalogue supports densely (the ≥80%/≥70% bar is asserted over this tier on the fixture path); 'realistic' journeys broaden coverage and are measured + logged honestly. See evals/scenarios/uat.test.ts and docs/uat-harness.md for how the SAME journeys perform over the (currently thin) live ingested catalogue.",
+  "clock": "FIXTURE_NOW = 2026-07-13T19:00:00Z (America/Vancouver reference); winter journeys are correctly out-of-season at this instant.",
+  "minRealistic": 3,
+  "journeys": [
+    {
+      "id": "open-gym-near-me",
+      "label": "open gym near East Van",
+      "persona": "Rainy Tuesday morning — parent wants an indoor drop-in gym close to home for a 2yo and 5yo.",
+      "tier": "benchmark",
+      "request": { "q": "open gym", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["open_gym"]
+    },
+    {
+      "id": "drop-in-gym-near-me",
+      "label": "drop-in gym near East Van",
+      "persona": "Parent uses everyday language ('drop-in gym') rather than the catalogue term — alias expansion must still find the open-gym family.",
+      "tier": "benchmark",
+      "request": { "q": "drop-in gym", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["open_gym"]
+    },
+    {
+      "id": "gym-time-near-me",
+      "label": "gym time near East Van",
+      "persona": "Another parent phrasing ('gym time') for the same intent — coverage of the open-gym alias set.",
+      "tier": "benchmark",
+      "request": { "q": "gym time", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["open_gym"]
+    },
+    {
+      "id": "free-things-near-me",
+      "label": "free things to do near East Van",
+      "persona": "Budget-conscious weekend browse — 'what free activities are near me right now?' A broad discovery journey; any launch category is on-topic.",
+      "tier": "benchmark",
+      "request": { "q": "free", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": "*"
+    },
+    {
+      "id": "whats-on-near-me",
+      "label": "what's on near East Van (browse, no keyword)",
+      "persona": "Parent opens the app with no specific plan and just browses everything nearby — the empty-query discovery path.",
+      "tier": "benchmark",
+      "request": { "q": "", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": "*"
+    },
+    {
+      "id": "family-swim-near-me",
+      "label": "family swim near East Van",
+      "persona": "Hot afternoon — parent wants a leisure/family public swim both kids can join, close to home.",
+      "tier": "realistic",
+      "request": { "q": "family swim", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["public_swim"]
+    },
+    {
+      "id": "swimming-lessons-near-me",
+      "label": "swimming lessons near East Van",
+      "persona": "Parent phrases the aquatic intent as 'swimming lessons' — should still land on public/leisure swim (no lessons product at launch).",
+      "tier": "realistic",
+      "request": { "q": "swimming lessons", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["public_swim"]
+    },
+    {
+      "id": "toddler-storytime",
+      "label": "toddler storytime",
+      "persona": "Library storytime for the 2yo — a low-cost, all-weather staple. Not geo-bound; a parent will travel a little for the right session.",
+      "tier": "realistic",
+      "request": { "q": "toddler storytime", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["storytime"]
+    },
+    {
+      "id": "storytime-free",
+      "label": "free storytime",
+      "persona": "Explicitly free storytime — the honest-cost path (unknown-cost listings must NOT be presented as free).",
+      "tier": "realistic",
+      "request": { "q": "storytime free", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["storytime"]
+    },
+    {
+      "id": "indoor-play-rainy-day",
+      "label": "indoor play for a rainy day near East Van",
+      "persona": "Classic rainy-day search — soft-play / indoor playground the little ones can burn energy in; nearby indoor gym play is an acceptable adjacent option.",
+      "tier": "realistic",
+      "request": { "q": "indoor play", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["indoor_play", "open_gym"]
+    },
+    {
+      "id": "public-skate",
+      "label": "public skate",
+      "persona": "Weekend family skate — the parent will drive across town for ice time, so no near-me radius.",
+      "tier": "realistic",
+      "request": { "q": "public skate", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["skate"]
+    },
+    {
+      "id": "aquarium-day-out",
+      "label": "aquarium day out",
+      "persona": "A bigger day-out attraction for both kids — the Aquarium as its own category (never mixed into swim).",
+      "tier": "realistic",
+      "request": { "q": "aquarium", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["aquarium"]
+    },
+    {
+      "id": "mini-train-stanley-park",
+      "label": "miniature train (Stanley Park)",
+      "persona": "Seasonal favourite — the little ones love the mini train; parent searches by the everyday name.",
+      "tier": "realistic",
+      "request": { "q": "mini train", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["miniature_train"]
+    },
+    {
+      "id": "tobogganing-winter-out-of-season",
+      "label": "tobogganing near East Van (out of season in July)",
+      "persona": "Parent hopefully searches a winter activity in mid-July. There are no confirmed dates — the honest outcome is an out-of-season/expected option + explanation, never a bare empty screen (PRD T-07/T-11, KPI #6).",
+      "tier": "realistic",
+      "request": { "q": "tobogganing", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": ["tobogganing"],
+      "recovery": true
+    },
+    {
+      "id": "pottery-class-no-match",
+      "label": "pottery class near East Van (genuine no-match)",
+      "persona": "Parent searches an activity the catalogue simply does not carry at launch. The empty state must name the blocking constraint and suggest relaxations (PRD T-11), not dead-end.",
+      "tier": "realistic",
+      "request": { "q": "pottery class", "origin": "east_van_near_me", "minResults": 3, "limit": 20 },
+      "relevantCategories": [],
+      "recovery": true
+    }
+  ]
+}
