@@ -5,8 +5,11 @@
 // floor), then adjudicated by Haiku. The apply is fail-closed:
 //   • AUTO-MERGE only when the model is ≥ DEDUP_AUTO_MERGE_MIN_CONFIDENCE AND the
 //     deterministic title similarity ≥ DEDUP_AUTO_MERGE_MIN_SIMILARITY (defense in depth —
-//     never merge on the model's word alone). Merge = archive the lower-authority duplicate
-//     + stamp the surviving canonical's reserved dedup_key + write a system audit row.
+//     never merge on the model's word alone). Merge = the REAL provenance-preserving merge
+//     (lib/llm/dedup-merge.ts): re-point the lower-authority duplicate's provenance onto the
+//     surviving canonical, archive the duplicate, stamp the canonical's reserved dedup_key,
+//     + write a system audit row. (G-T14-3 replaced the earlier silent archive that orphaned
+//     the duplicate's provenance.)
 //   • Otherwise ROUTE TO REVIEW: flag the duplicate as status_state='manual_candidate' so it
 //     surfaces in the EXISTING T34 QA queue for a human to confirm/reject (that human action
 //     IS audited, via app/admin/qa-queue). We never guess a merge.
@@ -28,6 +31,7 @@ import {
 import type { AnthropicBatchClient, BatchRequest } from './anthropic-client';
 import { runBatch } from './batch';
 import { withServiceTransaction } from './db';
+import { mergeOccurrencesTx } from './dedup-merge';
 import { advanceWatermark, recordDecision, recordNonAdvancingRun, runTimestamp, watermarkPredicate } from './watermark';
 import {
   DEDUP_OUTPUT_CONFIG,
@@ -265,20 +269,11 @@ export async function detectDedupCandidates(limit = configMaxCandidates()): Prom
 export async function applyDedupDecision(candidate: DedupCandidate, decision: DedupDecision): Promise<boolean> {
   return withServiceTransaction(async (client: PoolClient) => {
     if (decision.action === 'auto_merge') {
-      // Archive the duplicate (idempotent: only if still live) …
-      const archived = await client.query(
-        `UPDATE activity_occurrence
-            SET archived_at = now(), last_checked_at = now()
-          WHERE id = $1 AND archived_at IS NULL`,
-        [decision.duplicateId]
-      );
-      // … and stamp the surviving canonical's reserved dedup_key (idempotent: only if unset).
-      await client.query(
-        `UPDATE activity_occurrence
-            SET dedup_key = $2, last_checked_at = now()
-          WHERE id = $1 AND dedup_key IS NULL`,
-        [decision.canonicalId, `dedup:v1:${decision.canonicalId}`]
-      );
+      // Real provenance-preserving merge (G-T14-3): re-point the duplicate's provenance
+      // rows onto the canonical, THEN archive the duplicate + stamp the canonical's
+      // dedup_key — instead of the original silent archive that orphaned the duplicate's
+      // provenance. Idempotent / concurrency-safe via mergeOccurrencesTx's claim guard.
+      const outcome = await mergeOccurrencesTx(client, decision.canonicalId, decision.duplicateId);
       await recordDecision(
         {
           jobName: JOB_NAMES.dedup,
@@ -289,11 +284,16 @@ export async function applyDedupDecision(candidate: DedupCandidate, decision: De
           action: 'auto_merge',
           deterministicScore: decision.deterministicScore,
           llmConfidence: decision.llmConfidence,
-          detail: { reason: decision.reason, canonical: decision.canonicalId },
+          detail: {
+            reason: decision.reason,
+            canonical: decision.canonicalId,
+            mergeStatus: outcome.status,
+            provenanceMoved: outcome.provenanceMoved,
+          },
         },
         client
       );
-      return (archived.rowCount ?? 0) > 0;
+      return outcome.status === 'merged';
     }
 
     if (decision.action === 'route_to_review') {

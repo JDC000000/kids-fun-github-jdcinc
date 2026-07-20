@@ -18,6 +18,20 @@ export function isReviewIntent(v: string | undefined): v is ReviewIntent {
   return typeof v === 'string' && (REVIEW_INTENTS as readonly string[]).includes(v);
 }
 
+/**
+ * The two decisions on a flagged dedup pair (G-T34-6):
+ *   • 'merge'        — confirm the duplicate; merge it into the canonical (provenance
+ *                      preserved) and archive it (G-T14-3);
+ *   • 'reject_merge' — "not a duplicate"; keep BOTH records live & separate (confirm the
+ *                      candidate so it leaves the queue). Never archives.
+ */
+export const DEDUP_INTENTS = ['merge', 'reject_merge'] as const;
+export type DedupIntent = (typeof DEDUP_INTENTS)[number];
+
+export function isDedupIntent(v: string | undefined): v is DedupIntent {
+  return typeof v === 'string' && (DEDUP_INTENTS as readonly string[]).includes(v);
+}
+
 export const MAX_REVIEW_NOTE = 1000;
 
 export type ReviewNoteResult = { ok: true; note: string | null } | { ok: false; error: string };
