@@ -5,18 +5,18 @@
 // ONLY the user-editable columns of user_profile (0007_user_admin.sql):
 //   • home_postal      — a saved Canadian postal code (Metro Vancouver focus),
 //                         or null/'' to clear it.
-//   • saved_child_ages — the parent's children's ages, in MONTHS (the schema's
-//                         canonical unit; matches occurrence_age).
 //   • email_opt_in     — marketing/notification opt-in flag.
-// Identity columns (id, google_identity) and the geocoded home_geo are NOT
-// editable here by design — see the Task 24 findings doc.
+// saved_child_ages was REMOVED as an editable field by F-8 (PIPEDA / Round 25 Task
+// WW): the app no longer collects children's ages, so the key is now treated like
+// any other unknown field (rejected) — see the Task WW findings doc. Identity
+// columns (id, google_identity) and the geocoded home_geo are NOT editable here
+// by design — see the Task 24 findings doc.
 
 /** The validated, normalized set of fields a user may change on their profile.
  *  A key is PRESENT only when the caller sent it (PATCH semantics: absent = leave
  *  as-is). `home_postal: null` is a meaningful value — "clear my saved postal". */
 export interface ProfilePatch {
   home_postal?: string | null;
-  saved_child_ages?: number[];
   email_opt_in?: boolean;
 }
 
@@ -25,10 +25,7 @@ export type ParseResult =
   | { ok: false; error: string };
 
 // Constraints (exported so tests and the UI can reference the same limits).
-export const EDITABLE_KEYS = ['home_postal', 'saved_child_ages', 'email_opt_in'] as const;
-export const MAX_CHILD_AGES = 12; // a generous cap on children per profile
-export const AGE_MIN_MONTHS = 0;
-export const AGE_MAX_MONTHS = 18 * 12; // 216 months = 18 years
+export const EDITABLE_KEYS = ['home_postal', 'email_opt_in'] as const;
 export const MAX_POSTAL_LEN = 12;
 
 // Lenient Canadian postal-code shape: letter-digit-letter [space] digit-letter-digit.
@@ -91,27 +88,6 @@ export function parseProfilePatch(body: unknown): ParseResult {
     } else {
       return { ok: false, error: 'home_postal must be a string or null' };
     }
-  }
-
-  if ('saved_child_ages' in body) {
-    const v = body.saved_child_ages;
-    if (!Array.isArray(v)) {
-      return { ok: false, error: 'saved_child_ages must be an array of ages in months' };
-    }
-    if (v.length > MAX_CHILD_AGES) {
-      return { ok: false, error: `saved_child_ages may list at most ${MAX_CHILD_AGES} children` };
-    }
-    const ages: number[] = [];
-    for (const item of v) {
-      if (typeof item !== 'number' || !Number.isInteger(item)) {
-        return { ok: false, error: 'each age in saved_child_ages must be a whole number of months' };
-      }
-      if (item < AGE_MIN_MONTHS || item > AGE_MAX_MONTHS) {
-        return { ok: false, error: `each age must be between ${AGE_MIN_MONTHS} and ${AGE_MAX_MONTHS} months` };
-      }
-      ages.push(item);
-    }
-    patch.saved_child_ages = ages;
   }
 
   if ('email_opt_in' in body) {

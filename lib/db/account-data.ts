@@ -21,6 +21,7 @@
 // route change. Deletion is a small explicit list because FK order matters (child
 // rows before the parent user_profile); the ordering rule is documented inline.
 import { withUserContext, type UserScopedQuery } from './user-scoped-client';
+import { resolveRecipientEmail } from '../email/recipients';
 
 export const ACCOUNT_EXPORT_FORMAT = 'kids-fun/account-export';
 export const ACCOUNT_EXPORT_VERSION = 1;
@@ -40,11 +41,17 @@ const COLLECTORS: readonly DataCollector[] = [
   {
     section: 'profile',
     description:
-      'Your saved profile: postal code, children’s ages (in months), email opt-in, and account timestamps.',
+      'Your saved profile: postal code, children’s ages (in months, legacy — no longer collected), ' +
+      'email opt-in, your sign-in email, and account timestamps.',
     async collect(db, userId) {
       const rows = await db.query<Record<string, unknown>>(
+        // google_identity is intentionally NOT selected here: as of F-9 it is no
+        // longer stored (it only ever duplicated the auth.users email). We still
+        // owe the user their email under PIPEDA, so we resolve it live below via
+        // the same service-role path the weekly digest uses — never a stale copy.
+        // saved_child_ages IS still selected so legacy values (collection stopped
+        // in F-8) remain visible to the owner and fully exportable.
         `SELECT id,
-                google_identity,
                 home_postal,
                 saved_child_ages,
                 email_opt_in,
@@ -55,7 +62,13 @@ const COLLECTORS: readonly DataCollector[] = [
           WHERE id = $1`,
         [userId]
       );
-      return rows[0] ?? null;
+      const row = rows[0] ?? null;
+      if (!row) return null;
+      // Resolve the sign-in email on-demand (auth.users via the service-role admin
+      // API). Env-gated + non-throwing: in local/CI without a service-role key it
+      // returns null, exactly like the digest — the export stays consistent.
+      const { email } = await resolveRecipientEmail(userId);
+      return { ...row, email };
     },
   },
   {

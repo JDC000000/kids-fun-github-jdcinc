@@ -42,9 +42,11 @@ export default async function AccountPage() {
     loadError = true;
   }
 
+  // saved_child_ages is intentionally NOT passed to the form: F-8 (Round 25 Task
+  // WW) removed the children's-ages input, so the form no longer edits it. Any
+  // legacy value still stored stays visible via the data export below.
   const initial = {
     home_postal: profile?.home_postal ?? null,
-    saved_child_ages: profile?.saved_child_ages ?? [],
     email_opt_in: profile?.email_opt_in ?? false,
   };
 

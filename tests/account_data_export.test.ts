@@ -8,13 +8,24 @@
 // so a passing run proves the export can ONLY ever contain the caller's own rows.
 // The critical security property — two distinct users, no cross-contamination —
 // is asserted directly. Requires USER_DATABASE_URL; skips otherwise.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { exportUserData } from '../lib/db/account-data';
 import { ensureUserProfile, updateUserProfile } from '../lib/db/user-profile';
 import { createSavedSearch } from '../lib/db/saved-search';
 import { closeUserPool } from '../lib/db/user-scoped-client';
-import { closePool } from '../lib/db/client';
+import { closePool, query } from '../lib/db/client';
+
+// F-9: the export resolves the sign-in email on-demand (auth.users via the
+// service-role admin API) instead of reading the redundant stored google_identity
+// copy. Mock that resolver to a fixed address so we can assert the export carries
+// the live-resolved email without needing a real Supabase auth backend. The value
+// deliberately embeds no user id, so the cross-user isolation assertions below
+// (never contains the OTHER user's id) still hold.
+const RESOLVED_EMAIL = 'owner@example.com';
+vi.mock('../lib/email/recipients', () => ({
+  resolveRecipientEmail: vi.fn(async () => ({ email: 'owner@example.com', attempted: true })),
+}));
 
 const hasUserDb = Boolean(process.env.DATABASE_URL) && Boolean(process.env.USER_DATABASE_URL);
 
@@ -24,12 +35,17 @@ describe.skipIf(!hasUserDb)('exportUserData — owner-only data export (2 users)
 
   beforeAll(async () => {
     await ensureUserProfile(userA, 'a@example.com');
-    await updateUserProfile(userA, { home_postal: 'V6B 1A1', saved_child_ages: [24, 48], email_opt_in: true });
+    await updateUserProfile(userA, { home_postal: 'V6B 1A1', email_opt_in: true });
+    // Legacy saved_child_ages: seeded directly via the service pool to simulate a
+    // value stored BEFORE F-8 stopped collection. The app no longer writes this
+    // column; this proves the export STILL surfaces legacy values (PIPEDA).
+    await query('UPDATE user_profile SET saved_child_ages = $1 WHERE id = $2', [[24, 48], userA]);
     await createSavedSearch(userA, { name: 'A swim', params: { q: 'swim' } });
     await createSavedSearch(userA, { name: 'A gym', params: { q: 'gym' } });
 
     await ensureUserProfile(userB, 'b@example.com');
-    await updateUserProfile(userB, { home_postal: 'V5K 0A1', saved_child_ages: [12] });
+    await updateUserProfile(userB, { home_postal: 'V5K 0A1' });
+    await query('UPDATE user_profile SET saved_child_ages = $1 WHERE id = $2', [[12], userB]);
     await createSavedSearch(userB, { name: 'B art', params: { q: 'art' } });
   });
 
@@ -54,8 +70,14 @@ describe.skipIf(!hasUserDb)('exportUserData — owner-only data export (2 users)
     expect(profile).toBeTruthy();
     expect(profile!.id).toBe(userA);
     expect(profile!.home_postal).toBe('V6B 1A1');
+    // F-8: legacy children's-ages value (seeded pre-collection-stop) is STILL
+    // exported — a user is entitled to see what's stored, even legacy data.
     expect(profile!.saved_child_ages).toEqual([24, 48]);
     expect(profile!.email_opt_in).toBe(true);
+    // F-9: the sign-in email is resolved on-demand (not read from a stored copy),
+    // and the redundant google_identity column is no longer surfaced at all.
+    expect(profile!.email).toBe(RESOLVED_EMAIL);
+    expect('google_identity' in profile!).toBe(false);
 
     const searches = ex.data.saved_searches as Array<{ query_json: { name: string } }>;
     expect(searches).toHaveLength(2);
