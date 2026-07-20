@@ -107,12 +107,21 @@ describe('secondary category + suitability tag classification (G-T13-3)', () => 
   it('does not misfire on the QA-found unanchored category cases', () => {
     expect(detectCategorySignals({ title: 'history time with grandpa' })).not.toContain('storytime');
     expect(detectCategorySignals({ title: 'art display time' })).not.toContain('indoor_play');
+    expect(detectCategorySignals({ title: 'An Allegory Reading Circle' })).not.toContain('indoor_play'); // lego⊄allegory
     // miniature_train: "mini train"/"miniature trains" match, "mini training" does not
     expect(detectCategorySignals({ title: 'mini training session' })).not.toContain('miniature_train');
     expect(detectCategorySignals({ title: 'Miniature Train Rides' })).toContain('miniature_train');
     // a "history time" talk must also not get the auto category-implied 'indoor' tag
     expect(classifySuitabilityTags({ title: 'history time with grandpa', costStatus: 'unknown' })).not.toContain(
       'indoor'
+    );
+    // infant⊄infantry (trailing collision — needs the (?!ry) guard, not just leading \b);
+    // real infant references still tag stroller_friendly.
+    expect(classifySuitabilityTags({ title: 'Infantry Drill History Talk', costStatus: 'unknown' })).not.toContain(
+      'stroller_friendly'
+    );
+    expect(classifySuitabilityTags({ title: 'Infants Welcome Playgroup', costStatus: 'unknown' })).toContain(
+      'stroller_friendly'
     );
   });
 

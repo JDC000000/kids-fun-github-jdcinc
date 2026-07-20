@@ -78,7 +78,8 @@ const CATEGORY_SIGNAL_RULES: SignalRule[] = [
 
 const SUITABILITY_TAG_RULES: SignalRule[] = [
   { key: 'drop_in', test: /\bdrop[\s-]?in|\bno\s+registration|\bno\s+booking|\bjust\s+show\s+up/ },
-  { key: 'stroller_friendly', test: /\bstroller|\bbabytime|\bbaby\b|\binfant/ },
+  // (?!ry) so "infant(s)"/"infant room" tag but "infantry" (military-history) does not.
+  { key: 'stroller_friendly', test: /\bstroller|\bbabytime|\bbaby\b|\binfant(?!ry)/ },
   // Negative lookbehinds guard the accessibility semantics: "inaccessible",
   // "un/non/non-accessible" and "maladaptive" must NOT be tagged accessible.
   { key: 'accessible', test: /(?<!in)(?<!un)(?<!non)(?<!non-)accessible|\bwheelchair|(?<!mal)adaptive/ },
