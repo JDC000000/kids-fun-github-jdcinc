@@ -8,8 +8,8 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { resolveSessionAdmin } from '../_lib/gate';
-import { isReviewIntent, parseReviewNote } from './_lib/vocab';
-import { reviewOccurrence } from './_lib/data';
+import { isReviewIntent, isDedupIntent, parseReviewNote } from './_lib/vocab';
+import { reviewOccurrence, confirmDedupMerge, rejectDedupPair } from './_lib/data';
 
 export interface ReviewActionState {
   ok?: boolean;
@@ -61,6 +61,66 @@ export async function reviewAction(formData: FormData): Promise<ReviewActionStat
 
   revalidatePath('/admin/qa-queue');
   redirect(`/admin/qa-queue?flash=${intent === 'confirm' ? 'confirmed' : 'rejected'}`);
+}
+
+/**
+ * G-T34-6 — apply a dedup-pair decision to a flagged `manual_candidate` row.
+ *   • intent 'merge'        → confirmDedupMerge (real G-T14-3 merge: provenance preserved,
+ *                             duplicate archived) — needs both duplicateId + canonicalId;
+ *   • intent 'reject_merge' → rejectDedupPair ("not a duplicate": both kept live & separate).
+ * Same session-admin gate + audit posture as reviewAction (reused, not forked). On success:
+ * revalidate + redirect with a flash; on failure: return a banner (no navigation).
+ */
+export async function dedupReviewAction(formData: FormData): Promise<ReviewActionState> {
+  const admin = await resolveSessionAdmin();
+  if (!admin) return NEEDS_SESSION_ADMIN;
+
+  const duplicateId = str(formData.get('duplicateId'));
+  if (!duplicateId) return { ok: false, message: 'Missing record id — reload the queue.' };
+
+  const intent = str(formData.get('intent'));
+  if (!isDedupIntent(intent)) return { ok: false, message: 'Choose Confirm merge or Not a duplicate.' };
+
+  const noteParsed = parseReviewNote(str(formData.get('note')));
+  if (!noteParsed.ok) return { ok: false, message: 'Please shorten the note.', noteError: noteParsed.error };
+
+  if (intent === 'merge') {
+    const canonicalId = str(formData.get('canonicalId'));
+    if (!canonicalId) return { ok: false, message: 'Missing canonical id — reload the queue.' };
+
+    let result;
+    try {
+      result = await confirmDedupMerge(duplicateId, canonicalId, noteParsed.note, admin.userId);
+    } catch {
+      return { ok: false, message: 'Could not apply the merge — reload the queue and try again.' };
+    }
+    if (!result.ok) {
+      return {
+        ok: false,
+        message:
+          result.reason === 'not_a_pair'
+            ? 'These records are not a flagged duplicate pair — reload the queue.'
+            : result.reason === 'canonical_unavailable'
+              ? 'The canonical listing is no longer available — reload the queue.'
+              : 'That record was already handled by someone else — reload the queue.',
+      };
+    }
+    revalidatePath('/admin/qa-queue');
+    redirect('/admin/qa-queue?flash=merged');
+  }
+
+  // reject_merge — keep both records separate.
+  let result;
+  try {
+    result = await rejectDedupPair(duplicateId, noteParsed.note, admin.userId);
+  } catch {
+    return { ok: false, message: 'Could not apply the decision — reload the queue and try again.' };
+  }
+  if (!result.ok) {
+    return { ok: false, message: 'That record was already handled by someone else — reload the queue.' };
+  }
+  revalidatePath('/admin/qa-queue');
+  redirect('/admin/qa-queue?flash=kept_separate');
 }
 
 function str(v: FormDataEntryValue | null): string {
