@@ -43,6 +43,7 @@ import {
 import { recordProvenance } from '../../worker/core/provenance';
 import { LibraryAdapter, LIBRARY_SYSTEMS } from '../../worker/adapters/library';
 import { CityCalendarAdapter, CITY_CALENDARS } from '../../worker/adapters/citycalendar';
+import { VenueAdapter, getVenue } from '../../worker/adapters/venue';
 
 const ORIGINAL_ENV = { ...process.env };
 afterEach(() => {
@@ -125,6 +126,22 @@ describe('G-T35-3 ingestion contract carries source links, not editorial bodies'
       expect(typeof r.sourceUrl).toBe('string');
       expect(String(r.sourceUrl)).toMatch(/^https?:\/\//);
       for (const f of BODY_FIELDS) expect(r, `no ${f} republication field`).not.toHaveProperty(f);
+    }
+  });
+
+  it('venue adapter emits a sourceUrl per record and no editorial-body field', async () => {
+    const adapter = new VenueAdapter(getVenue('vancouver-aquarium')!);
+    const records = await recordsFor(adapter);
+    expect(records.length).toBeGreaterThan(0);
+    for (const r of records) {
+      expect(typeof r.sourceUrl).toBe('string');
+      expect(String(r.sourceUrl)).toMatch(/^https?:\/\//);
+      for (const f of BODY_FIELDS) expect(r, `no ${f} republication field`).not.toHaveProperty(f);
+      // open_hours_state / title are short facts, never article-length copy.
+      for (const key of ['title', 'openHoursState', 'ageText']) {
+        const v = r[key];
+        if (typeof v === 'string') expect(v.length, `${key} is a short fact`).toBeLessThanOrEqual(300);
+      }
     }
   });
 
