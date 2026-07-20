@@ -15,7 +15,8 @@ import { resolveSeries } from './series';
 import { resolveVenue } from './venue';
 import { upsertOccurrence } from './upsert';
 import { recordProvenance } from './provenance';
-import { confidenceLabelForCategory, resolvePrimaryCategoryId } from './taxonomy';
+import { classifyPrimaryCategory, resolvePrimaryCategoryId, applyOccurrenceCategoryTags } from './taxonomy';
+import { computeConfidence, loadSourceConfidenceContext, statusForConfidence } from './confidence';
 import { parseAgeText, computeAgeBandMatches, loadAgeBands, upsertOccurrenceAge } from './age';
 
 export interface IngestSummary {
@@ -27,6 +28,12 @@ export interface IngestSummary {
   provenanceRows: number;
   /** Occurrences whose free-text age wording was deterministically resolved into a structured band range. */
   ageResolved: number;
+  /** G-T13-3: secondary-category rows written into occurrence_category_tag this run. */
+  secondaryCategoriesWritten: number;
+  /** G-T13-3: suitability-tag rows written into occurrence_category_tag this run. */
+  suitabilityTagsWritten: number;
+  /** G-T13-6: occurrences the BR-13 confidence gate routed to needs_review (low/unscored). */
+  lowConfidenceFlagged: number;
   errors: string[];
 }
 
@@ -58,6 +65,9 @@ export async function ingestSource(
   let occurrencesCreated = 0;
   let provenanceRows = 0;
   let ageResolved = 0;
+  let secondaryCategoriesWritten = 0;
+  let suitabilityTagsWritten = 0;
+  let lowConfidenceFlagged = 0;
 
   try {
     const raw = await adapter.fetch();
@@ -69,6 +79,11 @@ export async function ingestSource(
 
     // Seeded age bands, loaded once per run for deterministic age normalisation.
     const ageBands = await loadAgeBands(pool);
+
+    // BR-13 confidence context — authority tier, cadence and rolling source-health,
+    // loaded ONCE per run (not per record). The in-flight check_run is 'running',
+    // which the loader's stat filters exclude, so this never counts itself.
+    const confidenceCtx = await loadSourceConfidenceContext(pool, sourceId);
 
     for (const record of records) {
       recordsFound += 1;
@@ -94,19 +109,53 @@ export async function ingestSource(
         if (series.created) seriesCreated += 1;
 
         const primaryCategoryId = await resolvePrimaryCategoryId(pool, record);
+        const primaryClass = classifyPrimaryCategory(record);
+
+        // Deterministic age parse first — its resolution feeds parse_quality below.
+        // (The occurrence_age row itself needs the occurrenceId, so it's written
+        // after the upsert.) Ambiguous wording resolves to null bounds; absent
+        // wording is a neutral parse signal, not a failure.
+        const ageParse = record.ageText ? parseAgeText(record.ageText) : null;
+
+        // BR-13: real confidence = authority × parse_quality × freshness × volatility.
+        // The gate routes low/unscored records to needs_review (hidden until reviewed)
+        // instead of the old unconditional 'confirmed'.
+        const confidence = computeConfidence({
+          authorityTier: confidenceCtx.authorityTier,
+          parseQuality: {
+            categoryCertainty: primaryClass.certainty,
+            explicitCategoryHint: primaryClass.source === 'hint',
+            hasStartDatetime: Boolean(record.startDatetimeUtc),
+            hasOpenHours: Boolean(record.openHoursState),
+            costStatus: record.costStatus,
+            ageResolved: ageParse ? ageParse.resolved : null,
+          },
+          lastCheckAtMs: confidenceCtx.lastCheckAtMs,
+          cadenceSeconds: confidenceCtx.cadenceSeconds,
+          healthScore: confidenceCtx.healthScore,
+          nowMs: Date.now(),
+        });
+        const statusState = statusForConfidence(confidence.label);
+        if (statusState === 'needs_review') lowConfidenceFlagged += 1;
+
         const { occurrenceId, created } = await upsertOccurrence(pool, series.seriesId, record, {
           primaryCategoryId,
-          statusState: 'confirmed',
-          confidenceLabel: confidenceLabelForCategory(record),
+          statusState,
+          confidenceLabel: confidence.label,
         });
         occurrencesUpserted += 1;
         if (created) occurrencesCreated += 1;
+
+        // G-T13-3: write the secondary categories + suitability tags this record
+        // signals into occurrence_category_tag, alongside the primary above.
+        const tagResult = await applyOccurrenceCategoryTags(pool, occurrenceId, record);
+        secondaryCategoriesWritten += tagResult.secondaryCategories;
+        suitabilityTagsWritten += tagResult.suitabilityTags;
 
         // Deterministic age normalisation: resolve the raw free-text age wording
         // into a structured occurrence_age row so the age search facet works.
         // Ambiguous wording is left unresolved (null bounds) for the future
         // LLM-fallback; unknown/absent wording writes no row (search "don't hide").
-        const ageParse = record.ageText ? parseAgeText(record.ageText) : null;
         if (ageParse) {
           await upsertOccurrenceAge(pool, occurrenceId, ageParse, computeAgeBandMatches(ageParse, ageBands));
           if (ageParse.resolved) ageResolved += 1;
@@ -146,6 +195,9 @@ export async function ingestSource(
     occurrencesCreated,
     provenanceRows,
     ageResolved,
+    secondaryCategoriesWritten,
+    suitabilityTagsWritten,
+    lowConfidenceFlagged,
     errors,
   };
 }
