@@ -81,8 +81,11 @@ const SUITABILITY_TAG_RULES: SignalRule[] = [
   // (?!ry) so "infant(s)"/"infant room" tag but "infantry" (military-history) does not.
   { key: 'stroller_friendly', test: /\bstroller|\bbabytime|\bbaby\b|\binfant(?!ry)/ },
   // Negative lookbehinds guard the accessibility semantics: "inaccessible",
-  // "un/non/non-accessible" and "maladaptive" must NOT be tagged accessible.
-  { key: 'accessible', test: /(?<!in)(?<!un)(?<!non)(?<!non-)accessible|\bwheelchair|(?<!mal)adaptive/ },
+  // "un-/un/non-/non-accessible" and "maladaptive" must NOT be tagged accessible.
+  // Both hyphenated and unhyphenated negations need their own lookbehind because
+  // each only inspects the exact chars immediately before "accessible" (so "un-"
+  // and "un", "non-" and "non" are distinct cases).
+  { key: 'accessible', test: /(?<!in)(?<!un)(?<!non)(?<!non-)(?<!un-)accessible|\bwheelchair|(?<!mal)adaptive/ },
   { key: 'outdoor', test: /\boutdoor|\bpark|\btrail|\bnature|\bplayground/ },
   { key: 'indoor', test: /\bindoor|\bgymnasium/ },
 ];

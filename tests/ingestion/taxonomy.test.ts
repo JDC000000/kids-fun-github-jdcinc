@@ -134,6 +134,7 @@ describe('secondary category + suitability tag classification (G-T13-3)', () => 
       'A maladaptive behavior workshop',
       'Non-accessible venue, sorry',
       'unaccessible washrooms',
+      'Un-accessible entrance', // hyphenated form needs its own (?<!un-) lookbehind
     ]) {
       expect(classifySuitabilityTags({ title, costStatus: 'unknown' })).not.toContain('accessible');
     }
