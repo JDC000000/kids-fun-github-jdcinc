@@ -235,14 +235,16 @@ describe.skipIf(!hasDb)('Tiered scheduler (G-T5-3)', () => {
   it('a tick enqueues jobs only for due sources, reading cadence from the source table', async () => {
     const pool = getPool();
     const suffix = crypto.randomUUID();
+    // ingestion_method='auto' is explicit: these are auto-crawled sources. The DB default
+    // is 'manual', which the tiered scheduler (G-T15-2) correctly excludes as operator-fed.
     const [due] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, terms_status, robots_status, baseline_cadence, next_check_at)
-       VALUES ('noop', $1, 'allowed', 'allowed', '1 day', now() - interval '1 minute') RETURNING id`,
+      `INSERT INTO source (family, name, terms_status, robots_status, ingestion_method, baseline_cadence, next_check_at)
+       VALUES ('noop', $1, 'allowed', 'allowed', 'auto', '1 day', now() - interval '1 minute') RETURNING id`,
       [`Due Source ${suffix}`]
     );
     const [notDue] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, terms_status, robots_status, baseline_cadence, next_check_at)
-       VALUES ('noop', $1, 'allowed', 'allowed', '1 day', now() + interval '1 day') RETURNING id`,
+      `INSERT INTO source (family, name, terms_status, robots_status, ingestion_method, baseline_cadence, next_check_at)
+       VALUES ('noop', $1, 'allowed', 'allowed', 'auto', '1 day', now() + interval '1 day') RETURNING id`,
       [`Not Due Source ${suffix}`]
     );
 

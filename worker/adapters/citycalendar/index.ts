@@ -14,10 +14,10 @@
 // gate (source terms_status='allowed' + robots_status='allowed') AND the
 // env allow-list KIDS_FUN_LIVE_CITY_CALENDARS=<calendarKey>.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
+import { politeFetch } from '../../health/policy';
 import { CITY_CALENDARS, getCityCalendar, type CityCalendarConfig, type CityCalendarVenueGeo } from './config';
 
 const DEFAULT_LIMIT = 40;
-const USER_AGENT = 'KidsFunBot/0.1 (+https://kids-fun-staging-jdci-nc.vercel.app; contact: jon@crhq.ai)';
 
 /** One Trumba published-calendar JSON event (fields we consume). */
 interface TrumbaEvent {
@@ -294,9 +294,14 @@ export class CityCalendarAdapter implements Adapter {
 }
 
 async function fetchTrumbaFeed(config: CityCalendarConfig): Promise<TrumbaEvent[]> {
-  const response = await fetch(new URL(config.feedUrl), {
-    headers: { accept: 'application/json', 'user-agent': USER_AGENT },
-  });
+  // Routed through the polite fetch seam (G-T15-5): identified UA + conditional headers,
+  // per-source rate limiting, and 403/429 backoff — the wiring the audit flagged as missing.
+  const response = await politeFetch(
+    `city_calendar::${config.calendarKey}`,
+    new URL(config.feedUrl),
+    { headers: { accept: 'application/json' } },
+    { family: 'city_calendar' }
+  );
   if (!response.ok) {
     throw new Error(`City calendar feed fetch failed: ${response.status} ${response.statusText}`);
   }

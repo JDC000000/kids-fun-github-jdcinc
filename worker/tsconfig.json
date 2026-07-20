@@ -22,7 +22,8 @@
     "src/**/*.ts",
     "core/**/*.ts",
     "adapters/**/*.ts",
-    "scheduler/**/*.ts"
+    "scheduler/**/*.ts",
+    "health/**/*.ts"
   ],
   "exclude": [
     "node_modules",
