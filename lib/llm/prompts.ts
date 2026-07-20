@@ -164,7 +164,140 @@ export interface AgeVerdict {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fail-closed parsing shared by both use cases.
+// Use case 3 — LLM category + cost extraction fallback (G-T13-5, category/cost extension).
+//
+// The deterministic scaffolding (worker/core/taxonomy.ts classifyPrimaryCategory) only maps
+// clear structured hints / title words into a primary category; everything else lands on the
+// generic 'class_program' fallback. And worker/core/adapter.ts leaves cost as 'unknown' when
+// the source exposes no structured price. This use case is the residue: given the free-text
+// listing, place it in a MORE SPECIFIC category and/or extract its cost — or say it cannot.
+// Same fail-closed philosophy as the age fallback: a low-confidence / unparseable answer is a
+// no-op, never a guess written to the DB.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The primary-category keys the model may assign. This is the SPECIFIC subset of
+ * worker/core/taxonomy.ts's primary-eligible set — it deliberately EXCLUDES 'class_program',
+ * which is the generic fallback the deterministic parser already applies: the model returns
+ * `null` for a generic class/program (no improvement possible) and a key here only when it can
+ * place the listing more specifically. Source of truth for the full set is
+ * worker/core/taxonomy.ts + the category seed; any drift fails closed (parseCategoryCostVerdict
+ * rejects an unknown key, and the key→id lookup returns null → no-op).
+ */
+export const ALLOWED_CATEGORY_KEYS = [
+  'open_gym',
+  'public_swim',
+  'skate',
+  'storytime',
+  'indoor_play',
+  'museum_venue',
+  'attraction',
+  'festival_event',
+  'outdoor_park',
+] as const;
+
+export type AllowedCategoryKey = (typeof ALLOWED_CATEGORY_KEYS)[number];
+const ALLOWED_CATEGORY_KEY_SET: ReadonlySet<string> = new Set(ALLOWED_CATEGORY_KEYS);
+
+/** Cost statuses the model may report. 'unknown' is NOT here — it is the input state, not an output. */
+export const ALLOWED_COST_STATUSES = ['free', 'known', 'check_source'] as const;
+export type AllowedCostStatus = (typeof ALLOWED_COST_STATUSES)[number];
+const ALLOWED_COST_STATUS_SET: ReadonlySet<string> = new Set(ALLOWED_COST_STATUSES);
+
+export const CATEGORY_COST_SYSTEM_PROMPT = `You classify and price kids-activity listings for a Metro Vancouver family-activity directory.
+
+A deterministic parser has already handled the clear cases. You are ONLY given the residue it could not confidently resolve: listings whose primary CATEGORY fell back to the generic "Class / Program" bucket (or none at all), and/or whose COST is still unknown. From the listing's free text (its name and, when present, a short description), do two independent jobs — assign a more specific category, and extract the cost — or, for either, say you cannot.
+
+CATEGORY — choose exactly one of these specific keys, or null:
+- "open_gym"        — drop-in gymnasium / open gym time.
+- "public_swim"     — public, family, or parent-child swim (a pool session open to the public).
+- "skate"           — public or family ice/roller skating session.
+- "storytime"       — library or bookshop storytime, babytime, toddler reading circle.
+- "indoor_play"     — indoor free play, drop-in play space, LEGO/DUPLO play, play cafe.
+- "museum_venue"    — museum, gallery, science centre, cultural venue visit/exhibit.
+- "attraction"      — a paid family attraction (aquarium, theme/adventure park, mini-golf, etc.).
+- "festival_event"  — a festival or one-off special community event.
+- "outdoor_park"    — park, nature centre, farm, trail, or other outdoor-space activity.
+Return null for the category when the best fit is a generic class, lesson, camp, workshop, or program with no more specific type above — the directory already defaults those to "Class / Program", so a null here is correct, not a failure. Also return null when the text is too thin to place confidently.
+
+COST — report cost_status as one of:
+- "free"          — explicitly free / no charge / no cost to attend.
+- "known"         — a concrete price or price range is stated. Give cost_min_cad, and cost_max_cad for a range (both in Canadian dollars, numbers only, drop-in/admission price preferred).
+- "check_source"  — there IS a cost but no number is stated (e.g. "see website for pricing", "fees apply", "registration required"). Provide no amounts.
+- null            — no cost information at all, or you cannot tell.
+Amounts are per-child drop-in/admission where possible. Use 0 for a free activity's bounds. Never invent a number you did not read.
+
+Be conservative and calibrate two SEPARATE confidences — one for the category, one for the cost — because we may accept one and reject the other. A wrong category can mis-file a listing and a wrong cost can mislead a parent, so when unsure report LOW confidence (and null) for that field rather than guessing.
+
+Respond with ONLY a single JSON object, no prose, matching exactly:
+{
+  "primaryCategory": string|null,     // one of the specific keys above, or null
+  "categoryConfidence": number,       // calibrated confidence in [0,1] for primaryCategory
+  "costStatus": "free"|"known"|"check_source"|null,
+  "costMinCad": number|null,          // required for "known"; 0 for "free"; else null
+  "costMaxCad": number|null,          // upper bound of a known range, else null
+  "costConfidence": number,           // calibrated confidence in [0,1] for the cost fields
+  "reason": string                    // one short sentence, no personal data
+}
+
+Examples:
+- name "Family Storytime", description "Songs and books for ages 0-5. Free drop-in." → {"primaryCategory": "storytime", "categoryConfidence": 0.95, "costStatus": "free", "costMinCad": 0, "costMaxCad": 0, "costConfidence": 0.95, "reason": "Library storytime, explicitly free drop-in."}
+- name "Aquarium Family Day", description "Admission $28 adults, $18 child." → {"primaryCategory": "attraction", "categoryConfidence": 0.9, "costStatus": "known", "costMinCad": 18, "costMaxCad": 28, "costConfidence": 0.85, "reason": "Paid aquarium attraction with stated admission range."}
+- name "Pottery Workshop", description "Register online; fees apply." → {"primaryCategory": null, "categoryConfidence": 0.9, "costStatus": "check_source", "costMinCad": null, "costMaxCad": null, "costConfidence": 0.8, "reason": "Generic program (no specific category); a fee applies but no amount is stated."}
+- name "Community Event" → {"primaryCategory": null, "categoryConfidence": 0.4, "costStatus": null, "costMinCad": null, "costMaxCad": null, "costConfidence": 0.3, "reason": "Too little detail to place a category or a cost."}`;
+
+export const CATEGORY_COST_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['primaryCategory', 'categoryConfidence', 'costStatus', 'costMinCad', 'costMaxCad', 'costConfidence', 'reason'],
+  properties: {
+    primaryCategory: { type: ['string', 'null'], enum: [...ALLOWED_CATEGORY_KEYS, null] },
+    categoryConfidence: { type: 'number' },
+    costStatus: { type: ['string', 'null'], enum: [...ALLOWED_COST_STATUSES, null] },
+    costMinCad: { type: ['number', 'null'] },
+    costMaxCad: { type: ['number', 'null'] },
+    costConfidence: { type: 'number' },
+    reason: { type: 'string' },
+  },
+};
+
+export const CATEGORY_COST_OUTPUT_CONFIG: OutputConfig = { format: { type: 'json_schema', schema: CATEGORY_COST_OUTPUT_SCHEMA } };
+
+/** The stable, cacheable system prefix for the category+cost use case (1h TTL breakpoint). */
+export function buildCategoryCostSystem(): SystemBlock[] {
+  return [{ type: 'text', text: CATEGORY_COST_SYSTEM_PROMPT, cache_control: ONE_HOUR_CACHE }];
+}
+
+export interface CategoryCostRecordContent {
+  activityName: string;
+  description: string | null;
+  /** Which fields this record actually needs help with (passed through for the model's context). */
+  needsCategory: boolean;
+  needsCost: boolean;
+}
+
+/** The VOLATILE per-record user content (no cache_control). */
+export function buildCategoryCostUser(rec: CategoryCostRecordContent): UserBlock[] {
+  const payload = {
+    activity_name: rec.activityName,
+    description: rec.description ?? '',
+    resolve: [rec.needsCategory ? 'category' : null, rec.needsCost ? 'cost' : null].filter(Boolean),
+  };
+  return [{ type: 'text', text: `Classify and price this listing:\n${JSON.stringify(payload)}` }];
+}
+
+export interface CategoryCostVerdict {
+  primaryCategory: AllowedCategoryKey | null;
+  categoryConfidence: number;
+  costStatus: AllowedCostStatus | null;
+  costMinCad: number | null;
+  costMaxCad: number | null;
+  costConfidence: number;
+  reason: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fail-closed parsing shared by all use cases.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Extract the first text block's string from a succeeded batch result message. */
@@ -236,4 +369,46 @@ function normaliseMonths(v: unknown): number | null | undefined {
   if (v === null || v === undefined) return null;
   if (typeof v !== 'number' || !Number.isFinite(v) || !Number.isInteger(v)) return undefined;
   return v;
+}
+
+/**
+ * Normalise a CAD amount for the cost fields. A legitimate absent amount → null; a valid,
+ * finite, non-negative number → that number; anything else (wrong type, NaN/∞, negative) is
+ * treated as "no trustworthy amount" and collapses to null (fail-closed — the decide step
+ * then declines to apply a 'known' cost that lacks a sound minimum).
+ */
+function normaliseCad(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null;
+  return v;
+}
+
+/**
+ * Parse a category+cost verdict, fail-closed. The whole verdict is discarded (null) only when
+ * the response is unusable at the structural level (non-JSON, or a missing/invalid confidence).
+ * Individual fields degrade INDEPENDENTLY: an unknown/mis-typed category or cost_status
+ * collapses to null (so the decide step simply won't apply that one field) while a valid
+ * sibling field survives — the two extractions are accepted or rejected separately.
+ */
+export function parseCategoryCostVerdict(text: string | null): CategoryCostVerdict | null {
+  const obj = parseJsonObject(text);
+  if (!obj) return null;
+  const categoryConfidence = clampConfidence(obj.categoryConfidence);
+  const costConfidence = clampConfidence(obj.costConfidence);
+  if (categoryConfidence === null || costConfidence === null) return null;
+
+  const primaryCategory =
+    typeof obj.primaryCategory === 'string' && ALLOWED_CATEGORY_KEY_SET.has(obj.primaryCategory)
+      ? (obj.primaryCategory as AllowedCategoryKey)
+      : null; // null / generic 'class_program' / unknown key / wrong type → no category signal
+
+  const costStatus =
+    typeof obj.costStatus === 'string' && ALLOWED_COST_STATUS_SET.has(obj.costStatus)
+      ? (obj.costStatus as AllowedCostStatus)
+      : null; // 'unknown' is an input state, not a valid output → nulls here too
+
+  const costMinCad = normaliseCad(obj.costMinCad);
+  const costMaxCad = normaliseCad(obj.costMaxCad);
+  const reason = typeof obj.reason === 'string' ? obj.reason.slice(0, 500) : '';
+  return { primaryCategory, categoryConfidence, costStatus, costMinCad, costMaxCad, costConfidence, reason };
 }

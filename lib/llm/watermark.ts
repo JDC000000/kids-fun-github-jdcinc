@@ -76,7 +76,7 @@ export async function recordNonAdvancingRun(
 
 export interface DecisionRow {
   jobName: string;
-  useCase: 'dedup' | 'age';
+  useCase: 'dedup' | 'age' | 'category_cost';
   targetId: string;
   relatedId?: string | null;
   customId: string;

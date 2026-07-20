@@ -59,7 +59,8 @@ describe('POST /api/llm/batch/run', () => {
     expect(body.dryRun).toBe(true);
     expect(body.enabled).toBe(false);
     expect(Array.isArray(body.results)).toBe(true);
-    expect(body.results).toHaveLength(2);
+    expect(body.results).toHaveLength(3);
+    expect(body.results.map((r: { useCase: string }) => r.useCase)).toEqual(['dedup', 'age', 'category_cost']);
   });
 
   it.skipIf(!hasDb)('honours a useCases filter', async () => {
