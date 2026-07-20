@@ -94,8 +94,12 @@ describe('G-T35-2 (A) live adapters issue only credential-free read-only GETs', 
 
     expect(calls.length, 'exactly one paginated GET per fetch').toBe(1);
     expectCredentialFreeGet(calls[0]);
-    // Public ToS-permitted RSS feed host — not a login/checkout/account endpoint.
-    expect(calls[0].url).toMatch(/gateway\.bibliocommons\.com/);
+    // Must be the ToS-permitted RSS/XML feed PATH specifically, not merely the
+    // gateway host. The prohibited JSON gateway (`…/v2/libraries/<slug>/events`)
+    // lives on the SAME host, so asserting only `gateway.bibliocommons.com` would
+    // let a silent regression back onto the JSON gateway pass. Pin the `/rss/`
+    // events segment so only the RSS feed satisfies this tripwire.
+    expect(calls[0].url).toMatch(/gateway\.bibliocommons\.com\/v2\/libraries\/[^/]+\/rss\/events/);
     expect(calls[0].url).not.toMatch(/login|signin|account|checkout|cart/i);
   });
 

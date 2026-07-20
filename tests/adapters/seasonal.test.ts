@@ -45,6 +45,15 @@ describe('classifyStatusText', () => {
     { text: 'The train is temporarily closed and not currently running.', expected: 'suspended' },
     { text: 'Service is suspended until further notice.', expected: 'suspended' },
     { text: 'The lifts are closed today due to high winds and poor weather.', expected: 'suspended', weather: true },
+    // Plural weather nouns without the "weather" bailout word — these exercise the
+    // WEATHER_HOLD_RE plural gap (winds/storms/rains) directly. Before the fix each
+    // fell through to 'unknown' (or matched 'suspended' with weather=false).
+    { text: 'The chairlift is closed today due to high winds.', expected: 'suspended', weather: true },
+    { text: 'Rides suspended due to incoming storms in the area.', expected: 'suspended', weather: true },
+    { text: 'Closed due to heavy rains overnight.', expected: 'suspended', weather: true },
+    // Fail-safe preserved: a suspension prefix with NO reason/weather word stays
+    // 'unknown' — it is NOT upgraded to 'suspended' on ambiguous input.
+    { text: 'Closed today.', expected: 'unknown' },
     { text: 'Welcome to the mountain. Buy tickets online.', expected: 'unknown' },
   ];
 
