@@ -24,7 +24,7 @@ export const metadata = {
 // omitted entirely rather than rendering a visible unresolved-placeholder artifact.
 // The orchestrator sets this to the real publish date (e.g. '2026-07-20') at
 // merge/deploy — a one-line change.
-const EFFECTIVE_DATE: string | null = '2026-07-20';
+const EFFECTIVE_DATE: string | null = '2026-07-21';
 
 export default function PrivacyPage() {
   return (
