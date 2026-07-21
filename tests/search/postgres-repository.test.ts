@@ -19,7 +19,9 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
     const pool = getPool();
     const suffix = crypto.randomUUID();
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier) VALUES ('library_bibliocommons', $1, 'official') RETURNING id`,
+      // terms_status='allowed': these fixtures insert 'confirmed' occurrences, which the
+      // 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Repository Test Source ${suffix}`]
     );
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
@@ -59,7 +61,9 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
   it('feeds DB storytime listings through the search engine', async () => {
     const suffix = crypto.randomUUID();
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier) VALUES ('library_bibliocommons', $1, 'official') RETURNING id`,
+      // terms_status='allowed': these fixtures insert 'confirmed' occurrences, which the
+      // 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Engine Test Source ${suffix}`]
     );
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
@@ -97,7 +101,9 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
 
   it('does not return expired fixed-time occurrences from the live read model', async () => {
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier) VALUES ('library_bibliocommons', $1, 'official') RETURNING id`,
+      // terms_status='allowed': these fixtures insert 'confirmed' occurrences, which the
+      // 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Expired Repository Source ${crypto.randomUUID()}`]
     );
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);

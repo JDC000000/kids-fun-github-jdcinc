@@ -72,7 +72,10 @@ describe.skipIf(!hasDb)('season state machine drives occurrences (DB)', () => {
 
   async function seed(): Promise<void> {
     const [s] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, season_state) VALUES ('noop', $1, 'unknown') RETURNING id`,
+      // terms_status='allowed': the fixture seeds a 'confirmed' occurrence (and seasonal
+      // transitions can return it to 'confirmed'), which the 0021 write-time invariant
+      // permits only for a terms-approved source.
+      `INSERT INTO source (family, name, season_state, terms_status) VALUES ('noop', $1, 'unknown', 'allowed') RETURNING id`,
       [`${TAG} src`]
     );
     sourceId = s.id;

@@ -21,6 +21,11 @@ export default defineConfig({
       'components/**/*.test.{ts,tsx}',
     ],
     environment: 'node',
+    // Round 27 safety net: refuse to run any test when DATABASE_URL / USER_DATABASE_URL
+    // point at a non-local host, so a DB-backed suite can never write throwaway fixtures
+    // into a real/staging database by accident (see lib/testing/local-db-guard.ts and the
+    // approval-bypass incident it stems from). No-op when the env vars are unset.
+    setupFiles: ['./lib/testing/local-db-guard.ts'],
     // The DB-gated integration suites (kpi / trends / benchmark / retention / rls…)
     // all read and write the SAME shared analytics_event table and assert on GLOBAL
     // deltas (e.g. "DAU rose by exactly 3"). Under vitest's default file-level

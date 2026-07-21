@@ -21,6 +21,17 @@ export interface GateDecision {
 const APPROVED_TERMS_STATUSES = new Set(['allowed', 'summarise_only']);
 const STAGING_BLOCKED_STATUSES = new Set(['disallowed', 'blocked']);
 
+/**
+ * Single source of truth for "this source is terms-approved for production use" —
+ * the same set the production terms gate and the DB write-time invariant use
+ * (supabase/migrations/0021_confirmed_requires_terms_approval.sql). A source that is
+ * NOT approved may still be run in STAGING review, but its occurrences must never
+ * surface as user-visible 'confirmed' (Round 27 approval-bypass incident).
+ */
+export function isTermsApprovedForProduction(termsStatus: string | null | undefined): boolean {
+  return termsStatus != null && APPROVED_TERMS_STATUSES.has(termsStatus);
+}
+
 export function evaluateTermsGate(source: SourceTermsInfo, env: Environment): GateDecision {
   if (source.robotsStatus === 'disallowed') {
     return { allowed: false, reason: 'blocked — robots_status=disallowed' };

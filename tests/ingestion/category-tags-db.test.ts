@@ -48,7 +48,9 @@ describe.skipIf(!hasDb)('Occurrence category-tag write side (G-T13-3)', () => {
   it('assigns 1 primary + secondaries + suitability tags for an overlapping record', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name) VALUES ('library_bibliocommons', $1) RETURNING id`,
+      // terms_status='allowed': these structured records ingest to 'confirmed' occurrences,
+      // which the 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, terms_status) VALUES ('library_bibliocommons', $1, 'allowed') RETURNING id`,
       [`Multi Category Source ${crypto.randomUUID()}`]
     );
 
@@ -104,7 +106,9 @@ describe.skipIf(!hasDb)('Occurrence category-tag write side (G-T13-3)', () => {
   it('is idempotent: re-ingesting the same record does not duplicate category-tag rows', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name) VALUES ('library_bibliocommons', $1) RETURNING id`,
+      // terms_status='allowed': these structured records ingest to 'confirmed' occurrences,
+      // which the 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, terms_status) VALUES ('library_bibliocommons', $1, 'allowed') RETURNING id`,
       [`Idempotent Category Source ${crypto.randomUUID()}`]
     );
     const adapter = multiCategoryAdapter();

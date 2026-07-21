@@ -211,7 +211,10 @@ describe.skipIf(!hasDb)('Venue ingest end-to-end + search visibility (G-T11-1/2/
   it('ingests one open-hours series + dated special-events; both queryable via the search read model', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier) VALUES ('venue_html', $1, 'official') RETURNING id`,
+      // terms_status='allowed': a high-confidence record on this source resolves to a
+      // 'confirmed' occurrence, which the 0021 write-time invariant permits only for a
+      // terms-approved source (mirrors production, where only approved sources ingest).
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('venue_html', $1, 'official', 'allowed') RETURNING id`,
       [`Venue Ingest Source ${crypto.randomUUID()}`]
     );
 

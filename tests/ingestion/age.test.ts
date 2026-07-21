@@ -140,7 +140,9 @@ describe.skipIf(!hasDb)('age normalisation wiring into ingest (occurrence_age)',
   it('writes a structured occurrence_age row and is idempotent on re-ingest', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      // terms_status='allowed': a structured record here ingests to a 'confirmed' occurrence,
+      // which the 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, terms_status) VALUES ('noop', $1, 'allowed') RETURNING id`,
       [`Age Wiring Source ${crypto.randomUUID()}`]
     );
     createdSourceIds.push(source.id);

@@ -22,7 +22,9 @@ const FAMILY = 'test_yy_dedup';
 
 async function seedOcc(name: string, authority: string, status: string, suffix: string): Promise<string> {
   const [src] = await query<{ id: string }>(
-    `INSERT INTO source (family, name, authority_tier, ingestion_method) VALUES ($1, $2, $3, 'auto') RETURNING id`,
+    // terms_status='allowed': seeded canon rows are 'confirmed' and dedup review can
+    // confirm a distinct dup — both require a terms-approved source under the 0021 invariant.
+    `INSERT INTO source (family, name, authority_tier, ingestion_method, terms_status) VALUES ($1, $2, $3, 'auto', 'allowed') RETURNING id`,
     [FAMILY, `${name} src ${suffix}`, authority]
   );
   const [ser] = await query<{ id: string }>(

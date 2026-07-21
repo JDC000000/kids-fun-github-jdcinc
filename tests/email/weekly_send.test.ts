@@ -37,8 +37,10 @@ describe.skipIf(!hasDb)('sendWeeklyDigestForUser (dry-run, real Postgres)', () =
     delete process.env.WEEKLY_EMAIL_ENABLED; // ensure sending stays disabled
 
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier)
-         VALUES ('library_bibliocommons', $1, 'official') RETURNING id`,
+      // terms_status='allowed': the digest fixture inserts 'confirmed' occurrences, which the
+      // 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, authority_tier, terms_status)
+         VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Weekly Email Test Source ${suffix}`]
     );
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
