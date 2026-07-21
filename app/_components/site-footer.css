@@ -1,0 +1,56 @@
+/* site-footer.css — styling for the global footer chrome (Round 27, PIPEDA F-1).
+ *
+ * Self-contained (not scoped under .kf) so it renders consistently on every route,
+ * mirroring account-nav.css. Colours consume the canonical global --kf-* tokens
+ * (app/design-tokens.css). Fixed brand palette tokens (warm paper / evergreen) are
+ * used intentionally — not the flipping surface roles — so this bar keeps its warm-
+ * paper look on every colour scheme, exactly like the AccountNav bar at the top. */
+
+.kf-site-footer {
+  font-family: var(--kf-font-ui);
+  color: var(--kf-evergreen);
+  background: var(--kf-warm-paper);
+  border-top: 1px solid var(--kf-neutral-200);
+  padding: var(--kf-space-4);
+}
+
+.kf-site-footer__inner {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--kf-space-3);
+  flex-wrap: wrap;
+}
+
+.kf-site-footer__word {
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--kf-park-moss-text);
+}
+
+.kf-site-footer__nav {
+  display: flex;
+  gap: var(--kf-space-4);
+}
+
+.kf-site-footer__link {
+  color: var(--kf-evergreen);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.kf-site-footer__link:hover {
+  color: var(--kf-leaf-hover);
+}
+/* Self-contained, so it carries its own always-visible focus ring (WCAG 2.4.7 /
+ * 2.4.11) rather than relying on the .kf :focus-visible rule. */
+.kf-site-footer__link:focus-visible {
+  outline: 3px solid var(--kf-leaf-hover);
+  outline-offset: 2px;
+  border-radius: 6px;
+}

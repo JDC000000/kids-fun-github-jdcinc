@@ -1,0 +1,138 @@
+/*
+ * privacy.css — styling for the /privacy policy page (Round 27, PIPEDA F-1).
+ *
+ * Long-form legal prose, not the phone-frame app shell: a single centred, readable
+ * document column on the canvas. All colour/spacing/radius/type values come from the
+ * canonical global --kf-* tokens (app/design-tokens.css), so the page inherits the
+ * brand system AND flips correctly in dark mode for free — the surface/ink roles used
+ * here (--kf-canvas / --kf-ink / --kf-ink-secondary / --kf-hairline / --kf-surface-
+ * subtle) are the flipping roles, so nothing is hard-coded per scheme.
+ *
+ * The page wrapper carries both `kf` (brand font + ink + the shared `.kf :focus-
+ * visible` ring) and `kf-privacy` (this layout).
+ */
+
+.kf-privacy {
+  min-height: 100vh;
+  background: var(--kf-canvas);
+  color: var(--kf-ink);
+  padding: var(--kf-space-7) var(--kf-space-4) var(--kf-space-8);
+  display: flex;
+  justify-content: center;
+}
+
+.kf-privacy__doc {
+  width: 100%;
+  max-width: 720px;
+}
+
+/* ── Header ── */
+.kf-privacy__header {
+  margin-bottom: var(--kf-space-6);
+}
+.kf-privacy__wordmark {
+  margin: 0 0 var(--kf-space-2);
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--kf-ink-secondary);
+}
+.kf-privacy__title {
+  margin: 0;
+  font-weight: 800;
+  font-size: 30px;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: var(--kf-ink);
+}
+
+/* ── Prose ── */
+.kf-privacy__prose {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--kf-ink);
+}
+.kf-privacy__prose h2 {
+  margin: var(--kf-space-6) 0 var(--kf-space-3);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--kf-ink);
+}
+.kf-privacy__prose p {
+  margin: 0 0 var(--kf-space-4);
+}
+.kf-privacy__meta {
+  color: var(--kf-ink-secondary);
+}
+.kf-privacy__prose ul {
+  margin: 0 0 var(--kf-space-4);
+  padding-left: var(--kf-space-5);
+}
+.kf-privacy__prose li {
+  margin: 0 0 var(--kf-space-2);
+}
+.kf-privacy__prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  border-radius: 6px;
+  background: var(--kf-surface-subtle);
+}
+
+/* Links: override the `.kf a` reset (colour:inherit; no underline). Distinguished by
+ * BOTH the high-contrast flipping ink colour AND an underline — never colour alone
+ * (WCAG 1.4.1). Higher specificity (.kf.kf-privacy a) guarantees this wins over
+ * `.kf a` regardless of stylesheet order. Focus ring is inherited from the shared
+ * `.kf :focus-visible` rule. */
+.kf.kf-privacy a {
+  color: var(--kf-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.kf.kf-privacy a:hover {
+  text-decoration-color: var(--kf-leaf-hover);
+}
+
+/* ── Data table (what we collect) ── */
+.kf-privacy__table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 var(--kf-space-4);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.kf-privacy__table th,
+.kf-privacy__table td {
+  padding: var(--kf-space-3);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--kf-hairline);
+  color: var(--kf-ink);
+}
+.kf-privacy__table thead th {
+  font-weight: 700;
+  border-bottom: 2px solid var(--kf-hairline);
+}
+.kf-privacy__table tbody th {
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .kf-privacy {
+    padding: var(--kf-space-6) var(--kf-space-3) var(--kf-space-7);
+  }
+  .kf-privacy__title {
+    font-size: 26px;
+  }
+  .kf-privacy__table {
+    font-size: 14px;
+  }
+  .kf-privacy__table th,
+  .kf-privacy__table td {
+    padding: var(--kf-space-2);
+  }
+}
