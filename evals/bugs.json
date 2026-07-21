@@ -22,11 +22,26 @@
       "accepted": "explicitly accepted-as-known for this round (data-breadth / ingestion / curation); escalated, not a code defect",
       "open-routed-for-fix": "confirmed code/config defect; NOT accepted as shippable; handed to the fix pipeline (Developer: fresh branch, own test, not merged, re-QA'd) — must-fix-before-launch",
       "deferred-logged": "medium/low; logged for a future hardening round; no fix required by this task's AC",
-      "fixed-pending-qa": "was open-routed-for-fix; a minimal code fix + regression test has landed on a fresh branch (overnight/r27-g-t39-3-bugfix-bundle), NOT merged; requires independent QA re-verification before merge/launch"
+      "fixed-pending-qa": "was open-routed-for-fix; a minimal code fix + regression test has landed on a fresh branch (overnight/r27-g-t39-3-bugfix-bundle), NOT merged; requires independent QA re-verification before merge/launch",
+      "qa-verified": "TERMINAL. was fixed-pending-qa; independent QA re-verification PASSED with checkable artifacts — the fix is confirmed correct and cleared to ship. (Added R27 G-T39-3 independent post-merge QA lane, 2026-07-21, because the legend previously dead-ended at fixed-pending-qa with no post-QA state.)"
     },
     "counts": { "critical": 0, "high": 4, "medium": 5, "low": 2, "total": 11 },
     "goNoGoMaterial": ["BUG-001", "BUG-002", "BUG-007", "BUG-011", "BUG-009 (awareness: staging correction pollution + one-click-report UX)"],
-    "exitAcCheck": "PASS — no critical/high left unresolved-and-unaccepted. 4 HIGH: BUG-001 & BUG-002 explicitly ACCEPTED (data/ingestion/curation, escalated); BUG-007 & BUG-011 explicitly OPEN-ROUTED-FOR-FIX (confirmed code/config defects with full briefs + recommended minimal fixes). 0 CRITICAL."
+    "exitAcCheck": "PASS — no critical/high left unresolved-and-unaccepted. 4 HIGH: BUG-001 & BUG-002 explicitly ACCEPTED (data/ingestion/curation, escalated); BUG-007 & BUG-011 explicitly OPEN-ROUTED-FOR-FIX (confirmed code/config defects with full briefs + recommended minimal fixes). 0 CRITICAL.",
+    "postMergeQa": {
+      "lane": "qa-orchestrator — independent post-merge QA (R27 G-T39-3 minor-fixes bundle)",
+      "runAt": "2026-07-21",
+      "reverifiedCommit": "9496844",
+      "note": "The bug-bash minor-fixes bundle (BUG-007/008/009/011) was merged to main@9496844 + deployed to staging BEFORE this independent QA ran (orchestrator process slip; the standing rule is independent QA before every merge). This lane ran genuine post-merge QA in a fresh clone with new/adversarial test cases + real-browser verification, NOT a re-run of the shipped tests.",
+      "verdict": "PASS (all 4 fixes confirmed correct)",
+      "evidence": {
+        "BUG-007": "no-token fallback carries no NEXT_PUBLIC_MAP_KEY / <code> / env-var mention; WITH a public token the map surface (kf-map__canvas) renders, not the fallback — new SSR test tests/_qa_indep_r27t39.test.tsx.",
+        "BUG-008": "labelArea() drops municipalityId from the chain; adversarial neighbourhood=null+displayArea=null → 'Metro Vancouver', UUID fuzz never leaks an id — new test tests/_qa_indep_r27t39.test.tsx.",
+        "BUG-009": "exhaustive 3x3 state-machine table + sequence sims (submit=true on exactly one transition, 'sent' unreachable except via confirming+confirm) AND a real-browser drive of the actual React component: single request writes 0, cancel writes 0, full path writes EXACTLY 1; differential control confirms the pre-fix code wrote on a single click.",
+        "BUG-011": "REAL Chromium at 320/360/375/390px, card + detail contexts, source 'yourlibrary.bibliocommons.com' + a 61-char no-break adversarial hostname: stamp wraps within its container/viewport, zero overflow, zero clipping. Differential control on the pre-fix CSS reproduced the overflow (viewport +70px @375px). Screenshots at /opt/projects/crhq-satellite/.scratch/bug011/shot-FIXED-*.png."
+      },
+      "ciParity": "typecheck PASS, lint PASS, vitest 1119/1163 PASS (incl. all 4 target-change tests + 13 new indep tests). The 35 non-passing are auth-role-gated RLS/account/profile integration tests that need a LOGIN-capable 'authenticated' Postgres role (real CI mints it fresh; the shared local Supabase cluster's role is NOLOGIN) — orthogonal to this frontend-only diff; no failing file references any changed module."
+    }
   },
   "bugs": [
     {
@@ -63,7 +78,7 @@
       "id": "BUG-007",
       "title": "Map view is non-functional on staging and renders an internal env-var name to end users",
       "severity": "high",
-      "status": "fixed-pending-qa",
+      "status": "qa-verified",
       "area": "search / map view",
       "rootCauseClass": "code + config (no map key configured for this deployment; user-facing fallback text hard-codes the env-var name)",
       "foundBy": "tester-custom (real browser); root-caused + confirmed in code by qa-orchestrator",
@@ -78,7 +93,7 @@
       "id": "BUG-011",
       "title": "Mobile: the 'Confirmed · source · Checked today' trust badge overflows the viewport, truncating on every card and detail page",
       "severity": "high",
-      "status": "fixed-pending-qa",
+      "status": "qa-verified",
       "area": "listing cards & detail / mobile layout / core trust signal",
       "rootCauseClass": "code (CSS — the stamp element does not wrap/shrink to fit narrow viewports; extends past its container)",
       "foundBy": "tester-custom (real browser, mobile 375x812, DOM measurement)",
@@ -123,7 +138,7 @@
       "id": "BUG-008",
       "title": "Raw region UUID rendered instead of an area name on ~30% of cards (null neighbourhood + displayArea)",
       "severity": "medium",
-      "status": "fixed-pending-qa",
+      "status": "qa-verified",
       "area": "catalogue / listing display (area label)",
       "rootCauseClass": "code (display fallback chain uses the raw municipalityId UUID before the safe default)",
       "foundBy": "tester-custom (real browser); root-caused + quantified in code/API by qa-orchestrator",
@@ -138,7 +153,7 @@
       "id": "BUG-009",
       "title": "'Report wrong info' submits instantly with no confirmation and captures no reason/detail",
       "severity": "medium",
-      "status": "fixed-pending-qa",
+      "status": "qa-verified",
       "area": "correction flow / trust pipeline",
       "rootCauseClass": "code + product decision (no confirm step, no text-capture before the write fires)",
       "foundBy": "tester-custom (real browser); corrections contract confirmed in code by qa-orchestrator",
