@@ -23,37 +23,27 @@
 //   an operator intentionally runs read-only checks against a remote DB. NEVER set this
 //   in CI or when a suite writes fixtures.
 
-/** Loopback / local host literals a disposable test DB may legitimately use. */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '::ffff:127.0.0.1']);
+// Host classification + resolution live in a shared, side-effect-free module so this guard
+// and the runtime pool config (lib/db/pool-config.ts) resolve the connection host the SAME
+// way node-postgres does — honoring a `?host=` override. See lib/db/connection-host.ts for
+// the full rationale (Round 27 approval-bypass incident).
+import { isLocalDatabaseHost, resolveConnectionHost } from '@/lib/db/connection-host';
+
+// Re-exported so existing importers (and tests) can keep importing it from this module.
+export { isLocalDatabaseHost };
 
 /**
- * True when `rawHost` is a loopback/local database host. An empty/omitted host (unix
- * socket or libpq default) is treated as local — those never reach a remote server.
- */
-export function isLocalDatabaseHost(rawHost: string | null | undefined): boolean {
-  if (rawHost == null) return true; // no TCP host at all → local (unix socket / default)
-  const host = rawHost.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
-  if (host === '') return true; // empty host → local
-  if (host.startsWith('/')) return true; // unix-socket path (e.g. ?host=/var/run/postgresql)
-  if (LOOPBACK_HOSTS.has(host)) return true;
-  if (host === 'localhost' || host.endsWith('.localhost')) return true; // RFC 6761 loopback TLD
-  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true; // 127.0.0.0/8
-  return false;
-}
-
-/**
- * Extract the connection host from a Postgres URL. Returns the hostname, or the unix
- * socket path if the URL uses one (`?host=/path`), or `''` when neither is present.
- * Returns `null` when the string cannot be parsed as a URL at all (unverifiable).
+ * Extract the host node-postgres will ACTUALLY connect to for a Postgres URL — honoring a
+ * `?host=` override the same way pg does (a `?host=` value OVERRIDES the URL hostname, in both
+ * directions; `?host=/path` yields the unix-socket path). Returns `''` when no host is present,
+ * or `null` when the string cannot be parsed as a connection URL at all (unverifiable).
+ *
+ * Previously this read `new URL(url).hostname` first and only fell back to `?host=` when the
+ * hostname was empty — the exact bug that let `postgres://127.0.0.1/db?host=db.x.supabase.co`
+ * (which really connects to remote Supabase) masquerade as local and slip past the guard.
  */
 export function databaseUrlHost(url: string): string | null {
-  try {
-    const u = new URL(url);
-    if (u.hostname) return u.hostname;
-    return u.searchParams.get('host') ?? '';
-  } catch {
-    return null;
-  }
+  return resolveConnectionHost(url);
 }
 
 function isTruthyEnv(v: string | undefined): boolean {
