@@ -57,7 +57,9 @@ describe.skipIf(!hasDb)('flipStaleOccurrences (DB)', () => {
 
   beforeAll(async () => {
     const [s] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, baseline_cadence) VALUES ('noop', $1, '1 day') RETURNING id`,
+      // terms_status='allowed': mkOcc seeds 'confirmed' occurrences (later flipped to stale),
+      // which the 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, baseline_cadence, terms_status) VALUES ('noop', $1, '1 day', 'allowed') RETURNING id`,
       [`${TAG} src`]
     );
     sourceId = s.id;

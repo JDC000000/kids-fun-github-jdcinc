@@ -22,8 +22,11 @@ describe.skipIf(!hasDb)('correction resolve workflow (G-T34-7)', () => {
     await query(`INSERT INTO admin_user (user_id, role, active) VALUES ($1, 'admin', true)`, [adminId]);
 
     const [src] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier, ingestion_method)
-       VALUES ('test_t34p2_corr', 'Corrections Test Source', 'official', 'auto') RETURNING id`
+      // terms_status='allowed': resolving a correction can set the occurrence to
+      // 'confirmed', which the 0021 write-time invariant allows only for a terms-approved
+      // source (in production, needs_review rows an admin confirms trace to approved sources).
+      `INSERT INTO source (family, name, authority_tier, ingestion_method, terms_status)
+       VALUES ('test_t34p2_corr', 'Corrections Test Source', 'official', 'auto', 'allowed') RETURNING id`
     );
     sourceId = src.id;
     const [ser] = await query<{ id: string }>(

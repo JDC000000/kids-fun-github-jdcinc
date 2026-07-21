@@ -60,7 +60,10 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
   it('lets a fully-structured record on a proven official source through as confirmed/high', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier) VALUES ('library_bibliocommons', $1, 'official') RETURNING id`,
+      // terms_status='allowed': this proven official source produces a high-confidence
+      // 'confirmed' occurrence, which the 0021 write-time invariant permits only for a
+      // terms-approved source (in production only approved sources reach ingest).
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Confident Ingest Source ${crypto.randomUUID()}`]
     );
 
@@ -138,7 +141,9 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
   it('attaches geocoded venue metadata to the resolved series', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
-      `INSERT INTO source (family, name) VALUES ('library_bibliocommons', $1) RETURNING id`,
+      // terms_status='allowed': this structured record ingests to a 'confirmed' occurrence,
+      // which the 0021 write-time invariant permits only for a terms-approved source.
+      `INSERT INTO source (family, name, terms_status) VALUES ('library_bibliocommons', $1, 'allowed') RETURNING id`,
       [`Venue Ingest Source ${crypto.randomUUID()}`]
     );
     const record: StructuredRecord = {

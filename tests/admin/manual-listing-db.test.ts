@@ -49,8 +49,12 @@ describe.skipIf(!hasDb)('manual listing intake + render-compat (G-T34-3)', () =>
     adminId = admin.id;
     await query(`INSERT INTO admin_user (user_id, role, active) VALUES ($1, 'admin', true)`, [adminId]);
     const [src] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier, ingestion_method)
-       VALUES ('test_t34p2_listsrc', 'Manual Listing Test Source', 'official', 'manual') RETURNING id`
+      // terms_status='allowed': one case creates a 'confirmed' listing against this chosen
+      // source; the 0021 write-time invariant permits 'confirmed' only for a terms-approved
+      // source (an admin publishing a confirmed listing under a source implies it is approved;
+      // the canonical 'Manual Curation' source is likewise created 'allowed').
+      `INSERT INTO source (family, name, authority_tier, ingestion_method, terms_status)
+       VALUES ('test_t34p2_listsrc', 'Manual Listing Test Source', 'official', 'manual', 'allowed') RETURNING id`
     );
     testSourceId = src.id;
   });

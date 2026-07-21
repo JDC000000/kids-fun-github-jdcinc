@@ -17,6 +17,7 @@ import { upsertOccurrence } from './upsert';
 import { recordProvenance } from './provenance';
 import { classifyPrimaryCategory, resolvePrimaryCategoryId, applyOccurrenceCategoryTags } from './taxonomy';
 import { computeConfidence, loadSourceConfidenceContext, statusForConfidence } from './confidence';
+import { isTermsApprovedForProduction } from './terms-gate';
 import { parseAgeText, computeAgeBandMatches, loadAgeBands, upsertOccurrenceAge } from './age';
 
 export interface IngestSummary {
@@ -85,6 +86,19 @@ export async function ingestSource(
     // which the loader's stat filters exclude, so this never counts itself.
     const confidenceCtx = await loadSourceConfidenceContext(pool, sourceId);
 
+    // Round 27 terms cap (application-layer counterpart of migration 0021's write-time
+    // trigger). The staging terms gate deliberately lets a NON-approved source run for
+    // fixture review — but its occurrences must never surface as user-visible 'confirmed'
+    // (that is exactly how the incident's pending-source rows became confirmed). Loaded
+    // once per run; when the source is not terms-approved, the confidence gate's
+    // 'confirmed' verdict is held down to 'needs_review' (hidden) BEFORE the upsert, so
+    // the DB guard is a pure backstop rather than a hard error on a legitimate run.
+    const termsRow = await pool.query<{ terms_status: string | null }>(
+      `SELECT terms_status FROM source WHERE id = $1`,
+      [sourceId]
+    );
+    const sourceTermsApproved = isTermsApprovedForProduction(termsRow.rows[0]?.terms_status);
+
     for (const record of records) {
       recordsFound += 1;
       try {
@@ -135,8 +149,13 @@ export async function ingestSource(
           healthScore: confidenceCtx.healthScore,
           nowMs: Date.now(),
         });
-        const statusState = statusForConfidence(confidence.label);
-        if (statusState === 'needs_review') lowConfidenceFlagged += 1;
+        const confidenceStatus = statusForConfidence(confidence.label);
+        if (confidenceStatus === 'needs_review') lowConfidenceFlagged += 1;
+        // Terms cap (Round 27): a non-approved source can never surface 'confirmed';
+        // hold it at needs_review. Confidence accounting above is left intact so
+        // lowConfidenceFlagged keeps meaning "the BR-13 gate held this", not "terms did".
+        const statusState =
+          confidenceStatus === 'confirmed' && !sourceTermsApproved ? 'needs_review' : confidenceStatus;
 
         const { occurrenceId, created } = await upsertOccurrence(pool, series.seriesId, record, {
           primaryCategoryId,

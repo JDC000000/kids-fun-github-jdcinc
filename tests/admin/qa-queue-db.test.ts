@@ -23,8 +23,11 @@ describe.skipIf(!hasDb)('QA review queue (G-T34-5)', () => {
     await query(`INSERT INTO admin_user (user_id, role, active) VALUES ($1, 'admin', true)`, [adminId]);
 
     const [src] = await query<{ id: string }>(
-      `INSERT INTO source (family, name, authority_tier, ingestion_method)
-       VALUES ('test_t34p3_qa', 'QA Queue Test Source', 'official', 'auto') RETURNING id`
+      // terms_status='allowed': the QA queue confirm action flips status_state → 'confirmed',
+      // which the 0021 write-time invariant allows only for a terms-approved source
+      // (needs_review rows an admin confirms trace to approved sources in production).
+      `INSERT INTO source (family, name, authority_tier, ingestion_method, terms_status)
+       VALUES ('test_t34p3_qa', 'QA Queue Test Source', 'official', 'auto', 'allowed') RETURNING id`
     );
     sourceId = src.id;
     const [ser] = await query<{ id: string }>(
