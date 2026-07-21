@@ -147,42 +147,50 @@ export function ResultsShell() {
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Scroll-snap filter chips: selected = fill AND checkmark, never colour alone. */}
-      <div className="kf-chips" role="group" aria-label="Quick filters">
-        {BOOL_CHIPS.map(({ key, label }) => {
-          const on = filters[key];
-          return (
-            <button key={key} type="button" className="kf-chip" aria-pressed={on} onClick={() => toggleBool(key)}>
-              {on && (
-                <span className="kf-chip__check" aria-hidden="true">
-                  ✓
-                </span>
-              )}
-              {label}
-            </button>
-          );
-        })}
-        {TIME_OF_DAY_OPTIONS.filter((t) => t.key !== 'any').map((t) => {
-          const on = filters.timeOfDay === t.key;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              className="kf-chip"
-              aria-pressed={on}
-              onClick={() => setTimeOfDay(t.key)}
-            >
-              {on && (
-                <span className="kf-chip__check" aria-hidden="true">
-                  ✓
-                </span>
-              )}
-              {t.label}
-            </button>
-          );
-        })}
+        {/* Scroll-snap filter chips — pinned INSIDE the sticky filter bar so the
+            live filters stay reachable after the first results load. Bug fix: this
+            chip row used to be a non-sticky sibling of .kf-sticky, so once a parent
+            scrolled into their first set of results it scrolled off-screen and never
+            came back. The only controls left pinned were the display-only date/area
+            stubs (see README "Not yet wired") + the radius — so changing search
+            criteria appeared to do nothing. Keeping the chips in the sticky cluster
+            makes every live filter reachable while browsing. Selected = fill AND
+            checkmark, never colour alone. */}
+        <div className="kf-chips kf-chips--filters" role="group" aria-label="Quick filters">
+          {BOOL_CHIPS.map(({ key, label }) => {
+            const on = filters[key];
+            return (
+              <button key={key} type="button" className="kf-chip" aria-pressed={on} onClick={() => toggleBool(key)}>
+                {on && (
+                  <span className="kf-chip__check" aria-hidden="true">
+                    ✓
+                  </span>
+                )}
+                {label}
+              </button>
+            );
+          })}
+          {TIME_OF_DAY_OPTIONS.filter((t) => t.key !== 'any').map((t) => {
+            const on = filters.timeOfDay === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                className="kf-chip"
+                aria-pressed={on}
+                onClick={() => setTimeOfDay(t.key)}
+              >
+                {on && (
+                  <span className="kf-chip__check" aria-hidden="true">
+                    ✓
+                  </span>
+                )}
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="kf-results">

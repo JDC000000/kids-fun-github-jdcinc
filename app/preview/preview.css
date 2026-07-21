@@ -232,6 +232,13 @@
 .kf-chips::-webkit-scrollbar {
   display: none;
 }
+/* The quick-filter chip rail now lives INSIDE the sticky filter bar so the live
+ * filters stay reachable after the first results load (bug fix). Trim its top
+ * padding — the radius row above already supplies bottom spacing — so the pinned
+ * header stays compact. */
+.kf-chips--filters {
+  padding-top: 4px;
+}
 .kf-chip {
   flex: 0 0 auto;
   scroll-snap-align: start;
