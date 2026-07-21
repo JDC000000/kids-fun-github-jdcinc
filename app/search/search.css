@@ -95,6 +95,21 @@
   color: var(--ink-secondary);
 }
 
+/* Quiet "optional" qualifier on a filter-group label (Round 30 — Jon's search-UX feedback).
+ * Signals a group the parent can safely skip (leaving it unset applies no filter). Deliberately
+ * de-emphasized against the uppercase micro-label: sentence case, lighter weight, muted tone —
+ * a quiet aside, never a second shouty label. The middot is decorative (aria-hidden in the DOM). */
+.kf-fgroup__optional {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink-muted);
+}
+
+.kf-fgroup__optional-dot {
+  margin: 0 5px 0 6px;
+}
+
 /* Horizontal, thumb-swipable rail (mobile-first). Chips snap; the row scrolls, the page doesn't. */
 .kf-fgroup__rail {
   display: flex;

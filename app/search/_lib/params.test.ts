@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGE_OPTIONS,
   DEFAULT_STATE,
   analyticsFilterTokens,
   apiQuery,
@@ -299,6 +300,64 @@ describe('saved-location origin (Task 29)', () => {
     const p = apiParams(st({ useSavedLocation: true, lat: 49.26, lng: -123.07 }), { postal: 'V6K 1A1' });
     expect(p.get('lat')).toBe('49.26');
     expect(p.has('postal')).toBe(false);
+  });
+});
+
+describe('Round 30 — an unset filter group means "no filter / show everything"', () => {
+  // Jon's hands-on feedback + an independent UX-review follow-up: every filter group must
+  // clearly signal that leaving it unset shows everything. Ages / Areas / Max price / When /
+  // Time do this with a checkmarked "Any X" default pill (see FilterRail); Quick filters
+  // (independent, non-exclusive toggles with no single "Any" chip) does it with a quiet
+  // "· optional" label. Whatever the visual, the underlying promise is identical: an untouched
+  // group composes NO filter. These lock that promise against a future hidden default.
+  it('AGES: a bare state selects no band and composes no age phrase (results span every age)', () => {
+    expect(parseSearchState({}).ages).toEqual([]);
+    expect(DEFAULT_STATE.ages).toEqual([]);
+    const phrases = intentPhrases(DEFAULT_STATE);
+    for (const opt of AGE_OPTIONS) {
+      if (opt.phrase) expect(phrases).not.toContain(opt.phrase);
+    }
+  });
+
+  it('AREAS: a bare state selects no region (results span everywhere in Metro Vancouver)', () => {
+    expect(parseSearchState({}).regions).toEqual([]);
+    expect(DEFAULT_STATE.regions).toEqual([]);
+  });
+
+  it('QUICK FILTERS: all four default OFF and compose no status/suitability/cost phrase', () => {
+    const s = parseSearchState({});
+    expect([s.bookableNow, s.dropIn, s.rainyDay, s.free]).toEqual([false, false, false, false]);
+    const phrases = intentPhrases(DEFAULT_STATE);
+    expect(phrases).not.toContain('bookable now');
+    expect(phrases).not.toContain('drop-in');
+    expect(phrases).not.toContain('rainy day');
+    expect(phrases).not.toContain('free');
+  });
+
+  it('MAX PRICE: defaults to no ceiling (null) and composes no "under $N" phrase', () => {
+    expect(parseSearchState({}).costMaxCad).toBeNull();
+    expect(DEFAULT_STATE.costMaxCad).toBeNull();
+    expect(intentPhrases(DEFAULT_STATE).some((p) => p.startsWith('under $'))).toBe(false);
+  });
+
+  it('all groups unset together ⇒ zero filter tokens, empty q, and a full bare browse (minResults 60)', () => {
+    expect(analyticsFilterTokens(DEFAULT_STATE)).toEqual([]);
+    const api = new URLSearchParams(apiQuery(DEFAULT_STATE));
+    // Nothing about age / area / status / cost reaches the backend query string.
+    expect(api.get('q')).toBe('');
+    expect(api.has('region')).toBe(false);
+    expect(api.get('minResults')).toBe('60');
+  });
+
+  it('the "Any X" reset links clear ONLY their own group (the href the Any-age/Any-area pills use)', () => {
+    // "Any age" pill → hrefFor(state, { ages: [] }); clears ages, leaves areas intact.
+    const ap = new URLSearchParams(hrefFor(st({ ages: ['5-9', '10-14'], regions: ['van'] }), { ages: [] }).split('?')[1] ?? '');
+    expect(ap.has('age')).toBe(false);
+    expect(ap.get('region')).toBe('van');
+    // "Any area" pill → hrefFor(state, { regions: [] }); clears areas, leaves ages intact.
+    const rp = new URLSearchParams(hrefFor(st({ ages: ['5-9'], regions: ['van', 'bby'] }), { regions: [] }).split('?')[1] ?? '');
+    expect(rp.has('region')).toBe(false);
+    expect(rp.get('age')).toBe('5-9');
   });
 });
 

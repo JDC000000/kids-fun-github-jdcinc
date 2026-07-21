@@ -56,11 +56,39 @@ function Chip({ href, active, children }: { href: string; active: boolean; child
   );
 }
 
-function Group({ label, children, id }: { label: string; id: string; children: ReactNode }) {
+// A filter group. `optional` appends a quiet, de-emphasized "optional" qualifier to the
+// label (Round 30, Jon's hands-on search-UX feedback): it tells a parent the group is safe
+// to skip — leaving it untouched applies no filter and shows everything (the confirmed
+// default behaviour; see app/search/_lib/params.ts DEFAULT_STATE + intentPhrases). It is the
+// unset-is-everything signal for the ONE group that can't use an "Any X" default pill — the
+// independent-toggle "Quick filters" group; every other group carries a leading "Any X" chip
+// instead (When/Time/Max price/Ages/Areas). The qualifier lives inside the labelledby target
+// so the group's accessible name becomes e.g. "Quick filters optional"; the middot separator
+// is decorative (aria-hidden) so AT never reads it. Sentence-case + muted tone keeps it a
+// quiet aside, not a second shouty micro-label.
+function Group({
+  label,
+  children,
+  id,
+  optional,
+}: {
+  label: string;
+  id: string;
+  optional?: boolean;
+  children: ReactNode;
+}) {
   return (
     <div className="kf-fgroup" role="group" aria-labelledby={id}>
       <span className="kf-fgroup__label" id={id}>
         {label}
+        {optional && (
+          <span className="kf-fgroup__optional">
+            <span className="kf-fgroup__optional-dot" aria-hidden="true">
+              ·
+            </span>
+            optional
+          </span>
+        )}
       </span>
       <div className="kf-fgroup__rail">{children}</div>
     </div>
@@ -171,8 +199,15 @@ export function FilterRail({
         ))}
       </Group>
 
-      {/* Ages — multi-select ("Pick every child — we'll match either age"). */}
+      {/* Ages — multi-select ("Pick every child — we'll match either age"). Leads with an
+          "Any age" default pill (checkmarked when no band is chosen) so an unset group reads as
+          "all ages" — the SAME "Any X" default-chip rule the When / Time of day / Max price
+          groups use. Tapping it clears every selected band. Leaving it unset composes no age
+          phrase, so results span every age (params.ts intentPhrases). */}
       <Group label="Ages" id="kf-fg-ages">
+        <Chip href={hrefFor(state, { ages: [] })} active={state.ages.length === 0}>
+          Any age
+        </Chip>
         {AGE_OPTIONS.map((opt) => {
           const active = state.ages.includes(opt.key);
           return (
@@ -187,8 +222,14 @@ export function FilterRail({
         })}
       </Group>
 
-      {/* Areas — additive region hierarchy (multi-select union). */}
+      {/* Areas — additive region hierarchy (multi-select union). Leads with an "Any area"
+          default pill (checkmarked when no region is chosen) so an unset group reads as
+          "everywhere in Metro Vancouver" — matching the "Any X" default-chip rule used by
+          When / Time of day / Max price / Ages. Tapping it clears every selected area. */}
       <Group label="Areas" id="kf-fg-areas">
+        <Chip href={hrefFor(state, { regions: [] })} active={state.regions.length === 0}>
+          Any area
+        </Chip>
         {REGION_CHIPS.map((r) => {
           const active = state.regions.includes(r.id);
           return (
@@ -199,8 +240,12 @@ export function FilterRail({
         })}
       </Group>
 
-      {/* Quick filters — status / suitability / cost chips (multi-select toggles). */}
-      <Group label="Quick filters" id="kf-fg-quick">
+      {/* Quick filters — status / suitability / cost chips (independent, non-exclusive toggles).
+          Unlike the other groups it has no single meaningful "Any" default chip (the four facets
+          are orthogonal, not mutually exclusive), so it carries the quiet "· optional" label as
+          its unset-is-everything signal instead of an "Any X" pill. All four default off → no
+          filtering (shows all results). */}
+      <Group label="Quick filters" id="kf-fg-quick" optional>
         <Chip href={hrefFor(state, { bookableNow: !state.bookableNow })} active={state.bookableNow}>
           Bookable now
         </Chip>
@@ -216,7 +261,9 @@ export function FilterRail({
       </Group>
 
       {/* Max price — cost ceiling (radio-like: one at a time). Sits alongside the binary
-          "Free" quick-filter so "cost range / free" is fully exposed (G-T21-4). */}
+          "Free" quick-filter so "cost range / free" is fully exposed (G-T21-4). Already leads
+          with an "Any price" default pill (costMaxCad null), so it needs no separate label — the
+          "Any X" pill is its unset-is-everything signal, consistent with When/Time/Ages/Areas. */}
       <Group label="Max price" id="kf-fg-cost">
         {COST_MAX_OPTIONS.map((opt) => (
           <Chip key={opt.key} href={hrefFor(state, { costMaxCad: opt.maxCad })} active={state.costMaxCad === opt.maxCad}>
