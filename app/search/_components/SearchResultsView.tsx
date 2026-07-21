@@ -68,8 +68,16 @@ export function SearchResultsView({ markers, token, totalResults, children }: Se
         </Chip>
       </div>
 
+      {/* Reserve the map's vertical footprint the moment Map view mounts — the SAME box the
+          real Mapbox canvas fills (see .kf-map__canvas: 62vh, clamped 340–560px). Without this,
+          switching from a long result list to the compact map (or its "not available" fallback /
+          loading state) collapses the page height by thousands of pixels; the browser then clamps
+          the scroll offset and drops the parent into the middle of the filter rail, half-hidden
+          behind the tall sticky search bar — the reported "blank gap + missing filter pills" on
+          List→Map. Reserving the footprint keeps the page height stable, so the toggle no longer
+          yanks the scroll (and it removes the layout shift when a real map key IS configured). */}
       {view === 'map' ? (
-        <div>
+        <div className="kf-map-region" style={{ minHeight: 'clamp(340px, 62vh, 560px)' }}>
           <p className="kf-map__note">{noteText}</p>
           <ResultsMap markers={markers} token={token} />
         </div>
