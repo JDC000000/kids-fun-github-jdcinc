@@ -16,19 +16,28 @@ import { mapListingRecordToActivity, mapSearchItemToActivity } from './search-ap
 import type { Activity } from './types';
 
 export async function loadActivityById(id: string): Promise<Activity | null> {
+  // LIVE database mode resolves ONLY from Postgres. The fixture lookups below must not run
+  // here: the canonical, shareable /activity/[id] route (and the interim /preview/[id])
+  // would otherwise resolve a test id like `l-rank-confirmed` ("Rank Test Gym") to a fake
+  // detail page for a real visitor — the same test-data leak fixed in /api/search. This
+  // matches the documented intent (README: detail pages are "DB-backed in staging").
+  if (process.env.KIDS_FUN_SEARCH_BACKEND === 'database') {
+    try {
+      const listing = await loadPostgresListingById(getPool(), id);
+      return listing ? mapListingRecordToActivity(listing) : null;
+    } catch {
+      // Detail pages must fail closed rather than leaking DB errors to parents.
+      return null;
+    }
+  }
+
+  // Fixture/demo mode (KIDS_FUN_SEARCH_BACKEND !== 'database'): local dev and the /preview
+  // demo shell resolve ids from the hand-authored + search fixtures (no DB, no network).
   const visualFixture = findActivity(id);
   if (visualFixture) return visualFixture;
 
   const searchFixture = FIXTURE_LISTINGS.find((listing) => listing.id === id);
   if (searchFixture) return mapSearchItemToActivity({ listing: searchFixture, distanceKm: null });
 
-  if (process.env.KIDS_FUN_SEARCH_BACKEND !== 'database') return null;
-
-  try {
-    const listing = await loadPostgresListingById(getPool(), id);
-    return listing ? mapListingRecordToActivity(listing) : null;
-  } catch {
-    // Detail pages must fail closed rather than leaking DB errors to parents.
-    return null;
-  }
+  return null;
 }

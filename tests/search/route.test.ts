@@ -71,17 +71,25 @@ describe('GET /api/search (fixture stub)', () => {
     expect(body.broadening.applied.length).toBeGreaterThan(0);
   });
 
-  it('falls back safely when database search is enabled but unavailable', async () => {
+  it('fails honestly (5xx, never fixtures) when database mode is on but the DB is unavailable', async () => {
+    // Behaviour change — P0 fixture-leak fix. Previously a genuine DB outage in database mode
+    // fell back to fixture/test rows (x-data-source: database-fallback-fixture), which showed
+    // "Rank Test Gym" to real visitors. A true outage is categorically different from a real
+    // zero-match result: we could not search at all, so the route now returns a 5xx (clients
+    // render their existing "couldn't load — try again" state) and NEVER fixtures — and it
+    // must not masquerade as a "nothing matches" result either.
     const oldBackend = process.env.KIDS_FUN_SEARCH_BACKEND;
     const oldDb = process.env.DATABASE_URL;
     process.env.KIDS_FUN_SEARCH_BACKEND = 'database';
-    delete process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL; // getPool() throws → searchDatabase catch → honest 5xx
     try {
       const { res, body } = await call('q=open+gym&lat=49.26&lng=-123.07&minResults=1');
-      expect(res.headers.get('x-data-source')).toBe('database-fallback-fixture');
-      expect(body.meta.backend).toBe('fixture');
-      expect(body.meta.fallbackReason).toBe('database search unavailable');
-      expect(body.results.length).toBeGreaterThan(0);
+      expect(res.status).toBe(503);
+      expect(res.headers.get('x-data-source')).not.toBe('database-fallback-fixture');
+      // No fixture/test payload of any kind in an outage response.
+      expect(body.results).toBeUndefined();
+      expect(body.meta).toBeUndefined();
+      expect(JSON.stringify(body)).not.toMatch(/Rank Test Gym|l-rank-confirmed|Test Centre/);
     } finally {
       if (oldBackend === undefined) delete process.env.KIDS_FUN_SEARCH_BACKEND;
       else process.env.KIDS_FUN_SEARCH_BACKEND = oldBackend;
