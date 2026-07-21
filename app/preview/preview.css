@@ -428,8 +428,15 @@
 }
 
 /* ── Freshness stamp (signature component, D9) ── */
+/* BUG-011: the stamp is the product's core trust signal ("✓ Confirmed · <source> ·
+ * Checked today") and must stay fully readable on the primary mobile surface. It used
+ * to be a single non-wrapping inline-flex row, so a long source hostname pushed it past
+ * the right edge of a 375px viewport and clipped "Checked today". It now wraps to a
+ * second line and is capped to its container width; the long source token breaks rather
+ * than overflow (see .kf-stamp__src), and the narrow-viewport tune below trims spacing. */
 .kf-stamp {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-top: 8px;
@@ -439,6 +446,7 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 1.2;
+  max-width: 100%;
 }
 .kf-stamp--confirmed {
   color: var(--confirmed-text);
@@ -472,6 +480,23 @@
 /* NB: the source name intentionally carries NO extra opacity. A prior `opacity: 0.85`
  * here compounded with the .kf-card--muted 0.9 (→0.765 effective) and dragged the source
  * text to 2.85:1 — the worst light-mode contrast offender (Round 18 a11y-remediation). */
+/* BUG-011: a long source hostname (e.g. yourlibrary.bibliocommons.com) must break within
+ * its own box so the stamp wraps instead of overflowing a narrow viewport. min-width:0
+ * lets the flex item shrink below its content width so overflow-wrap can take effect. */
+.kf-stamp__src {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* BUG-011: at phone widths (bug bash used 375×812) trim the horizontal spacing/type a
+ * touch so the wrapped stamp stays compact and never needs to overflow its card. */
+@media (max-width: 400px) {
+  .kf-stamp {
+    gap: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+}
 
 /* ── Category illustration tile (D4: flat, two-tone, category-coded glyph) ── */
 .kf-tile {

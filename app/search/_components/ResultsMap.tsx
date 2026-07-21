@@ -117,12 +117,14 @@ export function ResultsMap({ markers, token }: ResultsMapProps) {
   }, [markers, token, router]);
 
   if (!token) {
+    // BUG-007: keep this copy plain and non-technical — never surface an internal
+    // env-var name (e.g. NEXT_PUBLIC_MAP_KEY) to a parent. The map is simply
+    // unavailable here; List view still has every result.
     return (
       <div className="kf-map kf-map--fallback" role="note">
-        <p className="kf-map__fallback-title">Map view isn’t set up for this environment yet.</p>
+        <p className="kf-map__fallback-title">Map view isn’t available right now.</p>
         <p className="kf-map__fallback-body">
-          A public Mapbox map key needs to be configured (<code>NEXT_PUBLIC_MAP_KEY</code>). Every result is
-          still here — switch back to List view.
+          Every result is still here — switch back to List view.
         </p>
       </div>
     );

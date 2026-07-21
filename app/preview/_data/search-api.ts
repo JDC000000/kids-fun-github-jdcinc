@@ -109,7 +109,10 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
 }
 
 function labelArea(l: ListingRecordDto): string {
-  return l.neighbourhood ?? l.displayArea ?? l.municipalityId ?? 'Metro Vancouver';
+  // BUG-008: never fall back to the raw municipalityId — it is an opaque UUID, not a
+  // human area name. When neighbourhood and displayArea are both absent, go straight
+  // to the generic 'Metro Vancouver' rather than rendering a database id on the card.
+  return l.neighbourhood ?? l.displayArea ?? 'Metro Vancouver';
 }
 
 function mapCategory(key: string): Category {
