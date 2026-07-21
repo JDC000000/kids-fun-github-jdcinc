@@ -1,0 +1,39 @@
+# KIDS FUN ingestion worker — Fly.io app manifest for PRODUCTION (Round 28, 2026-07-21,
+# Jon's direct go-ahead relayed via operator: "APPROVED -- let's stand up production. Go to
+# work." Fly worker sizing explicitly approved to match staging).
+# Region `yyz` (Toronto) aligns with the approved ca-central-1 data-residency gate — same as
+# staging, unchanged. Chromium needs ~1GB. The entrypoint (dist/src/index.js) runs the
+# cadence-driven scheduler continuously: a tiered enqueue tick (source.baseline_cadence /
+# near_date_cadence) plus the durable job-queue poll loop that runs terms-gated ingest.
+# DATABASE_URL is injected as a Fly secret (Supabase session pooler, ca-central-1) — never
+# committed here. This is the PRODUCTION counterpart of fly.toml (staging) — same image/
+# Dockerfile, same VM size, only the app identity/env/target DB differ.
+app = "kids-fun-worker"
+primary_region = "yyz"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  WORKER_HEALTHZ_PORT = "8080"
+  PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
+  APP_ENV = "production"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "get"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"
+  cpus = 1
