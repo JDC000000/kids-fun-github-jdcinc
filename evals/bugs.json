@@ -1,5 +1,5 @@
 {
-  "description": "KIDS FUN bug-bash log (G-T39-3, Round 27). Structured findings from a manual, user-facing bug bash against STAGING (https://kids-fun-staging-jdci-nc.vercel.app, commit 761efac, backend=database), distinct from the automated regression suite (that baseline is G-T39-2). Two lanes: (a) qa-orchestrator direct HTTP/rendered-HTML/code recon of the public parent surface; (b) tester-custom real-browser exploratory pass (Chrome, desktop 1280x800 + mobile 375x812) covering parent flows, independent verification of the data-quality findings, and best-effort authed + admin console sanity on a local HEAD-0020 e2e stack (never staging). Each finding carries a severity graded on REAL USER IMPACT (not code elegance), a checkable evidence artifact, a root-cause class, and an explicit disposition. Exit-AC discipline: every critical/high finding is explicitly dispositioned (never silently deferred) — data-breadth items are ACCEPTED with rationale; confirmed code/config defects are OPEN-ROUTED-FOR-FIX (handed to the Developer for a minimal fix on a fresh branch, own test, not merged, re-QA'd before launch). qa-orchestrator is a QA conductor and does not itself write code fixes. This file is a QA log artifact, not a runtime input; the harness does not read it.",
+  "description": "KIDS FUN bug-bash log (G-T39-3, Round 27). Structured findings from a manual, user-facing bug bash against STAGING (https://kids-fun-staging-jdci-nc.vercel.app, commit 761efac, backend=database), distinct from the automated regression suite (that baseline is G-T39-2). Two lanes: (a) qa-orchestrator direct HTTP/rendered-HTML/code recon of the public parent surface; (b) tester-custom real-browser exploratory pass (Chrome, desktop 1280x800 + mobile 375x812) covering parent flows, independent verification of the data-quality findings, and best-effort authed + admin console sanity on a local HEAD-0020 e2e stack (never staging). Each finding carries a severity graded on REAL USER IMPACT (not code elegance), a checkable evidence artifact, a root-cause class, and an explicit disposition. Exit-AC discipline: every critical/high finding is explicitly dispositioned (never silently deferred) \u2014 data-breadth items are ACCEPTED with rationale; confirmed code/config defects are OPEN-ROUTED-FOR-FIX (handed to the Developer for a minimal fix on a fresh branch, own test, not merged, re-QA'd before launch). qa-orchestrator is a QA conductor and does not itself write code fixes. This file is a QA log artifact, not a runtime input; the harness does not read it.",
   "meta": {
     "task": "G-T39-3",
     "round": 27,
@@ -8,10 +8,10 @@
     "commit": "761efac337898e69731c3f370bcbedab165cc987",
     "backend": "database",
     "lanes": {
-      "direct-recon": "qa-orchestrator — HTTP + rendered-HTML + code (public parent surface)",
-      "browser-bugbash": "tester-custom (sonnet) — real Chrome desktop+mobile; verified BUG-001/002; authed+admin sanity on local e2e stack; 40 screenshots at /opt/projects/crhq-satellite/images/kidsfun-r27-*.png"
+      "direct-recon": "qa-orchestrator \u2014 HTTP + rendered-HTML + code (public parent surface)",
+      "browser-bugbash": "tester-custom (sonnet) \u2014 real Chrome desktop+mobile; verified BUG-001/002; authed+admin sanity on local e2e stack; 40 screenshots at /opt/projects/crhq-satellite/images/kidsfun-r27-*.png"
     },
-    "discipline": "read-mostly vs deployed staging. NOTE: the browser lane's correction-flow test wrote ONE real, contentless correction_report row to STAGING (see BUG-009) — flagged for operator cleanup; no fabricated text. Admin console eyeball used a LOCAL loopback DB admin grant only (soft-deactivated after), never staging. No secrets exposed. No core files touched.",
+    "discipline": "read-mostly vs deployed staging. NOTE: the browser lane's correction-flow test wrote ONE real, contentless correction_report row to STAGING (see BUG-009) \u2014 flagged for operator cleanup; no fabricated text. Admin console eyeball used a LOCAL loopback DB admin grant only (soft-deactivated after), never staging. No secrets exposed. No core files touched.",
     "severityScale": {
       "critical": "blocks a core flow for real users; data loss/corruption; security exposure",
       "high": "materially degrades trust or a core value-prop for real users; broken user-visible feature/link; obviously non-shippable content visible pre-launch",
@@ -20,27 +20,45 @@
     },
     "statusValues": {
       "accepted": "explicitly accepted-as-known for this round (data-breadth / ingestion / curation); escalated, not a code defect",
-      "open-routed-for-fix": "confirmed code/config defect; NOT accepted as shippable; handed to the fix pipeline (Developer: fresh branch, own test, not merged, re-QA'd) — must-fix-before-launch",
+      "open-routed-for-fix": "confirmed code/config defect; NOT accepted as shippable; handed to the fix pipeline (Developer: fresh branch, own test, not merged, re-QA'd) \u2014 must-fix-before-launch",
       "deferred-logged": "medium/low; logged for a future hardening round; no fix required by this task's AC",
       "fixed-pending-qa": "was open-routed-for-fix; a minimal code fix + regression test has landed on a fresh branch (overnight/r27-g-t39-3-bugfix-bundle), NOT merged; requires independent QA re-verification before merge/launch",
-      "qa-verified": "TERMINAL. was fixed-pending-qa; independent QA re-verification PASSED with checkable artifacts — the fix is confirmed correct and cleared to ship. (Added R27 G-T39-3 independent post-merge QA lane, 2026-07-21, because the legend previously dead-ended at fixed-pending-qa with no post-QA state.)"
+      "qa-verified": "TERMINAL. was fixed-pending-qa; independent QA re-verification PASSED with checkable artifacts \u2014 the fix is confirmed correct and cleared to ship. (Added R27 G-T39-3 independent post-merge QA lane, 2026-07-21, because the legend previously dead-ended at fixed-pending-qa with no post-QA state.)"
     },
-    "counts": { "critical": 0, "high": 4, "medium": 5, "low": 2, "total": 11 },
-    "goNoGoMaterial": ["BUG-001", "BUG-002", "BUG-007", "BUG-011", "BUG-009 (awareness: staging correction pollution + one-click-report UX)"],
-    "exitAcCheck": "PASS — no critical/high left unresolved-and-unaccepted. 4 HIGH: BUG-001 & BUG-002 explicitly ACCEPTED (data/ingestion/curation, escalated); BUG-007 & BUG-011 explicitly OPEN-ROUTED-FOR-FIX (confirmed code/config defects with full briefs + recommended minimal fixes). 0 CRITICAL.",
+    "counts": {
+      "critical": 0,
+      "high": 4,
+      "medium": 7,
+      "low": 7,
+      "total": 18
+    },
+    "goNoGoMaterial": [
+      "BUG-001",
+      "BUG-002",
+      "BUG-007",
+      "BUG-011",
+      "BUG-009 (awareness: staging correction pollution + one-click-report UX)"
+    ],
+    "exitAcCheck": "PASS \u2014 no critical/high left unresolved-and-unaccepted. 4 HIGH: BUG-001 & BUG-002 explicitly ACCEPTED (data/ingestion/curation, escalated); BUG-007 & BUG-011 explicitly OPEN-ROUTED-FOR-FIX (confirmed code/config defects with full briefs + recommended minimal fixes). 0 CRITICAL.",
     "postMergeQa": {
-      "lane": "qa-orchestrator — independent post-merge QA (R27 G-T39-3 minor-fixes bundle)",
+      "lane": "qa-orchestrator \u2014 independent post-merge QA (R27 G-T39-3 minor-fixes bundle)",
       "runAt": "2026-07-21",
       "reverifiedCommit": "9496844",
       "note": "The bug-bash minor-fixes bundle (BUG-007/008/009/011) was merged to main@9496844 + deployed to staging BEFORE this independent QA ran (orchestrator process slip; the standing rule is independent QA before every merge). This lane ran genuine post-merge QA in a fresh clone with new/adversarial test cases + real-browser verification, NOT a re-run of the shipped tests.",
       "verdict": "PASS (all 4 fixes confirmed correct)",
       "evidence": {
-        "BUG-007": "no-token fallback carries no NEXT_PUBLIC_MAP_KEY / <code> / env-var mention; WITH a public token the map surface (kf-map__canvas) renders, not the fallback — new SSR test tests/_qa_indep_r27t39.test.tsx.",
-        "BUG-008": "labelArea() drops municipalityId from the chain; adversarial neighbourhood=null+displayArea=null → 'Metro Vancouver', UUID fuzz never leaks an id — new test tests/_qa_indep_r27t39.test.tsx.",
+        "BUG-007": "no-token fallback carries no NEXT_PUBLIC_MAP_KEY / <code> / env-var mention; WITH a public token the map surface (kf-map__canvas) renders, not the fallback \u2014 new SSR test tests/_qa_indep_r27t39.test.tsx.",
+        "BUG-008": "labelArea() drops municipalityId from the chain; adversarial neighbourhood=null+displayArea=null \u2192 'Metro Vancouver', UUID fuzz never leaks an id \u2014 new test tests/_qa_indep_r27t39.test.tsx.",
         "BUG-009": "exhaustive 3x3 state-machine table + sequence sims (submit=true on exactly one transition, 'sent' unreachable except via confirming+confirm) AND a real-browser drive of the actual React component: single request writes 0, cancel writes 0, full path writes EXACTLY 1; differential control confirms the pre-fix code wrote on a single click.",
         "BUG-011": "REAL Chromium at 320/360/375/390px, card + detail contexts, source 'yourlibrary.bibliocommons.com' + a 61-char no-break adversarial hostname: stamp wraps within its container/viewport, zero overflow, zero clipping. Differential control on the pre-fix CSS reproduced the overflow (viewport +70px @375px). Screenshots at /opt/projects/crhq-satellite/.scratch/bug011/shot-FIXED-*.png."
       },
-      "ciParity": "typecheck PASS, lint PASS, vitest 1119/1163 PASS (incl. all 4 target-change tests + 13 new indep tests). The 35 non-passing are auth-role-gated RLS/account/profile integration tests that need a LOGIN-capable 'authenticated' Postgres role (real CI mints it fresh; the shared local Supabase cluster's role is NOLOGIN) — orthogonal to this frontend-only diff; no failing file references any changed module."
+      "ciParity": "typecheck PASS, lint PASS, vitest 1119/1163 PASS (incl. all 4 target-change tests + 13 new indep tests). The 35 non-passing are auth-role-gated RLS/account/profile integration tests that need a LOGIN-capable 'authenticated' Postgres role (real CI mints it fresh; the shared local Supabase cluster's role is NOLOGIN) \u2014 orthogonal to this frontend-only diff; no failing file references any changed module."
+    },
+    "round29UxReviewAddendum": {
+      "runAt": "2026-07-21",
+      "target": "https://kids-fun-psi.vercel.app (production)",
+      "source": "Two independent reviews: Jon's own hands-on production testing (BUG-012/013/014/015/016/017's discovery overlaps confirmed by both; filter-redundancy UX separately routed to a dedicated dev stream, not logged here) + an independent, uninvolved UX-review agent run by the operator.",
+      "note": "The most severe finding from this round (fixture/test data + raw debug metadata rendering on real production search results) is tracked as its own P0 fix-in-progress, NOT logged as a numbered bug here since it is actively being fixed same-day with dedicated QA, unlike the backlog items above. See documents/execution/ on the crhq-satellite host for the live incident thread if needed. The List<->Map view filter-sidebar-corruption finding was routed directly to the already-in-flight preview-filter-toggle bug fix stream as a likely repro lead, also not logged as a separate numbered bug here pending that investigation's conclusion."
     }
   },
   "bugs": [
@@ -54,7 +72,7 @@
       "foundBy": "qa-orchestrator (direct recon); CONFIRMED live in browser by tester-custom",
       "foundAt": "2026-07-21",
       "detail": "Several clearly non-kid civic/awareness observances ingested from the 'City of Vancouver events calendar' source are classified as primaryCategoryKey='class_program' (a kids-activity category) and appear in default /search results and in ANY query, including a 'toddler' search. Examples: 'International Overdose Awareness', 'National Day of Remembrance and Action on Violence Against Women', 'Remembrance Day', \"Firefighters' National Memorial Day\", \"Police and Peace Officers' National Memorial Day\". Some are somber adult topics jarring as 'fun for kids'.",
-      "userImpact": "Directly undermines trust in a child-focused product. A parent browsing/filtering sees memorial days and an overdose-awareness day presented as kids activities — the kind of thing a real user notices and screenshots.",
+      "userImpact": "Directly undermines trust in a child-focused product. A parent browsing/filtering sees memorial days and an overdose-awareness day presented as kids activities \u2014 the kind of thing a real user notices and screenshots.",
       "evidence": "GET /api/search?limit=100 -> ~5-6 civic observances from org 'City of Vancouver events calendar' (host vancouver.ca), all class_program; also surface for q=toddler. Browser-confirmed: images/kidsfun-r27-verify-bug001.png.",
       "resolution": "ACCEPTED (not a quick app-code fix): the app renders what the pipeline classifies. Root cause is upstream source SCOPE + CLASSIFICATION QUALITY. Escalated to ingestion/classification owner (development-orchestrator). Go/no-go-material: real-source content quality is mixed.",
       "goNoGoMaterial": true
@@ -83,25 +101,25 @@
       "rootCauseClass": "code + config (no map key configured for this deployment; user-facing fallback text hard-codes the env-var name)",
       "foundBy": "tester-custom (real browser); root-caused + confirmed in code by qa-orchestrator",
       "foundAt": "2026-07-21",
-      "detail": "The always-visible 'Map' toggle on /search (presented as equal to 'List') never renders a map; it shows 'Map view isn't set up for this environment yet. A public Mapbox map key needs to be configured (NEXT_PUBLIC_MAP_KEY). Every result is still here — switch back to List view.' Code confirms: app/search/page.tsx:261 mapToken = (NEXT_PUBLIC_MAP_KEY ?? GEOCODING_API_KEY ?? '').trim(); neither is set on staging -> fallback in app/search/_components/ResultsMap.tsx:124-125 which literally prints <code>NEXT_PUBLIC_MAP_KEY</code>.",
-      "userImpact": "A parent trying Map view (an advertised, equal browsing mode) hits a dead end with a technical message naming an internal env var — unprofessional to a non-technical user, and the feature is unusable as shipped on this environment. (List works and is the default, so browsing is not blocked; the impact is a broken secondary surface + a poor error message. NEXT_PUBLIC_MAP_KEY is a public-by-design var, so its NAME is not a secret leak — but it should not be shown to users.)",
+      "detail": "The always-visible 'Map' toggle on /search (presented as equal to 'List') never renders a map; it shows 'Map view isn't set up for this environment yet. A public Mapbox map key needs to be configured (NEXT_PUBLIC_MAP_KEY). Every result is still here \u2014 switch back to List view.' Code confirms: app/search/page.tsx:261 mapToken = (NEXT_PUBLIC_MAP_KEY ?? GEOCODING_API_KEY ?? '').trim(); neither is set on staging -> fallback in app/search/_components/ResultsMap.tsx:124-125 which literally prints <code>NEXT_PUBLIC_MAP_KEY</code>.",
+      "userImpact": "A parent trying Map view (an advertised, equal browsing mode) hits a dead end with a technical message naming an internal env var \u2014 unprofessional to a non-technical user, and the feature is unusable as shipped on this environment. (List works and is the default, so browsing is not blocked; the impact is a broken secondary surface + a poor error message. NEXT_PUBLIC_MAP_KEY is a public-by-design var, so its NAME is not a secret leak \u2014 but it should not be shown to users.)",
       "evidence": "Screenshot images/kidsfun-r27-map-view.png. Code: app/search/page.tsx:261, app/search/_components/ResultsMap.tsx:124-125.",
-      "resolution": "OPEN-ROUTED-FOR-FIX (qa is conductor, does not self-fix). Two-part recommendation for the Developer stream: (1) config — configure a Mapbox key on this deployment before any review/demo that includes Map view; or (2) code — hide/disable the Map toggle on environments where no key is present so users are never routed into the broken state, and remove the literal env-var name from any user-facing copy. Go/no-go-material (do not demo the Map view until resolved). FIX (Round 27, branch overnight/r27-g-t39-3-bugfix-bundle, NOT merged): code — the no-key fallback copy in app/search/_components/ResultsMap.tsx no longer names any env var; it now reads 'Map view isn't available right now. Every result is still here — switch back to List view.' (non-technical, no <code> element). Test tests/ui/results-map-fallback.test.tsx SSR-renders the token='' branch and asserts the markup contains neither NEXT_PUBLIC_MAP_KEY/GEOCODING_API_KEY nor any 'env var' phrasing, and still points to List view. The code path is graceful either way (real map when a key is present). CONFIG QUESTION flagged separately to the orchestrator: a 'kids-fun-mapbox' connector (KIDS FUN Mapbox/Geocoding, provider mapbox.com) DOES exist in the credential vault, but staging renders the no-key fallback — i.e. NEXT_PUBLIC_MAP_KEY is simply not wired into the staging environment. Whether to populate/wire it into staging is a deploy-config decision for the env owner (system-administrator/deploy), not assumed or wired by this fix stream; the secret value was NOT fetched or echoed.",
+      "resolution": "OPEN-ROUTED-FOR-FIX (qa is conductor, does not self-fix). Two-part recommendation for the Developer stream: (1) config \u2014 configure a Mapbox key on this deployment before any review/demo that includes Map view; or (2) code \u2014 hide/disable the Map toggle on environments where no key is present so users are never routed into the broken state, and remove the literal env-var name from any user-facing copy. Go/no-go-material (do not demo the Map view until resolved). FIX (Round 27, branch overnight/r27-g-t39-3-bugfix-bundle, NOT merged): code \u2014 the no-key fallback copy in app/search/_components/ResultsMap.tsx no longer names any env var; it now reads 'Map view isn't available right now. Every result is still here \u2014 switch back to List view.' (non-technical, no <code> element). Test tests/ui/results-map-fallback.test.tsx SSR-renders the token='' branch and asserts the markup contains neither NEXT_PUBLIC_MAP_KEY/GEOCODING_API_KEY nor any 'env var' phrasing, and still points to List view. The code path is graceful either way (real map when a key is present). CONFIG QUESTION flagged separately to the orchestrator: a 'kids-fun-mapbox' connector (KIDS FUN Mapbox/Geocoding, provider mapbox.com) DOES exist in the credential vault, but staging renders the no-key fallback \u2014 i.e. NEXT_PUBLIC_MAP_KEY is simply not wired into the staging environment. Whether to populate/wire it into staging is a deploy-config decision for the env owner (system-administrator/deploy), not assumed or wired by this fix stream; the secret value was NOT fetched or echoed.",
       "goNoGoMaterial": true
     },
     {
       "id": "BUG-011",
-      "title": "Mobile: the 'Confirmed · source · Checked today' trust badge overflows the viewport, truncating on every card and detail page",
+      "title": "Mobile: the 'Confirmed \u00b7 source \u00b7 Checked today' trust badge overflows the viewport, truncating on every card and detail page",
       "severity": "high",
       "status": "qa-verified",
       "area": "listing cards & detail / mobile layout / core trust signal",
-      "rootCauseClass": "code (CSS — the stamp element does not wrap/shrink to fit narrow viewports; extends past its container)",
+      "rootCauseClass": "code (CSS \u2014 the stamp element does not wrap/shrink to fit narrow viewports; extends past its container)",
       "foundBy": "tester-custom (real browser, mobile 375x812, DOM measurement)",
       "foundAt": "2026-07-21",
-      "detail": "At 375px, the green dashed '✓ Confirmed · <source> · Checked today' badge on every search-result card and on the detail page overflows the right viewport edge (badge getBoundingClientRect right=399.8 vs innerWidth=375, ~25px), cutting 'Checked today' to fragments ('Che toda' on detail; source+date clipped on cards, e.g. '✓ Confirmed · yourlibrary.bibliocomm...'). Reproduced on the first search card and on /activity/2c584a90 detail.",
-      "userImpact": "This is the product's stated CORE trust mechanic (homepage: 'the source and last-checked date on every listing, so you can trust it before you go'). On mobile — plausibly the majority of real usage — that exact information is unreadable on every card and the detail page. Directly undermines the central value proposition on the primary mobile surface.",
+      "detail": "At 375px, the green dashed '\u2713 Confirmed \u00b7 <source> \u00b7 Checked today' badge on every search-result card and on the detail page overflows the right viewport edge (badge getBoundingClientRect right=399.8 vs innerWidth=375, ~25px), cutting 'Checked today' to fragments ('Che toda' on detail; source+date clipped on cards, e.g. '\u2713 Confirmed \u00b7 yourlibrary.bibliocomm...'). Reproduced on the first search card and on /activity/2c584a90 detail.",
+      "userImpact": "This is the product's stated CORE trust mechanic (homepage: 'the source and last-checked date on every listing, so you can trust it before you go'). On mobile \u2014 plausibly the majority of real usage \u2014 that exact information is unreadable on every card and the detail page. Directly undermines the central value proposition on the primary mobile surface.",
       "evidence": "Screenshots images/kidsfun-r27-mobile-cards-badge.png, images/kidsfun-r27-mobile-detail.png. DOM: badge right=399.8px vs innerWidth=375px. (Rests on the lane's browser DOM measurement + screenshots; qa-orchestrator cannot re-measure a viewport over HTTP but accepts these as concrete checkable artifacts.)",
-      "resolution": "OPEN-ROUTED-FOR-FIX. Recommend the Developer make the stamp badge wrap to a second line or ellipsis-truncate within its own box below ~400px, verified across cards + detail at 320/360/375/390px. Go/no-go-material (breaks the core trust signal on mobile). FIX (Round 27, branch overnight/r27-g-t39-3-bugfix-bundle, NOT merged): code (CSS) — app/preview/preview.css .kf-stamp now sets flex-wrap:wrap + max-width:100% so the badge wraps to a second line and never extends past its container/viewport; a new .kf-stamp__src rule (min-width:0; overflow-wrap:anywhere; word-break:break-word) lets a long source hostname break instead of pushing the row wide; a @media (max-width:400px) tune trims gap/padding/font on phones. No truncation — the full '✓ Confirmed · source · Checked today' stays readable. Test tests/ui/freshness-stamp-mobile.test.tsx asserts the CSS carries these declarations and that the source renders through the breakable .kf-stamp__src span. NOTE: vitest runs node-env (no layout engine) so true pixel-overflow at 375px must be re-measured by QA's real-browser lane at 320/360/375/390px before merge.",
+      "resolution": "OPEN-ROUTED-FOR-FIX. Recommend the Developer make the stamp badge wrap to a second line or ellipsis-truncate within its own box below ~400px, verified across cards + detail at 320/360/375/390px. Go/no-go-material (breaks the core trust signal on mobile). FIX (Round 27, branch overnight/r27-g-t39-3-bugfix-bundle, NOT merged): code (CSS) \u2014 app/preview/preview.css .kf-stamp now sets flex-wrap:wrap + max-width:100% so the badge wraps to a second line and never extends past its container/viewport; a new .kf-stamp__src rule (min-width:0; overflow-wrap:anywhere; word-break:break-word) lets a long source hostname break instead of pushing the row wide; a @media (max-width:400px) tune trims gap/padding/font on phones. No truncation \u2014 the full '\u2713 Confirmed \u00b7 source \u00b7 Checked today' stays readable. Test tests/ui/freshness-stamp-mobile.test.tsx asserts the CSS carries these declarations and that the source renders through the breakable .kf-stamp__src span. NOTE: vitest runs node-env (no layout engine) so true pixel-overflow at 375px must be re-measured by QA's real-browser lane at 320/360/375/390px before merge.",
       "goNoGoMaterial": true
     },
     {
@@ -128,9 +146,9 @@
       "rootCauseClass": "ingestion (age bands not extracted) + by-design engine policy",
       "foundBy": "qa-orchestrator (direct recon)",
       "foundAt": "2026-07-21",
-      "detail": "29/30 listings have both ageMinMonths and ageMaxMonths null. The engine includes unknown-age listings regardless of the age filter (deliberate 'don't hide on missing data'), so filtering by age barely changes results — a 'toddler' search still returns teen clubs and civic observances. The detail page honestly discloses 'the source doesn't list an age limit', preventing a misleading answer, but the practical value of the age filter is low on current data.",
+      "detail": "29/30 listings have both ageMinMonths and ageMaxMonths null. The engine includes unknown-age listings regardless of the age filter (deliberate 'don't hide on missing data'), so filtering by age barely changes results \u2014 a 'toddler' search still returns teen clubs and civic observances. The detail page honestly discloses 'the source doesn't list an age limit', preventing a misleading answer, but the practical value of the age filter is low on current data.",
       "userImpact": "Age filtering, a headline value-prop, does little on real data. Mitigated by honest disclosure, so it is a value gap rather than a wrong-answer bug.",
-      "evidence": "GET /api/search?q=toddler&limit=100 -> ctx.ageBands ['under2','2-4'] but 30 results, only 'Baby & Me' (0-36mo) ageBandMatches; rest null. Detail shows 'Ages All ages · source doesn't list an age limit'.",
+      "evidence": "GET /api/search?q=toddler&limit=100 -> ctx.ageBands ['under2','2-4'] but 30 results, only 'Baby & Me' (0-36mo) ageBandMatches; rest null. Detail shows 'Ages All ages \u00b7 source doesn't list an age limit'.",
       "resolution": "Logged (data-breadth-bound; same root as G-T39-2 KPI #1/#2). Ingestion age-enrichment item, not a code defect.",
       "goNoGoMaterial": false
     },
@@ -143,10 +161,10 @@
       "rootCauseClass": "code (display fallback chain uses the raw municipalityId UUID before the safe default)",
       "foundBy": "tester-custom (real browser); root-caused + quantified in code/API by qa-orchestrator",
       "foundAt": "2026-07-21",
-      "detail": "app/preview/_data/search-api.ts:112 -> `l.neighbourhood ?? l.displayArea ?? l.municipalityId ?? 'Metro Vancouver'`. When neighbourhood AND displayArea are both null, the area line shows the raw municipalityId UUID '10000000-0000-0000-0000-000000000010'. Affects 9/30 visible listings (all Vancouver-citywide: the civic observances plus 'Vancouver Polar Bear Swim' and the 'Pop-up Recycling Event' cluster), on both search cards and detail pages, e.g. '10000000-0000-0000-0000-000000000010 · 13 min drive · 3.2 km'.",
-      "userImpact": "~30% of visible cards show a nonsensical database ID where a neighbourhood name should be — reads as visibly broken/unfinished.",
+      "detail": "app/preview/_data/search-api.ts:112 -> `l.neighbourhood ?? l.displayArea ?? l.municipalityId ?? 'Metro Vancouver'`. When neighbourhood AND displayArea are both null, the area line shows the raw municipalityId UUID '10000000-0000-0000-0000-000000000010'. Affects 9/30 visible listings (all Vancouver-citywide: the civic observances plus 'Vancouver Polar Bear Swim' and the 'Pop-up Recycling Event' cluster), on both search cards and detail pages, e.g. '10000000-0000-0000-0000-000000000010 \u00b7 13 min drive \u00b7 3.2 km'.",
+      "userImpact": "~30% of visible cards show a nonsensical database ID where a neighbourhood name should be \u2014 reads as visibly broken/unfinished.",
       "evidence": "Screenshots images/kidsfun-r27-remembranceday-card.png, images/kidsfun-r27-remembranceday-detail.png. GET /api/search?limit=100 -> 9/30 have null neighbourhood+displayArea and municipalityId=10000000-...-010; code app/preview/_data/search-api.ts:112.",
-      "resolution": "OPEN-ROUTED-FOR-FIX — trivial one-line change: drop `l.municipalityId` from the fallback chain (or replace with a region-name lookup) so it never shows a raw id, falling through to 'Metro Vancouver'/'Vancouver'. Medium severity but cheap + visible on 30% of cards; recommend fixing before launch. Independent of the BUG-001 content-scope question. FIX (Round 27, branch overnight/r27-g-t39-3-bugfix-bundle, NOT merged): code — app/preview/_data/search-api.ts labelArea() now returns `l.neighbourhood ?? l.displayArea ?? 'Metro Vancouver'`, dropping l.municipalityId from the chain so a raw UUID is never rendered (no attempt to resolve the UUID to a real name — out of scope). Test tests/preview-area-label.test.ts asserts the area is 'Metro Vancouver' (never a UUID pattern) when neighbourhood+displayArea are null, and that a real neighbourhood/displayArea still wins when present.",
+      "resolution": "OPEN-ROUTED-FOR-FIX \u2014 trivial one-line change: drop `l.municipalityId` from the fallback chain (or replace with a region-name lookup) so it never shows a raw id, falling through to 'Metro Vancouver'/'Vancouver'. Medium severity but cheap + visible on 30% of cards; recommend fixing before launch. Independent of the BUG-001 content-scope question. FIX (Round 27, branch overnight/r27-g-t39-3-bugfix-bundle, NOT merged): code \u2014 app/preview/_data/search-api.ts labelArea() now returns `l.neighbourhood ?? l.displayArea ?? 'Metro Vancouver'`, dropping l.municipalityId from the chain so a raw UUID is never rendered (no attempt to resolve the UUID to a real name \u2014 out of scope). Test tests/preview-area-label.test.ts asserts the area is 'Metro Vancouver' (never a UUID pattern) when neighbourhood+displayArea are null, and that a real neighbourhood/displayArea still wins when present.",
       "goNoGoMaterial": false
     },
     {
@@ -158,10 +176,10 @@
       "rootCauseClass": "code + product decision (no confirm step, no text-capture before the write fires)",
       "foundBy": "tester-custom (real browser); corrections contract confirmed in code by qa-orchestrator",
       "foundAt": "2026-07-21",
-      "detail": "The 'Report wrong info' button on /activity|/preview/[id] has no form/text field/confirm — one click fires POST /api/corrections with body {\"occurrenceId\":\"<id>\"} (verified via network capture) and shows 'Thanks — we'll recheck this listing against the source.' There is no way to say WHAT is wrong and no undo. (Code confirms the route accepts an optional 'note' field that the UI never collects.)",
-      "userImpact": "Every correction submitted site-wide is contentless, giving curators zero actionable signal beyond 'someone clicked once' — undermines the correction pipeline the product markets as part of its trust story. A misclick (easy on mobile, where the button sits above the sticky Registration/Maps bar) silently files a report with no cancel.",
+      "detail": "The 'Report wrong info' button on /activity|/preview/[id] has no form/text field/confirm \u2014 one click fires POST /api/corrections with body {\"occurrenceId\":\"<id>\"} (verified via network capture) and shows 'Thanks \u2014 we'll recheck this listing against the source.' There is no way to say WHAT is wrong and no undo. (Code confirms the route accepts an optional 'note' field that the UI never collects.)",
+      "userImpact": "Every correction submitted site-wide is contentless, giving curators zero actionable signal beyond 'someone clicked once' \u2014 undermines the correction pipeline the product markets as part of its trust story. A misclick (easy on mobile, where the button sits above the sticky Registration/Maps bar) silently files a report with no cancel.",
       "evidence": "Screenshot images/kidsfun-r27-report-modal.png (post-click 'Thanks...' state, no form shown). Network: POST /api/corrections, postData {\"occurrenceId\":\"2c584a90-62e5-4cc4-8fd1-2202facd4744\"}, response 202.",
-      "resolution": "OPEN-ROUTED-FOR-FIX (product/UX decision for Jon + a small code change): add a short reason field + a confirm step before the write. ALSO — DISCIPLINE / CLEANUP: this test click created ONE real, contentless correction_report row on STAGING against occurrenceId 2c584a90-62e5-4cc4-8fd1-2202facd4744 (Family Storytime — Brighouse). No fabricated text; harmless to leave, but an operator can dismiss it via /admin/corrections on staging if a clean queue is wanted before launch review. qa-orchestrator did not (and should not) mutate staging to remove it without proper access. FIX (Round 27, branch overnight/r27-g-t39-3-bugfix-bundle, NOT merged): code — app/preview/_components/ReportWrongInfo.tsx now gates the write behind a lightweight confirm step; the first click only shows 'Report this listing as having wrong info?' with 'Yes, report it' / 'Cancel', and the POST to /api/corrections fires ONLY on explicit confirm (Cancel returns to idle, nothing sent). The transition rule lives in an exported pure `nextReportStage` state machine so 'one click never submits' is unit-testable in this node-env project. SCOPE: per the delegated brief this fix adds the confirm gate only; the optional reason/note capture (also noted here) is left for a follow-up product decision and is out of this bundle's scope. Test tests/ui/report-wrong-info-confirm.test.tsx asserts a single 'request' yields submit=false, submission happens only after 'confirm', cancel/other transitions never submit, and the default SSR render shows the trigger (not the acknowledgement) with reportCorrection un-called. Built the confirm UI with the existing kf-link/kf-panel patterns (no new component/CSS pattern invented). NOTE: the one contentless staging correction_report row remains an operator-cleanup item (unchanged by this code fix).",
+      "resolution": "OPEN-ROUTED-FOR-FIX (product/UX decision for Jon + a small code change): add a short reason field + a confirm step before the write. ALSO \u2014 DISCIPLINE / CLEANUP: this test click created ONE real, contentless correction_report row on STAGING against occurrenceId 2c584a90-62e5-4cc4-8fd1-2202facd4744 (Family Storytime \u2014 Brighouse). No fabricated text; harmless to leave, but an operator can dismiss it via /admin/corrections on staging if a clean queue is wanted before launch review. qa-orchestrator did not (and should not) mutate staging to remove it without proper access. FIX (Round 27, branch overnight/r27-g-t39-3-bugfix-bundle, NOT merged): code \u2014 app/preview/_components/ReportWrongInfo.tsx now gates the write behind a lightweight confirm step; the first click only shows 'Report this listing as having wrong info?' with 'Yes, report it' / 'Cancel', and the POST to /api/corrections fires ONLY on explicit confirm (Cancel returns to idle, nothing sent). The transition rule lives in an exported pure `nextReportStage` state machine so 'one click never submits' is unit-testable in this node-env project. SCOPE: per the delegated brief this fix adds the confirm gate only; the optional reason/note capture (also noted here) is left for a follow-up product decision and is out of this bundle's scope. Test tests/ui/report-wrong-info-confirm.test.tsx asserts a single 'request' yields submit=false, submission happens only after 'confirm', cancel/other transitions never submit, and the default SSR render shows the trigger (not the acknowledgement) with reportCorrection un-called. Built the confirm UI with the existing kf-link/kf-panel patterns (no new component/CSS pattern invented). NOTE: the one contentless staging correction_report row remains an operator-cleanup item (unchanged by this code fix).",
       "goNoGoMaterial": true
     },
     {
@@ -170,11 +188,11 @@
       "severity": "medium",
       "status": "deferred-logged",
       "area": "search filters / mobile layout",
-      "rootCauseClass": "code (CSS — button not cleared below the date inputs at narrow widths)",
+      "rootCauseClass": "code (CSS \u2014 button not cleared below the date inputs at narrow widths)",
       "foundBy": "tester-custom (real browser, mobile 375x812, DOM measurement)",
       "foundAt": "2026-07-21",
-      "detail": "On /search at 375px, the CUSTOM DATES 'Apply dates' button overlaps the bottom-right of the 'To' date input: 'To' right edge x=217; 'Apply dates' spans x=197-296.7, y 400-436 — a ~20x36px overlap sitting over the input's native calendar-picker icon.",
-      "userImpact": "A parent tapping the calendar icon on the 'To' field on a phone is likely to hit 'Apply dates' instead — fiddly, looks broken. Typing a date still works, so the flow is not blocked.",
+      "detail": "On /search at 375px, the CUSTOM DATES 'Apply dates' button overlaps the bottom-right of the 'To' date input: 'To' right edge x=217; 'Apply dates' spans x=197-296.7, y 400-436 \u2014 a ~20x36px overlap sitting over the input's native calendar-picker icon.",
+      "userImpact": "A parent tapping the calendar icon on the 'To' field on a phone is likely to hit 'Apply dates' instead \u2014 fiddly, looks broken. Typing a date still works, so the flow is not blocked.",
       "evidence": "Screenshot images/kidsfun-r27-mobile-applydates2.png. DOM rects as above.",
       "resolution": "Logged for a mobile-CSS hardening pass: clear the button below the date-inputs stack on narrow viewports. Recommend bundling with BUG-011 in the same mobile-layout fix stream.",
       "goNoGoMaterial": false
@@ -188,9 +206,9 @@
       "rootCauseClass": "code (read-model occurrence selection / freshness window)",
       "foundBy": "qa-orchestrator (direct recon + rendered detail)",
       "foundAt": "2026-07-21",
-      "detail": "'Family Storytime — Brighouse' displays a Mon Jul 20 7:30 PM occurrence (~1 day past vs today 2026-07-21) as its representative occurrence, with no 'already happened' indicator, rather than the next upcoming instance. Only 1/30; boundary case. The other 7 past-start listings are correctly-shown ongoing multi-week summer programs (future end dates).",
+      "detail": "'Family Storytime \u2014 Brighouse' displays a Mon Jul 20 7:30 PM occurrence (~1 day past vs today 2026-07-21) as its representative occurrence, with no 'already happened' indicator, rather than the next upcoming instance. Only 1/30; boundary case. The other 7 past-start listings are correctly-shown ongoing multi-week summer programs (future end dates).",
       "userImpact": "A single result whose shown date is ~1 day in the past. Minor, boundary-only.",
-      "evidence": "GET /api/search?limit=100 -> startDatetimeUtc 2026-07-21T02:30:00Z (Jul 20 19:30 America/Vancouver). Rendered detail: 'When Mon, Jul 20 · 7:30 PM–8 PM'.",
+      "evidence": "GET /api/search?limit=100 -> startDatetimeUtc 2026-07-21T02:30:00Z (Jul 20 19:30 America/Vancouver). Rendered detail: 'When Mon, Jul 20 \u00b7 7:30 PM\u20138 PM'.",
       "resolution": "Logged for hardening: prefer next-upcoming occurrence for a recurring series, or label an elapsed one. Low, boundary case.",
       "goNoGoMaterial": false
     },
@@ -207,6 +225,111 @@
       "userImpact": "Cosmetic; a careful reader notices the grammar slip. No functional impact.",
       "evidence": "GET /search?q=zzzxqmytrhwabc rendered text.",
       "resolution": "Logged as copy polish; below the fix-required bar. Fold into the next copy pass.",
+      "goNoGoMaterial": false
+    },
+    {
+      "id": "BUG-012",
+      "title": "AGES/AREAS filter pills overflow with no scroll cue on desktop and mobile",
+      "severity": "medium",
+      "status": "deferred-logged",
+      "area": "search filter rail",
+      "rootCauseClass": "CSS overflow / missing affordance",
+      "foundBy": "independent UX review (operator-run, uninvolved agent), Round 29",
+      "foundAt": "2026-07-21",
+      "detail": "AGES and AREAS filter pill rows overflow their container with no scrollbar, arrow, or fade cue on either desktop or mobile. Example: 'Richmond' gets clipped with no visible indication more options exist off-screen.",
+      "userImpact": "Real discoverability bug -- a user whose area isn't in the visible pills may never realize their area is filterable at all, silently narrowing what they think is available.",
+      "evidence": "Independent UX review, live production, https://kids-fun-psi.vercel.app/search.",
+      "resolution": "DEFERRED-LOGGED. Not urgent, backlog for a future filter-rail hardening pass -- may be addressed alongside the Round 29 WHEN/TIME-OF-DAY redesign work (same component) if convenient, but not required for that pass's scope.",
+      "goNoGoMaterial": false
+    },
+    {
+      "id": "BUG-013",
+      "title": "'Back to today' link on activity detail pages discards the user's actual search context",
+      "severity": "low",
+      "status": "deferred-logged",
+      "area": "activity detail page navigation",
+      "rootCauseClass": "hardcoded link target",
+      "foundBy": "independent UX review (operator-run, uninvolved agent), Round 29",
+      "foundAt": "2026-07-21",
+      "detail": "The in-app 'Back to today' link on activity detail pages always routes to the generic all-listings feed regardless of how the user arrived (e.g. via a filtered/searched result), silently discarding their actual search. The real browser Back button works correctly and preserves context -- only this specific in-app link is wrong.",
+      "userImpact": "A user who searched for something specific, opened a detail page, then used this link loses their search and has to redo it. Minor but a real repeated-friction annoyance.",
+      "evidence": "Independent UX review, live production.",
+      "resolution": "DEFERRED-LOGGED. Backlog. Likely fix: carry the originating search's URL-encoded state through to this link the same way the app already does for shareable search URLs (existing precedent in the codebase).",
+      "goNoGoMaterial": false
+    },
+    {
+      "id": "BUG-014",
+      "title": "Empty-state message has a grammar error and sometimes misattributes the cause of zero results",
+      "severity": "low",
+      "status": "deferred-logged",
+      "area": "search empty state",
+      "rootCauseClass": "copy bug + attribution logic",
+      "foundBy": "independent UX review (operator-run, uninvolved agent), Round 29",
+      "foundAt": "2026-07-21",
+      "detail": "The zero-results empty state reads 'The search terms is...' (subject-verb agreement error). It also sometimes blames the search WORD for zero results when the real cause is the Area/Age filters narrowing the result set to nothing -- misattributing the reason to the user.",
+      "userImpact": "Minor polish issue; the misattribution part is a bit more real since it could lead a user to give up on a valid search term when the actual fix is loosening a filter.",
+      "evidence": "Independent UX review, live production.",
+      "resolution": "DEFERRED-LOGGED. Backlog -- two small fixes: grammar copy correction, and improving the empty-state's reasoning to check filter narrowing before blaming the query text.",
+      "goNoGoMaterial": false
+    },
+    {
+      "id": "BUG-015",
+      "title": "Sticky bottom action bar overlaps part of the activity detail page card",
+      "severity": "low",
+      "status": "deferred-logged",
+      "area": "activity detail page layout",
+      "rootCauseClass": "CSS layering / spacing",
+      "foundBy": "independent UX review (operator-run, uninvolved agent), Round 29",
+      "foundAt": "2026-07-21",
+      "detail": "A sticky bottom action bar on the activity detail page overlaps part of the content card beneath it.",
+      "userImpact": "Cosmetic; may obscure the bottom of card content on some viewport sizes.",
+      "evidence": "Independent UX review, live production.",
+      "resolution": "DEFERRED-LOGGED. Backlog, needs a bottom-padding/safe-area adjustment on the card to account for the sticky bar's height.",
+      "goNoGoMaterial": false
+    },
+    {
+      "id": "BUG-016",
+      "title": "Large unused grey margin on wide desktop screens",
+      "severity": "low",
+      "status": "deferred-logged",
+      "area": "layout / responsive design",
+      "rootCauseClass": "missing wide-viewport layout treatment",
+      "foundBy": "independent UX review (operator-run, uninvolved agent), Round 29",
+      "foundAt": "2026-07-21",
+      "detail": "On wide desktop viewports, a large amount of grey margin sits unused on either side of the content, which reads as unfinished/unpolished rather than intentional.",
+      "userImpact": "Cosmetic, affects visual polish on desktop specifically (product appears primarily mobile-first, which may be an intentional design choice -- this is about the wide-viewport experience specifically, not a functional bug).",
+      "evidence": "Independent UX review, live production.",
+      "resolution": "DEFERRED-LOGGED. Backlog -- a future pass should decide on a deliberate max-width/wide-layout treatment (e.g. a max content width with a designed background treatment) rather than leave it as incidental whitespace.",
+      "goNoGoMaterial": false
+    },
+    {
+      "id": "BUG-017",
+      "title": "Unexplained console 400 error near the Google sign-in redirect",
+      "severity": "medium",
+      "status": "deferred-logged",
+      "area": "authentication",
+      "rootCauseClass": "unknown -- needs investigation",
+      "foundBy": "independent UX review (operator-run, uninvolved agent), Round 29",
+      "foundAt": "2026-07-21",
+      "detail": "A browser console 400 error was observed near the Google sign-in redirect flow. Not yet root-caused -- the reviewer flagged it as worth a quick look rather than fully diagnosing it themselves.",
+      "userImpact": "Unknown severity until investigated -- flagged as medium out of caution since it's in the authentication path, but the sign-in flow itself was not reported as visibly broken (no user-facing failure described, just a console error).",
+      "evidence": "Independent UX review, live production -- browser console observation only, no further detail captured.",
+      "resolution": "DEFERRED-LOGGED. Backlog -- needs a real reproduction + root-cause pass before a fix can be scoped. Worth a look sooner than the purely-cosmetic items above given it's auth-adjacent, but not confirmed to be causing real sign-in failures.",
+      "goNoGoMaterial": false
+    },
+    {
+      "id": "BUG-018",
+      "title": "Map view unavailable on production (informational -- confirmed pre-existing, known, accepted, not new)",
+      "severity": "low",
+      "status": "accepted",
+      "area": "search results map view",
+      "rootCauseClass": "missing environment configuration (known since Round 27)",
+      "foundBy": "independent UX review (operator-run, uninvolved agent), Round 29 -- re-confirming a Round 27 known item, not a new finding",
+      "foundAt": "2026-07-21",
+      "detail": "Map view shows an honest 'Map view isn't available right now' fallback rather than rendering a map. Root cause confirmed (orchestrator, Round 29): app/search/_components/ResultsMap.tsx intentionally shows this exact fallback when no NEXT_PUBLIC_MAP_KEY token is present -- this is the SAME known, already-accepted gap logged in Round 27 (a Mapbox credential exists in the vault but was never wired into the deployed environment's NEXT_PUBLIC_MAP_KEY variable, staging or prod). Confirmed this is graceful-by-design (BUG-007 precedent: the fallback correctly reveals no env-var names or internal details to the user), not a crash or leak.",
+      "userImpact": "Users who tap Map view see an honest, well-worded 'not available' message and can switch back to List. Not a broken/crashing experience, just a missing feature.",
+      "evidence": "Code confirmed: app/search/_components/ResultsMap.tsx token-fallback branch. Cross-referenced against the Round 27 BUG-007 finding (evals/bugs.json).",
+      "resolution": "ACCEPTED (re-confirmed, not new). Wiring NEXT_PUBLIC_MAP_KEY into the live environments (staging + the new prod project) whenever a live Map view is actually wanted remains a simple, low-risk follow-up whenever prioritized -- credential already exists in the vault (kids-fun-mapbox).",
       "goNoGoMaterial": false
     }
   ]
