@@ -526,7 +526,8 @@ export default async function AdminDashboardPage({
       </section>
 
       <footer className="adm-foot">
-        Read-only ops view · numbers are live from the staging database · no data is modified by this page.
+        Read-only ops view · numbers are live from the {process.env.NEXT_PUBLIC_APP_ENV ?? 'staging'} database ·
+        no data is modified by this page.
       </footer>
     </main>
   );
