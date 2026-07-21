@@ -30,6 +30,7 @@ import { SearchEngine, type SearchRequest, type SearchResponse } from '@/lib/sea
 import { getPool } from '@/lib/db/client';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
 import { resolvePreciseSavedHomeGeocoder } from '@/lib/geo/saved-home-geocoder';
+import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 import type { Geocoder, OriginRequest } from '@/lib/geo/origin';
 import type { SortKey } from '@/lib/search/types';
 
@@ -38,8 +39,10 @@ export const dynamic = 'force-dynamic';
 const VALID_SORTS: SortKey[] = ['best_match', 'distance', 'soonest', 'lowest_cost', 'newest'];
 const fixtureBundle = makeFixtureEngine();
 
+export const GET = withObservedRoute(searchGet, { tags: { route: 'api/search' } });
+
 /** GET /api/search?q=open+gym&lat=..&lng=..&sort=..&region=van,bby&includeUnknownCost=1&limit=20 */
-export async function GET(request: Request): Promise<NextResponse> {
+async function searchGet(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const searchRequest = buildSearchRequest(url.searchParams);
 
@@ -106,11 +109,12 @@ async function searchDatabase(
     const response = engine.search(searchRequest);
     response.meta.backend = 'database';
     return { ok: true, response, header: 'database' };
-  } catch {
+  } catch (err) {
     // Genuine DB failure (pool/connection/query threw) — categorically different from a
     // reachable-but-zero-match result. We could not search at all, so we must neither fake
     // data (fixtures) nor falsely claim "nothing matches" (empty state). Signal failure; the
     // caller returns a 5xx and the client shows its honest "couldn't load — try again" state.
+    await captureAndFlush(err, undefined, { route: 'api/search', operation: 'search_database' });
     return { ok: false };
   }
 }

@@ -58,7 +58,7 @@ to preview deployments too, not just production merges.
 | Fly.io worker (prod) | ✅ **LIVE since Round 28** | `kids-fun-worker`, region `yyz`, `shared-cpu-1x`/1024mb, 1 machine (matches staging size, Jon-approved). |
 | GitHub repo + push | ✅ **LIVE** | `JDC000000/kids-fun-github-jdcinc`, private. Push via vault slug `kids-fun-github-personal-repo` only. |
 | CI on PR | ✅ **LIVE** | `.github/workflows/ci.yml` runs on every PR. |
-| Sentry | ✅ **LIVE** | Shared Sentry project across staging+prod, distinguished by the `environment` tag (`NEXT_PUBLIC_APP_ENV`). See Round 29's serverless-flush fix (`lib/observability/route-handler.ts`) for the current error-capture reliability pattern — routes should migrate to `withObservedRoute` over time, not all done yet. |
+| Sentry | ✅ **LIVE** | Shared Sentry project across web + Fly worker, distinguished by `environment` and `app_runtime` tags. Fly apps `kids-fun-worker-staging` + `kids-fun-worker` both have the `SENTRY_DSN` secret set (2026-07-21). Serverless API routes on the core search/results path now use `withObservedRoute` / explicit `captureAndFlush`; admin/cron utility routes remain lower-priority auto-instrumented surfaces. |
 
 Remaining known gaps (tracked, not blocking):
 - Map view (`/search`) shows an honest "not available" fallback in both environments — `NEXT_PUBLIC_MAP_KEY`

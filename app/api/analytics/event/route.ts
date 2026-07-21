@@ -11,13 +11,16 @@ import { ANON_SESSION_COOKIE, getOrCreateAnonId } from '@/lib/db/session';
 import { writeAnalyticsEvent } from '@/lib/analytics/events';
 import { parseAnalyticsEventBody } from '@/lib/analytics/validate';
 import { MAX_ANALYTICS_PAYLOAD_BYTES } from '@/lib/analytics/types';
+import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // pg pool needs the Node runtime, not edge.
 
 const ANON_COOKIE_MAX_AGE_S = 60 * 60 * 24 * 400; // ~13 months, matches retention window.
 
-export async function POST(request: Request): Promise<NextResponse> {
+export const POST = withObservedRoute(analyticsPost, { tags: { route: 'api/analytics/event' } });
+
+async function analyticsPost(request: Request): Promise<NextResponse> {
   // 1. Cheap early reject on declared size before reading the body.
   const declared = Number(request.headers.get('content-length') ?? '');
   if (Number.isFinite(declared) && declared > MAX_ANALYTICS_PAYLOAD_BYTES) {
@@ -50,6 +53,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 6. Best-effort write — a DB hiccup must not fail the request.
   const result = await writeAnalyticsEvent({ ...parsed.value, userOrSession: anonId });
+  if (!result.ok) {
+    await captureAndFlush(new Error('analytics_event_write_failed'), undefined, {
+      route: 'api/analytics/event',
+      operation: 'write_analytics_event',
+    });
+  }
 
   const response = NextResponse.json({ ok: true, recorded: result.ok }, { status: 202 });
 
