@@ -1,10 +1,10 @@
 // TEMPORARY, SELF-DELETING route — Round 29 Sentry production verification.
-// Deliberately throws a marked, controlled server-side error so it can be
-// confirmed to reach Sentry tagged environment=production. Gated behind a
-// secret query param (not discoverable/spammable), and this whole route is
-// removed again in a follow-up commit within minutes of the verification.
-// DO NOT rely on this route existing -- it will be gone shortly.
+// Explicitly captures + flushes (rather than relying solely on auto-instrumentation
+// of the thrown error) to remove ambiguity about serverless function termination
+// timing cutting off the async send. Gated behind a secret query param. This whole
+// route is removed again once verification is complete.
 import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,5 +15,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
   const marker = url.searchParams.get('marker') ?? 'unmarked';
-  throw new Error(`KF-SENTRY-VERIFY-SERVER-${marker}`);
+  const err = new Error(`KF-SENTRY-VERIFY-SERVER-${marker}`);
+  const eventId = Sentry.captureException(err);
+  const flushed = await Sentry.flush(8000);
+  return NextResponse.json({ eventId, flushed, marker }, { status: 200 });
 }
