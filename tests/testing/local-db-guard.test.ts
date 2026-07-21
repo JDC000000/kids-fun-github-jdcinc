@@ -43,6 +43,23 @@ describe('local-db-guard: databaseUrlHost', () => {
     expect(databaseUrlHost('postgres:///db?host=/var/run/postgresql')).toBe('/var/run/postgresql');
     expect(databaseUrlHost('not a url at all')).toBeNull();
   });
+
+  // Round 27 F1 regression: node-postgres treats a `?host=` query param as an OVERRIDE of the
+  // URL hostname (pg/lib/connection-parameters.js → pg-connection-string parse().host), in BOTH
+  // directions. The old implementation read `new URL(url).hostname` first and only fell back to
+  // `?host=` when the hostname was empty, so a remote-via-?host= URL reported as local and slipped
+  // past the guard. These assert the host we report equals the host pg will actually connect to.
+  it('honours the ?host= override the same way node-postgres does (both directions)', () => {
+    // Local-looking hostname, remote ?host= override → we must report the REMOTE host.
+    expect(databaseUrlHost('postgres://127.0.0.1/db?host=db.x.supabase.co')).toBe('db.x.supabase.co');
+    expect(databaseUrlHost('postgres://127.0.0.1:5432/db?host=db.real.supabase.co')).toBe(
+      'db.real.supabase.co'
+    );
+    // Remote-looking hostname, local ?host= override → we must report the LOCAL host.
+    expect(databaseUrlHost('postgres://db.real.supabase.co:5432/db?host=127.0.0.1')).toBe('127.0.0.1');
+    // An empty ?host= does NOT override (matches pg) → falls back to the URL hostname.
+    expect(databaseUrlHost('postgres://localhost/db?host=')).toBe('localhost');
+  });
 });
 
 describe('local-db-guard: assertLocalDatabaseUrl', () => {
@@ -80,6 +97,33 @@ describe('local-db-guard: assertLocalDatabaseUrl', () => {
   it('throws on an unparseable-but-set URL (fails closed)', () => {
     delete process.env.KIDS_FUN_ALLOW_NONLOCAL_DB;
     expect(() => assertLocalDatabaseUrl('::::not-a-url::::')).toThrow(/not a parseable connection URL/);
+  });
+
+  // Round 27 F1 regression (QA-specified): a URL whose hostname LOOKS local but whose `?host=`
+  // override points at a real database must be REJECTED — that URL genuinely connects to the
+  // remote host in practice, so allowing the test to run reopens the approval-bypass accident
+  // vector this guard exists to close.
+  it('rejects a local-looking URL whose ?host= override targets a real database (QA F1 case)', () => {
+    delete process.env.KIDS_FUN_ALLOW_NONLOCAL_DB;
+    expect(() => assertLocalDatabaseUrl('postgres://127.0.0.1/db?host=db.x.supabase.co')).toThrow(
+      /non-local host "db\.x\.supabase\.co"/
+    );
+    // Names the env var in the error, same as a plain remote host.
+    expect(() =>
+      assertLocalDatabaseUrl('postgres://127.0.0.1/db?host=db.x.supabase.co', 'USER_DATABASE_URL')
+    ).toThrow(/USER_DATABASE_URL/);
+  });
+
+  it('allows a remote-looking URL whose ?host= override points back to local (reverse direction)', () => {
+    delete process.env.KIDS_FUN_ALLOW_NONLOCAL_DB;
+    // pg would actually connect to 127.0.0.1 here, so this is genuinely local and must be allowed.
+    expect(() =>
+      assertLocalDatabaseUrl('postgres://db.real.supabase.co:5432/db?host=127.0.0.1')
+    ).not.toThrow();
+    // A unix-socket override is also local.
+    expect(() =>
+      assertLocalDatabaseUrl('postgres://db.real.supabase.co:5432/db?host=/var/run/postgresql')
+    ).not.toThrow();
   });
 
   it('honours the KIDS_FUN_ALLOW_NONLOCAL_DB escape hatch', () => {
