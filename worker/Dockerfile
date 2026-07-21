@@ -12,6 +12,7 @@ COPY src ./src
 COPY core ./core
 COPY adapters ./adapters
 COPY scheduler ./scheduler
+COPY health ./health
 RUN npm run build
 
 # ── runtime: Chromium + prod deps + compiled dist ────────────────────────────
