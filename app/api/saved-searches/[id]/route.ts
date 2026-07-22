@@ -13,13 +13,18 @@
 import { NextResponse } from 'next/server';
 import { getRequestUser } from '@/lib/db/session-user';
 import { deleteSavedSearch } from '@/lib/db/saved-search';
+import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function DELETE(
+export const DELETE = withObservedRoute(savedSearchDelete, {
+  tags: { route: 'api/saved-searches/[id]', method: 'DELETE' },
+});
+
+async function savedSearchDelete(
   _request: Request,
   { params }: { params: { id: string } }
 ): Promise<NextResponse> {
@@ -39,7 +44,8 @@ export async function DELETE(
       return NextResponse.json({ ok: false, error: 'not found' }, { status: 404 });
     }
     return NextResponse.json({ ok: true, deleted: id });
-  } catch {
+  } catch (err) {
+    await captureAndFlush(err, undefined, { route: 'api/saved-searches/[id]', operation: 'delete' });
     return NextResponse.json({ ok: false, error: 'could not delete saved search' }, { status: 500 });
   }
 }

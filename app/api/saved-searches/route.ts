@@ -14,11 +14,19 @@ import { NextResponse } from 'next/server';
 import { getRequestUser } from '@/lib/db/session-user';
 import { listSavedSearches, createSavedSearch } from '@/lib/db/saved-search';
 import { parseSavedSearchCreate } from '@/lib/user/saved-search-validate';
+import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // Supabase SSR + pg pool need Node, not edge.
 
-export async function GET(): Promise<NextResponse> {
+export const GET = withObservedRoute(savedSearchesGet, {
+  tags: { route: 'api/saved-searches', method: 'GET' },
+});
+export const POST = withObservedRoute(savedSearchesPost, {
+  tags: { route: 'api/saved-searches', method: 'POST' },
+});
+
+async function savedSearchesGet(): Promise<NextResponse> {
   const user = await getRequestUser();
   if (!user) {
     return NextResponse.json({ ok: false, error: 'not signed in' }, { status: 401 });
@@ -26,12 +34,13 @@ export async function GET(): Promise<NextResponse> {
   try {
     const savedSearches = await listSavedSearches(user.userId);
     return NextResponse.json({ ok: true, savedSearches });
-  } catch {
+  } catch (err) {
+    await captureAndFlush(err, undefined, { route: 'api/saved-searches', operation: 'list' });
     return NextResponse.json({ ok: false, error: 'could not load saved searches' }, { status: 500 });
   }
 }
 
-export async function POST(request: Request): Promise<NextResponse> {
+async function savedSearchesPost(request: Request): Promise<NextResponse> {
   // 1. Must be signed in.
   const user = await getRequestUser();
   if (!user) {
@@ -57,7 +66,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const savedSearch = await createSavedSearch(user.userId, parsed.value);
     return NextResponse.json({ ok: true, savedSearch }, { status: 201 });
-  } catch {
+  } catch (err) {
+    await captureAndFlush(err, undefined, { route: 'api/saved-searches', operation: 'create' });
     return NextResponse.json({ ok: false, error: 'could not save search' }, { status: 500 });
   }
 }

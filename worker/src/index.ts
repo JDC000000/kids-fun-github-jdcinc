@@ -4,6 +4,7 @@ import { healthz, type HealthState } from './healthz';
 import { chromiumSmoke } from './chromium-smoke';
 import { createPool } from './db';
 import { startScheduler } from './scheduler';
+import { captureWorkerException, closeWorkerSentry, initWorkerSentry } from './sentry';
 
 // KIDS FUN ingestion-worker entrypoint (G-T1-2 + G-T5-3). Long-running Node process:
 //  - exposes /healthz for the runtime health check (always 200 for liveness),
@@ -14,6 +15,8 @@ import { startScheduler } from './scheduler';
 //    ingestion runtime that replaces the one-shot `ingest:once` entrypoint.
 
 const PORT = Number(process.env.WORKER_HEALTHZ_PORT ?? 8080);
+
+initWorkerSentry();
 
 const state: HealthState = {
   chromiumReady: false,
@@ -40,6 +43,9 @@ function startWorkloadIfConfigured(): void {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[worker] failed to start scheduler:', err instanceof Error ? err.message : String(err));
+    void captureWorkerException(err, {
+      tags: { component: 'worker', operation: 'start_scheduler' },
+    });
   }
 }
 
@@ -57,6 +63,9 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify(r));
       })
       .catch((err: unknown) => {
+        void captureWorkerException(err, {
+          tags: { component: 'worker', operation: 'smoke_endpoint' },
+        });
         res.writeHead(500, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: String(err) }));
       });
@@ -79,6 +88,9 @@ server.listen(PORT, () => {
     .catch((err: unknown) => {
       // eslint-disable-next-line no-console
       console.error('[worker] chromium smoke on boot failed:', err);
+      void captureWorkerException(err, {
+        tags: { component: 'worker', operation: 'boot_chromium_smoke' },
+      });
     });
   // Bring up the continuous ingestion scheduler.
   startWorkloadIfConfigured();
@@ -91,6 +103,7 @@ const shutdown = (): void => {
   abort.abort();
   server.close(() => {
     Promise.resolve(pool ? pool.end() : undefined)
+      .then(() => closeWorkerSentry())
       .catch(() => undefined)
       .finally(() => process.exit(0));
   });
@@ -99,3 +112,22 @@ const shutdown = (): void => {
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
+process.on('unhandledRejection', (reason) => {
+  // eslint-disable-next-line no-console
+  console.error('[worker] unhandled rejection:', reason);
+  // Fatal, same as uncaughtException: by the time this fires, some code path
+  // assumed a promise would resolve/reject and didn't, so process state is no
+  // longer trustworthy (e.g. a DB transaction left open, a queue job never
+  // marked done). Crash and let Fly's supervisor restart clean rather than
+  // keep the scheduler/poll loop running on top of unknown state.
+  captureWorkerException(reason, {
+    tags: { component: 'worker', operation: 'unhandled_rejection' },
+  }).finally(() => process.exit(1));
+});
+process.on('uncaughtException', (err) => {
+  // eslint-disable-next-line no-console
+  console.error('[worker] uncaught exception:', err);
+  captureWorkerException(err, {
+    tags: { component: 'worker', operation: 'uncaught_exception' },
+  }).finally(() => process.exit(1));
+});

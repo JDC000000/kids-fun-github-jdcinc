@@ -2,7 +2,7 @@
   "name": "kids-fun-worker",
   "version": "0.0.0",
   "private": true,
-  "description": "KIDS FUN ingestion worker \u2014 long-running/containerised Node runtime with headless Chromium (TSD \u00a73A.1, \u00a75). NOT Vercel serverless.",
+  "description": "KIDS FUN ingestion worker — long-running/containerised Node runtime with headless Chromium (TSD §3A.1, §5). NOT Vercel serverless.",
   "engines": {
     "node": ">=20 <23"
   },
@@ -16,6 +16,7 @@
     "ingest:once": "node dist/src/ingest-once.js"
   },
   "dependencies": {
+    "@sentry/node": "^10.66.0",
     "pg": "^8.22.0",
     "puppeteer-core": "22.15.0"
   },

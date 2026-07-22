@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { runTermsGatedIngest, type SourceSelector } from '../core/source-runner';
 import type { Environment } from '../core/terms-gate';
+import { captureWorkerException, closeWorkerSentry, initWorkerSentry } from './sentry';
 
 interface Args {
   selector: SourceSelector;
@@ -31,6 +32,7 @@ export function parseArgs(argv = process.argv.slice(2)): Args {
 }
 
 async function main(): Promise<number> {
+  initWorkerSentry();
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error('DATABASE_URL is required');
 
@@ -50,9 +52,13 @@ async function main(): Promise<number> {
 if (require.main === module) {
   main()
     .then((code) => process.exit(code))
-    .catch((err) => {
+    .catch(async (err) => {
+      await captureWorkerException(err, {
+        tags: { component: 'ingest_once', operation: 'main' },
+      });
       // eslint-disable-next-line no-console
       console.error(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      await closeWorkerSentry();
       process.exit(1);
     });
 }

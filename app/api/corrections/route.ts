@@ -14,13 +14,16 @@ import { ANON_SESSION_COOKIE, getOrCreateAnonId } from '@/lib/db/session';
 import { writeCorrectionReport } from '@/lib/corrections/report';
 import { parseCorrectionReportBody } from '@/lib/corrections/validate';
 import { MAX_CORRECTION_PAYLOAD_BYTES } from '@/lib/corrections/types';
+import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // pg pool needs the Node runtime, not edge.
 
 const ANON_COOKIE_MAX_AGE_S = 60 * 60 * 24 * 400; // ~13 months, matches analytics/anon cookie.
 
-export async function POST(request: Request): Promise<NextResponse> {
+export const POST = withObservedRoute(correctionsPost, { tags: { route: 'api/corrections' } });
+
+async function correctionsPost(request: Request): Promise<NextResponse> {
   // 1. Cheap early reject on declared size before reading the body.
   const declared = Number(request.headers.get('content-length') ?? '');
   if (Number.isFinite(declared) && declared > MAX_CORRECTION_PAYLOAD_BYTES) {
@@ -53,6 +56,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 6. Best-effort write — a DB hiccup must not contradict the optimistic UX.
   const result = await writeCorrectionReport({ ...parsed.value, reporter: anonId });
+  if (!result.ok) {
+    await captureAndFlush(new Error('correction_report_write_failed'), undefined, {
+      route: 'api/corrections',
+      operation: 'write_correction_report',
+    });
+  }
 
   const response = NextResponse.json({ ok: true, recorded: result.ok }, { status: 202 });
 

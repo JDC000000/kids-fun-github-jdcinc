@@ -24,6 +24,7 @@ import { NextResponse } from 'next/server';
 import { getRequestUser } from '@/lib/db/session-user';
 import { ensureUserProfile, getUserProfile, updateUserProfile } from '@/lib/db/user-profile';
 import { parseProfilePatch } from '@/lib/user/profile-validate';
+import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // Supabase SSR + pg pool need Node, not edge.
@@ -33,7 +34,10 @@ interface ProfileStatus {
   id: string | null;
 }
 
-export async function GET(): Promise<NextResponse> {
+export const GET = withObservedRoute(meGet, { tags: { route: 'api/me', method: 'GET' } });
+export const PATCH = withObservedRoute(mePatch, { tags: { route: 'api/me', method: 'PATCH' } });
+
+async function meGet(): Promise<NextResponse> {
   // 1. Resolve the session. getRequestUser never throws — any failure (unset
   //    SUPABASE_URL/ANON_KEY, an expired/malformed cookie) reads as anonymous.
   const user = await getRequestUser();
@@ -51,7 +55,8 @@ export async function GET(): Promise<NextResponse> {
       ({ profile: row } = await ensureUserProfile(user.userId, user.email));
     }
     profile = { exists: true, id: row.id };
-  } catch {
+  } catch (err) {
+    await captureAndFlush(err, undefined, { route: 'api/me', operation: 'profile_probe' });
     profile = { exists: false, id: null };
   }
 
@@ -62,7 +67,7 @@ export async function GET(): Promise<NextResponse> {
   });
 }
 
-export async function PATCH(request: Request): Promise<NextResponse> {
+async function mePatch(request: Request): Promise<NextResponse> {
   // 1. Must be signed in. A null user (anonymous or unresolvable session) is a
   //    clean 401, not a crash.
   const user = await getRequestUser();
@@ -90,7 +95,8 @@ export async function PATCH(request: Request): Promise<NextResponse> {
   try {
     const profile = await updateUserProfile(user.userId, parsed.value);
     return NextResponse.json({ ok: true, profile });
-  } catch {
+  } catch (err) {
+    await captureAndFlush(err, undefined, { route: 'api/me', operation: 'update_profile' });
     return NextResponse.json({ ok: false, error: 'could not update profile' }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { enqueueDueJobs } from '../scheduler/tiered';
 import { dequeue, markDone, markFailed, type Job } from '../core/queue';
 import { makeTermsGatedIngestJobHandler } from '../core/source-runner';
 import type { Environment } from '../core/terms-gate';
+import { captureWorkerException } from './sentry';
 
 // worker/src/scheduler.ts — G-T5-3 runtime: the continuous, cadence-driven loop
 // that turns the trigger-agnostic tiered policy into a long-running worker.
@@ -137,6 +138,20 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       metrics.lastError = `job ${job.id}: ${errMsg(err)}`;
       // eslint-disable-next-line no-console
       console.error(`[scheduler] job ${job.id} failed:`, errMsg(err));
+      await captureWorkerException(err, {
+        tags: {
+          component: 'scheduler',
+          operation: 'process_job',
+          job_type: job.jobType,
+          environment,
+        },
+        extra: {
+          jobId: job.id,
+          sourceId: job.sourceId,
+          attempts: job.attempts,
+          maxAttempts: job.maxAttempts,
+        },
+      });
       await markFailed(pool, job.id, errMsg(err));
     }
     return true;
@@ -153,6 +168,9 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
         metrics.lastError = `poll: ${errMsg(err)}`;
         // eslint-disable-next-line no-console
         console.error('[scheduler] poll error:', errMsg(err));
+        await captureWorkerException(err, {
+          tags: { component: 'scheduler', operation: 'poll', environment },
+        });
       }
       if (!processed) await sleep(pollIntervalMs, signal);
     }
@@ -177,6 +195,9 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       metrics.lastError = `tick: ${errMsg(err)}`;
       // eslint-disable-next-line no-console
       console.error('[scheduler] tick error:', errMsg(err));
+      await captureWorkerException(err, {
+        tags: { component: 'scheduler', operation: 'enqueue_tick', environment },
+      });
     }
   }
 
