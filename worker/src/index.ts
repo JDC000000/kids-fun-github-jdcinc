@@ -115,9 +115,14 @@ process.on('SIGINT', shutdown);
 process.on('unhandledRejection', (reason) => {
   // eslint-disable-next-line no-console
   console.error('[worker] unhandled rejection:', reason);
-  void captureWorkerException(reason, {
+  // Fatal, same as uncaughtException: by the time this fires, some code path
+  // assumed a promise would resolve/reject and didn't, so process state is no
+  // longer trustworthy (e.g. a DB transaction left open, a queue job never
+  // marked done). Crash and let Fly's supervisor restart clean rather than
+  // keep the scheduler/poll loop running on top of unknown state.
+  captureWorkerException(reason, {
     tags: { component: 'worker', operation: 'unhandled_rejection' },
-  });
+  }).finally(() => process.exit(1));
 });
 process.on('uncaughtException', (err) => {
   // eslint-disable-next-line no-console
