@@ -51,13 +51,21 @@ import {
   SIGNED_IN_SHARE_TARGET_PCT,
   ZERO_RESULT_TARGET_PCT,
 } from './benchmark';
+// The "measured zero vs. nothing to measure" primitive, extracted to its own pure
+// module (H1) so lib/observability/ can apply the identical rule without importing
+// this module's database client. Re-exported below so existing call sites are
+// unchanged and there remains exactly ONE definition in the codebase.
+import { anchorMsFromIso, isPreHistory, periodEndMs, type PeriodGrain } from './prehistory';
+
+export { anchorMsFromIso, isPreHistory, periodEndMs };
+export type { PeriodGrain };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Grain / window configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The two review cadences the operating dashboard supports (G-T41-2). */
-export type OperatingGrain = 'day' | 'month';
+export type OperatingGrain = PeriodGrain;
 
 /** Buckets shown in the DAILY review (30 days ≈ a month of day-by-day context). */
 export const DAILY_REVIEW_PERIODS = 30;
@@ -124,54 +132,11 @@ export function periodLabel(periodStart: string, grain: OperatingGrain): string 
   return grain === 'month' ? periodStart.slice(0, 7) : periodStart;
 }
 
-/**
- * Exclusive end of a bucket, as an epoch-ms UTC instant.
- *
- * ⚠️ TIMEZONE COUPLING (known, correct today, documented rather than defended): the
- * bucket KEYS are produced by Postgres `date_trunc`, which uses the DB SESSION
- * timezone, while this function interprets them in UTC. The two agree only while the
- * database session runs in UTC — which it does on CI (the postgis container defaults
- * to UTC) and on Supabase (UTC default). If a future deployment ever sets a non-UTC
- * session timezone, bucket boundaries here would drift by the offset and pre-history
- * suppression could be off by up to a day at the edge. The fix, if that day comes, is
- * to have the SQL return an explicit UTC-normalised boundary rather than to patch the
- * arithmetic here. See docs/kpi-cadence.md §7.
- */
-export function periodEndMs(periodStart: string, grain: OperatingGrain): number {
-  const [year, month, day] = periodStart.split('-').map(Number);
-  if (!Number.isFinite(year) || !Number.isFinite(month)) return Number.NaN;
-  return grain === 'month' ? Date.UTC(year, month, 1) : Date.UTC(year, month - 1, (day ?? 1) + 1);
-}
-
-/**
- * Whether a bucket ended BEFORE the product had any recorded history at all.
- *
- * This is the difference between "we measured zero" and "there was nothing to
- * measure", and getting it wrong is a real, load-bearing lie on a dashboard read
- * days after launch: a monthly review that compares July against a June in which the
- * product did not yet exist would report "MAU 0, steady" — flat, unremarkable, and
- * completely wrong. Pre-history buckets therefore carry `null` (→ em-dash, direction
- * 'unknown'), not 0.
- *
- * Crucially this is NOT the same as "the bucket has no events". A day AFTER launch on
- * which nobody visited is a genuine, measured zero and must keep reading 0 — that is
- * precisely the traffic-cliff signal the daily review exists to catch, and suppressing
- * it would hide an outage. Only buckets that closed before the very first event are
- * suppressed.
- *
- * When there is no recorded history at all (`firstEventAtMs == null`), nothing is
- * suppressed: with no anchor we cannot claim a period predates anything, so the
- * honest reading is the raw zeros.
- */
-export function isPreHistory(
-  periodStart: string,
-  grain: OperatingGrain,
-  firstEventAtMs: number | null
-): boolean {
-  if (firstEventAtMs == null || !Number.isFinite(firstEventAtMs)) return false;
-  const end = periodEndMs(periodStart, grain);
-  return Number.isFinite(end) && end <= firstEventAtMs;
-}
+// `periodEndMs` / `isPreHistory` now live in lib/analytics/prehistory.ts — pure and
+// DB-free, so lib/observability/ can share the identical primitive without importing
+// this module's pg pool. They are re-exported verbatim (see the import block at the
+// top) so every existing call site keeps its current import path. Do NOT reintroduce
+// a local copy: re-derivation per surface is exactly the defect H1 exists to close.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Raw per-period counters

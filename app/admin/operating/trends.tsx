@@ -464,6 +464,46 @@ export function OperatingDetailTable({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Empty-dataset disclosure
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What the banner says when the analytics table is completely empty (H1 item 2).
+ *
+ * ── WHY THIS IS A COMPONENT AND NOT INLINE PROSE ───────────────────────────────
+ * It used to be a sentence inside page.tsx promising that "every KPI below will read
+ * as an em-dash rather than a zero" on an empty database. The page did not do that,
+ * and independent QA reproduced the disagreement live: the rate KPIs correctly showed
+ * "—" while `Daily active users`, `Corrections reported`, `Corrections resolved` and
+ * `Searches per day` all showed "0 · steady". A banner teaching a reading rule the
+ * page beside it does not follow is worse than no banner, because it trains the
+ * reviewer to mistrust the dashes that ARE load-bearing everywhere else.
+ *
+ * ── WHICH WAY IT WAS FIXED, AND WHY ────────────────────────────────────────────
+ * The prose changed, not the numbers. `isPreHistory(_, _, null) === false` is a
+ * deliberate, documented contract: with no anchor we cannot claim a period predates
+ * anything. On an empty database a count of 0 is the TRUE measured count — there
+ * really were zero corrections today — so dashing it would be the same class of lie
+ * pointing the other way, hiding a real measurement behind "no data". The page was
+ * right; the sentence was wrong.
+ *
+ * Living here, next to the em-dash rendering it describes, is the point: the claim and
+ * the behaviour are now in one file and one test file, so they cannot drift apart
+ * again the way they did across page.tsx and lib/analytics/operating.ts.
+ */
+export function EmptyDatasetNotice() {
+  return (
+    <>
+      There is no analytics data yet. <strong>Rate</strong> KPIs below read as an em-dash because they have no
+      denominator to divide by; <strong>count</strong> KPIs read 0, which is the honest measured count of an empty
+      period rather than a stand-in for missing data. With no first event on record there is no anchor, so no period is
+      treated as predating the data and nothing is hidden from you — the period count in the heading below is how many
+      buckets closed inside the review window, not how many of them contain anything.
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sentry issue trend
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -488,8 +528,13 @@ export function SentryIssuePanel({ sentry }: { sentry: SentryIssueTrend }) {
     );
   }
 
-  const peak = sentry.points.reduce((max, p) => Math.max(max, p.newIssues), 0);
-  const total = sentry.points.reduce((sum, p) => sum + p.newIssues, 0);
+  // Unwatched days are excluded from both aggregates rather than counted as 0 (H1).
+  // Treating them as zeros would drag "busiest day" and the window total toward a
+  // calmer picture than the watched period actually had.
+  const measured = sentry.points.filter((p) => p.newIssues != null).map((p) => p.newIssues as number);
+  const unmeasured = sentry.points.length - measured.length;
+  const peak = measured.reduce((max, n) => Math.max(max, n), 0);
+  const total = measured.reduce((sum, n) => sum + n, 0);
 
   return (
     <div className={styles.panel}>
@@ -522,6 +567,9 @@ export function SentryIssuePanel({ sentry }: { sentry: SentryIssueTrend }) {
             {sentry.truncated
               ? ` List capped at the API page limit, so these counts are a floor, not an exact total.`
               : ''}
+            {unmeasured > 0
+              ? ` ${unmeasured} day(s) read “—”: they closed before this project was being watched, so nothing could have been reported in them. Those days are excluded from the totals above rather than counted as zero.`
+              : ''}
           </caption>
           <thead>
             <tr>
@@ -530,10 +578,13 @@ export function SentryIssuePanel({ sentry }: { sentry: SentryIssueTrend }) {
             </tr>
           </thead>
           <tbody>
+            {/* NOTE: formatCount(null) returns "0", not an em-dash — passing a
+                pre-history value straight to it would reintroduce the exact defect
+                this change removes. The null check has to happen HERE. */}
             {[...sentry.points].reverse().map((p) => (
               <tr key={p.date}>
                 <th scope="row">{p.date}</th>
-                <td>{formatCount(p.newIssues)}</td>
+                <td>{p.newIssues == null ? EM_DASH : formatCount(p.newIssues)}</td>
               </tr>
             ))}
           </tbody>

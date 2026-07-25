@@ -25,13 +25,27 @@
 // returned `reason` string: the failure paths below surface an HTTP status code or an
 // error NAME (never `err.message`, which upstream libraries have been known to build
 // by echoing request headers).
+//
+// ── PRE-HISTORY (H1 item 3) ────────────────────────────────────────────────────
+// The same honesty contract applies WITHIN the 'ok' state, along the time axis. The
+// trend zero-filled every day in the window, so a day before this project was being
+// watched looked exactly like a genuinely quiet day — and on an error panel those two
+// readings mean opposite things. Days that closed before the configured observation
+// start now carry `null`, using the identical rule the analytics dashboards use
+// (lib/analytics/prehistory.ts). With no observation start configured — the default,
+// and the current production state — nothing is suppressed and the trend is unchanged.
 import {
   isSentryIssuesConfigured,
   sentryApiBaseUrl,
   sentryIssuesApiToken,
+  sentryObservedSinceMs,
   sentryOrg,
   sentryProject,
 } from './config';
+// Pure, DB-free primitive — importing it here costs this module nothing and guarantees
+// "before the source existed" means the same thing on the error panel as on the KPI
+// cards two sections above it.
+import { isPreHistory } from '@/lib/analytics/prehistory';
 
 /** How long the dashboard is willing to wait for Sentry before giving up. */
 export const SENTRY_FETCH_TIMEOUT_MS = 4_000;
@@ -40,12 +54,30 @@ export const SENTRY_TREND_DAYS = 14;
 /** Cap on issues pulled — a trend, not a log viewer. */
 export const SENTRY_ISSUE_LIMIT = 100;
 
-/** One day of the issue trend. */
+/**
+ * One day of the issue trend.
+ *
+ * `newIssues` is nullable for the same structural reason TrendPoint's measures are
+ * (see lib/analytics/prehistory.ts): a boolean flag alone can be ignored by a new
+ * surface and still compile, whereas a nullable measure cannot reach a formatter
+ * without that surface deciding, in compiler-checked code, what an unwatched day
+ * looks like. INVARIANT: `preHistory === true` ⟺ `newIssues === null`.
+ */
 export interface SentryTrendPoint {
   /** UTC calendar day, 'YYYY-MM-DD'. */
   date: string;
-  /** Issues whose FIRST occurrence was on this day (i.e. genuinely new problems). */
-  newIssues: number;
+  /**
+   * True when this day closed before the project was being watched — nothing could
+   * have been reported, so `newIssues` is null rather than 0. Always false when no
+   * observation start is configured.
+   */
+  preHistory: boolean;
+  /**
+   * Issues whose FIRST occurrence was on this day (i.e. genuinely new problems).
+   * Null iff pre-history. A real 0 — a watched day on which nothing broke — stays 0,
+   * because that is the good news this panel exists to report.
+   */
+  newIssues: number | null;
 }
 
 export type SentryIssueTrend =
@@ -83,11 +115,19 @@ function utcDay(d: Date): string {
  * Pure and clock-injected so it is unit-testable without a network or a fixed date.
  * Issues first seen before the window start are counted in the totals by the caller
  * but contribute no point here — they are not *new* problems in this window.
+ *
+ * `observedSinceMs` is the instant this project started being watched. Days that
+ * CLOSED at or before it get `newIssues: null` (nothing could have been reported)
+ * rather than 0. Null/omitted — the default — suppresses nothing, exactly as
+ * isPreHistory() does without an anchor. Counting still happens before suppression so
+ * an issue whose `firstSeen` predates the configured anchor cannot be double-counted
+ * into a later day; it simply lands on a day that is then reported as unmeasurable.
  */
 export function buildIssueTrend(
   issues: SentryIssue[],
   nowMs: number,
-  windowDays: number = SENTRY_TREND_DAYS
+  windowDays: number = SENTRY_TREND_DAYS,
+  observedSinceMs: number | null = null
 ): SentryTrendPoint[] {
   const days = Math.min(90, Math.max(1, Math.trunc(windowDays)));
   const counts = new Map<string, number>();
@@ -101,7 +141,11 @@ export function buildIssueTrend(
     const key = utcDay(t);
     if (counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  return [...counts.entries()].map(([date, newIssues]) => ({ date, newIssues }));
+  return [...counts.entries()].map(([date, newIssues]) => {
+    // 'day' grain: these keys ARE UTC calendar days, so the shared rule applies as-is.
+    const preHistory = isPreHistory(date, 'day', observedSinceMs);
+    return { date, preHistory, newIssues: preHistory ? null : newIssues };
+  });
 }
 
 /** Sum an issue list's event counts, tolerating Sentry's string-or-number `count`. */
@@ -176,6 +220,6 @@ export async function getSentryIssueTrend(nowMs: number = Date.now()): Promise<S
     unresolvedIssues: issues.length,
     totalEvents: sumIssueEvents(issues),
     truncated: issues.length >= SENTRY_ISSUE_LIMIT,
-    points: buildIssueTrend(issues, nowMs),
+    points: buildIssueTrend(issues, nowMs, SENTRY_TREND_DAYS, sentryObservedSinceMs()),
   };
 }

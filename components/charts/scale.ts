@@ -116,10 +116,42 @@ export function scaleY(value: number, yMax: number, area: PlotArea): number {
   return round2(area.bottom - t * area.h);
 }
 
-/** Map a series of values to XY points across the plot (index → x, value → y). */
-export function projectValues(values: number[], yMax: number, area: PlotArea): XY[] {
+/**
+ * Map a series of values to XY points across the plot (index → x, value → y).
+ *
+ * A `null` value maps to a `null` POINT, not to a point on the baseline (H1). The
+ * distinction is the whole fix: an unmeasurable day drawn at y=baseline is visually
+ * identical to a measured zero, which is exactly how weeks of pre-instrumentation
+ * days came to read as a sustained traffic outage. A null point is skipped by the
+ * path builders below, leaving a gap. A real 0 still projects onto the baseline and
+ * stays plainly visible.
+ */
+export function projectValues(values: (number | null)[], yMax: number, area: PlotArea): (XY | null)[] {
   const count = values.length;
-  return values.map((v, i) => ({ x: scaleX(i, count, area), y: scaleY(v, yMax, area) }));
+  return values.map((v, i) =>
+    v == null ? null : { x: scaleX(i, count, area), y: scaleY(v, yMax, area) }
+  );
+}
+
+/**
+ * Split a point list into its contiguous runs of NON-null points.
+ *
+ * Shared by both path builders so a line and its area wash can never disagree about
+ * where the gaps are. Runs preserve order; nulls act purely as separators.
+ */
+function segments(points: (XY | null)[]): XY[][] {
+  const runs: XY[][] = [];
+  let current: XY[] = [];
+  for (const p of points) {
+    if (p == null) {
+      if (current.length) runs.push(current);
+      current = [];
+    } else {
+      current.push(p);
+    }
+  }
+  if (current.length) runs.push(current);
+  return runs;
 }
 
 /**
@@ -127,26 +159,40 @@ export function projectValues(values: number[], yMax: number, area: PlotArea): X
  * '' for an empty set. A single point becomes a tiny horizontal dash so the line
  * is still visible (an isolated moveto renders nothing with round caps in some
  * engines).
+ *
+ * Null entries break the line into separate sub-paths rather than being interpolated
+ * across: a gap must LOOK like a gap. An isolated real point between two nulls still
+ * gets the tiny-dash treatment so it does not vanish.
  */
-export function linePath(points: XY[]): string {
-  if (points.length === 0) return '';
-  if (points.length === 1) {
-    const p = points[0];
-    return `M${p.x} ${p.y}L${p.x + 0.01} ${p.y}`;
-  }
-  return points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join('');
+export function linePath(points: (XY | null)[]): string {
+  return segments(points)
+    .map((run) => {
+      if (run.length === 1) {
+        const p = run[0];
+        return `M${p.x} ${p.y}L${p.x + 0.01} ${p.y}`;
+      }
+      return run.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join('');
+    })
+    .join('');
 }
 
 /**
  * SVG path `d` for a filled area under `points`, closed down to `baselineY`
  * (the ~10%-opacity single-series wash). Returns '' for an empty set.
+ *
+ * Each contiguous run is closed to the baseline independently, so the wash is absent
+ * over a gap instead of being carried across it — a filled region under a stretch
+ * with no data would reassert the very "we measured this" claim the gap denies.
  */
-export function areaPath(points: XY[], baselineY: number): string {
-  if (points.length === 0) return '';
-  const top = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join('');
-  const first = points[0];
-  const last = points[points.length - 1];
-  return `${top}L${last.x} ${round2(baselineY)}L${first.x} ${round2(baselineY)}Z`;
+export function areaPath(points: (XY | null)[], baselineY: number): string {
+  return segments(points)
+    .map((run) => {
+      const top = run.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join('');
+      const first = run[0];
+      const last = run[run.length - 1];
+      return `${top}L${last.x} ${round2(baselineY)}L${first.x} ${round2(baselineY)}Z`;
+    })
+    .join('');
 }
 
 function clamp01(t: number): number {
