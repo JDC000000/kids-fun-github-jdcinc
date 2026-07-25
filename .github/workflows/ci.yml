@@ -78,5 +78,8 @@ jobs:
       - name: Lint
         run: npx eslint .
 
+      # Two lanes (H3): the parallel no-DB lane and the serial shared-Postgres lane, run
+      # concurrently. See scripts/test.sh and vitest.workspace.ts. `npx vitest run` still
+      # works locally and is still safe (serial), it is just ~2x slower than this.
       - name: Unit tests
-        run: npx vitest run
+        run: bash scripts/test.sh
