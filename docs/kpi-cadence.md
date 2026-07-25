@@ -166,8 +166,13 @@ Recommended jobs, when approved:
 | `kids-fun-daily-product-health` | Every working day, early | Wake an agent, run §3's checklist against `/admin/operating?view=daily`, post to the paired channel **only if** something in the Escalate column trips |
 | `kids-fun-monthly-product-health` | 1st of the month | Wake an agent, assemble the §5 note as a draft, and hand it to Jon for the decision — the *judgement* stays human |
 
-Two constraints on whoever wires these:
+Three constraints on whoever wires these:
 
+- **⚠️ PREREQUISITE — fix the ops-query fan-out first (see §7).** `getOpsSeries` is fine
+  at today's volume (~282 ms) but degrades non-linearly, and `vercel.json` sets no
+  `maxDuration`. A cron that loads this page on a schedule is exactly what turns a
+  latency gradient into a recurring 504. **Do not automate this page until that query is
+  split.**
 - **The daily job must be silent when healthy.** A job that posts "all green" every day
   gets muted within a week, and then the one day it matters, nobody reads it.
 - **The admin surface is gated.** `/admin/operating` requires a real admin session (or the
@@ -191,6 +196,37 @@ Honest list. None of these are blockers for running the cadence; all are worth k
   deliberate: rendering a shared secret into the HTML of a dashboard whose whole purpose is
   to be screenshotted into a review note is a real leak vector. A reviewer using a proper
   admin **session** is unaffected. Retiring the interim token removes the issue entirely.
+- **⚠️ `getOpsSeries` has a cartesian fan-out — fix before automating this page.**
+  `lib/admin/operating.ts` LEFT JOINs `correction_report` twice and `source_check_run`
+  once per bucket, so the intermediate row count is *corrections × corrections × check
+  runs* per bucket. `count(DISTINCT …)` still returns the right answer, but the cost is
+  a cliff rather than a gradient. Measured on real Postgres at `('day', 30)`:
+
+  | corrections/day | intermediate rows | exec |
+  |---|---|---|
+  | 5 (today) | 10 k | 282 ms |
+  | 20 | 166 k | 429 ms |
+  | 60 | 1.5 M | 1.44 s |
+  | 120 | 6.0 M | 5.66 s |
+  | 200 | 16.6 M | 16.4 s |
+
+  A realistic sustained shape (400 checks/day + 40 corrections/day over 30 buckets) is
+  **19.2 M intermediate rows / 25.9 s**. `vercel.json` sets no `maxDuration`, so the
+  platform default (10–15 s) would 504. It is not a problem today — nothing loads this
+  page automatically and current volume runs in 282 ms — but it **is** a hard
+  prerequisite for §6's cron. The fix is to split the one query into three independent
+  per-bucket aggregates (or LATERALs), so the joins never multiply. Found by
+  independent QA, who measured the table above rather than estimating it.
+- **`getDataCoverage()` cannot be clock-pinned.** It calls `Date.now()` internally while
+  `getOperatingDashboardData()` takes an injectable `nowMs`, so `coverage.daysOfData` can
+  disagree with `generatedAt` by a hair and is awkward to test against a fixed clock.
+  Cosmetic today; the fix is to thread `nowMs` through.
+- **Bucket boundaries are computed in UTC; Postgres truncates in the SESSION timezone.**
+  `periodEndMs`/`isPreHistory` interpret bucket keys as UTC, while the keys themselves
+  come from `date_trunc`, which honours the DB session timezone. Both are UTC on CI and
+  on Supabase, so this is correct today — but it is a coupling, not a guarantee. If a
+  deployment ever runs a non-UTC session, fix it by returning an explicit UTC-normalised
+  boundary from the SQL rather than by patching the JS arithmetic.
 - **Lifecycle queries do a full-table scan of `analytics_event`.** Determining whether an
   actor is *new* requires a whole-history `min(created_at)` per actor, and
   `analytics_event` has no index on `user_or_session`. Correct, and comfortable at the

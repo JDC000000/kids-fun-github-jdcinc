@@ -85,7 +85,11 @@ export default async function AdminOperatingPage({
   const copy = reviewCopy(grain);
 
   const { coverage, sourceFreshness, correctionsQueue, activeUserTrend } = data;
-  const completePeriods = data.periods.filter((p) => !p.partial).length;
+  // Count ONLY buckets that could actually contain a measurement. Counting
+  // pre-history buckets here would over-claim the review's depth and directly
+  // contradict the detail-table caption below, which discloses those same buckets as
+  // "not shown … nothing to measure in them".
+  const completePeriods = data.periods.filter((p) => !p.partial && !p.preHistory).length;
   const dataIsThin = coverage.daysOfData < THIN_DATA_DAYS;
   const monthlyImpossible = grain === 'month' && coverage.daysOfData < MONTHLY_REVIEW_MIN_DAYS;
 

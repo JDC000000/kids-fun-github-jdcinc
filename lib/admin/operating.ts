@@ -136,6 +136,41 @@ export async function getOperatingOpsPeriods(
   }));
 }
 
+/** How far back the OPS tables' own history goes — the ops half of DataCoverage. */
+export interface OpsDataCoverage {
+  /** Oldest source_check_run.started_at, or null when none have ever run. */
+  firstCheckRunAt: string | null;
+  /** Oldest non-archived correction_report.created_at, or null when none exist. */
+  firstCorrectionAt: string | null;
+}
+
+/**
+ * Read where the ops tables' histories actually begin.
+ *
+ * Deliberately a separate, tiny read rather than something folded into the bucketed
+ * ops query: it is two index-friendly `min()`s over whole tables, and keeping it apart
+ * means the per-bucket aggregate stays a per-bucket aggregate. Safe on empty tables
+ * (both fields null → nothing is ever treated as pre-history).
+ */
+export async function getOpsCoverage(): Promise<OpsDataCoverage> {
+  const rows = await query<{ first_check_run_at: Date | null; first_correction_at: Date | null }>(
+    `
+    SELECT
+      (SELECT min(started_at) FROM source_check_run)                            AS first_check_run_at,
+      (SELECT min(created_at) FROM correction_report WHERE archived_at IS NULL) AS first_correction_at
+    `
+  );
+  const toIso = (v: Date | null | undefined): string | null => {
+    if (v == null) return null;
+    const ms = new Date(v).getTime();
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  };
+  return {
+    firstCheckRunAt: toIso(rows[0]?.first_check_run_at),
+    firstCorrectionAt: toIso(rows[0]?.first_correction_at),
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Ops-side KPI definitions — same model as the analytics ones so the trends UI
 // renders both from a single component.
@@ -173,41 +208,91 @@ const DATA_HEALTH_DEF: OperatingKpiDef = {
 };
 
 /**
+ * The instant each data domain's history actually starts. One entry per underlying
+ * TABLE, because pre-history is a property of the table a KPI reads — not of the
+ * product as a whole.
+ *
+ * ── WHY THIS TYPE EXISTS (regression guard, R1) ────────────────────────────────
+ * The first version of this file anchored the ops KPIs on `analytics_event`'s first
+ * row. That is wrong and it hid real data: `source_check_run` has been recording
+ * since the early ingestion rounds, while analytics instrumentation only landed at
+ * T32 — so every ingestion run older than the first analytics event was reported as
+ * "nothing to measure". Independent QA reproduced it live: three genuinely FAILED
+ * check runs on a day before analytics began (a total-ingestion-outage day, i.e.
+ * exactly what the daily review exists to catch) rendered as an em-dash, and the
+ * detail row was dropped under a caption claiming there was nothing to measure.
+ *
+ * It also got worse with time rather than better: lib/analytics/retention.ts purges
+ * `analytics_event` on a 13-month window, so the analytics anchor MOVES FORWARD and
+ * the suppression window grows.
+ *
+ * Each KPI is therefore anchored on its own table's `min()`. A domain with no rows at
+ * all yields `null`, which {@link isPreHistory} treats as "suppress nothing".
+ */
+export interface OperatingDataAnchors {
+  /** min(analytics_event.created_at) — anchors the product-analytics KPIs. */
+  analyticsMs: number | null;
+  /** min(source_check_run.started_at) — anchors the ingestion-success KPI. */
+  checkRunMs: number | null;
+  /** min(correction_report.created_at) — anchors the corrections KPIs. */
+  correctionMs: number | null;
+}
+
+/**
+ * The earliest instant ANY domain recorded something. A bucket that closed before
+ * this had nothing to measure in any table, and is the only kind of bucket the detail
+ * table may legitimately drop.
+ */
+export function earliestDataMs(anchors: OperatingDataAnchors): number | null {
+  const known = [anchors.analyticsMs, anchors.checkRunMs, anchors.correctionMs].filter(
+    (ms): ms is number => ms != null && Number.isFinite(ms)
+  );
+  return known.length ? Math.min(...known) : null;
+}
+
+/**
  * Build the three ops-side KPIs from the ops period series. Pure.
  *
- * `grain`/`firstEventAtMs` apply the same pre-history suppression the analytics KPIs
- * use (see isPreHistory in lib/analytics/operating.ts) so a monthly review does not
- * report "0 corrections, steady" for months in which the product did not exist.
+ * Each KPI is anchored on the table it actually reads (see {@link OperatingDataAnchors}).
+ * Passing no anchors suppresses nothing, which is the safe default: showing a real
+ * zero is always recoverable, hiding a real outage is not.
  */
 export function buildOpsKpis(
   ops: OperatingOpsPeriod[],
   grain: OperatingGrain = 'day',
-  firstEventAtMs: number | null = null
+  anchors: Partial<OperatingDataAnchors> = {}
 ): OperatingKpi[] {
-  const point = (o: OperatingOpsPeriod, value: number | null, sample: number | null) => {
-    const preHistory = isPreHistory(o.period, grain, firstEventAtMs);
-    return {
-      period: o.period,
-      label: o.label,
-      value: preHistory ? null : value,
-      sample: preHistory ? null : sample,
-      partial: o.partial,
-      preHistory,
+  const point =
+    (anchorMs: number | null) =>
+    (o: OperatingOpsPeriod, value: number | null, sample: number | null) => {
+      const preHistory = isPreHistory(o.period, grain, anchorMs);
+      return {
+        period: o.period,
+        label: o.label,
+        value: preHistory ? null : value,
+        sample: preHistory ? null : sample,
+        partial: o.partial,
+        preHistory,
+      };
     };
-  };
+
+  const correctionPoint = point(anchors.correctionMs ?? null);
+  const checkRunPoint = point(anchors.checkRunMs ?? null);
 
   return [
     buildOperatingKpi(
       CORRECTIONS_OPENED_DEF,
-      ops.map((o) => point(o, o.correctionsOpened, null))
+      ops.map((o) => correctionPoint(o, o.correctionsOpened, null))
     ),
     buildOperatingKpi(
       CORRECTIONS_RESOLVED_DEF,
-      ops.map((o) => point(o, o.correctionsResolved, null))
+      ops.map((o) => correctionPoint(o, o.correctionsResolved, null))
     ),
     buildOperatingKpi(
       DATA_HEALTH_DEF,
-      ops.map((o) => point(o, pct(o.okCheckRuns, o.checkRuns), o.checkRuns))
+      // pct(0, 0) is already null, so a bucket with genuinely no runs reads "—" on its
+      // own merits; the anchor only suppresses buckets that predate ingestion itself.
+      ops.map((o) => checkRunPoint(o, pct(o.okCheckRuns, o.checkRuns), o.checkRuns))
     ),
   ];
 }
@@ -219,10 +304,18 @@ export function buildOpsKpis(
 export interface OperatingDashboardData {
   generatedAt: string;
   grain: OperatingGrain;
-  /** The bucket axis shared by every KPI series, oldest→newest. */
+  /**
+   * The bucket axis shared by every KPI series, oldest→newest. `preHistory` here means
+   * "no domain could have recorded anything in this bucket" — the only condition under
+   * which the detail table may drop a row.
+   */
   periods: { period: string; label: string; partial: boolean; preHistory: boolean }[];
-  /** How much real data exists — the guard against reading noise as signal. */
+  /** How much real analytics_event data exists — the guard against reading noise as signal. */
   coverage: DataCoverage;
+  /** Where the ops tables' own histories begin (they differ from analytics — see R1). */
+  opsCoverage: OpsDataCoverage;
+  /** The per-table pre-history anchors actually applied to each KPI. */
+  anchors: OperatingDataAnchors;
   /** The canonical current-window KPI snapshot (reused verbatim from T32). */
   snapshot: ProductHealthKpis;
   /** Rolling DAU/WAU/MAU + volume lines (reused verbatim from T32). */
@@ -255,21 +348,47 @@ export async function getOperatingDashboardData(
   periodsRequested?: number,
   nowMs: number = Date.now()
 ): Promise<OperatingDashboardData> {
-  const [counts, opsCounts, snapshot, activeUserTrend, coverage, correctionsQueue, sourceFreshness, sentry] =
-    await Promise.all([
-      getOperatingPeriodCounts(grain, periodsRequested),
-      getOperatingOpsPeriods(grain, periodsRequested),
-      getProductHealthKpis(),
-      getActivityTrend(),
-      getDataCoverage(),
-      getCorrectionsQueueSummary(),
-      getSourceFreshnessSla(nowMs),
-      getSentryIssueTrend(nowMs),
-    ]);
+  const [
+    counts,
+    opsCounts,
+    snapshot,
+    activeUserTrend,
+    coverage,
+    opsCoverage,
+    correctionsQueue,
+    sourceFreshness,
+    sentry,
+  ] = await Promise.all([
+    getOperatingPeriodCounts(grain, periodsRequested),
+    getOperatingOpsPeriods(grain, periodsRequested),
+    getProductHealthKpis(),
+    getActivityTrend(),
+    getDataCoverage(),
+    getOpsCoverage(),
+    getCorrectionsQueueSummary(),
+    getSourceFreshnessSla(nowMs),
+    getSentryIssueTrend(nowMs),
+  ]);
 
-  // The pre-history anchor: buckets that closed before this instant had nothing to
-  // measure, and are reported as "no data" rather than as a measured zero.
-  const firstEventAtMs = coverage.firstEventAt ? Date.parse(coverage.firstEventAt) : null;
+  // One pre-history anchor PER TABLE. Using the analytics anchor for the ops KPIs hid
+  // real ingestion failures that predated analytics instrumentation — see
+  // OperatingDataAnchors for the full account of that defect.
+  const parse = (iso: string | null): number | null => {
+    if (!iso) return null;
+    const ms = Date.parse(iso);
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const anchors: OperatingDataAnchors = {
+    analyticsMs: parse(coverage.firstEventAt),
+    checkRunMs: parse(opsCoverage.firstCheckRunAt),
+    correctionMs: parse(opsCoverage.firstCorrectionAt),
+  };
+
+  // A bucket may only be dropped from the detail table (and excluded from the
+  // "complete periods" count) when NO domain could have recorded anything in it —
+  // otherwise a row carrying real ops data disappears under a caption insisting there
+  // was nothing to measure.
+  const earliestMs = earliestDataMs(anchors);
 
   return {
     generatedAt: new Date(nowMs).toISOString(),
@@ -278,14 +397,16 @@ export async function getOperatingDashboardData(
       period: c.period,
       label: c.label,
       partial: c.partial,
-      preHistory: isPreHistory(c.period, grain, firstEventAtMs),
+      preHistory: isPreHistory(c.period, grain, earliestMs),
     })),
     coverage,
+    opsCoverage,
+    anchors,
     snapshot,
     activeUserTrend,
     kpis: [
-      ...buildOperatingKpis(counts, grain, firstEventAtMs),
-      ...buildOpsKpis(opsCounts, grain, firstEventAtMs),
+      ...buildOperatingKpis(counts, grain, anchors.analyticsMs),
+      ...buildOpsKpis(opsCounts, grain, anchors),
     ],
     sentry,
     correctionsQueue,

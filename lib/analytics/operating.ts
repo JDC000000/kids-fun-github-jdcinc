@@ -33,7 +33,24 @@
 //     presenting it with the same authority as a well-powered number. This matters
 //     right now: KIDS FUN launched 2026-07-21 and the production dataset is days old.
 import { query } from '@/lib/db/client';
-import { pct, perDay, signedInSharePct, sourceCtrPct, zeroResultPct } from './kpi';
+import {
+  SOURCE_CTR_TARGET_PCT,
+  pct,
+  perDay,
+  signedInSharePct,
+  sourceCtrPct,
+  zeroResultPct,
+} from './kpi';
+// Targets are IMPORTED, never copied. The UI renders a provenance line naming these
+// very constants as each target's source, so a hardcoded literal here would let a
+// tuned launch goal move /admin/product-health while /admin/operating silently kept
+// the old number and went on claiming benchmark.ts as its authority.
+import {
+  MAU_TARGET,
+  SEARCHES_PER_DAY_TARGET,
+  SIGNED_IN_SHARE_TARGET_PCT,
+  ZERO_RESULT_TARGET_PCT,
+} from './benchmark';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Grain / window configuration
@@ -107,7 +124,19 @@ export function periodLabel(periodStart: string, grain: OperatingGrain): string 
   return grain === 'month' ? periodStart.slice(0, 7) : periodStart;
 }
 
-/** Exclusive end of a bucket, as an epoch-ms UTC instant. */
+/**
+ * Exclusive end of a bucket, as an epoch-ms UTC instant.
+ *
+ * ⚠️ TIMEZONE COUPLING (known, correct today, documented rather than defended): the
+ * bucket KEYS are produced by Postgres `date_trunc`, which uses the DB SESSION
+ * timezone, while this function interprets them in UTC. The two agree only while the
+ * database session runs in UTC — which it does on CI (the postgis container defaults
+ * to UTC) and on Supabase (UTC default). If a future deployment ever sets a non-UTC
+ * session timezone, bucket boundaries here would drift by the offset and pre-history
+ * suppression could be off by up to a day at the edge. The fix, if that day comes, is
+ * to have the SQL return an explicit UTC-normalised boundary rather than to patch the
+ * arithmetic here. See docs/kpi-cadence.md §7.
+ */
 export function periodEndMs(periodStart: string, grain: OperatingGrain): number {
   const [year, month, day] = periodStart.split('-').map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(month)) return Number.NaN;
@@ -733,8 +762,11 @@ const DERIVATIONS: readonly Derivation[] = [
       description: 'Distinct actors with any event in the calendar month.',
       format: 'count',
       better: 'higher',
-      provenance: 'TSD §12.5 reach; launch goal target from benchmark.ts',
+      provenance: 'TSD §12.5 reach; launch goal target from benchmark.ts (MAU_TARGET)',
       cadence: 'monthly',
+      // The provenance line above promises a target, so one is actually rendered —
+      // MAU_TARGET already existed in benchmark.ts and was going unused.
+      target: { value: MAU_TARGET, direction: 'gte', source: 'launch goal (benchmark.ts MAU_TARGET)' },
     },
     value: (c) => c.activeActors,
   },
@@ -748,7 +780,11 @@ const DERIVATIONS: readonly Derivation[] = [
       better: 'higher',
       provenance: 'TSD §12.5 KPI #15 — computed with kpi.ts signedInSharePct()',
       cadence: 'both',
-      target: { value: 20, direction: 'gte', source: 'launch goal (benchmark.ts SIGNED_IN_SHARE_TARGET_PCT)' },
+      target: {
+        value: SIGNED_IN_SHARE_TARGET_PCT,
+        direction: 'gte',
+        source: 'launch goal (benchmark.ts SIGNED_IN_SHARE_TARGET_PCT)',
+      },
     },
     value: (c) => signedInSharePct(c.signedInActors, c.activeActors),
     sample: (c) => c.activeActors,
@@ -803,7 +839,13 @@ const DERIVATIONS: readonly Derivation[] = [
       better: 'higher',
       provenance: 'TSD §12.5 KPI #1,2 — complement of kpi.ts zeroResultPct()',
       cadence: 'both',
-      target: { value: 90, direction: 'gte', source: 'complement of the ≤10% zero-result launch goal' },
+      // Derived, not restated: this KPI IS the complement of the zero-result rate, so its
+      // target must be the complement of that target or the two can disagree.
+      target: {
+        value: 100 - ZERO_RESULT_TARGET_PCT,
+        direction: 'gte',
+        source: `complement of the ≤${ZERO_RESULT_TARGET_PCT}% zero-result launch goal (benchmark.ts ZERO_RESULT_TARGET_PCT)`,
+      },
     },
     value: nonEmptyResultPct,
     sample: (c) => c.searchesWithResults,
@@ -843,7 +885,11 @@ const DERIVATIONS: readonly Derivation[] = [
       better: 'lower',
       provenance: 'launch goal (benchmark.ts ZERO_RESULT_TARGET_PCT) — kpi.ts zeroResultPct()',
       cadence: 'both',
-      target: { value: 10, direction: 'lte', source: 'launch goal (benchmark.ts ZERO_RESULT_TARGET_PCT)' },
+      target: {
+        value: ZERO_RESULT_TARGET_PCT,
+        direction: 'lte',
+        source: 'launch goal (benchmark.ts ZERO_RESULT_TARGET_PCT)',
+      },
     },
     value: (c) => zeroResultPct(c.zeroResultSearches, c.searchesWithResults),
     sample: (c) => c.searchesWithResults,
@@ -857,7 +903,11 @@ const DERIVATIONS: readonly Derivation[] = [
       better: 'higher',
       provenance: 'TSD §12.5 KPI #7 (ratified) — kpi.ts sourceCtrPct()',
       cadence: 'both',
-      target: { value: 25, direction: 'gte', source: 'TSD §12.5 KPI #7 (ratified)' },
+      target: {
+        value: SOURCE_CTR_TARGET_PCT,
+        direction: 'gte',
+        source: 'TSD §12.5 KPI #7 (ratified) — kpi.ts SOURCE_CTR_TARGET_PCT',
+      },
     },
     value: (c) => sourceCtrPct(c.outboundClicks, c.listingViews),
     sample: (c) => c.listingViews,
@@ -871,7 +921,11 @@ const DERIVATIONS: readonly Derivation[] = [
       better: 'higher',
       provenance: 'launch goal (benchmark.ts SEARCHES_PER_DAY_TARGET) — kpi.ts perDay()',
       cadence: 'both',
-      target: { value: 20, direction: 'gte', source: 'launch goal (benchmark.ts SEARCHES_PER_DAY_TARGET)' },
+      target: {
+        value: SEARCHES_PER_DAY_TARGET,
+        direction: 'gte',
+        source: 'launch goal (benchmark.ts SEARCHES_PER_DAY_TARGET)',
+      },
     },
     value: (c) => perDay(c.searches, daysInPeriod(c)),
   },

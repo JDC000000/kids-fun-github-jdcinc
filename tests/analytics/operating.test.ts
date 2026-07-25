@@ -46,6 +46,13 @@ import {
   type OperatingKpiDef,
   type OperatingPeriodCounts,
 } from '../../lib/analytics/operating';
+import { SOURCE_CTR_TARGET_PCT } from '../../lib/analytics/kpi';
+import {
+  MAU_TARGET,
+  SEARCHES_PER_DAY_TARGET,
+  SIGNED_IN_SHARE_TARGET_PCT,
+  ZERO_RESULT_TARGET_PCT,
+} from '../../lib/analytics/benchmark';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
@@ -82,6 +89,64 @@ describe('grain utilities', () => {
   it('labels a bucket by grain', () => {
     expect(periodLabel('2026-07-25', 'day')).toBe('2026-07-25');
     expect(periodLabel('2026-07-01', 'month')).toBe('2026-07');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer 1: targets must be IMPORTED, not copied (A2/A3)
+//
+// The UI renders a provenance line naming benchmark.ts / kpi.ts as each target's
+// source. If a target were a hardcoded literal, tuning a launch goal would move
+// /admin/product-health while /admin/operating silently kept the stale number and
+// went on citing the constant as its authority. These tests bind the two together, so
+// changing a constant either updates this dashboard or fails the build.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('KPI targets are bound to the canonical constants', () => {
+  const byKey = (key: string) => {
+    const daily = buildOperatingKpis([counts()], 'day').find((k) => k.key === key);
+    const monthly = buildOperatingKpis([counts()], 'month').find((k) => k.key === key);
+    return daily ?? monthly;
+  };
+
+  it('sources every target from benchmark.ts / kpi.ts rather than a literal', () => {
+    expect(byKey('source_ctr')?.target?.value).toBe(SOURCE_CTR_TARGET_PCT);
+    expect(byKey('zero_result_rate')?.target?.value).toBe(ZERO_RESULT_TARGET_PCT);
+    expect(byKey('searches_per_day')?.target?.value).toBe(SEARCHES_PER_DAY_TARGET);
+    expect(byKey('signed_in_share')?.target?.value).toBe(SIGNED_IN_SHARE_TARGET_PCT);
+  });
+
+  it('derives the non-empty-result target as the complement of the zero-result target', () => {
+    // Not "90" — the two KPIs are complements, so their targets must move together.
+    expect(byKey('non_empty_results')?.target?.value).toBe(100 - ZERO_RESULT_TARGET_PCT);
+  });
+
+  it('renders the MAU target it promises in its provenance line (A3)', () => {
+    const mau = byKey('active_actors');
+    expect(mau?.provenance).toContain('MAU_TARGET');
+    expect(mau?.target?.value).toBe(MAU_TARGET);
+    expect(mau?.target?.direction).toBe('gte');
+  });
+
+  it('never NAMES a target constant in its provenance without rendering one', () => {
+    // Matches an actual constant identifier (SOURCE_CTR_TARGET_PCT, MAU_TARGET…), which
+    // is a positive claim that a target exists — this is exactly the A3 defect shape.
+    // It deliberately does NOT match lowercase prose like "not a ratified … target",
+    // which several PROPOSED KPIs use to DISCLAIM having one. (An earlier, naive
+    // /target/i here failed on precisely that distinction.)
+    const NAMES_A_TARGET_CONSTANT = /[A-Z][A-Z0-9_]*TARGET[A-Z0-9_]*/;
+    for (const kpi of [...buildOperatingKpis([counts()], 'day'), ...buildOperatingKpis([counts()], 'month')]) {
+      if (NAMES_A_TARGET_CONSTANT.test(kpi.provenance)) {
+        expect(kpi.target, `${kpi.key} names a target constant in its provenance`).toBeDefined();
+      }
+    }
+  });
+
+  it('the PROPOSED KPIs correctly carry no target at all', () => {
+    // The other half of the contract: an unratified definition must not invent one.
+    for (const key of ['activation', 'retention', 'zero_result_recovery', 'search_engagement']) {
+      expect(byKey(key)?.target, `${key} must not carry an invented target`).toBeUndefined();
+    }
   });
 });
 

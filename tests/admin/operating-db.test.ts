@@ -7,7 +7,14 @@
 // rows produce on today's bucket, so the assertions hold regardless of what else is
 // already in the shared database. Everything inserted is removed afterwards.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildOpsKpis, getOperatingDashboardData, getOperatingOpsPeriods } from '../../lib/admin/operating';
+import {
+  buildOpsKpis,
+  earliestDataMs,
+  getOperatingDashboardData,
+  getOperatingOpsPeriods,
+  getOpsCoverage,
+  type OperatingOpsPeriod,
+} from '../../lib/admin/operating';
 import { closePool, query } from '../../lib/db/client';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -81,6 +88,15 @@ describe.skipIf(!hasDb)('operating ops series (DB)', () => {
       [ids.seriesId, `${TAG} Saturday Open Gym`, openGymCatId]
     );
 
+    // An OLD failed check run, well before anything this suite writes to
+    // analytics_event. Under the R1 defect this day's genuine 0% ingestion success was
+    // suppressed by the analytics anchor; it must now survive.
+    await query(
+      `INSERT INTO source_check_run (source_id, status, started_at)
+       VALUES ($1, 'failed', now() - interval '6 days')`,
+      [ids.srcId]
+    );
+
     // Two reports opened today; one of them also resolved today.
     await query(
       `INSERT INTO correction_report (occurrence_id, issue_type, status, created_at)
@@ -143,6 +159,38 @@ describe.skipIf(!hasDb)('operating ops series (DB)', () => {
     expect(a.correctionsResolved - b.correctionsResolved).toBe(1);
   });
 
+  it('INVARIANT: any bucket with real check runs is never suppressed (R1)', async () => {
+    // Stated as an invariant rather than an exact-value assertion so it holds no
+    // matter what else lives in the shared test database. This is the property the
+    // R1 defect violated: a bucket containing real source_check_run rows was reported
+    // as "nothing to measure" because analytics_event happened to start later.
+    const data = await getOperatingDashboardData('day', 10);
+    const ingest = data.kpis.find((k) => k.key === 'ingest_success_rate')!;
+    const opsByPeriod = new Map(data.opsCounts.map((o) => [o.period, o]));
+
+    let checked = 0;
+    for (const point of ingest.points) {
+      const ops = opsByPeriod.get(point.period);
+      if (!ops || ops.checkRuns === 0) continue;
+      checked++;
+      expect(point.preHistory ?? false).toBe(false);
+      expect(point.value).not.toBeNull();
+      expect(point.sample).toBe(ops.checkRuns);
+      // …and the bucket must still be renderable in the detail table.
+      expect(data.periods.find((p) => p.period === point.period)?.preHistory).toBe(false);
+    }
+    // The seed guarantees at least the 6-days-ago outage day and today.
+    expect(checked).toBeGreaterThanOrEqual(2);
+  });
+
+  it('reads the ops tables OWN history start, independently of analytics', async () => {
+    const opsCoverage = await getOpsCoverage();
+    // The seed inserted check runs and corrections today, so both anchors must exist
+    // and be real timestamps — never silently null (which would disable suppression).
+    expect(opsCoverage.firstCheckRunAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(opsCoverage.firstCorrectionAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
   it('builds ops KPIs whose ingestion success rate reflects the seeded runs', async () => {
     const series = await getOperatingOpsPeriods('day', 3);
     const kpis = buildOpsKpis(series);
@@ -155,6 +203,89 @@ describe.skipIf(!hasDb)('operating ops series (DB)', () => {
     expect(todaysPoint.partial).toBe(true);
     expect(todaysPoint.value).not.toBeNull();
     expect(ingest.inProgress).toBe(todaysPoint.value);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R1 regression — ops KPIs must NOT be suppressed by the analytics anchor.
+//
+// This is the exact scenario independent QA reproduced live against the built server:
+// real FAILED source_check_run rows on a day BEFORE the first analytics event — i.e. a
+// total-ingestion-outage day, precisely what the daily review exists to catch — were
+// rendered as an em-dash and their detail row was dropped under a caption claiming
+// there was nothing to measure. Pure test (no DB): the bug lived entirely in which
+// anchor was handed to which KPI.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('buildOpsKpis anchoring (R1 regression)', () => {
+  // Analytics started on the 21st; ingestion has been running since the 19th.
+  const analyticsMs = Date.parse('2026-07-21T00:00:00Z');
+  const checkRunMs = Date.parse('2026-07-19T00:00:00Z');
+  const correctionMs = Date.parse('2026-07-19T00:00:00Z');
+
+  /** The outage day: 3 runs, all failed → a real, measured 0% success. */
+  const outageDay: OperatingOpsPeriod = {
+    period: '2026-07-19',
+    label: '2026-07-19',
+    partial: false,
+    correctionsOpened: 2,
+    correctionsResolved: 0,
+    checkRuns: 3,
+    okCheckRuns: 0,
+    failedCheckRuns: 3,
+  };
+  const laterDay: OperatingOpsPeriod = {
+    ...outageDay,
+    period: '2026-07-22',
+    label: '2026-07-22',
+    correctionsOpened: 1,
+    okCheckRuns: 3,
+    failedCheckRuns: 0,
+  };
+  const series = [outageDay, laterDay];
+
+  it('surfaces a real 0%-ingestion day that predates analytics instrumentation', () => {
+    const ingest = buildOpsKpis(series, 'day', { analyticsMs, checkRunMs, correctionMs }).find(
+      (k) => k.key === 'ingest_success_rate'
+    )!;
+    const outagePoint = ingest.points.find((p) => p.period === '2026-07-19')!;
+
+    expect(outagePoint.value).toBe(0); // a measured 0%, NOT an em-dash
+    expect(outagePoint.preHistory).toBe(false); // and NOT droppable from the table
+    expect(outagePoint.sample).toBe(3);
+  });
+
+  it('surfaces corrections filed before analytics began', () => {
+    const opened = buildOpsKpis(series, 'day', { analyticsMs, checkRunMs, correctionMs }).find(
+      (k) => k.key === 'corrections_opened'
+    )!;
+    const point = opened.points.find((p) => p.period === '2026-07-19')!;
+    expect(point.value).toBe(2);
+    expect(point.preHistory).toBe(false);
+  });
+
+  it('DOES still suppress buckets that predate the ops table itself', () => {
+    // Ingestion genuinely started on the 20th here, so the 19th had nothing to measure.
+    const ingest = buildOpsKpis(series, 'day', {
+      analyticsMs,
+      checkRunMs: Date.parse('2026-07-20T00:00:00Z'),
+      correctionMs,
+    }).find((k) => k.key === 'ingest_success_rate')!;
+    const point = ingest.points.find((p) => p.period === '2026-07-19')!;
+    expect(point.value).toBeNull();
+    expect(point.preHistory).toBe(true);
+  });
+
+  it('suppresses nothing when no anchors are supplied (safe default)', () => {
+    for (const kpi of buildOpsKpis(series, 'day')) {
+      expect(kpi.points.every((p) => p.preHistory === false)).toBe(true);
+    }
+  });
+
+  it('earliestDataMs takes the oldest domain, ignoring domains with no history', () => {
+    expect(earliestDataMs({ analyticsMs, checkRunMs, correctionMs })).toBe(checkRunMs);
+    expect(earliestDataMs({ analyticsMs, checkRunMs: null, correctionMs: null })).toBe(analyticsMs);
+    expect(earliestDataMs({ analyticsMs: null, checkRunMs: null, correctionMs: null })).toBeNull();
   });
 });
 
