@@ -260,3 +260,124 @@ Also green: `tsc --noEmit`, `eslint .`, `next build`, and the public/authed func
 (unchanged). Harness note: the local E2E harness pins `E2E_BASE_URL` to `:3000`; if a stale
 `next-server` already holds that port, Playwright silently tests the stale build — run on a free
 port (`E2E_PORT` + matching `E2E_BASE_URL`) to test your actual build.
+
+---
+
+## 7. H2 — admin surfaces audited & remediated (2026-07-25, branch `h2-admin-a11y-audit`)
+
+> **The §4 audit gap is closed.** Rounds 17/18 could not reach any `/admin/*` route and
+> recorded `/admin/dashboard` as an explicit, un-actioned gap. Three more admin surfaces
+> have shipped since without an a11y pass. This section covers **all four**, in **both
+> colour schemes**, with the **same** axe-core `4.12.1` / WCAG-AA tag set and the same
+> spec/helper as §1–§3 — no new testing approach was invented.
+
+### 7.1 What made the gap closable
+
+The blocker was never the audit code — it was that `scripts/e2e/setup-local-supabase.sh`
+never provisioned `ADMIN_DASHBOARD_TOKEN`, so the interim gate (`lib/admin/access.ts`)
+failed closed and every admin route 404'd. That script now emits a **loopback-only**
+test token (on par with the well-known `supabase start` demo keys it already emits), and
+`run-e2e.sh` sources it before starting both the app and Playwright.
+
+Two guards were added so this can never silently regress into a *false* clean:
+
+- The spec now asserts each audited page is the **real admin surface** (`h1` contains
+  "KIDS FUN"), because axe reports a Next.js 404 page as "0 violations" — a page that
+  fails closed would otherwise audit as perfectly accessible.
+- `run-e2e.sh` **refuses to start** if `$PORT` is already held. Previously `next start`
+  would fail to bind, the health check would pass against the *foreign* server, and
+  Playwright would test a stale build while reporting a normal pass. **This actually
+  happened during H2:** a leftover `next-server` (re-parented to PID 1, so the old trap
+  never reaped it) made an unfixed page audit as fixed. Cleanup now reaps by port.
+
+### 7.2 Routes audited
+
+`/admin/operating` is audited in **both review modes** — the grain switches the KPI grid,
+headings and the whole detail table, so one mode cannot stand in for the other.
+`/admin/product-health` has a single mode (no `view` param).
+
+| Route | Light — before → after | Dark — before → after |
+|---|---|---|
+| `/admin/dashboard` | ⚠️ 36 nodes → ✅ **0** | ⚠️ 39 nodes → ✅ **0** |
+| `/admin/operating?view=day` | ⚠️ 1 node → ✅ **0** | ⚠️ 17 nodes → ✅ **0** |
+| `/admin/operating?view=month` | ⚠️ 1 node → ✅ **0** | ⚠️ 17 nodes → ✅ **0** |
+| `/admin/product-health` | ✅ 0 (already clean) | ✅ 0 (already clean) |
+| `/admin/data-health` | ⚠️ 1 node → ✅ **0** | ⚠️ 70 nodes → ✅ **0** |
+
+**`/admin/product-health` was already clean in both schemes** — and *why* it was clean is
+the key to the whole finding set: T41 wrote `ProductHealth.module.css` with
+`background: var(--kf-canvas)` and a comment explaining exactly this failure mode.
+`Operating.module.css` copied it. `DataHealth.module.css` (older) never got it, and
+`/admin/dashboard` predates the token system entirely. **Every fix below applies the
+repo's own already-proven pattern — none of it is a new convention.**
+
+### 7.3 Findings — required fixes (genuine WCAG violations)
+
+| # | Rule / SC | Where | Root cause | Fix |
+|---|---|---|---|---|
+| 1 | `color-contrast` 1.4.3 | `/admin/data-health` `.backLink` — **1.11:1**, fails in **both** schemes | `var(--kf-anchor-text, var(--kf-info-text))` — the fallback **never fires** (`--kf-anchor-text` is always defined), so the link rendered in the cream meant to sit *on* the dark anchor fill: cream on the page canvas | `--kf-info-text`, matching the two clean pages |
+| 2 | `color-contrast` 1.4.3 | `/admin/data-health`, 70 nodes in dark | `.page` set `color` but **no background**; `layout.tsx` sets none either, so dark-mode ink landed on the browser-default **white** body | `background: var(--kf-canvas)` |
+| 3 | `color-contrast` 1.4.3 | `/admin/data-health` `.okNote` — 1.84:1 dark | Same never-firing-fallback bug as #1: fixed `--kf-park-moss-text` against the **flipping** `--kf-confirmed-bg` | `--kf-confirmed-text` (the role that flips *with* that background) |
+| 4 | `color-contrast` 1.4.3 | `/admin/operating` `.kpiProvenance` — 1.84:1 dark, 14 nodes | Fixed palette value `--kf-tertiary-text` (tuned for light) used on a dark card | `--kf-ink-muted` (same value in light → **light rendering unchanged**) |
+| 5 | `color-contrast` 1.4.3 | `/admin/operating` + `/admin/dashboard` cross-links — 1.75:1 dark | Links had **no colour rule at all** → UA default `#0000ee`. Same defect Round 18 fixed on `/account` | Themed on `--kf-info-text`, underlined (link affordance never colour-alone, 1.4.1) |
+| 6 | `color-contrast` 1.4.3 | `/admin/dashboard`, 36 nodes **in light too** | `ADMIN_CSS` predates the design tokens: `#777` on `#f7f7f7` = 4.18, `#888` on `#fafafa` = 3.39, `#999` on `#fff` = 2.84 — all < 4.5 — **and** the block is entirely scheme-blind while the `KpiTiles` module nested in it *does* flip (dark ink on hardcoded white) | Colour-token migration of the whole block. Layout/type/spacing untouched |
+| 7 | `scrollable-region-focusable` **2.1.1 / 2.1.3** | `/admin/operating` `.tableWrap` | Horizontally-scrolling container was **pointer-only** — unreachable by keyboard | `tabIndex=0` + `role="region"` + `aria-label`, plus a `:focus-visible` outline (2.4.7) so the new tab stop is visible and named |
+
+Every colour above was **computed**, not eyeballed; all replacement pairs clear 4.5:1 with
+margin in both schemes (worst case 5.43:1 — dark `--kf-ink-muted` on `--kf-surface`).
+
+### 7.4 Found by manual review — axe could NOT detect it
+
+- **`TrendChart`'s data-table twin (`.tableScroll`) had the same 2.1.1 defect.** It scrolls
+  in both axes (`max-height: 260px`) with ~30 rows, so its lower rows were pointer-only.
+  **axe cannot catch this**: the table lives inside a `<details>` that is **collapsed at
+  page load**, so the region is not in the accessibility tree when the audit runs. Fixed
+  with the same treatment as #7. This is why "0 violations" is reported as *evidence*, not
+  *proof* — see §7.6.
+- **The second `.tableWrap` (Sentry panel) was not flagged** — that table simply did not
+  overflow with the harness dataset. It is the identical container, so fixing only the
+  flagged instance would have left a violation that appears as soon as the list widens.
+  Both were fixed.
+
+### 7.5 Checked and deliberately NOT changed
+
+- **The charts were already right.** `TrendChart` already had `role="img"` + a descriptive
+  `aria-label`, a legend, direct end-labels and a full **data-table twin**, so no value is
+  reachable only by looking at a line. The task brief's concern about SVG text alternatives
+  was already satisfied by T32/T41; **no chart markup was restyled and no H1 behaviour was
+  touched** — the only chart edits are the wrapper attributes in §7.4 and a focus outline.
+  The null-aware geometry and em-dash rendering are byte-for-byte unchanged.
+- **`aria-live`/`role="status"` on the chart tooltip** — axe flags nothing; correct as-is.
+- **`.badge` borders** on the dashboard now inherit `--kf-hairline` rather than per-status
+  border tints. Purely cosmetic; status remains carried by text + background, never colour
+  alone.
+
+### 7.6 Honest limits of this audit
+
+- **"0 violations" ≠ "accessible."** axe automatically checks roughly a third of WCAG.
+  §7.4 is a concrete example of a real violation on these very pages that axe could not see.
+- **Collapsed / interaction-only states are still unscanned.** Anything behind a
+  `<details>`, a hover, or a focus state is not in the DOM at scan time. The chart table
+  twin was caught by reading the CSS, not by the tool.
+- **`best-practice` rules remain excluded by design** (§4), so every finding above maps to
+  a real success criterion. Enabling them would surface advisory items not counted here.
+- **Data-shape dependent.** The harness DB is near-empty, so empty-state branches are
+  well covered but wide/long tables are under-represented (exactly what hid the second
+  `.tableWrap`). A seeded-data sweep is a cheap future follow-up.
+- **No manual screen-reader or keyboard walkthrough was performed** — that needs a human
+  and is the clearest remaining gap on these surfaces.
+
+### 7.7 Verification
+
+Full suite, real built app on the local Supabase stack, freshly-started server:
+
+```
+45 passed (33.9s)   ·   0 skipped
+  [a11y-anon] + [a11y-anon-dark]      13 routes each — ALL 0 violations
+      (incl. all 5 admin surfaces: dashboard, operating ×2 modes, product-health, data-health)
+  [a11y-authed] + [a11y-authed-dark]  /account — 0 violations
+  [public] / [authed] / [authed-dark] functional specs — unchanged, still passing
+```
+
+Previous rounds reported `24 passed · 2 skipped (admin — audit gap)`. **There are now no
+skipped a11y tests at all.** Also green: `tsc --noEmit`, `eslint .`, `next build`.

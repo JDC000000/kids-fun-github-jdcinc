@@ -535,43 +535,68 @@ export default async function AdminDashboardPage({
   );
 }
 
+// H2 a11y remediation — this block was authored in the M5 first slice, BEFORE the
+// canonical --kf-* design tokens existed, so every colour was a raw hex. That caused
+// two distinct WCAG 1.4.3 problems the H2 axe sweep caught (36 nodes light / 39 dark):
+//
+//  1. Several greys simply fail AA in LIGHT, independent of colour scheme:
+//     #777 on #f7f7f7 = 4.18 (table headers), #888 on #fafafa = 3.39 (.tile-sub),
+//     #888 on #fff = 3.54 (.empty), #999 on #fff = 2.84 (.src-family) — all < 4.5.
+//  2. The block is entirely SCHEME-BLIND (hardcoded light surfaces, no dark rules),
+//     while the KpiTiles CSS module nested inside it uses the FLIPPING ink roles. In
+//     dark mode that put dark-mode ink (#9fb09d) on this block's hardcoded white —
+//     light-on-light, which no amount of grey-darkening here would have fixed.
+//
+// Both are resolved by doing what the three newer admin surfaces already do: paint
+// from the flipping role tokens. Light rendering stays essentially as designed (the
+// role values ARE the tuned light greys); dark now inverts coherently instead of
+// being a white page with dark-mode text on it. Layout/type/spacing are unchanged —
+// this is a colour-token migration, not a redesign.
 const ADMIN_CSS = `
-  .adm { max-width: 1080px; margin: 0 auto; padding: 24px 20px 64px; color: #1a1a1a;
+  .adm { max-width: 1080px; margin: 0 auto; padding: 24px 20px 64px;
+         color: var(--kf-ink); background: var(--kf-canvas); min-height: 100vh; box-sizing: border-box;
          font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
   .adm-head h1 { font-size: 20px; margin: 0 0 4px; }
-  .adm-sub { margin: 0; color: #555; }
-  .adm-note { margin: 8px 0 0; padding: 8px 12px; background: #fff7e6; border: 1px solid #f0d9a8;
-              border-radius: 6px; color: #6b4f00; font-size: 13px; }
+  /* Cross-links to the other admin surfaces carried no colour rule at all, so they
+     fell back to the UA default link blue #0000ee — 1.75:1 on the dark canvas (WCAG
+     1.4.3). Scoped to .adm rather than the three flagged nodes so any link added to
+     this page later inherits the accessible colour instead of re-introducing the bug.
+     Underlined, so the link affordance never rests on colour alone (WCAG 1.4.1). */
+  .adm a { color: var(--kf-info-text); text-decoration: underline; }
+  .adm-sub { margin: 0; color: var(--kf-ink-secondary); }
+  .adm-note { margin: 8px 0 0; padding: 8px 12px; background: var(--kf-expected-bg);
+              border: 1px solid var(--kf-hairline);
+              border-radius: 6px; color: var(--kf-expected-text); font-size: 13px; }
   .adm-section { margin-top: 28px; }
-  .adm-section h2 { font-size: 16px; margin: 0 0 6px; border-bottom: 2px solid #eee; padding-bottom: 6px; }
-  .adm-section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #666; margin: 18px 0 6px; }
-  .adm-hint, .adm-foot { color: #666; font-size: 13px; }
-  .adm-foot { margin-top: 40px; border-top: 1px solid #eee; padding-top: 12px; }
+  .adm-section h2 { font-size: 16px; margin: 0 0 6px; border-bottom: 2px solid var(--kf-hairline); padding-bottom: 6px; }
+  .adm-section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--kf-ink-muted); margin: 18px 0 6px; }
+  .adm-hint, .adm-foot { color: var(--kf-ink-secondary); font-size: 13px; }
+  .adm-foot { margin-top: 40px; border-top: 1px solid var(--kf-hairline); padding-top: 12px; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-  .tile { border: 1px solid #e5e5e5; border-radius: 8px; padding: 14px 16px; background: #fafafa; }
+  .tile { border: 1px solid var(--kf-hairline); border-radius: 8px; padding: 14px 16px; background: var(--kf-surface); }
   .tile-value { font-size: 26px; font-weight: 700; line-height: 1.1; }
-  .tile-label { color: #444; margin-top: 2px; }
-  .tile-sub { color: #888; font-size: 12px; margin-top: 2px; }
+  .tile-label { color: var(--kf-ink-secondary); margin-top: 2px; }
+  .tile-sub { color: var(--kf-ink-muted); font-size: 12px; margin-top: 2px; }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
   table.grid { width: 100%; border-collapse: collapse; margin-top: 6px; }
-  table.grid th, table.grid td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
-  table.grid th { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: #777; background: #f7f7f7; }
+  table.grid th, table.grid td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--kf-hairline); vertical-align: top; }
+  table.grid th { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--kf-ink-secondary); background: var(--kf-surface-subtle); }
   table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .src-name { font-weight: 600; }
-  .src-family { color: #999; font-size: 12px; }
-  .dim { color: #888; }
+  .src-family { color: var(--kf-ink-muted); font-size: 12px; }
+  .dim { color: var(--kf-ink-muted); }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-  .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 12px; border: 1px solid; }
-  .badge.ok { background: #e7f6ec; border-color: #b6e0c4; color: #1a7f3c; }
-  .badge.warn { background: #fff4e0; border-color: #f0d199; color: #915c00; }
-  .badge.bad { background: #fdeaea; border-color: #f2b8b8; color: #b3261e; }
-  .badge.info { background: #e8f0fe; border-color: #b7ccf5; color: #1a56c4; }
-  .badge.muted { background: #f0f0f0; border-color: #ddd; color: #666; }
-  .empty { color: #888; font-style: italic; padding: 8px 0; }
-  .ok-note { color: #1a7f3c; background: #e7f6ec; border: 1px solid #b6e0c4; border-radius: 6px;
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 12px; border: 1px solid var(--kf-hairline); }
+  .badge.ok { background: var(--kf-confirmed-bg); color: var(--kf-confirmed-text); }
+  .badge.warn { background: var(--kf-expected-bg); color: var(--kf-expected-text); }
+  .badge.bad { background: var(--kf-cancelled-bg); color: var(--kf-cancelled-text); }
+  .badge.info { background: var(--kf-info-bg); color: var(--kf-info-text); }
+  .badge.muted { background: var(--kf-surface-subtle); color: var(--kf-ink-secondary); }
+  .empty { color: var(--kf-ink-muted); font-style: italic; padding: 8px 0; }
+  .ok-note { color: var(--kf-confirmed-text); background: var(--kf-confirmed-bg); border: 1px solid var(--kf-hairline); border-radius: 6px;
              padding: 8px 12px; margin: 6px 0 0; }
   .err-cell { max-width: 520px; }
-  .err-text { color: #b3261e; word-break: break-word; white-space: normal; }
-  .bar { display: inline-block; height: 10px; background: #6c8cff; border-radius: 3px; min-width: 2px; }
+  .err-text { color: var(--kf-cancelled-text); word-break: break-word; white-space: normal; }
+  .bar { display: inline-block; height: 10px; background: var(--kf-chart-1); border-radius: 3px; min-width: 2px; }
   @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
 `;

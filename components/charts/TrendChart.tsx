@@ -382,7 +382,20 @@ export function TrendChart({ title, caption, x, series, area = false, maxXLabels
       {/* Table-view twin — the WCAG-clean equivalent; every value reachable without hover. */}
       <details className={styles.tableWrap}>
         <summary className={styles.tableSummary}>Show data table</summary>
-        <div className={styles.tableScroll}>
+        {/* H2 a11y (WCAG 2.1.1 Keyboard): .tableScroll scrolls in BOTH axes
+            (max-height 260px), so with ~30 rows its lower rows are pointer-only
+            without a focusable container. axe cannot catch this automatically —
+            <details> is collapsed at page load, so the region is not in the
+            accessibility tree when the audit runs. Found by manual review, fixed
+            with the same tabIndex + named-region treatment as the operating
+            detail tables. Attributes only — no change to the H1 null-aware
+            values or em-dash rendering below. */}
+        <div
+          className={styles.tableScroll}
+          tabIndex={0}
+          role="region"
+          aria-label={`${title} — data table (scrollable)`}
+        >
           <table className={styles.table}>
             <caption className={styles.tableCaption}>
               {title} — daily values
