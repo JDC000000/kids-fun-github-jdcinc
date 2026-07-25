@@ -201,7 +201,9 @@ export default async function AdminDashboardPage({
         </p>
         <p className="adm-hint">
           Full data-health detail — source-freshness SLA, the region × activity-family coverage-or-gap board, and the
-          corrections queue — lives on <Link href="/admin/data-health">/admin/data-health</Link>.
+          corrections queue — lives on <Link href="/admin/data-health">/admin/data-health</Link>. The daily/monthly
+          product-health review — every KPI as a trend rather than a snapshot — is on{' '}
+          <Link href="/admin/operating">/admin/operating</Link> (protocol: <span className="mono">docs/kpi-cadence.md</span>).
         </p>
       </header>
 

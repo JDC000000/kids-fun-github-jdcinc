@@ -1,0 +1,371 @@
+/* Operating dashboard (M7 / T41) — layout only.
+ *
+ * Every colour, radius, space and type value comes from the canonical --kf-* design
+ * tokens (app/design-tokens.css); tile surfaces are the shared <Card> primitive and
+ * status pills the shared <Badge>, and chart marks use the validated --kf-chart-*
+ * tokens. Deliberately mirrors ProductHealth.module.css / DataHealth.module.css so
+ * the operating review reads as the same console in both light and dark mode, and no
+ * new palette is introduced.
+ *
+ * Trend direction is NEVER communicated by colour alone: every arrow glyph is
+ * accompanied by a text verdict ("improving" / "worsening" / "not enough data"), per
+ * WCAG 1.4.1 and the same rule the Badge primitive enforces. */
+
+/* ── Page shell ────────────────────────────────────────────────────────────── */
+.page {
+  /* Own the canvas so dark-mode ink never lands on the browser-default white body
+   * (the WCAG 1.4.3 failure ProductHealth.module.css documents). */
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  box-sizing: border-box;
+  color: var(--kf-ink);
+  font-family: var(--kf-font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: var(--kf-space-6) var(--kf-space-5) var(--kf-space-9);
+}
+
+.page > * {
+  max-width: 1120px;
+  margin-inline: auto;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-1);
+}
+
+.navRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-4);
+}
+
+.backLink {
+  color: var(--kf-info-text);
+  font-size: 13px;
+  text-decoration: none;
+}
+.backLink:hover {
+  text-decoration: underline;
+}
+
+.pageTitle {
+  font: 700 20px/1.2 var(--kf-font-display, var(--kf-font-ui));
+  margin: var(--kf-space-1) 0 0;
+  color: var(--kf-ink);
+}
+
+.sub {
+  margin: 0;
+  color: var(--kf-ink-secondary);
+  font-size: 13px;
+}
+
+.note {
+  margin: var(--kf-space-2) 0 0;
+  padding: var(--kf-space-2) var(--kf-space-3);
+  background: var(--kf-expected-bg);
+  color: var(--kf-expected-text);
+  border-radius: var(--kf-r-card);
+  font-size: 13px;
+}
+.note a {
+  color: inherit;
+  font-weight: 600;
+}
+
+/* The data-thinness banner. Uses the same "expected/attention" role as .note but is
+ * a separate class so its copy can never be mistaken for the access-gate note. */
+.thinBanner {
+  margin: var(--kf-space-3) 0 0;
+  padding: var(--kf-space-3) var(--kf-space-4);
+  background: var(--kf-info-bg);
+  color: var(--kf-info-text);
+  border-radius: var(--kf-r-card);
+  font-size: 13px;
+}
+.thinBanner strong {
+  font-weight: 700;
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-7);
+  margin-top: var(--kf-space-6);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-3);
+}
+
+.sectionTitle {
+  font: 700 16px/1.25 var(--kf-font-display, var(--kf-font-ui));
+  margin: 0;
+  color: var(--kf-ink);
+}
+
+.hint {
+  margin: 0;
+  color: var(--kf-ink-secondary);
+  font-size: 13px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95em;
+}
+
+.foot {
+  margin-top: var(--kf-space-7);
+  border-top: 1px solid var(--kf-hairline);
+  padding-top: var(--kf-space-3);
+  color: var(--kf-ink-muted);
+  font-size: 13px;
+}
+
+/* ── Review-mode switch (daily / monthly) ──────────────────────────────────── */
+.modeSwitch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-2);
+  margin-top: var(--kf-space-3);
+}
+
+.modeLink {
+  display: inline-block;
+  padding: var(--kf-space-2) var(--kf-space-4);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-control);
+  background: var(--kf-surface);
+  color: var(--kf-ink-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.modeLink:hover {
+  border-color: var(--kf-info-text);
+  color: var(--kf-ink);
+}
+/* The active mode is marked by aria-current in the markup as well — the border and
+ * weight here are reinforcement, never the sole signal. */
+.modeLinkActive {
+  background: var(--kf-info-bg);
+  border-color: var(--kf-info-text);
+  color: var(--kf-info-text);
+}
+
+/* ── KPI trend cards ───────────────────────────────────────────────────────── */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--kf-space-4);
+}
+
+.kpiCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+  padding: var(--kf-space-4);
+}
+
+.kpiLabel {
+  color: var(--kf-ink-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.kpiValueRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--kf-space-2);
+}
+
+.kpiValue {
+  font: 700 26px/1.1 var(--kf-font-display, var(--kf-font-ui));
+  font-variant-numeric: tabular-nums;
+  color: var(--kf-ink);
+}
+
+.kpiDelta {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--kf-ink-secondary);
+}
+
+.badgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-2);
+}
+
+.kpiSub {
+  margin: 0;
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+}
+
+.kpiProvenance {
+  margin: 0;
+  color: var(--kf-tertiary-text);
+  font-size: 11px;
+}
+
+/* ── Sparkline ─────────────────────────────────────────────────────────────── */
+.spark {
+  display: block;
+  width: 100%;
+  height: 40px;
+  overflow: visible;
+}
+
+.sparkLine {
+  fill: none;
+  stroke: var(--kf-chart-1);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The in-progress segment is dashed so an incomplete period is visibly not the same
+ * kind of datum as a closed one — the visual twin of the "in progress" text label. */
+.sparkPartial {
+  fill: none;
+  stroke: var(--kf-chart-1);
+  stroke-width: 2;
+  stroke-dasharray: 3 3;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
+.sparkBaseline {
+  stroke: var(--kf-chart-grid);
+  stroke-width: 1;
+}
+
+.sparkMarker {
+  fill: var(--kf-chart-1);
+}
+
+.sparkEmpty {
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+}
+
+/* ── Charts ────────────────────────────────────────────────────────────────── */
+.chartGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--kf-space-4);
+}
+
+.chartCard {
+  padding: var(--kf-space-4);
+  background: var(--kf-surface);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-card);
+}
+
+/* ── Detail table ──────────────────────────────────────────────────────────── */
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-card);
+  background: var(--kf-surface);
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.table caption {
+  caption-side: top;
+  padding: var(--kf-space-3) var(--kf-space-4);
+  color: var(--kf-ink-secondary);
+  font-size: 12px;
+  text-align: left;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid var(--kf-hairline);
+  padding: var(--kf-space-2) var(--kf-space-3);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table th:first-child,
+.table td:first-child {
+  text-align: left;
+}
+
+.table thead th {
+  color: var(--kf-ink-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.table tbody td {
+  font-variant-numeric: tabular-nums;
+  color: var(--kf-ink);
+}
+
+.rowPartial td {
+  color: var(--kf-ink-muted);
+  font-style: italic;
+}
+
+/* ── Sentry panel ──────────────────────────────────────────────────────────── */
+.panel {
+  padding: var(--kf-space-4);
+  background: var(--kf-surface);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-3);
+}
+
+.panelStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-6);
+}
+
+.panelStat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.panelStatLabel {
+  color: var(--kf-ink-secondary);
+  font-size: 12px;
+}
+
+.panelStatValue {
+  font: 700 20px/1.1 var(--kf-font-display, var(--kf-font-ui));
+  font-variant-numeric: tabular-nums;
+  color: var(--kf-ink);
+}
+
+/* "We could not read this" state — deliberately NOT styled as a zero-value stat, so
+ * an unavailable trend can never be skim-read as a healthy one. */
+.unknownState {
+  margin: 0;
+  padding: var(--kf-space-3) var(--kf-space-4);
+  background: var(--kf-surface-subtle);
+  border: 1px dashed var(--kf-hairline);
+  border-radius: var(--kf-r-card);
+  color: var(--kf-ink-secondary);
+  font-size: 13px;
+}
