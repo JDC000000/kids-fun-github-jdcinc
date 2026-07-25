@@ -99,6 +99,9 @@ export default async function AdminProductHealthPage({
           <Link href="/admin/data-health" className={styles.backLink}>
             Data health
           </Link>
+          <Link href="/admin/operating" className={styles.backLink}>
+            Operating review
+          </Link>
         </nav>
         <h1 className={styles.pageTitle}>KIDS FUN — Product health</h1>
         <p className={styles.sub}>
