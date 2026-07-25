@@ -112,3 +112,59 @@ describe('projectValues / linePath / areaPath', () => {
     expect(linePath(one)).toBe('M50 30L50.01 30'); // tiny dash so the mark is visible
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Null (unmeasurable) values — H1.
+//
+// A period before the data source existed must be a GAP, not a point on the baseline.
+// Visually those are opposite claims: a gap says "we cannot say", the baseline says
+// "we measured zero". Weeks of pre-instrumentation days drawn on the baseline is what
+// made the product-health chart read as a sustained traffic outage.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('null handling — a gap is not a zero', () => {
+  it('projects null to a null POINT, and a real 0 onto the baseline', () => {
+    // The distinction the whole fix rests on: 0 is plotted and plainly visible;
+    // null is absent. If null ever projects to y=bottom these are indistinguishable.
+    expect(projectValues([null, 0, 10], 10, AREA)).toEqual([null, { x: 50, y: 100 }, { x: 100, y: 0 }]);
+  });
+
+  it('breaks the line at a gap instead of interpolating across it', () => {
+    // Two sub-paths (two 'M' commands), NOT one line drawn straight through the gap —
+    // an interpolated segment would invent data for a day nobody measured.
+    // Each side of the gap is a run of ONE point, so each gets the tiny-dash form —
+    // two separate sub-paths, neither connected to the other.
+    const pts = projectValues([10, null, 10], 10, AREA);
+    const d = linePath(pts);
+    expect(d).toBe('M0 0L0.01 0M100 0L100.01 0');
+    expect(d.split('M').length - 1).toBe(2);
+  });
+
+  it('keeps an isolated measured point visible between two gaps', () => {
+    // A single real day surrounded by unmeasurable ones still gets the tiny-dash
+    // treatment; otherwise the one day that DOES have data renders as nothing.
+    expect(linePath(projectValues([null, 5, null], 10, AREA))).toBe('M50 50L50.01 50');
+  });
+
+  it('does not wash the area under a gap', () => {
+    // Each run closes to the baseline on its own. A fill carried across the gap would
+    // reassert the "we measured this" claim the gap exists to deny.
+    const d = areaPath(projectValues([10, null, 10], 10, AREA), AREA.bottom);
+    expect(d).toBe('M0 0L0 100L0 100ZM100 0L100 100L100 100Z');
+    expect(d.split('Z').length - 1).toBe(2);
+  });
+
+  it('renders an all-null series as nothing at all rather than a flat baseline', () => {
+    // The literal defect: 27 of 30 pre-instrumentation days drawing a flat zero line.
+    const pts = projectValues([null, null, null], 10, AREA);
+    expect(pts).toEqual([null, null, null]);
+    expect(linePath(pts)).toBe('');
+    expect(areaPath(pts, AREA.bottom)).toBe('');
+  });
+
+  it('leaves an all-numeric series byte-for-byte unchanged (no regression)', () => {
+    const pts = projectValues([0, 5, 10], 10, AREA);
+    expect(linePath(pts)).toBe('M0 100L50 50L100 0');
+    expect(areaPath(pts, AREA.bottom)).toBe('M0 100L50 50L100 0L100 100L0 100Z');
+  });
+});

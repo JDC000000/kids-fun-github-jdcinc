@@ -17,8 +17,15 @@ export interface TrendSeries {
    * palette stays the audited one.
    */
   colorVar: string;
-  /** One value per x-axis position (same length/order as the chart's `x`). */
-  values: number[];
+  /**
+   * One value per x-axis position (same length/order as the chart's `x`).
+   *
+   * `null` means "this x had nothing to measure" — a period before the data source
+   * existed — and is rendered as a GAP in the line and an em-dash in the table, never
+   * as a zero. A real, measured zero is `0` and stays a visible point on the baseline:
+   * that traffic-cliff signal is the whole reason these charts exist (H1).
+   */
+  values: (number | null)[];
 }
 
 /** A number formatter for axis ticks / tooltip / table values (defaults to en-CA). */

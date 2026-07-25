@@ -41,8 +41,25 @@ you can't trust. Four conventions, and they matter more than any individual KPI:
    separately as "in progress" and is never used as a trend endpoint. Comparing a
    part-day against a whole day is the most common way a dashboard lies; the code
    refuses to do it (`buildOperatingKpi` in `lib/analytics/operating.ts`).
-2. **`—` is not `0`.** An em-dash means *there was no data to state this rate* (a zero
-   denominator). A `0` means the number really is zero. Never read one as the other.
+2. **`—` is not `0`.** An em-dash means *there was nothing to state*. It has exactly two
+   causes: a **zero denominator** (a rate with nothing to divide by), or **pre-history** —
+   the period closed before the data source it reads even existed. A `0` means the number
+   really is zero, measured. Never read one as the other.
+
+   The converse matters just as much and is the easier one to break: **a quiet period
+   after a source went live is a real `0` and stays visible.** A day with no traffic, a
+   day with no new Sentry issues, a day with no corrections — those are measurements, and
+   they are precisely the signals the daily review exists to catch. Suppressing them into
+   "no data" would be the same lie pointing the other way. The rule lives in ONE place,
+   `lib/analytics/prehistory.ts` (`isPreHistory`), and is carried **in the data** — as
+   `preHistory` plus nullable measures on `TrendPoint`, `SentryTrendPoint` and
+   `OperatingKpi`'s points — so a new surface that forgets to handle it gets a compile
+   error rather than silently publishing a zero. That structural guarantee exists because
+   the same defect shipped six times across three tasks while the rule was re-derived
+   per-surface.
+
+   On the trend **charts**, pre-history is drawn as a **gap in the line**, not a point on
+   the baseline, and the accessible data table under each chart shows `—` for those days.
 3. **`low sample` means "directionally unreliable".** Any rate whose denominator is below
    `MIN_RATE_SAMPLE` (20) carries this badge. 1-of-2 and 500-of-1000 are both "50%", and
    only one of them is worth acting on.
@@ -191,6 +208,15 @@ Honest list. None of these are blockers for running the cadence; all are worth k
   environment. `SENTRY_AUTH_TOKEN` is **not** it — that is CI-only, for source-map upload,
   and a write token is the wrong credential for a long-lived web process. Until the token
   is provisioned the panel honestly reports *unconfigured* rather than showing zeros.
+- **The Sentry trend cannot know when the project started being watched.** Sentry's issue
+  list carries no "project created" field, and deriving it from the earliest `firstSeen`
+  would be actively wrong — a day before the first issue is a day with **no errors**,
+  which is good news, and hiding it would suppress the best signal the panel has. So the
+  observation start is supplied out-of-band via the optional `SENTRY_OBSERVED_SINCE`
+  (ISO-8601). Unset — the current production state — suppresses nothing and the trend
+  behaves exactly as it always has. Set it and days that closed before it read `—`
+  instead of `0`. Set it only if you actually know the date; a wrong value hides real
+  days.
 - **The interim admin token is not carried across the review-mode switch.** Switching
   daily↔monthly drops `?token=`, so a token-authorised reviewer must re-append it. This is
   deliberate: rendering a shared secret into the HTML of a dashboard whose whole purpose is

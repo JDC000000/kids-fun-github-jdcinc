@@ -31,6 +31,7 @@ import { formatCount, formatTimestampUtc } from '@/lib/admin/format';
 import { TrendChart } from '@/components/charts/TrendChart';
 import type { TrendSeries } from '@/components/charts/types';
 import {
+  EmptyDatasetNotice,
   KpiTrendGrid,
   OperatingDetailTable,
   ReviewModeSwitch,
@@ -163,7 +164,10 @@ export default async function AdminOperatingPage({
                 {formatTimestampUtc(coverage.firstEventAt)}) and {formatCount(coverage.totalEvents)} event(s) in total.
               </>
             ) : (
-              <>There is no analytics data yet — every KPI below will read as an em-dash rather than a zero.</>
+              // EMPTY-DATABASE BRANCH (H1 item 2) — copy lives next to the em-dash
+              // rendering it describes, so the claim and the behaviour cannot drift
+              // apart again. See EmptyDatasetNotice for the full account.
+              <EmptyDatasetNotice />
             )}{' '}
             Rates computed over small denominators are directionally unreliable and are badged{' '}
             <strong>low sample</strong>. A KPI showing “—” has no data to state, which is not the same as 0.

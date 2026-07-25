@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  EmptyDatasetNotice,
   KpiTrendCard,
   OperatingDetailTable,
   ReviewModeSwitch,
@@ -372,9 +373,9 @@ describe('<SentryIssuePanel>', () => {
           totalEvents: 42,
           truncated: false,
           points: [
-            { date: '2026-07-23', newIssues: 1 },
-            { date: '2026-07-24', newIssues: 0 },
-            { date: '2026-07-25', newIssues: 2 },
+            { date: '2026-07-23', preHistory: false, newIssues: 1 },
+            { date: '2026-07-24', preHistory: false, newIssues: 0 },
+            { date: '2026-07-25', preHistory: false, newIssues: 2 },
           ],
         }}
       />
@@ -397,11 +398,109 @@ describe('<SentryIssuePanel>', () => {
           unresolvedIssues: 100,
           totalEvents: 1,
           truncated: true,
-          points: [{ date: '2026-07-25', newIssues: 1 }],
+          points: [{ date: '2026-07-25', preHistory: false, newIssues: 1 }],
         }}
       />
     );
     expect(html).toContain('100+');
     expect(html).toContain('a floor, not an exact total');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H1 — the two follow-up occurrences that render through this file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SentryIssuePanel — unwatched days (H1 item 3)', () => {
+  const panel = (points: { date: string; preHistory: boolean; newIssues: number | null }[]) =>
+    renderToStaticMarkup(
+      <SentryIssuePanel
+        sentry={{
+          state: 'ok',
+          org: 'o',
+          project: 'p',
+          windowDays: points.length,
+          unresolvedIssues: 3,
+          totalEvents: 9,
+          truncated: false,
+          points,
+        }}
+      />
+    );
+
+  /** The value cells of the day-by-day table, in render (newest-first) order. */
+  const cells = (html: string) => [...html.matchAll(/<td[^>]*>([^<]*)<\/td>/g)].map((m) => m[1]);
+
+  it('dashes an unwatched day rather than printing "0"', () => {
+    // formatCount(null) returns "0" in this codebase, so this is a live trap: passing
+    // a pre-history value straight through would silently reintroduce the defect.
+    const html = panel([
+      { date: '2026-07-23', preHistory: true, newIssues: null },
+      { date: '2026-07-24', preHistory: false, newIssues: 0 },
+      { date: '2026-07-25', preHistory: false, newIssues: 4 },
+    ]);
+    // Newest first.
+    expect(cells(html)).toEqual(['4', '0', EM_DASH]);
+  });
+
+  it('NO-REGRESSION: a watched day with no new issues still prints a real 0', () => {
+    const html = panel([
+      { date: '2026-07-24', preHistory: false, newIssues: 0 },
+      { date: '2026-07-25', preHistory: false, newIssues: 0 },
+    ]);
+    expect(cells(html)).toEqual(['0', '0']);
+    expect(cells(html)).not.toContain(EM_DASH);
+  });
+
+  it('excludes unwatched days from the busiest-day and total aggregates', () => {
+    // Counting them as zeros would drag both figures toward a calmer picture than the
+    // watched period actually had.
+    const html = panel([
+      { date: '2026-07-23', preHistory: true, newIssues: null },
+      { date: '2026-07-24', preHistory: false, newIssues: 6 },
+      { date: '2026-07-25', preHistory: false, newIssues: 2 },
+    ]);
+    expect(html).toContain('>8<'); // total across watched days only
+    expect(html).toContain('>6<'); // busiest watched day
+  });
+
+  it('says why the dashes are there instead of leaving a reader to guess', () => {
+    const html = panel([
+      { date: '2026-07-24', preHistory: true, newIssues: null },
+      { date: '2026-07-25', preHistory: false, newIssues: 1 },
+    ]);
+    expect(html).toContain('before this project was being watched');
+    expect(html).toContain('excluded from the totals above rather than counted as zero');
+  });
+
+  it('adds no such disclosure when every day was watched', () => {
+    const html = panel([{ date: '2026-07-25', preHistory: false, newIssues: 1 }]);
+    expect(html).not.toContain('before this project was being watched');
+  });
+});
+
+describe('EmptyDatasetNotice — the empty-database banner (H1 item 2)', () => {
+  const html = renderToStaticMarkup(<EmptyDatasetNotice />);
+
+  it('no longer promises that EVERY KPI reads as an em-dash', () => {
+    // The exact false claim QA reproduced against the live page: rate KPIs did dash,
+    // but Daily active users, Corrections reported/resolved and Searches per day all
+    // read "0 · steady". A banner teaching a rule the page does not follow trains the
+    // reviewer to mistrust the dashes that ARE load-bearing elsewhere.
+    expect(html).not.toContain('every KPI below will read as an em-dash');
+  });
+
+  it('scopes the em-dash claim to RATE KPIs and explains why counts read 0', () => {
+    expect(html).toContain('<strong>Rate</strong>');
+    expect(html).toContain('<strong>count</strong>');
+    expect(html).toContain('no denominator');
+    expect(html).toContain('honest measured count of an empty period');
+  });
+
+  it('explains that nothing is hidden and what the period count actually means', () => {
+    // The second half of the QA finding: "29 complete day(s)" on an empty database
+    // reads as 29 days of review depth unless the banner says otherwise.
+    expect(html).toContain('nothing is hidden from you');
+    expect(html).toContain('not how many of them contain anything');
   });
 });

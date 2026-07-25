@@ -57,3 +57,31 @@ export function sentryIssuesApiToken(): string | undefined {
 export function isSentryIssuesConfigured(): boolean {
   return Boolean(sentryOrg() && sentryProject() && sentryIssuesApiToken());
 }
+
+/**
+ * When this Sentry project actually started being watched, as epoch-ms — or `null`
+ * when unset, which is the default and means "suppress nothing" (H1 item 3).
+ *
+ * ── WHY THIS IS CONFIG AND NOT DERIVED ─────────────────────────────────────────
+ * The issue-trend reader asks Sentry for a trailing window and zero-fills every day in
+ * it, so a day before the project existed is indistinguishable from a genuinely quiet
+ * day. On an error dashboard those two readings mean opposite things.
+ *
+ * There is no honest way to DERIVE the answer from the issues payload. The tempting
+ * one — anchor on the earliest `firstSeen` in the response — is actively wrong: a day
+ * before the first issue is a day with no errors, which is good news, and suppressing
+ * it would hide the best signal the panel can carry. The project's real start date is
+ * only knowable from outside the issue list, so it is supplied from outside.
+ *
+ * Unset is the safe default and the current production state: with no anchor the trend
+ * is byte-for-byte what it was before H1. Set it (ISO-8601, e.g. `2026-07-14`) and days
+ * that closed before it read as an em-dash instead of a zero. An unparseable value is
+ * treated as unset rather than as epoch 0 — a bad env var must not silently suppress
+ * the entire window.
+ */
+export function sentryObservedSinceMs(): number | null {
+  const raw = env('SENTRY_OBSERVED_SINCE');
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : null;
+}
