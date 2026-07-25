@@ -23,7 +23,7 @@
 //    with the same authority as a well-powered one.
 import Link from 'next/link';
 import { Badge, Card, type BadgeVariant } from '@/components/ui';
-import { formatCount } from '@/lib/admin/format';
+import { EM_DASH, formatCount, formatMeasure } from '@/lib/admin/format';
 import { plotArea, niceCeil, scaleX, scaleY, linePath, type PlotBox, type XY } from '@/components/charts/scale';
 import {
   MIN_RATE_SAMPLE,
@@ -39,7 +39,8 @@ import { earliestDataMs, type OperatingDataAnchors, type OperatingOpsPeriod } fr
 import type { SentryIssueTrend } from '@/lib/observability/sentry-issues';
 import styles from './_components/Operating.module.css';
 
-const EM_DASH = '—';
+// EM_DASH is imported from lib/admin/format rather than redeclared: the glyph and the
+// helper that emits it should never be able to drift apart.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting
@@ -578,13 +579,12 @@ export function SentryIssuePanel({ sentry }: { sentry: SentryIssueTrend }) {
             </tr>
           </thead>
           <tbody>
-            {/* NOTE: formatCount(null) returns "0", not an em-dash — passing a
-                pre-history value straight to it would reintroduce the exact defect
-                this change removes. The null check has to happen HERE. */}
+            {/* `newIssues` is number | null, so formatCount() no longer accepts it —
+                the compiler now enforces what a comment here used to have to ask for. */}
             {[...sentry.points].reverse().map((p) => (
               <tr key={p.date}>
                 <th scope="row">{p.date}</th>
-                <td>{p.newIssues == null ? EM_DASH : formatCount(p.newIssues)}</td>
+                <td>{formatMeasure(p.newIssues)}</td>
               </tr>
             ))}
           </tbody>

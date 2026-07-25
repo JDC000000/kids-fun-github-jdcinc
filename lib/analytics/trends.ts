@@ -76,17 +76,12 @@ export interface ActivityTrend {
    * zero-filled where the day was measurable and null-filled where it was not.
    */
   points: TrendPoint[];
-  /**
-   * ISO instant of the oldest analytics_event, or null when the table is empty — the
-   * anchor every point's `preHistory` was derived from, surfaced so a caller can
-   * explain the em-dashes rather than leaving a reviewer to guess.
-   *
-   * NOTE: lib/analytics/retention.ts purges analytics_event on a rolling 13-month
-   * window, so this anchor MOVES FORWARD over time. That is correct for this series —
-   * a purged day genuinely can no longer be measured from this table — but it means
-   * the anchor is "oldest row we still have", not "instrumentation start" forever.
-   */
-  firstEventAt: string | null;
+  // NOTE: no `firstEventAt` here. H1 briefly exposed the anchor on this type, but
+  // nothing consumed it — <TrendChart> explains its own em-dashes in the table caption,
+  // which is the better place for it (the explanation belongs beside the dashes, not in
+  // a field every caller must remember to render), and lib/admin/operating.ts already
+  // carries the same instant as `coverage.firstEventAt` from getDataCoverage(). Two
+  // sources for one fact is how they drift. Dropped rather than left as dead surface.
 }
 
 /** The raw per-day shape the SQL returns, before pre-history is applied. */
@@ -214,7 +209,6 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
   // the series is byte-for-byte what it was before H1: all real, all zero.
   const firstEventRaw = rows[0]?.first_event_at ?? null;
   const firstEventMs = firstEventRaw ? anchorMsFromIso(new Date(firstEventRaw).toISOString()) : null;
-  const firstEventAt = firstEventMs != null ? new Date(firstEventMs).toISOString() : null;
 
   const points = buildTrendPoints(rows, firstEventMs);
 
@@ -222,6 +216,5 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
     days: points.length,
     windows: { wauDays: WAU_WINDOW_DAYS, mauDays: MAU_WINDOW_DAYS },
     points,
-    firstEventAt,
   };
 }

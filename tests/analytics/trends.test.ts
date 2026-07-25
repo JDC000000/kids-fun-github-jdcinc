@@ -151,13 +151,20 @@ describe.skipIf(!hasDb)('getActivityTrend (DB)', () => {
     }
   });
 
-  it('derives preHistory from the live first-event anchor it reports', async () => {
-    // Wires the pure rule to the real read: whatever the shared table currently holds,
-    // a point is pre-history EXACTLY when its day closed at/before firstEventAt. This
-    // is the binding the pure tests above cannot cover.
-    const trend = await getActivityTrend();
-    const anchorMs = trend.firstEventAt ? Date.parse(trend.firstEventAt) : null;
+  it('derives preHistory from the live first-event anchor, queried INDEPENDENTLY', async () => {
+    // Wires the pure rule to the real read. The anchor is re-queried here rather than
+    // read back off the returned object, so the test does not take the module's own
+    // word for what its anchor was — if getActivityTrend() ever read min(created_at)
+    // differently from getDataCoverage(), this catches it. (This independence is why
+    // dropping the unused `firstEventAt` field cost nothing: the stronger assertion
+    // never wanted it.)
+    const anchorRows = await query<{ first_event_at: Date | null }>(
+      `SELECT min(created_at) AS first_event_at FROM analytics_event`
+    );
+    const raw = anchorRows[0]?.first_event_at ?? null;
+    const anchorMs = raw ? new Date(raw).getTime() : null;
 
+    const trend = await getActivityTrend();
     for (const p of trend.points) {
       const dayEnd = Date.parse(`${p.date}T00:00:00Z`) + 86_400_000;
       expect(p.preHistory).toBe(anchorMs != null && dayEnd <= anchorMs);
@@ -165,7 +172,7 @@ describe.skipIf(!hasDb)('getActivityTrend (DB)', () => {
 
     // Anti-vacuity: these suites always seed recent rows, so an anchor must exist and
     // today must be measurable. Without this the loop above passes on an all-null read.
-    expect(trend.firstEventAt).not.toBeNull();
+    expect(anchorMs).not.toBeNull();
     expect(trend.points[trend.points.length - 1].preHistory).toBe(false);
   });
 
