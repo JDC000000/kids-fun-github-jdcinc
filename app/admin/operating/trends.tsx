@@ -406,7 +406,17 @@ export function OperatingDetailTable({
     isBefore ? EM_DASH : `${formatCount(a)} / ${formatCount(b)}`;
 
   return (
-    <div className={styles.tableWrap}>
+    // H2 a11y (WCAG 2.1.1 Keyboard): this wrapper scrolls horizontally, so its content
+    // is unreachable to anyone who cannot use a pointer unless the container itself can
+    // take focus. tabIndex=0 makes it scrollable with the arrow keys; role="region" +
+    // an accessible name stop that new tab stop from being an unlabelled mystery to a
+    // screen-reader user (an unnamed focusable div is a worse bug than the one fixed).
+    <div
+      className={styles.tableWrap}
+      tabIndex={0}
+      role="region"
+      aria-label={`Per-${grain === 'month' ? 'month' : 'day'} detail counters (scrollable)`}
+    >
       <table className={styles.table}>
         <caption>
           Every counter behind the KPIs above, one row per {grain === 'month' ? 'month' : 'day'}, newest first. The
@@ -561,7 +571,16 @@ export function SentryIssuePanel({ sentry }: { sentry: SentryIssueTrend }) {
         </div>
       </div>
 
-      <div className={styles.tableWrap}>
+      {/* Same WCAG 2.1.1 treatment as the detail table above. axe only flagged the
+          other wrapper (this table did not overflow with the harness dataset), but the
+          container is identically scrollable — fixing only the flagged instance would
+          leave a violation that appears as soon as the Sentry list gets wider. */}
+      <div
+        className={styles.tableWrap}
+        tabIndex={0}
+        role="region"
+        aria-label="New Sentry issues per day (scrollable)"
+      >
         <table className={styles.table}>
           <caption>
             New Sentry issues by the UTC day they were first seen, {sentry.org}/{sentry.project}, unresolved only.

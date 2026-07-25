@@ -8,6 +8,16 @@
   max-width: 1120px;
   margin: 0 auto;
   padding: var(--kf-space-6) var(--kf-space-5) var(--kf-space-9);
+  /* H2 a11y: own the page background from the flipping canvas role. layout.tsx sets
+   * no body background, so a page that sets only `color` renders its DARK-mode ink
+   * (cream/sage) on the browser-default WHITE body — light-on-light, a WCAG 1.4.3
+   * failure across essentially every text node (axe: 70 nodes on this page in dark).
+   * This is the same fix ProductHealth.module.css and Operating.module.css already
+   * carry (and document), which is exactly why those two pages audit clean in both
+   * schemes while this older page did not. */
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  box-sizing: border-box;
   color: var(--kf-ink);
   font-family: var(--kf-font-ui);
   font-size: 14px;
@@ -33,7 +43,12 @@
 }
 
 .backLink {
-  color: var(--kf-anchor-text, var(--kf-info-text));
+  /* H2 a11y: was `var(--kf-anchor-text, var(--kf-info-text))`. That fallback never
+   * fired — --kf-anchor-text is always defined — so this link rendered in the CREAM
+   * meant to sit ON the dark anchor FILL: #f7f2e8 on the page canvas = 1.11:1, i.e.
+   * a practically invisible link in BOTH colour schemes (not just dark). Use the
+   * link/info role, matching ProductHealth/Operating's .backLink. */
+  color: var(--kf-info-text);
   font-size: 13px;
   text-decoration: none;
 }
@@ -197,7 +212,11 @@
 }
 
 .okNote {
-  color: var(--kf-park-moss-text, var(--kf-confirmed-text));
+  /* H2 a11y: same never-firing-fallback bug as .backLink. --kf-park-moss-text is a
+   * FIXED palette value (#4d604c) while --kf-confirmed-bg FLIPS, so in dark this was
+   * dark-green ink on the dark-green confirmed surface = 1.84:1. --kf-confirmed-text
+   * is the role that pairs with --kf-confirmed-bg and flips with it. */
+  color: var(--kf-confirmed-text);
   background: var(--kf-confirmed-bg);
   border: 1px solid var(--kf-hairline);
   border-radius: var(--kf-r-card);

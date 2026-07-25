@@ -114,6 +114,16 @@
   color: var(--kf-ink-secondary);
   font-size: 13px;
 }
+/* H2 a11y: the cross-links inside these hints ("/admin/product-health",
+ * "/admin/data-health") carried NO class, so they fell back to the UA default link
+ * blue #0000ee — 1.75:1 on the dark canvas (WCAG 1.4.3). This is the same un-themed
+ * -inline-link failure Round 18 fixed on /account. Theme them on the flipping
+ * link/info role and keep the underline, so the link affordance never depends on
+ * colour alone (WCAG 1.4.1). */
+.hint a {
+  color: var(--kf-info-text);
+  text-decoration: underline;
+}
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -214,7 +224,11 @@
 
 .kpiProvenance {
   margin: 0;
-  color: var(--kf-tertiary-text);
+  /* H2 a11y: was --kf-tertiary-text, a FIXED palette value (#555e54) tuned for LIGHT
+   * surfaces. On the dark card surface it read 1.84:1 (WCAG 1.4.3). --kf-ink-muted is
+   * the flipping role built on that same value in light, so light rendering is
+   * unchanged while dark now gets the dark-mode muted ink. */
+  color: var(--kf-ink-muted);
   font-size: 11px;
 }
 
@@ -279,6 +293,13 @@
   border: 1px solid var(--kf-hairline);
   border-radius: var(--kf-r-card);
   background: var(--kf-surface);
+}
+/* H2 a11y (WCAG 2.4.7 Focus Visible): these wrappers became focusable to satisfy
+ * WCAG 2.1.1 (see trends.tsx), so the new tab stop must be plainly visible rather
+ * than relying on the UA default ring, which is easy to lose against the card border. */
+.tableWrap:focus-visible {
+  outline: 2px solid var(--kf-info-text);
+  outline-offset: 2px;
 }
 
 .table {

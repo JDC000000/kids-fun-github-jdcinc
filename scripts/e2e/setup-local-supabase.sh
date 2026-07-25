@@ -24,6 +24,16 @@ export PATH="$HOME/.npm-global/bin:$PATH"
 # Local-only dummy password for the RLS role (same spirit as the local-db auth stub).
 E2E_AUTH_PW="e2e_local_authenticated"
 
+# Local-only shared secret for the INTERIM admin gate (lib/admin/access.ts). Without
+# it the gate fails closed and every /admin/* route 404s for the harness — which is
+# exactly why the Round 17 a11y audit had to record /admin/dashboard as an explicit
+# AUDIT GAP. Provisioning it here closes that gap: the admin a11y sweep (and any
+# future admin E2E spec) can reach the real, served admin pages.
+# This is a fixed, PUBLIC, loopback-only test value on par with the well-known
+# `supabase start` demo keys emitted below — it is NOT a production secret, and the
+# real deployment secret is supplied out-of-band via the platform env.
+E2E_ADMIN_TOKEN="e2e-local-admin-dashboard-token"
+
 echo "→ ensuring local Supabase stack is up"
 if ! supabase status >/dev/null 2>&1; then
   supabase start
@@ -74,6 +84,11 @@ USER_DATABASE_URL=${USER_DB_URL}
 NEXT_PUBLIC_APP_ENV=test
 NEXT_PUBLIC_SITE_URL=http://127.0.0.1:3000
 E2E_BASE_URL=http://127.0.0.1:3000
+# Interim admin-gate shared secret — local/test only (see E2E_ADMIN_TOKEN above).
+# Read by BOTH the app server (lib/admin/access.ts) and the Playwright process
+# (tests/e2e/a11y/routes.anon.a11y.spec.ts), because run-e2e.sh sources this file
+# before starting either — so the token the spec presents is the one the gate expects.
+ADMIN_DASHBOARD_TOKEN=${E2E_ADMIN_TOKEN}
 EOF
 
 echo "✔ E2E local Supabase ready (target ${API_URL}). Now run: npm run build && bash scripts/e2e/run-e2e.sh"

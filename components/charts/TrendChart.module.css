@@ -189,6 +189,12 @@
   border: 1px solid var(--kf-hairline);
   border-radius: var(--kf-r-control);
 }
+/* H2 a11y (WCAG 2.4.7): the region is focusable for keyboard scrolling — make that
+ * focus plainly visible rather than leaning on the UA ring against the border. */
+.tableScroll:focus-visible {
+  outline: 2px solid var(--kf-info-text);
+  outline-offset: 2px;
+}
 
 .table {
   width: 100%;
