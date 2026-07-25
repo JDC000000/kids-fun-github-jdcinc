@@ -17,10 +17,13 @@ import {
   ReviewModeSwitch,
   SentryIssuePanel,
   buildSparkGeometry,
+  countPreHistoryPeriods,
+  countReviewablePeriods,
   directionGlyph,
   formatKpiDelta,
   formatKpiValue,
   verdictText,
+  type PeriodAxisEntry,
 } from '../../app/admin/operating/trends';
 import { buildOperatingKpi, type OperatingKpiDef, type OperatingPeriodCounts } from '../../lib/analytics/operating';
 import type { OperatingOpsPeriod } from '../../lib/admin/operating';
@@ -208,18 +211,124 @@ describe('<OperatingDetailTable>', () => {
   });
 
   it('drops pre-history rows but DISCLOSES how many it dropped', () => {
-    const preLaunch: OperatingPeriodCounts = { ...base, period: '2026-06-01', label: '2026-06' };
+    const preLaunch: OperatingPeriodCounts = { ...base, period: '2020-01-01', label: '2020-01-01' };
     const html = renderToStaticMarkup(
       <OperatingDetailTable
         counts={[preLaunch, base, partial]}
         ops={ops}
         grain="day"
-        preHistory={new Set(['2026-06-01'])}
+        // Every domain starts well after 2020 → that row could not have been measured.
+        anchors={{
+          analyticsMs: Date.parse('2026-07-24T00:00:00Z'),
+          checkRunMs: Date.parse('2026-07-24T00:00:00Z'),
+          correctionMs: Date.parse('2026-07-24T00:00:00Z'),
+        }}
       />
     );
-    expect(html).not.toContain('2026-06');
+    expect(html).not.toContain('2020-01-01');
     expect(html).toContain('1 earlier'); // the disclosure — never a silent truncation
     expect(html).toContain('nothing to measure in them');
+  });
+
+  // ── ADV-2 regression: per-COLUMN dashes ────────────────────────────────────
+  // The R1 fix (correctly) stopped dropping rows that predate analytics but carry real
+  // ops data. This is the other half: those rows must not then print 0 in the columns
+  // whose own table did not exist yet, while the KPI cards for the same period read "—".
+  describe('per-domain dashes (ADV-2)', () => {
+    // Ingestion from the 19th, corrections from the 21st, analytics from the 22nd.
+    const anchors = {
+      checkRunMs: Date.parse('2026-07-19T00:00:00Z'),
+      correctionMs: Date.parse('2026-07-21T00:00:00Z'),
+      analyticsMs: Date.parse('2026-07-22T00:00:00Z'),
+    };
+    // The 19th: ingestion existed, corrections and analytics did not.
+    const day19: OperatingPeriodCounts = { ...base, period: '2026-07-19', label: '2026-07-19' };
+    const ops19: OperatingOpsPeriod[] = [
+      { period: '2026-07-19', label: '2026-07-19', partial: false, correctionsOpened: 0, correctionsResolved: 0, checkRuns: 3, okCheckRuns: 0, failedCheckRuns: 3 },
+    ];
+
+    /** Text of every cell in the row for `period`, in column order. */
+    const cellsOf = (html: string, period: string): string[] => {
+      const row = ([...html.matchAll(/<tr[^>]*>[\s\S]*?<\/tr>/g)].map((m) => m[0]).find((r) => r.includes(period))) ?? '';
+      return [...row.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g)].map((m) => m[1].replace(/<[^>]+>/g, '').trim());
+    };
+
+    it('dashes analytics columns for a bucket predating analytics, but keeps the row', () => {
+      const html = renderToStaticMarkup(
+        <OperatingDetailTable counts={[day19]} ops={ops19} grain="day" anchors={anchors} />
+      );
+      expect(html).toContain('2026-07-19'); // row survives — that was the R1 fix
+      const cells = cellsOf(html, '2026-07-19');
+      // Period, then 9 analytics counters + 1 analytics pair, then corrections, checks.
+      const analyticsCells = cells.slice(1, 11);
+      expect(analyticsCells.every((c) => c === EM_DASH)).toBe(true);
+    });
+
+    it('dashes the corrections pair when corrections predate the bucket, independently', () => {
+      const html = renderToStaticMarkup(
+        <OperatingDetailTable counts={[day19]} ops={ops19} grain="day" anchors={anchors} />
+      );
+      const cells = cellsOf(html, '2026-07-19');
+      expect(cells[11]).toBe(EM_DASH); // Corrections +/− — table did not exist yet
+    });
+
+    it('still shows REAL ingestion data on that same row (the R1 property)', () => {
+      const html = renderToStaticMarkup(
+        <OperatingDetailTable counts={[day19]} ops={ops19} grain="day" anchors={anchors} />
+      );
+      const cells = cellsOf(html, '2026-07-19');
+      expect(cells[12]).toBe('0 / 3'); // Checks ok/total — a real, measured outage
+      expect(cells[12]).not.toBe(EM_DASH);
+    });
+
+    it('shows real zeros once every domain has history (a dash is not a zero, and vice versa)', () => {
+      const day23: OperatingPeriodCounts = {
+        ...base, period: '2026-07-23', label: '2026-07-23',
+        activeActors: 0, newActors: 0, searches: 0,
+      };
+      const ops23: OperatingOpsPeriod[] = [
+        { period: '2026-07-23', label: '2026-07-23', partial: false, correctionsOpened: 0, correctionsResolved: 0, checkRuns: 0, okCheckRuns: 0, failedCheckRuns: 0 },
+      ];
+      const html = renderToStaticMarkup(
+        <OperatingDetailTable counts={[day23]} ops={ops23} grain="day" anchors={anchors} />
+      );
+      const cells = cellsOf(html, '2026-07-23');
+      // A quiet day AFTER instrumentation is a measured 0 — never dashed, or a real
+      // traffic cliff would be invisible.
+      expect(cells[1]).toBe('0');
+      expect(cells.slice(1)).not.toContain(EM_DASH);
+    });
+
+    it('dashes nothing at all when no anchors are supplied (safe default)', () => {
+      const html = renderToStaticMarkup(<OperatingDetailTable counts={[day19]} ops={ops19} grain="day" />);
+      expect(cellsOf(html, '2026-07-19').slice(1)).not.toContain(EM_DASH);
+    });
+  });
+
+  // ── M6 regression: header/caption arithmetic must reconcile ────────────────
+  describe('period-axis arithmetic (M6)', () => {
+    const axis: PeriodAxisEntry[] = [
+      { period: '2026-07-19', label: '2026-07-19', partial: false, preHistory: true },
+      { period: '2026-07-20', label: '2026-07-20', partial: false, preHistory: true },
+      { period: '2026-07-21', label: '2026-07-21', partial: false, preHistory: false },
+      { period: '2026-07-22', label: '2026-07-22', partial: true, preHistory: false },
+    ];
+
+    it('counts only buckets that could contain a measurement', () => {
+      expect(countReviewablePeriods(axis)).toBe(1);
+      expect(countPreHistoryPeriods(axis)).toBe(2);
+    });
+
+    it('RECONCILES: reviewable + pre-history + in-progress === the whole axis', () => {
+      // This identity is what the page's header and the table's caption jointly claim.
+      // Counting pre-history buckets as "complete" (the original A4 defect) breaks it.
+      const inProgress = axis.filter((p) => p.partial).length;
+      expect(countReviewablePeriods(axis) + countPreHistoryPeriods(axis) + inProgress).toBe(axis.length);
+    });
+
+    it('never counts an in-progress bucket as complete', () => {
+      expect(countReviewablePeriods([{ period: 'p', label: 'p', partial: true, preHistory: false }])).toBe(0);
+    });
   });
 
   it('is a real data table — every plotted counter is reachable as text', () => {

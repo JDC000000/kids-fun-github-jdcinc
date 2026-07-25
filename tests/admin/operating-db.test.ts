@@ -183,6 +183,40 @@ describe.skipIf(!hasDb)('operating ops series (DB)', () => {
     expect(checked).toBeGreaterThanOrEqual(2);
   });
 
+  it('INVARIANT: corrections are anchored on THEIR table, not the earliest domain (ADV-1)', async () => {
+    // The symmetric partner to the check-run invariant above, and the one QA's M2
+    // mutation slipped past: collapsing all three anchors to earliestDataMs at the call
+    // site is a plausible "just use the earliest" simplification that leaves the rest of
+    // the suite green while silently reintroducing the corrections false-zero — because
+    // earliestDataMs is the CHECK-RUN anchor here (ingestion is older than corrections),
+    // so corrections buckets between the two anchors would flip from "—" to a fake 0.
+    const data = await getOperatingDashboardData('day', 10);
+    const { checkRunMs, correctionMs } = data.anchors;
+    expect(checkRunMs, 'seed must provide a check-run anchor').not.toBeNull();
+    expect(correctionMs, 'seed must provide a corrections anchor').not.toBeNull();
+    // The seed puts a check run 6 days ago and corrections today, so the two anchors
+    // genuinely differ — without that, this test could not tell the wirings apart.
+    expect(checkRunMs!).toBeLessThan(correctionMs!);
+
+    const opened = data.kpis.find((k) => k.key === 'corrections_opened')!;
+    const ingest = data.kpis.find((k) => k.key === 'ingest_success_rate')!;
+
+    // A bucket strictly between the two anchors: ingestion could measure it, the
+    // corrections table could not. The two KPIs MUST disagree about that bucket.
+    const between = opened.points.filter((p) => {
+      const endMs = Date.parse(`${p.period}T00:00:00Z`) + 86_400_000;
+      return endMs > checkRunMs! && endMs <= correctionMs!;
+    });
+    expect(between.length, 'seed should straddle the two anchors').toBeGreaterThan(0);
+
+    for (const point of between) {
+      expect(point.preHistory, `${point.period} predates corrections`).toBe(true);
+      expect(point.value, `${point.period} must be "—", never a fake 0`).toBeNull();
+      const ingestPoint = ingest.points.find((p) => p.period === point.period)!;
+      expect(ingestPoint.preHistory, `${point.period} does NOT predate ingestion`).toBe(false);
+    }
+  });
+
   it('reads the ops tables OWN history start, independently of analytics', async () => {
     const opsCoverage = await getOpsCoverage();
     // The seed inserted check runs and corrections today, so both anchors must exist

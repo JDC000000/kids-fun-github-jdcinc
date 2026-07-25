@@ -27,6 +27,7 @@ import { formatCount } from '@/lib/admin/format';
 import { plotArea, niceCeil, scaleX, scaleY, linePath, type PlotBox, type XY } from '@/components/charts/scale';
 import {
   MIN_RATE_SAMPLE,
+  isPreHistory,
   type KpiFormat,
   type OperatingGrain,
   type OperatingKpi,
@@ -34,7 +35,7 @@ import {
   type TrendDirection,
   type TrendVerdict,
 } from '@/lib/analytics/operating';
-import type { OperatingOpsPeriod } from '@/lib/admin/operating';
+import { earliestDataMs, type OperatingDataAnchors, type OperatingOpsPeriod } from '@/lib/admin/operating';
 import type { SentryIssueTrend } from '@/lib/observability/sentry-issues';
 import styles from './_components/Operating.module.css';
 
@@ -305,6 +306,38 @@ export function KpiTrendGrid({ kpis, grain }: { kpis: OperatingKpi[]; grain: Ope
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Period-axis arithmetic — shared so the header and the table caption can never
+// tell the reviewer two different stories about the same axis.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One entry of the bucket axis, as OperatingDashboardData publishes it. */
+export interface PeriodAxisEntry {
+  period: string;
+  label: string;
+  partial: boolean;
+  /** No domain could have recorded anything in this bucket. */
+  preHistory: boolean;
+}
+
+/**
+ * Buckets the review can actually be READ off: complete (not in progress) and capable
+ * of having contained a measurement.
+ *
+ * Counting pre-history buckets here would over-claim the review's depth and contradict
+ * the detail-table caption, which discloses those same buckets as "not shown … nothing
+ * to measure in them". Exported (rather than inlined in the page) precisely so that
+ * contradiction is testable: see the reconciliation identity in the tests.
+ */
+export function countReviewablePeriods(periods: PeriodAxisEntry[]): number {
+  return periods.filter((p) => !p.partial && !p.preHistory).length;
+}
+
+/** Buckets hidden from the detail table because no domain could have measured them. */
+export function countPreHistoryPeriods(periods: PeriodAxisEntry[]): number {
+  return periods.filter((p) => p.preHistory).length;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Numeric detail table — the text twin of every plotted series
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -312,28 +345,64 @@ export function KpiTrendGrid({ kpis, grain }: { kpis: OperatingKpi[]; grain: Ope
  * Every counter behind every KPI, one row per period. This is the accessibility twin
  * for the sparklines (colour and shape are never the only channel) AND the artifact a
  * reviewer copies into the review note the cadence doc asks them to write.
+ *
+ * ── PER-COLUMN pre-history, not per-row (regression fix) ───────────────────────
+ * Each column group is sourced from a DIFFERENT table, and those tables have
+ * different histories — that is the whole reason {@link OperatingDataAnchors} exists.
+ * So a cell is dashed when ITS OWN domain had no history in that bucket, not when the
+ * row as a whole did.
+ *
+ * This matters because the earlier fix (correctly) stopped dropping rows that predate
+ * analytics but still have real ops data. Rendering every column with `formatCount`
+ * then printed `Active=0, Searches=0` for days before analytics instrumentation
+ * existed, while the KPI cards for the same period read "—" — the same page giving two
+ * different answers, and a direct breach of this module's load-bearing rule that a
+ * dash is not a zero. A reviewer scanning the table could have read three
+ * pre-instrumentation days as a traffic outage. Dashing per column closes that: the
+ * table and the cards now agree cell-for-cell.
  */
 export function OperatingDetailTable({
   counts,
   ops,
   grain,
-  preHistory,
+  anchors,
 }: {
   counts: OperatingPeriodCounts[];
   ops: OperatingOpsPeriod[];
   grain: OperatingGrain;
-  /** Bucket keys that closed before the product recorded anything (see isPreHistory). */
-  preHistory?: Set<string>;
+  /**
+   * Per-table history starts. Omitted ⇒ nothing is dashed and nothing is dropped,
+   * the same "no anchor, suppress nothing" default {@link isPreHistory} uses.
+   */
+  anchors?: Partial<OperatingDataAnchors>;
 }) {
   const opsByPeriod = new Map(ops.map((o) => [o.period, o]));
   // Newest first — a reviewer reads the most recent period, not the oldest.
   const all = [...counts].reverse();
-  // Pre-history buckets carry no information (they are all-zero by construction, and
-  // their KPI cards read "—"), so they are dropped from the table rather than padding
-  // it with rows of zeros that look like measurements. The count of what was dropped
-  // is disclosed in the caption — a hidden row is never a silent one.
-  const rows = preHistory ? all.filter((c) => !preHistory.has(c.period)) : all;
+
+  // Per-domain "this bucket predates the table this column reads".
+  const before = (period: string, anchorMs: number | null | undefined) =>
+    isPreHistory(period, grain, anchorMs ?? null);
+  const analyticsBefore = (period: string) => before(period, anchors?.analyticsMs);
+  const correctionsBefore = (period: string) => before(period, anchors?.correctionMs);
+  const checkRunsBefore = (period: string) => before(period, anchors?.checkRunMs);
+
+  // A row is only DROPPED when no domain could have recorded anything in it — the
+  // exact claim the caption makes. Anything else is rendered, with its unmeasurable
+  // columns dashed rather than zeroed.
+  const earliestMs = anchors ? earliestDataMs({
+    analyticsMs: anchors.analyticsMs ?? null,
+    checkRunMs: anchors.checkRunMs ?? null,
+    correctionMs: anchors.correctionMs ?? null,
+  }) : null;
+  const rows = all.filter((c) => !isPreHistory(c.period, grain, earliestMs));
   const hidden = all.length - rows.length;
+
+  /** A single counter: em-dash when its own domain had nothing to measure yet. */
+  const cell = (isBefore: boolean, value: number) => (isBefore ? EM_DASH : formatCount(value));
+  /** A paired "a / b" counter, dashed as ONE unit so half a pair is never implied. */
+  const pair = (isBefore: boolean, a: number, b: number) =>
+    isBefore ? EM_DASH : `${formatCount(a)} / ${formatCount(b)}`;
 
   return (
     <div className={styles.tableWrap}>
@@ -364,30 +433,27 @@ export function OperatingDetailTable({
         <tbody>
           {rows.map((c) => {
             const o = opsByPeriod.get(c.period);
+            const noAnalytics = analyticsBefore(c.period);
+            const noCorrections = correctionsBefore(c.period);
+            const noCheckRuns = checkRunsBefore(c.period);
             return (
               <tr key={c.period} className={c.partial ? styles.rowPartial : undefined}>
                 <th scope="row">
                   {c.label}
                   {c.partial ? ' (in progress)' : ''}
                 </th>
-                <td>{formatCount(c.activeActors)}</td>
-                <td>{formatCount(c.newActors)}</td>
-                <td>{formatCount(c.activatedNewActors)}</td>
-                <td>{formatCount(c.returningActors)}</td>
-                <td>{formatCount(c.searches)}</td>
-                <td>{formatCount(c.zeroResultSearches)}</td>
-                <td>{formatCount(c.recoveredZeroResultSearches)}</td>
-                <td>{formatCount(c.listingViews)}</td>
-                <td>{formatCount(c.outboundClicks)}</td>
-                <td>
-                  {formatCount(c.savedSearches)} / {formatCount(c.emailOptIns)}
-                </td>
-                <td>
-                  {formatCount(o?.correctionsOpened ?? 0)} / {formatCount(o?.correctionsResolved ?? 0)}
-                </td>
-                <td>
-                  {formatCount(o?.okCheckRuns ?? 0)} / {formatCount(o?.checkRuns ?? 0)}
-                </td>
+                <td>{cell(noAnalytics, c.activeActors)}</td>
+                <td>{cell(noAnalytics, c.newActors)}</td>
+                <td>{cell(noAnalytics, c.activatedNewActors)}</td>
+                <td>{cell(noAnalytics, c.returningActors)}</td>
+                <td>{cell(noAnalytics, c.searches)}</td>
+                <td>{cell(noAnalytics, c.zeroResultSearches)}</td>
+                <td>{cell(noAnalytics, c.recoveredZeroResultSearches)}</td>
+                <td>{cell(noAnalytics, c.listingViews)}</td>
+                <td>{cell(noAnalytics, c.outboundClicks)}</td>
+                <td>{pair(noAnalytics, c.savedSearches, c.emailOptIns)}</td>
+                <td>{pair(noCorrections, o?.correctionsOpened ?? 0, o?.correctionsResolved ?? 0)}</td>
+                <td>{pair(noCheckRuns, o?.okCheckRuns ?? 0, o?.checkRuns ?? 0)}</td>
               </tr>
             );
           })}

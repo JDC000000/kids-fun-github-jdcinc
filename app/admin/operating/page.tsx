@@ -35,6 +35,7 @@ import {
   OperatingDetailTable,
   ReviewModeSwitch,
   SentryIssuePanel,
+  countReviewablePeriods,
 } from './trends';
 import styles from './_components/Operating.module.css';
 
@@ -85,11 +86,9 @@ export default async function AdminOperatingPage({
   const copy = reviewCopy(grain);
 
   const { coverage, sourceFreshness, correctionsQueue, activeUserTrend } = data;
-  // Count ONLY buckets that could actually contain a measurement. Counting
-  // pre-history buckets here would over-claim the review's depth and directly
-  // contradict the detail-table caption below, which discloses those same buckets as
-  // "not shown … nothing to measure in them".
-  const completePeriods = data.periods.filter((p) => !p.partial && !p.preHistory).length;
+  // Counts ONLY buckets that could actually contain a measurement. Shared with the
+  // detail table's own arithmetic so the header and the caption can never disagree.
+  const completePeriods = countReviewablePeriods(data.periods);
   const dataIsThin = coverage.daysOfData < THIN_DATA_DAYS;
   const monthlyImpossible = grain === 'month' && coverage.daysOfData < MONTHLY_REVIEW_MIN_DAYS;
 
@@ -270,12 +269,7 @@ export default async function AdminOperatingPage({
             The text twin of every sparkline above — no value on this page is reachable only by looking at a line. Copy
             the top row into the review note the cadence doc asks for.
           </p>
-          <OperatingDetailTable
-            counts={data.counts}
-            ops={data.opsCounts}
-            grain={grain}
-            preHistory={new Set(data.periods.filter((p) => p.preHistory).map((p) => p.period))}
-          />
+          <OperatingDetailTable counts={data.counts} ops={data.opsCounts} grain={grain} anchors={data.anchors} />
         </section>
       </div>
 
