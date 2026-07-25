@@ -26,9 +26,16 @@ Canonical scope: `documents/requirements/jon-cartwright/kids-fun-scope-to-task-v
 npm install            # app deps
 npm run dev            # next dev
 npm run migrate        # apply migrations (needs DATABASE_URL + psql)
-npm run test           # vitest
+npm run test           # full suite — parallel no-DB lane + serial shared-Postgres lane
+npm run test:unit      # just the parallel lane (no database needed)
+npm run test:db        # just the serial shared-Postgres lane
 cd worker && npm install && npm run build && npm start   # worker on :8080
 ```
+
+The suite runs in two lanes (`vitest.workspace.ts`): the DB-backed integration suites share
+one Postgres and must run one file at a time; everything else runs fully parallel. A bare
+`npx vitest run` still works and is still safe — it just serialises everything, which is
+what `npm run test` exists to avoid.
 
 ## Environments
 
