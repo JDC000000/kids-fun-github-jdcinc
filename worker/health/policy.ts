@@ -88,6 +88,13 @@ export const REQUESTS_PER_MINUTE_BY_FAMILY: Record<string, number> = {
   library_communico: 20,
   seasonal: 10, // status pages: gentler, low-value-change
   seasonal_watcher: 10,
+  // ActiveCommunities rec portals (T7): the only PAGINATED source we run — ~2N+2
+  // requests per tenant-run rather than one. 20/min = a 3s floor, comfortably inside
+  // the ">=1s spacing, single-threaded per host" hygiene rule that D-10's engineering
+  // conditions require, and the per-run request cap in the tenant config bounds the
+  // total. Stated explicitly rather than inherited from the default so the crawl
+  // footprint of the highest-volume source is visible in config.
+  activenet: 20,
 };
 
 export function requestsPerMinuteFor(family?: string): number {

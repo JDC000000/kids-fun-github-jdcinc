@@ -1,0 +1,19 @@
+{
+  "headers": {
+    "sessionRefreshedOn": null,
+    "sessionExtendedCount": 0,
+    "response_code": "0000",
+    "response_message": "Successful",
+    "page_info": {
+      "order_by": "",
+      "order_option": "ASC",
+      "total_page": 1,
+      "total_records_per_page": 20,
+      "total_records": 0,
+      "page_number": 1
+    }
+  },
+  "body": {
+    "calendars": []
+  }
+}

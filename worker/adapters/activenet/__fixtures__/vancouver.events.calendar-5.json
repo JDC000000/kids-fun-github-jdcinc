@@ -1,0 +1,1580 @@
+{
+  "headers": {
+    "sessionRefreshedOn": null,
+    "sessionExtendedCount": 0,
+    "response_code": "0000",
+    "response_message": "Successful",
+    "page_info": {
+      "order_by": "",
+      "order_option": "ASC",
+      "total_page": 1,
+      "total_records_per_page": 20,
+      "total_records": 0,
+      "page_number": 1
+    }
+  },
+  "body": {
+    "center_events": [
+      {
+        "center_id": 44,
+        "center_name": "*Hastings Community Centre",
+        "events": [
+          {
+            "title": "Badminton Drop-in",
+            "start_time": "2026-07-30 15:30:00",
+            "end_time": "2026-07-30 17:30:00",
+            "event_type": 0,
+            "description": "Youth Drop - In (Badminton)",
+            "event_item_id": 627986,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/badminton-drop-in/627986",
+            "activity_location_desc": "Hastings Community Centre Gymnasium",
+            "facilities": [
+              {
+                "facility_id": 470,
+                "facility_name": "Gymnasium - Hastings",
+                "center_id": 44,
+                "center_name": "*Hastings Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "Check details for fees",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Volleyball Drop-in",
+            "start_time": "2026-07-27 15:00:00",
+            "end_time": "2026-07-27 16:00:00",
+            "event_type": 0,
+            "description": "Youth Drop - In",
+            "event_item_id": 627977,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/volleyball-drop-in/627977",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 470,
+                "facility_name": "Gymnasium - Hastings",
+                "center_id": 44,
+                "center_name": "*Hastings Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": false,
+              "estimate_price": "",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Basketball Drop-in",
+            "start_time": "2026-07-28 15:30:00",
+            "end_time": "2026-07-28 17:30:00",
+            "event_type": 0,
+            "description": "Youth Drop - In (Bball)",
+            "event_item_id": 627983,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/basketball-drop-in/627983",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 470,
+                "facility_name": "Gymnasium - Hastings",
+                "center_id": 44,
+                "center_name": "*Hastings Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": false,
+              "estimate_price": "",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Volleyball Drop-in",
+            "start_time": "2026-07-29 15:30:00",
+            "end_time": "2026-07-29 17:30:00",
+            "event_type": 0,
+            "description": "Youth Drop - In (Volleyball)",
+            "event_item_id": 627980,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/volleyball-drop-in/627980",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 470,
+                "facility_name": "Gymnasium - Hastings",
+                "center_id": 44,
+                "center_name": "*Hastings Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": false,
+              "estimate_price": "",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 55,
+        "center_name": "*Kensington Community Centre",
+        "events": [
+          {
+            "title": "Friday Pre-teen Badminton Drop-in",
+            "start_time": "2026-07-31 15:25:00",
+            "end_time": "2026-07-31 16:40:00",
+            "event_type": 0,
+            "description": "<p>  Drop-in for our Friday Pre-teen Badminton with your friends for fun! Bring your friends, meet other pre-teen from the area. </p>",
+            "event_item_id": 594684,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/friday-pre-teen-badminton-drop-in/594684",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 659,
+                "facility_name": "Gymnasium",
+                "center_id": 55,
+                "center_name": "*Kensington Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Friday Pre-teen Badminton Drop-in",
+                  "details": [
+                    {
+                      "price": "50.00%",
+                      "description": "Leisure Discount - PB - Non-Taxable: for Customer"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Friday Youth Badminton Drop-in",
+            "start_time": "2026-07-31 16:45:00",
+            "end_time": "2026-07-31 18:05:00",
+            "event_type": 0,
+            "description": "<p>  Drop-in for our Friday Youth Badminton with your friends for fun and fitness! Bring your friends, meet other youth from the area and play Badminton! </p>",
+            "event_item_id": 594685,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/friday-youth-badminton-drop-in/594685",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 659,
+                "facility_name": "Gymnasium",
+                "center_id": 55,
+                "center_name": "*Kensington Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Friday Youth Badminton Drop-in",
+                  "details": [
+                    {
+                      "price": "50.00%",
+                      "description": "Leisure Discount - PB - Non-Taxable: for Customer"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Friday Youth Volleyball Drop-in",
+            "start_time": "2026-07-31 18:15:00",
+            "end_time": "2026-07-31 19:45:00",
+            "event_type": 0,
+            "description": "<p>  Drop-in for our Friday Youth Volleyball with your friends for fun and fitness! Bring your friends, meet other youth from the area and play Volleyball! </p>",
+            "event_item_id": 594687,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/friday-youth-volleyball-drop-in/594687",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 659,
+                "facility_name": "Gymnasium",
+                "center_id": 55,
+                "center_name": "*Kensington Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Friday Youth Volleyball Drop-in",
+                  "details": [
+                    {
+                      "price": "50.00%",
+                      "description": "Leisure Discount - PB - Non-Taxable: for Customer"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Friday Youth Basketball Drop-in",
+            "start_time": "2026-07-31 20:00:00",
+            "end_time": "2026-07-31 21:30:00",
+            "event_type": 0,
+            "description": "<p>  Drop-in for our Friday Youth Basketball with your friends for fun! Bring your friends, meet other youth from the area and play Basketball! </p>",
+            "event_item_id": 594686,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/friday-youth-basketball-drop-in/594686",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 659,
+                "facility_name": "Gymnasium",
+                "center_id": 55,
+                "center_name": "*Kensington Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Friday Youth Basketball Drop-in",
+                  "details": [
+                    {
+                      "price": "50.00%",
+                      "description": "Leisure Discount - PB - Non-Taxable: for Customer"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 35,
+        "center_name": "*Killarney Community Centre",
+        "events": [
+          {
+            "title": "Pre-Teen and Teen Open Gym",
+            "start_time": "2026-07-27 15:15:00",
+            "end_time": "2026-07-27 17:00:00",
+            "event_type": 0,
+            "description": "<p><font color=\"#333333\" style=\"background-color: rgb(255, 255, 51);\"><strong><em>Sessions are supervised by a Youth Program Assistant I/II or Community Youth Worker, but there is no instructor for this program</em></strong></font></p><p>Welcome back to youth open gym at Killarney Community Centre! Looking to get back into the game and tune up your skills? Come through! You will need to check-in with the front-desk or a youth staff to attend the session. Please note the following rules to be followed in the gymnasium:</p><p><b><font color=\"#333333\">How to Play:</font></b></p><ul><li>Competition is permitted and masks are recommended</li><li>Wash your hands before and after play</li><li>No food or drink in the gymnasium</li><li>Use appropriate and respectful language.</li><li>Respect the Equipment (basketballs, volleyballs, nets, etc.).</li><li>Respect direction from Killarney staff and be kind to other youth.</li></ul><div>If you have any further inquiries, please contact the Killarney Youth Office<em>: 604-718-8212</em></div>",
+            "event_item_id": 618978,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/pre-teen-and-teen-open-gym/618978",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 307,
+                "facility_name": "Gymnasium - 2/3",
+                "center_id": 35,
+                "center_name": "*Killarney Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Pre-Teen and Teen Open Gym",
+            "start_time": "2026-07-28 15:15:00",
+            "end_time": "2026-07-28 17:30:00",
+            "event_type": 0,
+            "description": "<p><font color=\"#333333\" style=\"background-color: rgb(255, 255, 51);\"><strong><em>Sessions are supervised by a Youth Program Assistant I/II or Community Youth Worker, but there is no instructor for this program</em></strong></font></p><p>Welcome back to youth open gym at Killarney Community Centre! Looking to get back into the game and tune up your skills? Come through! You will need to check-in with the front-desk or a youth staff to attend the session. Please note the following rules to be followed in the gymnasium:</p><p><b><font color=\"#333333\">How to Play:</font></b></p><ul><li>Competition is permitted and masks are recommended</li><li>Wash your hands before and after play</li><li>No food or drink in the gymnasium</li><li>Use appropriate and respectful language.</li><li>Respect the Equipment (basketballs, volleyballs, nets, etc.).</li><li>Respect direction from Killarney staff and be kind to other youth.</li></ul><div>If you have any further inquiries, please contact the Killarney Youth Office<em>: 604-718-8212</em></div>",
+            "event_item_id": 618978,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/pre-teen-and-teen-open-gym/618978",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 307,
+                "facility_name": "Gymnasium - 2/3",
+                "center_id": 35,
+                "center_name": "*Killarney Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Pre-Teen and Teen Open Gym",
+            "start_time": "2026-07-31 15:15:00",
+            "end_time": "2026-07-31 17:30:00",
+            "event_type": 0,
+            "description": "<p><font color=\"#333333\" style=\"background-color: rgb(255, 255, 51);\"><strong><em>Sessions are supervised by a Youth Program Assistant I/II or Community Youth Worker, but there is no instructor for this program</em></strong></font></p><p>Welcome back to youth open gym at Killarney Community Centre! Looking to get back into the game and tune up your skills? Come through! You will need to check-in with the front-desk or a youth staff to attend the session. Please note the following rules to be followed in the gymnasium:</p><p><b><font color=\"#333333\">How to Play:</font></b></p><ul><li>Competition is permitted and masks are recommended</li><li>Wash your hands before and after play</li><li>No food or drink in the gymnasium</li><li>Use appropriate and respectful language.</li><li>Respect the Equipment (basketballs, volleyballs, nets, etc.).</li><li>Respect direction from Killarney staff and be kind to other youth.</li></ul><div>If you have any further inquiries, please contact the Killarney Youth Office<em>: 604-718-8212</em></div>",
+            "event_item_id": 618978,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/pre-teen-and-teen-open-gym/618978",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 307,
+                "facility_name": "Gymnasium - 2/3",
+                "center_id": 35,
+                "center_name": "*Killarney Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Pre-Teen and Teen Open Gym",
+            "start_time": "2026-08-03 15:15:00",
+            "end_time": "2026-08-03 17:00:00",
+            "event_type": 0,
+            "description": "<p><font color=\"#333333\" style=\"background-color: rgb(255, 255, 51);\"><strong><em>Sessions are supervised by a Youth Program Assistant I/II or Community Youth Worker, but there is no instructor for this program</em></strong></font></p><p>Welcome back to youth open gym at Killarney Community Centre! Looking to get back into the game and tune up your skills? Come through! You will need to check-in with the front-desk or a youth staff to attend the session. Please note the following rules to be followed in the gymnasium:</p><p><b><font color=\"#333333\">How to Play:</font></b></p><ul><li>Competition is permitted and masks are recommended</li><li>Wash your hands before and after play</li><li>No food or drink in the gymnasium</li><li>Use appropriate and respectful language.</li><li>Respect the Equipment (basketballs, volleyballs, nets, etc.).</li><li>Respect direction from Killarney staff and be kind to other youth.</li></ul><div>If you have any further inquiries, please contact the Killarney Youth Office<em>: 604-718-8212</em></div>",
+            "event_item_id": 618978,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/pre-teen-and-teen-open-gym/618978",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 307,
+                "facility_name": "Gymnasium - 2/3",
+                "center_id": 35,
+                "center_name": "*Killarney Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 40,
+        "center_name": "*Kitsilano Community Centre",
+        "events": [
+          {
+            "title": "Youth (13-18yrs) Open Gym - Tue/ Wed",
+            "start_time": "2026-07-28 13:00:00",
+            "end_time": "2026-07-28 15:00:00",
+            "event_type": 0,
+            "description": "The gym is open for youth! Please no food or drink in the gym.<div>No sessions Jly 15,16,17,22 Aug 5,6 12,13,19,20<br><div><br>     <div><br></div>    </div>    </div>",
+            "event_item_id": 620157,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-13-18yrs-open-gym---tue-wed/620157",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 447,
+                "facility_name": "Gymnasium",
+                "center_id": 40,
+                "center_name": "*Kitsilano Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Youth (13-18yrs) Open Gym - Tue/ Wed",
+            "start_time": "2026-07-29 13:00:00",
+            "end_time": "2026-07-29 15:00:00",
+            "event_type": 0,
+            "description": "The gym is open for youth! Please no food or drink in the gym.<div>No sessions Jly 15,16,17,22 Aug 5,6 12,13,19,20<br><div><br>     <div><br></div>    </div>    </div>",
+            "event_item_id": 620157,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-13-18yrs-open-gym---tue-wed/620157",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 447,
+                "facility_name": "Gymnasium",
+                "center_id": 40,
+                "center_name": "*Kitsilano Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Youth (13-18yrs) Open Gym - Saturday",
+            "start_time": "2026-08-01 15:30:00",
+            "end_time": "2026-08-01 17:30:00",
+            "event_type": 0,
+            "description": "The gym is open for youth! Please no food or drink in the gym.    <div>no session Aug.1, Sept 5</div>",
+            "event_item_id": 620155,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-13-18yrs-open-gym---saturday/620155",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 447,
+                "facility_name": "Gymnasium",
+                "center_id": 40,
+                "center_name": "*Kitsilano Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Adult Open Gym (19+)",
+            "start_time": "2026-08-01 17:45:00",
+            "end_time": "2026-08-01 19:45:00",
+            "event_type": 0,
+            "description": "The gym is open for adults 19+! Bring your own ball! No additional equiptment will be provided. Please no food or drink in the gym.",
+            "event_item_id": 622646,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/adult-open-gym-19/622646",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 447,
+                "facility_name": "Gymnasium",
+                "center_id": 40,
+                "center_name": "*Kitsilano Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 54,
+        "center_name": "*Marpole-Oakridge Community Centre",
+        "events": [
+          {
+            "title": "Youth Basketball",
+            "start_time": "2026-07-29 15:15:00",
+            "end_time": "2026-07-29 16:25:00",
+            "event_type": 0,
+            "description": "All youth are welcome to drop-in and shoot hoops, bump balls or  swing a racquet (space permitting).  Bring your own gear or borrow from us with a One Card or Go Card. All youth are required to scan their one card upon arrival. If you don't have one yet, come see the community youth worker in the youth room.",
+            "event_item_id": 605865,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-basketball/605865",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 499,
+                "facility_name": "Gymnasium",
+                "center_id": 54,
+                "center_name": "*Marpole-Oakridge Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Youth Volleyball",
+            "start_time": "2026-07-29 16:30:00",
+            "end_time": "2026-07-29 17:45:00",
+            "event_type": 0,
+            "description": "All youth are welcome to drop-in and shoot hoops, bump balls or  swing a racquet (space permitting).  Bring your own gear or borrow from us with a One Card or Go Card. All youth are required to scan their one card upon arrival. If you don't have one yet, come see the community youth worker in the youth room.",
+            "event_item_id": 605869,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-volleyball/605869",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 499,
+                "facility_name": "Gymnasium",
+                "center_id": 54,
+                "center_name": "*Marpole-Oakridge Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Youth Badminton",
+            "start_time": "2026-07-31 15:20:00",
+            "end_time": "2026-07-31 16:50:00",
+            "event_type": 0,
+            "description": "All youth are welcome to drop-in and shoot hoops, bump balls or  swing a racquet (space permitting).  Bring your own gear or borrow from us with a One Card or Go Card. All youth are required to scan their one card upon arrival. If you don't have one yet, come see the community youth worker in the youth room.",
+            "event_item_id": 605882,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-badminton/605882",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 499,
+                "facility_name": "Gymnasium",
+                "center_id": 54,
+                "center_name": "*Marpole-Oakridge Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Youth Basketball",
+            "start_time": "2026-08-05 15:15:00",
+            "end_time": "2026-08-05 16:25:00",
+            "event_type": 0,
+            "description": "All youth are welcome to drop-in and shoot hoops, bump balls or  swing a racquet (space permitting).  Bring your own gear or borrow from us with a One Card or Go Card. All youth are required to scan their one card upon arrival. If you don't have one yet, come see the community youth worker in the youth room.",
+            "event_item_id": 605865,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-basketball/605865",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 499,
+                "facility_name": "Gymnasium",
+                "center_id": 54,
+                "center_name": "*Marpole-Oakridge Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 953,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 51,
+        "center_name": "*Strathcona Community Centre",
+        "events": [
+          {
+            "title": "Youth Volleyball",
+            "start_time": "2026-07-28 17:00:00",
+            "end_time": "2026-07-28 18:45:00",
+            "event_type": 0,
+            "description": "<div>Youth Volleyball Dropin on Tuesdays, 5pm - 6:30pm at Strathcona Community Centre Gymnasium. Please wear appropriate clothing, bring a ball, and bring a water bottle. This is a time to play, practice, and socialize. Participants are expected to help take down equipment at the end of program. </div>",
+            "event_item_id": 618725,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-volleyball/618725",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 436,
+                "facility_name": "Gymnasium",
+                "center_id": 51,
+                "center_name": "*Strathcona Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Youth Volleyball",
+                  "details": [
+                    {
+                      "price": "50.00%",
+                      "description": "Leisure Access – PB: for Customer"
+                    },
+                    {
+                      "price": "25.00%",
+                      "description": "PB Strathcona Recreation 75 Discount - No Tax: for Customer"
+                    },
+                    {
+                      "price": "25.00%",
+                      "description": "PB Strathcona Recreation 25 Discount - No Tax: for Customer"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 5471,
+                "first_name": "Jared",
+                "middle_name": "",
+                "last_name": "Smith",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Youth Gym Drop-In",
+            "start_time": "2026-07-31 16:30:00",
+            "end_time": "2026-07-31 20:30:00",
+            "event_type": 0,
+            "description": "Looking for something to do on Friday nights? We've got a fun assortment of activities such as badminton, volleyball, and basketball. You can even talk to staff about getting an activity going depending on group interest.<div>Younger youth, aged 11-13 years are welcome to join from 3:30pm - 5pm.</div><div>Older youth, aged 13-18 years are welcome to join from 5:00pm -7:45pm.</div><div><br></div><div><br></div>",
+            "event_item_id": 618630,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-gym-drop-in/618630",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 436,
+                "facility_name": "Gymnasium",
+                "center_id": 51,
+                "center_name": "*Strathcona Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Youth Gym Drop-In",
+                  "details": [
+                    {
+                      "price": "50.00%",
+                      "description": "Leisure Access – PB: for Customer"
+                    },
+                    {
+                      "price": "25.00%",
+                      "description": "PB Strathcona Recreation 75 Discount - No Tax: for Customer"
+                    },
+                    {
+                      "price": "25.00%",
+                      "description": "PB Strathcona Recreation 25 Discount - No Tax: for Customer"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 2478,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Youth Volleyball",
+            "start_time": "2026-08-04 17:00:00",
+            "end_time": "2026-08-04 18:45:00",
+            "event_type": 0,
+            "description": "<div>Youth Volleyball Dropin on Tuesdays, 5pm - 6:30pm at Strathcona Community Centre Gymnasium. Please wear appropriate clothing, bring a ball, and bring a water bottle. This is a time to play, practice, and socialize. Participants are expected to help take down equipment at the end of program. </div>",
+            "event_item_id": 618725,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-volleyball/618725",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 436,
+                "facility_name": "Gymnasium",
+                "center_id": 51,
+                "center_name": "*Strathcona Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Youth Volleyball",
+                  "details": [
+                    {
+                      "price": "50.00%",
+                      "description": "Leisure Access – PB: for Customer"
+                    },
+                    {
+                      "price": "25.00%",
+                      "description": "PB Strathcona Recreation 75 Discount - No Tax: for Customer"
+                    },
+                    {
+                      "price": "25.00%",
+                      "description": "PB Strathcona Recreation 25 Discount - No Tax: for Customer"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 5471,
+                "first_name": "Jared",
+                "middle_name": "",
+                "last_name": "Smith",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Youth Gym Drop-In",
+            "start_time": "2026-08-07 16:30:00",
+            "end_time": "2026-08-07 20:30:00",
+            "event_type": 0,
+            "description": "Looking for something to do on Friday nights? We've got a fun assortment of activities such as badminton, volleyball, and basketball. You can even talk to staff about getting an activity going depending on group interest.<div>Younger youth, aged 11-13 years are welcome to join from 3:30pm - 5pm.</div><div>Older youth, aged 13-18 years are welcome to join from 5:00pm -7:45pm.</div><div><br></div><div><br></div>",
+            "event_item_id": 618630,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/youth-gym-drop-in/618630",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 436,
+                "facility_name": "Gymnasium",
+                "center_id": 51,
+                "center_name": "*Strathcona Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Youth Gym Drop-In",
+                  "details": [
+                    {
+                      "price": "50.00%",
+                      "description": "Leisure Access – PB: for Customer"
+                    },
+                    {
+                      "price": "25.00%",
+                      "description": "PB Strathcona Recreation 75 Discount - No Tax: for Customer"
+                    },
+                    {
+                      "price": "25.00%",
+                      "description": "PB Strathcona Recreation 25 Discount - No Tax: for Customer"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [
+              {
+                "id": 2478,
+                "first_name": "Youth",
+                "middle_name": "",
+                "last_name": "Leader",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      }
+    ]
+  }
+}

@@ -1,0 +1,384 @@
+{
+  "headers": {
+    "sessionRefreshedOn": null,
+    "sessionExtendedCount": 0,
+    "response_code": "0000",
+    "response_message": "Successful",
+    "page_info": {
+      "order_by": "Name",
+      "total_page": 1,
+      "order_option": "ASC",
+      "total_records_per_page": 20,
+      "total_records": 17,
+      "page_number": 1
+    }
+  },
+  "body": {
+    "center_events": [
+      {
+        "center_id": 57,
+        "center_name": "*Champlain Heights Community Centre",
+        "events": [
+          {
+            "title": "Gym Bugs Drop In",
+            "start_time": "2026-09-13 09:30:00",
+            "end_time": "2026-09-13 11:30:00",
+            "event_type": 0,
+            "description": "<p>  Come and play, climb and run with your child on Sunday mornings. There are cars, balls and a climbing apparatus to keep your child busy. Bouncy castle and play area with toys too! Parent participation required. A great place to meet other families! </p><p><br></p><p>Drop-in price is per child $3.00. Children 12 months and under are free. </p>",
+            "event_item_id": 622896,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/gym-bugs-drop-in/622896",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 487,
+                "facility_name": "Gymnasium - Champlain Heights",
+                "center_id": 57,
+                "center_name": "*Champlain Heights Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 20,
+                "first_name": "TBA",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Gym Bugs Drop In",
+            "start_time": "2026-09-09 09:30:00",
+            "end_time": "2026-09-09 11:30:00",
+            "event_type": 0,
+            "description": "<p>  Come and play, climb and run with your child on Sunday mornings. There are cars, balls and a climbing apparatus to keep your child busy. Bouncy castle and play area with toys too! Parent participation required. A great place to meet other families! No class Nov 4.</p><p><br></p><p>Drop-in price is per child $3.25. Children 12 months and under are free. </p>",
+            "event_item_id": 622895,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/gym-bugs-drop-in/622895",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 487,
+                "facility_name": "Gymnasium - Champlain Heights",
+                "center_id": 57,
+                "center_name": "*Champlain Heights Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 20,
+                "first_name": "TBA",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Family Play Time",
+            "start_time": "2026-09-14 10:15:00",
+            "end_time": "2026-09-14 11:45:00",
+            "event_type": 0,
+            "description": "A free drop-in parent-participation program for children aged 0-5 and their families to build connections, learn, and play! There will be open play, arts and crafts, and music. This program is offered in partnership with South Vancouver Neighbourhood House. www.southvan.org. No class Oct 12.",
+            "event_item_id": 629626,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/family-play-time/629626",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 491,
+                "facility_name": "Lounge",
+                "center_id": 57,
+                "center_name": "*Champlain Heights Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 2005,
+                "first_name": "South Vancouver",
+                "middle_name": "",
+                "last_name": "Neighbourhood House",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 3,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 32,
+        "center_name": "*Trout Lake Community Centre",
+        "events": [
+          {
+            "title": "Parent and Tot Gym",
+            "start_time": "2026-09-06 10:00:00",
+            "end_time": "2026-09-06 11:45:00",
+            "event_type": 0,
+            "description": "Join us at this playtime created especially for families. Toddlers will have the opportunity to explore various climbing equipment and other toys. Toddlers develop their motor skills using gym equipment while meeting new friends. Parental supervision required and the ratio of caregiver to child is 1:3.  Drop-in $3, registration not required.  No session Oct 7, 11 & Dec 13.<div><br></div><div><b>Sundays & Wednesdays only. Drop ins $3. Registration is not required.</b></div>",
+            "event_item_id": 622801,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/parent-and-tot-gym/622801",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 698,
+                "facility_name": "Gymnasium - Trout Lake",
+                "center_id": 32,
+                "center_name": "*Trout Lake Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Parent and Tot Gym",
+            "start_time": "2026-09-09 10:00:00",
+            "end_time": "2026-09-09 11:45:00",
+            "event_type": 0,
+            "description": "Join us at this playtime created especially for families. Toddlers will have the opportunity to explore various climbing equipment and other toys. Toddlers develop their motor skills using gym equipment while meeting new friends. Parental supervision required and the ratio of caregiver to child is 1:3.  Drop-in $3, registration not required.  No session Oct 7, 11 & Dec 13.<div><br></div><div><b>Sundays & Wednesdays only. Drop ins $3. Registration is not required.</b></div>",
+            "event_item_id": 622801,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/parent-and-tot-gym/622801",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 700,
+                "facility_name": "Gymnasium - South (1/3)",
+                "center_id": 32,
+                "center_name": "*Trout Lake Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Parent and Tot Gym",
+            "start_time": "2026-09-13 10:00:00",
+            "end_time": "2026-09-13 11:45:00",
+            "event_type": 0,
+            "description": "Join us at this playtime created especially for families. Toddlers will have the opportunity to explore various climbing equipment and other toys. Toddlers develop their motor skills using gym equipment while meeting new friends. Parental supervision required and the ratio of caregiver to child is 1:3.  Drop-in $3, registration not required.  No session Oct 7, 11 & Dec 13.<div><br></div><div><b>Sundays & Wednesdays only. Drop ins $3. Registration is not required.</b></div>",
+            "event_item_id": 622801,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/parent-and-tot-gym/622801",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 698,
+                "facility_name": "Gymnasium - Trout Lake",
+                "center_id": 32,
+                "center_name": "*Trout Lake Community Centre",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 3,
+        "extra_notes": ""
+      }
+    ]
+  }
+}

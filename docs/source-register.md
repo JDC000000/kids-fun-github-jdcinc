@@ -30,10 +30,12 @@ true (verified in code — see §3):
    *never* production-enables anything; promotion to `allowed`/`summarise_only` is an
    out-of-band ops/admin action on the production DB.
 2. **Env allow-list** — the adapter's live path is additionally gated behind an
-   environment allow-list: `KIDS_FUN_LIVE_LIBRARY_SYSTEMS` (e.g. `vpl,rpl`) and
-   `KIDS_FUN_LIVE_CITY_CALENDARS` (e.g. `vancouver`). Absent the env var, the adapter
-   returns fixtures and makes **zero** network calls. (`.env.example` sets neither, so a
-   fresh/dev environment is fixture-only by default.)
+   environment allow-list: `KIDS_FUN_LIVE_LIBRARY_SYSTEMS` (e.g. `vpl,rpl`),
+   `KIDS_FUN_LIVE_CITY_CALENDARS` (e.g. `vancouver`), `KIDS_FUN_LIVE_VENUES`, and
+   `KIDS_FUN_LIVE_ACTIVENET` (e.g. `vancouver,burnaby` — see §6.3). Absent the env var,
+   the adapter returns fixtures and makes **zero** network calls. (`.env.example`
+   documents all four but sets none, so a fresh/dev environment is fixture-only by
+   default.)
 
 Default posture is therefore fail-closed: a source stays fixture-only until it is
 *explicitly* cleared in the DB **and** switched on by env.
@@ -76,14 +78,20 @@ paginated crawl. Item volume per fetch is hard-capped (`liveEventsLimit`).
 
 Verified by reading the actual adapter + core code (not config flags):
 
-- **No bypass** (`tests/compliance/no-bypass.test.ts`, G-T35-2): the two live adapters
-  (`worker/adapters/library`, `worker/adapters/citycalendar`) each issue exactly **one
-  credential-free GET** — no `Authorization`/`Cookie` header, no request body, no
-  `credentials: 'include'`, carrying only an identified bot User-Agent (never a browser
-  spoof). The rec-portal scaffolds (ActiveNet, PerfectMind) make **zero** network calls.
-  A comment-stripped source scan additionally asserts none of the eight adapter files
-  contain login/credential, CAPTCHA, headless-navigation (`puppeteer`/`playwright`/
-  `page.*`), checkout/cart, or anti-forgery-token-submission code.
+- **No bypass** (`tests/compliance/no-bypass.test.ts`, G-T35-2, amended by G-T7R-0):
+  the production live adapters (`worker/adapters/library`, `worker/adapters/citycalendar`,
+  `worker/adapters/venue`) each issue exactly **one credential-free GET** — no
+  `Authorization`/`Cookie` header, no request body, no `credentials: 'include'`, carrying
+  only an identified bot User-Agent (never a browser spoof). **PerfectMind** still makes
+  **zero** network calls and exposes no live-fetch capability. **ActiveNet** is now
+  live-capable under D-10 (§6.3) and is held to the same contract with ONE named
+  exception: it may POST to two exact read-only search paths
+  (`READ_ONLY_POST_SEARCH`, D-11), and only when its tenant is named in
+  `KIDS_FUN_LIVE_ACTIVENET` — un-named tenants still make **zero** network calls, asserted
+  behaviourally. A comment-stripped source scan additionally asserts none of the fifteen
+  adapter files contain login/credential, CAPTCHA, headless-navigation
+  (`puppeteer`/`playwright`/`page.*`), checkout/cart, anti-forgery-token-submission, or
+  PUT/PATCH/DELETE code — the allow-listed file included.
 - **Attribute & summarise** (`tests/compliance/attribution.test.ts`, G-T35-3): the
   ingestion contract (`worker/core/adapter.ts` `StructuredRecord`) **requires**
   `sourceUrl` on every record and carries **no** editorial-body field — so there is
@@ -140,8 +148,7 @@ this round.
 
 | Family / name(s) | Status | Note |
 |---|---|---|
-| `activenet` / City of Vancouver | terms cleared (D-9), **excluded — no current data** | Official API syndication ceased ~2024-06. See §6.2 |
-| `activenet` / City of Burnaby, District of West Vancouver | terms cleared (D-9), **excluded — not syndicated** | No municipal org in the official API at all. See §6.2 |
+| `activenet` / District of West Vancouver | **excluded — ZERO drop-in data** | Portal live, online-calendar module empty. See §6.3 |
 | `perfectmind` / City of Richmond, NVRC, (New Westminster = candidate) | pending, fixture-only | See §6.1 (future source T8) |
 | `venue_html` / Vancouver Aquarium, Science World | pending, fixture-only | Semi-automated venue HTML; separate terms review needed |
 | `seasonal_watcher` / Stanley Park Miniature Railway, Burnaby Central Railway, Cypress Mountain | pending, fixture-only | Status-page watchers |
@@ -165,20 +172,24 @@ would have to be checked *first*:
   requires a human to sign off; (d) ensure the §7 F-1 politeness wiring is in place first.
   Provisional classification pending review: **partner-required / excluded** until a
   terms decision lands.
-- **ActiveNet / ActiveCommunities** (Vancouver, Burnaby, West Vancouver): **resolved —
-  see §6.2.** The terms question closed (D-9) but the source was then excluded on data
-  grounds, not terms grounds.
+- **ActiveNet / ActiveCommunities** (Vancouver, Burnaby, West Vancouver): **superseded —
+  see §6.3.** The *official-API* route (D-9) was excluded on data grounds (§6.2). The
+  *portal* route was subsequently authorised by D-10 and BUILT (T7 REBUILD); Vancouver
+  and Burnaby are live-capable, West Vancouver has zero drop-in data.
 
-Guardrail: `tests/compliance/no-bypass.test.ts` currently asserts these adapters make
-**zero** network calls and expose no live-fetch capability. That test is the tripwire —
-it must be revisited (and the login/CAPTCHA/headless assertions re-scoped) as part of any
-future task that wires either adapter live. **It has NOT been revisited** — T7 left both
-rec-portal adapters fixture-only, so the tripwire still stands unmodified.
+Guardrail: `tests/compliance/no-bypass.test.ts` is the tripwire. It has now been revisited
+ONCE, by G-T7R-0, for ActiveNet only — a single named `READ_ONLY_POST_SEARCH` allowance
+(§6.3). **PerfectMind is untouched**: it still makes zero network calls and exposes no
+live-fetch capability, and wiring it live would require its own revisit of that test.
 
-### 6.2 ActiveNet (T7) — terms cleared, source excluded on data grounds
+### 6.2 ActiveNet via the OFFICIAL ACTIVE API (T7, D-9) — excluded on data grounds
 
-**Outcome: T7 did not ship an ingesting adapter. There is no ActiveNet coverage, and the
-correct classification is an explicit, evidenced gap — not a deferral.**
+> **Superseded as the delivery route by §6.3** (T7 REBUILD, authority D-10), which reads
+> the municipal *portal* instead. This section is retained because it is the evidence for
+> WHY the official API is not the route — deleting it would invite someone to re-try it.
+
+**Outcome: this route did not ship an ingesting adapter. The official API carries no
+current data for our tenants, and that is an explicit, evidenced gap — not a deferral.**
 
 Two separate questions had to clear. The first did; the second did not.
 
@@ -224,12 +235,195 @@ from `config.ts` (they were a latent hazard — a config entry is how a barred h
 wired live by accident), replaced by per-tenant `syndicationStatus` + evidence fields.
 `tests/adapters/activenet.test.ts` pins both facts.
 
-**To revisit:** re-run the confirming query. If Vancouver Park Board resumes syndication,
-`ingestableTenants()` becomes non-empty and the pinning test fails by design, which is the
-signal to build G-T7-2..T7-6. Do not flip a tenant to `syndicated_current` without that
-fresh query. Independent of ACTIVE, the Park Board's drop-in schedule may be reachable via
-the City of Vancouver **open-data** portal — a different source under different terms, and
-the more promising route to this coverage.
+**To revisit:** re-run the confirming query. If Vancouver Park Board resumes syndication
+the official API becomes a *second*, lower-risk route to the same coverage and should be
+preferred over the portal, because it carries no terms override. Nothing in §6.3 removes
+that preference.
+
+---
+
+### 6.3 ActiveCommunities rec-portal (T7 REBUILD) — live-capable under D-10, with the risk stated plainly
+
+**Status: BUILT and measured. Vancouver and Burnaby are live-capable. West Vancouver has
+zero drop-in data and is recorded as zero. Nothing is enabled in production by this task.**
+
+#### 6.3.1 Authority, and the risk we are accepting
+
+The ActiveCommunities rec-portal (`anc.ca.apm.activecommunities.com/<tenant>`) is **barred
+by ACTIVE Network's Terms of Use for automated access by ANY technique** — a plain JSON GET
+is as prohibited as a headless render. That has not changed and is not disputed here.
+
+**decisions_register D-10 (2026-07-30) overrides it.** Jon, the business owner, directly and
+twice, on an informed basis, authorised reading these portals notwithstanding those terms.
+
+The risk is recorded here **unsoftened**, because softening it would defeat the purpose of
+recording it:
+
+> We are reading a third party's portal against its published Terms of Use. ACTIVE Network
+> would be within those stated terms to block our access, to demand we stop, or to pursue
+> the matter further, and we would have no contractual or good-faith position to stand on —
+> we knew, and proceeded anyway. The polite engineering below bounds the OPERATIONAL risk
+> (getting blocked, degrading their service); it does nothing whatsoever about the TERMS
+> risk, which is accepted in full as a business decision, not engineered away.
+
+D-10 authorises **reading**. It does not authorise deception or defeating access controls,
+and none was needed: see §6.3.2. It covers **ActiveCommunities portal tenants only** — not
+PerfectMind (T8, still parked and still making zero network calls), not other ACTIVE
+products, not any other barred host.
+
+**Preference on record:** if ACTIVE's official Activity Search API ever resumes carrying
+current municipal data (§6.2), it is the better route precisely because it needs no
+override, and it should replace this one.
+
+#### 6.3.2 What is actually sent — verified, not assumed (2026-07-30)
+
+| Property | Needed? | Evidence |
+|---|---|---|
+| Cookie / session | **No** | Endpoints answer 200 with no cookie jar |
+| CSRF / anti-forgery token | **No** | 200 with no `__csrfToken`, and we never send one |
+| Browser-spoofed User-Agent | **No** | Works with the project's identified `KidsFunBot/1.0 (+…; contact: …)` |
+| Login / paywall / CAPTCHA | **No** | All endpoints are pre-auth |
+| Headless browser | **No** | Every data endpoint answers plain `fetch()` |
+| Read-only POST (search) | **Yes** | The vendor's two search endpoints take a JSON filter object |
+
+The last row is the ONLY thing that moved in the compliance tripwire. `tests/compliance/
+no-bypass.test.ts` now carries a named `READ_ONLY_POST_SEARCH` allow-list keyed on adapter
+family + **exact host** + **exact path** (`anc.ca.apm.activecommunities.com` ·
+`/onlinecalendar/filters`, `/onlinecalendar/multicenter/events`) — `decisions_register
+D-11`. Every other prohibition still applies **to that same file**: Authorization header,
+Cookie header, `credentials:'include'`, PUT/PATCH/DELETE, headless navigation,
+checkout/cart, anti-forgery-token submission, CAPTCHA handling, password credentials,
+browser-spoofed UA. The zero-network assertion is retained for every tenant not named in
+`KIDS_FUN_LIVE_ACTIVENET`.
+
+**Host-scoping (QA finding A1, closed 2026-07-30).** The first revision of the amendment
+pinned the PATH but not the HOST — `pathname.endsWith()` alone, which was host-agnostic by
+construction. Independent QA proved it by repointing `ACTIVENET_PORTAL_HOST` to a fake host:
+the elevated-scrutiny suite stayed green while an ordinary adapter test caught it — exactly
+backwards for the file this project holds to the highest standard. **D-10's authorisation is
+host-scoped** — Jon overrode ACTIVE Network's Terms of Use for *this portal*, not for
+read-only POSTs against hosts in general — so the tripwire now owns that boundary itself,
+three ways: (1) behaviourally, every captured request from the family must go to an
+allow-listed hostname, GETs included; (2) the POST check requires host AND path to match on
+the SAME allow-list entry; (3) structurally, the family's config must declare the pinned
+host as its ONLY host literal. Hostnames match EXACTLY, never by suffix.
+
+The amendment is itself tested (`(C) tripwire self-check`), and was mutation-verified on
+2026-07-30 by injecting each bypass class into the real adapter and confirming the suite
+goes red. **All ten classes bite:**
+
+| Injected into the real adapter | Tests failed |
+|---|---|
+| Cookie header | 3 |
+| Anti-forgery / CSRF header | 3 |
+| Headless-browser import | 1 |
+| Browser-spoofed User-Agent | 4 |
+| `PUT` inside the allow-listed file | 4 |
+| POST to a non-allow-listed path | 4 |
+| **Host repointed to `evil.example.com`** (QA's A1 repro) | **3** |
+| **Host suffix-extended** (`…activecommunities.com.attacker.example`) | **3** |
+| **Second host added alongside the real one** | **1** |
+| **Second host added as a full URL literal** | **1** |
+
+Baseline restored each time: 63/63 green. The last four rows are the A1 fix; the last two
+were not in QA's report — they are the additive repoint routes the exact-match assertion
+also has to cover, tested because closing only the case that was demonstrated would have
+left the obvious neighbouring one open.
+
+#### 6.3.3 Crawl posture
+
+Single-threaded per host through the shared `politeFetch` seam (`worker/health/policy.ts`),
+family rate `activenet: 20/min` (a 3s floor — the hygiene requirement is ≥1s), hard
+per-run request cap in tenant config (Vancouver 60, Burnaby 48), `Retry-After` honoured,
+bounded exponential backoff on 5xx, and a circuit breaker that **stops the run and writes a
+`source_check_run`** on 403/429 rather than retrying into a block. Cadence is daily-at-most;
+these schedules change weekly. No adapter opens its own HTTP path.
+
+Measured cost of one full run: **Vancouver 47 requests, Burnaby 33** (≈2N+2 for N
+calendars). The endpoint returns the tenant's whole calendar period in one response and
+**ignores `start_date`/`end_date`** (proven by ablation), so windowing is done client-side —
+paginating by date would have cost requests and returned identical bytes.
+
+#### 6.3.4 MEASURED COVERAGE — staging-equivalent run, 2026-07-30
+
+Real run of the shipped adapter (live fetch → parse → venue join) with
+`KIDS_FUN_LIVE_ACTIVENET=vancouver,burnaby,west_vancouver`, 28-day ingest window
+2026-07-30 → 2026-08-27. **Every number below is measured. None is projected.**
+
+| | Vancouver | Burnaby | West Vancouver |
+|---|---|---|---|
+| Calendars configured | 23 (+1 UI placeholder excluded) | 17 | **0** |
+| Calendars returning **zero** | **1** (Queer Inclusion) | **3** (Floor Hockey, Indoor Cycling, Multi-sport) | n/a |
+| Requests used / cap | 47 / 60 | 33 / 48 | **0** / 4 |
+| Occurrences fetched (full calendar period) | 10,146 | 4,786 | **0** |
+| Records emitted (28-day window) | **6,834** | **2,457** | **0** |
+| Skipped — closure notices | 27 | 0 | 0 |
+| Skipped — outside window | 3,285 | 2,329 | 0 |
+| Skipped — unparseable time | **0** | **0** | 0 |
+| Venue address resolved | **6,834 / 6,834 (100%)** | **2,457 / 2,457 (100%)** | n/a |
+| Unmapped centres | **0** | **0** | n/a |
+| Distinct venues | 35 | 7 | 0 |
+| Unrecognised payload keys | **0** | **0** | n/a |
+
+**Cost-status distribution (28-day window)**
+
+| | Vancouver | Burnaby |
+|---|---|---|
+| `free` | 454 (6.6%) | **0** |
+| `known` (a real amount) | 1,614 (23.6%) | 23 (0.9%) |
+| `check_source` | 2,626 (38.4%) | 2,401 (97.7%) |
+| `unknown` | 2,140 (31.3%) | 33 (1.3%) |
+
+**The "free" flag is not trustworthy, and this is the number that proves it.** Over the full
+calendar period, Vancouver ships **838** occurrences with `price.free === true`. We report
+**721** as free and **hold back 117 (14.0%)** — 74 because the record's own title or
+description quotes a price or names an admission fee ("Drop-in price is per child $3.00" on
+a record flagged `free: true` **and** priced "no charge"), and 43 because a single
+uncorroborated free signal is not enough to tell a parent something is free. We never assert
+free without the vendor flag (0 such cases). Burnaby ships **zero** free records at all.
+
+**Age resolution (T13's existing deterministic normaliser, not forked)**
+
+| | Vancouver | Burnaby |
+|---|---|---|
+| Records with age wording captured | 6,834 (100%) | 2,457 (100%) |
+| Resolved to a structured band | **2,322 (34.0%)** | **601 (24.5%)** |
+
+Two thirds of Vancouver records and three quarters of Burnaby's do **not** resolve to an age
+band deterministically. That is a real gap, stated as a gap: the wording is free text
+("Gym Bugs Drop In", "Reserve In Advance: Badminton All Ages"), and this is exactly the
+worklist T13's LLM-fallback exists for.
+
+**Category classification** — 5,536 of 6,834 Vancouver records (81%) fall through to the
+generic `class_program`; only 1,184 carry a confident calendar-derived hint (`public_swim`
+842, `indoor_play` 257, `open_gym` 88, `skate` 75). Burnaby is worse: 2,421 of 2,457 (99%)
+are `class_program`. The taxonomy is not tuned for this source's vocabulary.
+
+#### 6.3.5 Honest findings that qualify the headline numbers
+
+1. **Burnaby is mostly not walk-in drop-in.** 4,691 of 4,786 occurrences (**98%**) are
+   titled `"Reserve In Advance: …"` — pre-booked slots, not turn-up-and-play. And 2,635
+   (55%) come from ONE calendar, "Racquet Court", at ONE centre: court bookings. Burnaby's
+   raw count should not be read as 4,786 kids' drop-in sessions.
+2. **The D-10 scoping doc's per-week figures were per-calendar-period.** It reported e.g.
+   "1,125 Public Swimming occurrences/week"; the endpoint ignores the date window, so that
+   was the whole ~8-week period. The corrected single-week measurement (2026-08-03 →
+   08-09) is **Vancouver 1,596 / Burnaby 589** occurrences — still substantial, but ~7x
+   lower than the scoping figure implies. Corrected here rather than carried forward.
+3. **The build-stamp canary was misattributed in scoping.** `26.9.53` and `26.9.37` are two
+   different globals (`__version` / `__cuiVersion`) on the SAME page, identical across both
+   tenants — not one version per tenant. Re-measured and pinned correctly.
+4. **The `*` centre-name sentinel is tenant-specific.** Vancouver 36/36 centres carry it;
+   Burnaby 0/7 do. Stripping is defensive, not assumed.
+5. **West Vancouver is zero, and stays zero.** Its portal is live with 6,566 *registered*
+   activities, but `onlinecalendar/calendars` returns an empty array. It is configured with
+   `dropInCalendarIds: []` and `enabled: false`, and cannot live-fetch even when named in
+   the env allow-list. It is **not** backfilled with registered activities.
+6. **Not enabled in production, and no production DB was touched by this task.** The
+   coverage run above was executed against an ephemeral local CI Postgres and the live
+   portal; the shared staging environment's `source` rows still need the out-of-band
+   `terms_status`/`robots_status` promotion described in §1 before anything ingests. That
+   promotion is an operator action, deliberately not performed here.
 
 ---
 

@@ -110,6 +110,62 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     expect(occ.status_state).toBe('confirmed');
   });
 
+  // G-T7R-6 — Adapter.assessRun(): an adapter over a brittle, unofficial source gets to
+  // fail its OWN run. Without this, a vendor shape change or a yield collapse completes
+  // without throwing and the check run reports a cheerful green over empty data.
+  it('folds an alerting adapter self-assessment into the check-run errors', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      [`Assess Run Source ${crypto.randomUUID()}`]
+    );
+
+    const seenBaselines: Array<number | null> = [];
+    class CollapsingAdapter extends NoopAdapter {
+      assessRun(baseline: number | null) {
+        seenBaselines.push(baseline);
+        return { code: 'yield_collapse', alert: true, detail: `1 occurrence vs baseline ${baseline}` };
+      }
+    }
+
+    const summary = await ingestSource(pool, new CollapsingAdapter(), source.id);
+
+    expect(seenBaselines, 'first run has no history to compare against').toEqual([null]);
+    expect(summary.errors.join(' ')).toMatch(/run health \[yield_collapse\]/);
+    // Records still landed, so the run is 'partial' — degraded and visible, not silent.
+    expect(summary.occurrencesUpserted).toBeGreaterThan(0);
+    const [run] = await query<{ status: string; errors: unknown }>(
+      `SELECT status, errors FROM source_check_run WHERE id = $1`,
+      [summary.checkRunId]
+    );
+    expect(run.status).toBe('partial');
+    expect(JSON.stringify(run.errors)).toMatch(/yield_collapse/);
+
+    // Second run: the first run's records_found is now the trailing baseline.
+    await ingestSource(pool, new CollapsingAdapter(), source.id);
+    expect(seenBaselines[1]).toBe(1);
+  });
+
+  it('a non-alerting self-assessment leaves the run green', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      [`Assess Run OK Source ${crypto.randomUUID()}`]
+    );
+    class HealthyAdapter extends NoopAdapter {
+      assessRun() {
+        return { code: 'ok', alert: false, detail: 'all good' };
+      }
+    }
+    const summary = await ingestSource(pool, new HealthyAdapter(), source.id);
+    expect(summary.errors).toEqual([]);
+    const [run] = await query<{ status: string }>(
+      `SELECT status FROM source_check_run WHERE id = $1`,
+      [summary.checkRunId]
+    );
+    expect(run.status).toBe('success');
+  });
+
   it('is idempotent: a second run reuses the series and updates the occurrence in place', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(

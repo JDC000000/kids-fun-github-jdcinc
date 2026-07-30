@@ -1,0 +1,405 @@
+{
+  "headers": {
+    "sessionRefreshedOn": null,
+    "sessionExtendedCount": 0,
+    "response_code": "0000",
+    "response_message": "Successful",
+    "page_info": {
+      "order_by": "",
+      "total_page": 1,
+      "order_option": "ASC",
+      "total_records_per_page": 20,
+      "total_records": 0,
+      "page_number": 1
+    }
+  },
+  "body": {
+    "center": [
+      {
+        "id": 44,
+        "name": "*Hastings Community Centre"
+      },
+      {
+        "id": 55,
+        "name": "*Kensington Community Centre"
+      },
+      {
+        "id": 35,
+        "name": "*Killarney Community Centre"
+      },
+      {
+        "id": 40,
+        "name": "*Kitsilano Community Centre"
+      },
+      {
+        "id": 54,
+        "name": "*Marpole-Oakridge Community Centre"
+      },
+      {
+        "id": 51,
+        "name": "*Strathcona Community Centre"
+      }
+    ],
+    "activity": [
+      {
+        "id": 622646,
+        "name": "Adult Open Gym (19+)",
+        "category_id": 27,
+        "sub_category_id": 23,
+        "center_ids": [
+          40
+        ]
+      },
+      {
+        "id": 627986,
+        "name": "Badminton Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 625657,
+        "name": "Basketball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 627997,
+        "name": "Basketball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 627983,
+        "name": "Basketball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 594684,
+        "name": "Friday Pre-teen Badminton Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          55
+        ]
+      },
+      {
+        "id": 594685,
+        "name": "Friday Youth Badminton Drop-in",
+        "category_id": 27,
+        "sub_category_id": 30,
+        "center_ids": [
+          55
+        ]
+      },
+      {
+        "id": 594686,
+        "name": "Friday Youth Basketball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          55
+        ]
+      },
+      {
+        "id": 594687,
+        "name": "Friday Youth Volleyball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 30,
+        "center_ids": [
+          55
+        ]
+      },
+      {
+        "id": 618978,
+        "name": "Pre-Teen and Teen Open Gym",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          35
+        ]
+      },
+      {
+        "id": 634909,
+        "name": "Pre-Teen and Teen Open Gym Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          35
+        ]
+      },
+      {
+        "id": 625686,
+        "name": "Volleyball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 631191,
+        "name": "Volleyball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 625658,
+        "name": "Volleyball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 627980,
+        "name": "Volleyball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 627977,
+        "name": "Volleyball Drop-in",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          44
+        ]
+      },
+      {
+        "id": 620155,
+        "name": "Youth (13-18yrs) Open Gym - Saturday",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          40
+        ]
+      },
+      {
+        "id": 620157,
+        "name": "Youth (13-18yrs) Open Gym - Tue/ Wed",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          40
+        ]
+      },
+      {
+        "id": 605882,
+        "name": "Youth Badminton",
+        "category_id": 28,
+        "sub_category_id": 29,
+        "center_ids": [
+          54
+        ]
+      },
+      {
+        "id": 605865,
+        "name": "Youth Basketball",
+        "category_id": 28,
+        "sub_category_id": 29,
+        "center_ids": [
+          54
+        ]
+      },
+      {
+        "id": 618630,
+        "name": "Youth Gym Drop-In",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          51
+        ]
+      },
+      {
+        "id": 605869,
+        "name": "Youth Volleyball",
+        "category_id": 28,
+        "sub_category_id": 29,
+        "center_ids": [
+          54
+        ]
+      },
+      {
+        "id": 618725,
+        "name": "Youth Volleyball",
+        "category_id": 27,
+        "sub_category_id": 29,
+        "center_ids": [
+          51
+        ]
+      }
+    ],
+    "activity_category": [
+      {
+        "id": 28,
+        "name": "Fitness & Health",
+        "centerIds": [
+          54
+        ]
+      },
+      {
+        "id": 27,
+        "name": "Sports",
+        "centerIds": [
+          35,
+          51,
+          55,
+          40,
+          44
+        ]
+      }
+    ],
+    "facilities": [
+      {
+        "facility_id": 447,
+        "facility_name": "Gymnasium",
+        "center_id": 40,
+        "center_name": "*Kitsilano Community Centre",
+        "is_center_valid": true,
+        "event_type_ids": [
+          0
+        ]
+      },
+      {
+        "facility_id": 659,
+        "facility_name": "Gymnasium",
+        "center_id": 55,
+        "center_name": "*Kensington Community Centre",
+        "is_center_valid": true,
+        "event_type_ids": [
+          0
+        ]
+      },
+      {
+        "facility_id": 499,
+        "facility_name": "Gymnasium",
+        "center_id": 54,
+        "center_name": "*Marpole-Oakridge Community Centre",
+        "is_center_valid": true,
+        "event_type_ids": [
+          0
+        ]
+      },
+      {
+        "facility_id": 436,
+        "facility_name": "Gymnasium",
+        "center_id": 51,
+        "center_name": "*Strathcona Community Centre",
+        "is_center_valid": true,
+        "event_type_ids": [
+          0
+        ]
+      },
+      {
+        "facility_id": 307,
+        "facility_name": "Gymnasium - 2/3",
+        "center_id": 35,
+        "center_name": "*Killarney Community Centre",
+        "is_center_valid": true,
+        "event_type_ids": [
+          0
+        ]
+      },
+      {
+        "facility_id": 470,
+        "facility_name": "Gymnasium - Hastings",
+        "center_id": 44,
+        "center_name": "*Hastings Community Centre",
+        "is_center_valid": true,
+        "event_type_ids": [
+          0
+        ]
+      },
+      {
+        "facility_id": 306,
+        "facility_name": "Gymnasium - Killarney",
+        "center_id": 35,
+        "center_name": "*Killarney Community Centre",
+        "is_center_valid": true,
+        "event_type_ids": [
+          0
+        ]
+      }
+    ],
+    "calendar_period": {
+      "start_date": "2026-07-26",
+      "end_date": "2026-09-20"
+    },
+    "event_types": [],
+    "activity_center": [
+      {
+        "id": 44,
+        "name": "*Hastings Community Centre"
+      },
+      {
+        "id": 55,
+        "name": "*Kensington Community Centre"
+      },
+      {
+        "id": 35,
+        "name": "*Killarney Community Centre"
+      },
+      {
+        "id": 40,
+        "name": "*Kitsilano Community Centre"
+      },
+      {
+        "id": 54,
+        "name": "*Marpole-Oakridge Community Centre"
+      },
+      {
+        "id": 51,
+        "name": "*Strathcona Community Centre"
+      }
+    ],
+    "activity_sub_category": [
+      {
+        "id": 30,
+        "name": "4 - Preteen",
+        "centerIds": [
+          55
+        ]
+      },
+      {
+        "id": 29,
+        "name": "5 - Youth",
+        "centerIds": [
+          35,
+          51,
+          54,
+          55,
+          40,
+          44
+        ]
+      },
+      {
+        "id": 23,
+        "name": "6 - Adult",
+        "centerIds": [
+          40
+        ]
+      }
+    ],
+    "permit_center": []
+  }
+}

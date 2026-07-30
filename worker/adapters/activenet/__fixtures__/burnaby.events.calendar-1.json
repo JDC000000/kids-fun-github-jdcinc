@@ -1,0 +1,1072 @@
+{
+  "headers": {
+    "sessionRefreshedOn": null,
+    "sessionExtendedCount": 0,
+    "response_code": "0000",
+    "response_message": "Successful",
+    "page_info": {
+      "order_by": "",
+      "total_page": 1,
+      "order_option": "ASC",
+      "total_records_per_page": 20,
+      "total_records": 0,
+      "page_number": 1
+    }
+  },
+  "body": {
+    "center_events": [
+      {
+        "center_id": 63,
+        "center_name": "Bonsor Recreation Complex (BON)",
+        "events": [
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-27 17:15:00",
+            "end_time": "2026-07-27 19:15:00",
+            "event_type": 0,
+            "description": "<div><div>Come play this drop-in indoor sport in a positive and enjoyable environment. Reserve in advance is available for this activity, check-in prior to activity start time to avoid losing your reservation.</div><div><br></div><div>Drop-ins are subject to remaining spots available. No waitlist.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div></div><div><br></div>",
+            "event_item_id": 116902,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/116902",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 171,
+                "facility_name": "BON Gym 2/3",
+                "center_id": 63,
+                "center_name": "Bonsor Recreation Complex (BON)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for 6 up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Badminton Adult",
+            "start_time": "2026-07-27 19:30:00",
+            "end_time": "2026-07-27 21:30:00",
+            "event_type": 0,
+            "description": "<div><div>Come play this drop-in indoor sport in a positive and enjoyable environment. Reserve in advance is available for this activity, check-in prior to activity start time to avoid losing your reservation.</div><div><br></div><div>Drop-ins are subject to remaining spots available. No waitlist.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div></div><div><br></div>",
+            "event_item_id": 116909,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-adult/116909",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 171,
+                "facility_name": "BON Gym 2/3",
+                "center_id": 63,
+                "center_name": "Bonsor Recreation Complex (BON)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton Adult",
+                  "details": [
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (19-25 yrs) fee for 19 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-29 08:00:00",
+            "end_time": "2026-07-29 10:00:00",
+            "event_type": 0,
+            "description": "<div><div>Come play this drop-in indoor sport in a positive and enjoyable environment. Reserve in advance is available for this activity, check-in prior to activity start time to avoid losing your reservation.</div><div><br></div><div>Drop-ins are subject to remaining spots available. No waitlist.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div></div><div><br></div>",
+            "event_item_id": 116924,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/116924",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 1183,
+                "facility_name": "BON Gym 1",
+                "center_id": 63,
+                "center_name": "Bonsor Recreation Complex (BON)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for 6 up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-29 10:05:00",
+            "end_time": "2026-07-29 12:05:00",
+            "event_type": 0,
+            "description": "<div><div>Come play this drop-in indoor sport in a positive and enjoyable environment. Reserve in advance is available for this activity, check-in prior to activity start time to avoid losing your reservation.</div><div><br></div><div>Drop-ins are subject to remaining spots available. No waitlist.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div></div><div><br></div>",
+            "event_item_id": 116931,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/116931",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 1183,
+                "facility_name": "BON Gym 1",
+                "center_id": 63,
+                "center_name": "Bonsor Recreation Complex (BON)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for 6 up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 41,
+        "center_name": "Christine Sinclair Community Centre (CSC)",
+        "events": [
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-27 13:30:00",
+            "end_time": "2026-07-27 15:30:00",
+            "event_type": 0,
+            "description": "<div>Come play this drop-in indoor sport in a positive and enjoyable environment. Children 6-12 years must be accompanied by a participating adult. Reserve in advance is available for this activity, check-in prior to activity start time to avoid losing your reservation. Drop-ins are subject to remaining spots available. No waitlist.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div>",
+            "event_item_id": 110470,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/110470",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 335,
+                "facility_name": "CSC Gym 1",
+                "center_id": 41,
+                "center_name": "Christine Sinclair Community Centre (CSC)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-28 15:00:00",
+            "end_time": "2026-07-28 16:45:00",
+            "event_type": 0,
+            "description": "<div>Come play this drop-in indoor sport in a positive and enjoyable environment. Children 6-12 years must be accompanied by a participating adult. Reserve in advance is available for this activity, check-in prior to activity start time to avoid losing your reservation. Drop-ins are subject to remaining spots available. No waitlist.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div>",
+            "event_item_id": 110653,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/110653",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 335,
+                "facility_name": "CSC Gym 1",
+                "center_id": 41,
+                "center_name": "Christine Sinclair Community Centre (CSC)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-28 17:00:00",
+            "end_time": "2026-07-28 18:30:00",
+            "event_type": 0,
+            "description": "<div>Come play this drop-in indoor sport in a positive and enjoyable environment. Children 6-12 years must be accompanied by a participating adult. Reserve in advance is available for this activity, check-in prior to activity start time to avoid losing your reservation. Drop-ins are subject to remaining spots available. No waitlist.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div>",
+            "event_item_id": 110667,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/110667",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 332,
+                "facility_name": "CSC Gym",
+                "center_id": 41,
+                "center_name": "Christine Sinclair Community Centre (CSC)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-29 10:30:00",
+            "end_time": "2026-07-29 12:30:00",
+            "event_type": 0,
+            "description": "<div>Come play this drop-in indoor sport in a positive and enjoyable environment. Children 6-12 years must be accompanied by a participating adult. Reserve in advance is available for this activity, check-in prior to activity start time to avoid losing your reservation. Drop-ins are subject to remaining spots available. No waitlist.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div>",
+            "event_item_id": 110712,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/110712",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 335,
+                "facility_name": "CSC Gym 1",
+                "center_id": 41,
+                "center_name": "Christine Sinclair Community Centre (CSC)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 50,
+        "center_name": "Edmonds Community Centre (ECC)",
+        "events": [
+          {
+            "title": "Reserve In Advance: All Ages Badminton",
+            "start_time": "2026-07-27 08:00:00",
+            "end_time": "2026-07-27 10:00:00",
+            "event_type": 0,
+            "description": "<div><div>All ages programs, children 6-12 years must be accompanied by a participating adult. Please arrive early and check in with staff at the gymnasium to claim your reservation. Participants arriving 10 minutes after activity start time will be considered an in person drop-in, subject to remaining availability. </div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div></div>",
+            "event_item_id": 113823,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-all-ages-badminton/113823",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 361,
+                "facility_name": "ECC Gym 1",
+                "center_id": 50,
+                "center_name": "Edmonds Community Centre (ECC)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: All Ages Badminton",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: All Ages Badminton",
+            "start_time": "2026-07-27 20:00:00",
+            "end_time": "2026-07-27 22:00:00",
+            "event_type": 0,
+            "description": "<div><div>All ages programs, children 6-12 years must be accompanied by a participating adult. Please arrive early to claim your reservation. Participants arriving 10 minutes after activity start time will be considered an in person drop-in, subject to remaining availability. </div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div></div>",
+            "event_item_id": 113867,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-all-ages-badminton/113867",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 276,
+                "facility_name": "ECC Gym 2",
+                "center_id": 50,
+                "center_name": "Edmonds Community Centre (ECC)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: All Ages Badminton",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: All Ages Badminton",
+            "start_time": "2026-07-28 08:00:00",
+            "end_time": "2026-07-28 10:00:00",
+            "event_type": 0,
+            "description": "<div><div>All ages programs, children 6-12 years must be accompanied by a participating adult. Please arrive early and check in with staff at the gymnasium to claim your reservation. Participants arriving 10 minutes after activity start time will be considered an in person drop-in, subject to remaining availability.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div></div>",
+            "event_item_id": 113886,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-all-ages-badminton/113886",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 361,
+                "facility_name": "ECC Gym 1",
+                "center_id": 50,
+                "center_name": "Edmonds Community Centre (ECC)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: All Ages Badminton",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: All Ages Badminton",
+            "start_time": "2026-07-28 13:00:00",
+            "end_time": "2026-07-28 15:00:00",
+            "event_type": 0,
+            "description": "<div><div>All ages programs, children 6-12 years must be accompanied by a participating adult. Please arrive early and check in with staff at the gymnasium to claim your reservation. Participants arriving 10 minutes after activity start time will be considered an in person drop-in, subject to remaining availability.</div><div><br></div><div>Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</div><div><br></div><div>If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</div></div>",
+            "event_item_id": 113915,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-all-ages-badminton/113915",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 361,
+                "facility_name": "ECC Gym 1",
+                "center_id": 50,
+                "center_name": "Edmonds Community Centre (ECC)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: All Ages Badminton",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      },
+      {
+        "center_id": 180,
+        "center_name": "Rosemary Brown Recreation Centre (RBR)",
+        "events": [
+          {
+            "title": "Reserve In Advance: Badminton (8-17yrs)",
+            "start_time": "2026-07-28 15:15:00",
+            "end_time": "2026-07-28 17:15:00",
+            "event_type": 0,
+            "description": "<div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Get a great workout with a casual game of badminton. Bring your own equipment. Floor split with other reserve programming. <br><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Please arrive up to 15 minutes early. Participants arriving 10 minutes after activity start time will be considered an in person drop-in, subject to remaining availability.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</font></div></div>",
+            "event_item_id": 111711,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-8-17yrs/111711",
+            "activity_location_desc": "Rosemary Brown Floor B",
+            "facilities": [
+              {
+                "facility_id": 1582,
+                "facility_name": "RBR Floor B",
+                "center_id": 180,
+                "center_name": "Rosemary Brown Recreation Centre (RBR)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton (8-17yrs)",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Family Badminton (6-13 with adult)",
+            "start_time": "2026-07-28 15:15:00",
+            "end_time": "2026-07-28 17:15:00",
+            "event_type": 0,
+            "description": "<div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Get a great workout with a casual game of badminton. Bring your own equipment. Floor split with other reserve programming. Adult participation is mandatory. Children will not be granted admission without a participating adult present. The ratio of children to adults must not be greater than 3 to 1. Children must be 6-13yrs old.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Please arrive up to 15 minutes early. Participants arriving 10 minutes after activity start time will be considered an in person drop-in, subject to remaining availability.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</font></div></div>",
+            "event_item_id": 122379,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-family-badminton-6-13-with-adult/122379",
+            "activity_location_desc": "Rosemary Brown Floor B",
+            "facilities": [
+              {
+                "facility_id": 1582,
+                "facility_name": "RBR Floor B",
+                "center_id": 180,
+                "center_name": "Rosemary Brown Recreation Centre (RBR)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Family Badminton (6-13 with adult)",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-28 17:45:00",
+            "end_time": "2026-07-28 19:45:00",
+            "event_type": 0,
+            "description": "<div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Get a great workout with a casual game of badminton. Bring your own equipment. Floor split with other reserve programming. Participants 12 & under must be accompanied by a participating </font><span style=\"font-family: Arial, Helvetica, sans-serif; font-size: small;\">adult.</span></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Please arrive up to 15 minutes early. Participants arriving 10 minutes after activity start time will be considered an in person drop-in, subject to remaining availability.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</font></div></div>",
+            "event_item_id": 111699,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/111699",
+            "activity_location_desc": "Rosemary Brown Floor B",
+            "facilities": [
+              {
+                "facility_id": 1582,
+                "facility_name": "RBR Floor B",
+                "center_id": 180,
+                "center_name": "Rosemary Brown Recreation Centre (RBR)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Reserve In Advance: Badminton All Ages",
+            "start_time": "2026-07-30 17:45:00",
+            "end_time": "2026-07-30 19:45:00",
+            "event_type": 0,
+            "description": "<div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Get a great workout with a casual game of badminton. Bring your own equipment. Floor split with other reserve programming. Participants 12 & under must be accompanied by a participating </font><span style=\"font-family: Arial, Helvetica, sans-serif; font-size: small;\">adult.</span></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Please arrive up to 15 minutes early. Participants arriving 10 minutes after activity start time will be considered an in person drop-in, subject to remaining availability.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity. On the day of your drop-in activity, please visit the front desk to have this charge refunded and a visit taken from your 10 Visit Be Active Pass. Customers with a valid Annual, One Month or Recurring Monthly Be Active Pass will be registered at no charge.</font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\"><br></font></div><div><font face=\"Arial, Helvetica, sans-serif\" size=\"2\">If you are unable to attend, please withdraw from the drop-in activity for the consideration to others. Withdraw online up until the day prior to the activity start date or contact a recreation facility prior to the start of the activity.</font></div></div>",
+            "event_item_id": 111704,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/burnaby/Activity_Search/reserve-in-advance-badminton-all-ages/111704",
+            "activity_location_desc": "Rosemary Brown Floor B",
+            "facilities": [
+              {
+                "facility_id": 1582,
+                "facility_name": "RBR Floor B",
+                "center_id": 180,
+                "center_name": "Rosemary Brown Recreation Centre (RBR)",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "",
+              "prices": [
+                {
+                  "list_name": "",
+                  "activity_name": "Reserve In Advance: Badminton All Ages",
+                  "details": [
+                    {
+                      "price": "$3.57",
+                      "description": "Child (6-14 yrs) fee for up to 14 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Youth (15-25 yrs) fee for 15 up to 25 years old"
+                    },
+                    {
+                      "price": "$7.14",
+                      "description": "Adult (26-64 yrs) fee for 26 up to 64 years old"
+                    },
+                    {
+                      "price": "$5.33",
+                      "description": "Senior (65+ yrs) fee for 65 or more years old"
+                    }
+                  ]
+                }
+              ],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": false
+            },
+            "instructors": [],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 4,
+        "extra_notes": ""
+      }
+    ]
+  }
+}

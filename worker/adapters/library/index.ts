@@ -9,6 +9,10 @@
 // one paginated request, no login, no headless browser, no CAPTCHA bypass.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
 import { politeFetch } from '../../health/policy';
+// Shared, DST-correct local-wall-clock -> UTC conversion. BiblioCommons publishes
+// offset-less local timestamps, and so does ActiveNet — one implementation, in
+// worker/core/time.ts, rather than a second copy of a DST rule that can rot.
+import { zonedLocalToUtcIso } from '../../core/time';
 import { LIBRARY_SYSTEMS, getLibrarySystem, type LibraryBranchLocation, type LibrarySystemConfig } from './config';
 
 /** BiblioCommons/BiblioEvents-shaped event after normalisation from gateway JSON. */
@@ -68,7 +72,6 @@ interface BiblioCommonsGatewayEvent {
 }
 
 const DEFAULT_BIBLIOCOMMONS_LIMIT = 20;
-const DEFAULT_TIME_ZONE = 'America/Vancouver';
 
 /** Stable per-source politeness key (rate-limit + backoff state) for a library system. */
 function libraryPolicyKey(system: LibrarySystemConfig): string {
@@ -97,42 +100,6 @@ function stripHtml(html = ''): string {
     .trim();
 }
 
-function utcPartsInTimeZone(date: Date, timeZone: string): Record<string, number> {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).formatToParts(date);
-  return Object.fromEntries(
-    parts
-      .filter((p) => p.type !== 'literal')
-      .map((p) => [p.type, Number(p.value)])
-  );
-}
-
-function zonedLocalToUtcIso(local: string | undefined, timeZone = DEFAULT_TIME_ZONE): string | undefined {
-  if (!local) return undefined;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(local);
-  if (!match) return undefined;
-  const [, y, mo, d, h, mi, s = '0'] = match;
-  const desiredAsUtc = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
-  const rendered = utcPartsInTimeZone(new Date(desiredAsUtc), timeZone);
-  const renderedAsUtc = Date.UTC(
-    rendered.year,
-    rendered.month - 1,
-    rendered.day,
-    rendered.hour,
-    rendered.minute,
-    rendered.second
-  );
-  const offsetMs = renderedAsUtc - desiredAsUtc;
-  return new Date(desiredAsUtc - offsetMs).toISOString();
-}
 
 function categoryHint(title: string, typeNames: string[] = []): string | undefined {
   const t = `${title} ${typeNames.join(' ')}`.toLowerCase();
