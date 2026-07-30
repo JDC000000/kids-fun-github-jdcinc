@@ -330,6 +330,24 @@ were not in QA's report — they are the additive repoint routes the exact-match
 also has to cover, tested because closing only the case that was demonstrated would have
 left the obvious neighbouring one open.
 
+**⚠️ KNOWN GAP — case-variant User-Agent shadowing (QA finding A2, 2026-07-31, tracked
+follow-up, NOT YET FIXED, non-blocking per QA's own verdict).** `no-bypass.test.ts`'s UA
+check (search this file for the comment `covered by the behavioural UA assertion`) delegates
+UA verification to a separate assertion — and that delegation does not fully hold. Injecting
+a **lowercase** `'user-agent': 'Mozilla/…'` header into the ActiveNet adapter's GET requests
+leaves the compliance suite green (the guard's case-insensitive lookup finds the identified
+`User-Agent` first and stops), even though the spoofed value **is actually transmitted on the
+wire** — `Headers` combines duplicate keys rather than one shadowing the other:
+`user-agent: KidsFunBot/1.0, Mozilla/5.0 (Windows NT 10.0)`. Bounded: this only affects
+checks that assert a *property of a value* (like UA); absence-assertions (Cookie,
+Authorization) are casing-safe regardless, since they trip on the header key existing at
+all, in any case. **No spoof exists in shipped code today — this is a tripwire gap, not a
+live violation.** Verified fix (not yet applied): make `headerLookup` mirror real wire
+semantics via the native `Headers` API (`new Headers(rec).get(name)`) instead of a
+hand-rolled case-insensitive object scan — confirmed both directions, baseline stays 63/63,
+the shadowed spoof goes from green to failing. Do not read the `covered by the behavioural
+UA assertion` comment at that line as settled until this is closed.
+
 #### 6.3.3 Crawl posture
 
 Single-threaded per host through the shared `politeFetch` seam (`worker/health/policy.ts`),
