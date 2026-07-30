@@ -140,7 +140,8 @@ this round.
 
 | Family / name(s) | Status | Note |
 |---|---|---|
-| `activenet` / City of Vancouver, City of Burnaby, District of West Vancouver | pending, fixture-only | See §6.1 (future source T7) |
+| `activenet` / City of Vancouver | terms cleared (D-9), **excluded — no current data** | Official API syndication ceased ~2024-06. See §6.2 |
+| `activenet` / City of Burnaby, District of West Vancouver | terms cleared (D-9), **excluded — not syndicated** | No municipal org in the official API at all. See §6.2 |
 | `perfectmind` / City of Richmond, NVRC, (New Westminster = candidate) | pending, fixture-only | See §6.1 (future source T8) |
 | `venue_html` / Vancouver Aquarium, Science World | pending, fixture-only | Semi-automated venue HTML; separate terms review needed |
 | `seasonal_watcher` / Stanley Park Miniature Railway, Burnaby Central Railway, Cypress Mountain | pending, fixture-only | Status-page watchers |
@@ -164,16 +165,71 @@ would have to be checked *first*:
   requires a human to sign off; (d) ensure the §7 F-1 politeness wiring is in place first.
   Provisional classification pending review: **partner-required / excluded** until a
   terms decision lands.
-- **ActiveNet / ActiveCommunities** (Vancouver, Burnaby, West Vancouver): check for a
-  public activity-search JSON/API vs. HTML scraping; read
-  `anc.ca.apm.activecommunities.com` robots.txt + ActiveNet ToS. Provisional
-  classification pending review: **partner-required / excluded** until a terms decision
-  lands.
+- **ActiveNet / ActiveCommunities** (Vancouver, Burnaby, West Vancouver): **resolved —
+  see §6.2.** The terms question closed (D-9) but the source was then excluded on data
+  grounds, not terms grounds.
 
 Guardrail: `tests/compliance/no-bypass.test.ts` currently asserts these adapters make
 **zero** network calls and expose no live-fetch capability. That test is the tripwire —
 it must be revisited (and the login/CAPTCHA/headless assertions re-scoped) as part of any
-future task that wires either adapter live.
+future task that wires either adapter live. **It has NOT been revisited** — T7 left both
+rec-portal adapters fixture-only, so the tripwire still stands unmodified.
+
+### 6.2 ActiveNet (T7) — terms cleared, source excluded on data grounds
+
+**Outcome: T7 did not ship an ingesting adapter. There is no ActiveNet coverage, and the
+correct classification is an explicit, evidenced gap — not a deferral.**
+
+Two separate questions had to clear. The first did; the second did not.
+
+**1. Terms — CLEARED (D-9).** The ActiveCommunities rec-portal
+(`anc.ca.apm.activecommunities.com/<tenant>`) is barred by ACTIVE's Terms of Use for
+automated access by *any* technique; a plain JSON GET is as prohibited as a headless
+render. The one compliant path is ACTIVE's own official **Activity Search API v2**
+(`api.amp.active.com/v2/search`, keys via developer.active.com), whose express documented
+purpose is third-party redistribution of activity listings. Jon authorised use of that API
+on the existing credentials and personally accepted its caching/data-retention restriction
+(D-9). That authorisation covers **this API only** — not the portal, not other
+ACTIVE-family APIs, and not PerfectMind (T8, still separately parked).
+
+**2. Data — FAILED.** The confirming query ran against the official API on **2026-07-30**
+(read-only, Vancouver-scoped, official host only). The credentials work and the API is
+healthy — but the data our tenants need is not in it:
+
+| Tenant | In official API? | Newest activity | Verdict |
+|---|---|---|---|
+| Vancouver (Park Board) | Yes — org `Vancouver Board of Parks and Recreation`, `sourceSystem = 'ActiveNet CA'` | **2024-06-04** | **Stale** — syndication ceased |
+| Burnaby | No municipal org | — | **Not syndicated** |
+| West Vancouver | No municipal org | — | **Not syndicated** |
+
+Vancouver Park Board activity counts by year in the API: 2021 → 1,497 · 2022 → 1,342 ·
+2023 → ~10,000 (result cap) · 2024 → **22** · 2025 → **0** · 2026 → **0**. The exact
+drop-in listings T7 targets (Open Gym, Public Swim, Public Skate) *are* present and
+correctly attributed — but the newest ends **2023-08-26**, and the final 22 records
+(2024-06-04) are preschool deposits, not drop-ins.
+
+This is not a broken key, a wrong parameter, or a dead API — the same API returns **2,838**
+current 2026 activities for other Vancouver organisations. The date filter was validated by
+bisection (it returns varying non-zero totals for 2019–2024 and zero only for 2025–2026),
+and `activityRecurrences` was checked for hidden current dates: none. Burnaby's and West
+Vancouver's 2026 records are **100% private organisations** (hockey schools, private
+schools, swim/baseball clubs) on `AW Camps 3.0` / `ActiveWorks Team Sports` — no municipal
+ActiveNet tenant exists for either.
+
+**Why nothing was built.** Ingesting this feed would have put ~3-year-old listings in front
+of parents, and would have required dismantling the `no-bypass` tripwire to do it. An
+empty, honest gap is the better product outcome. `worker/adapters/activenet/` therefore
+stays fixture-only and makes zero network calls; the barred portal URLs were **removed**
+from `config.ts` (they were a latent hazard — a config entry is how a barred host gets
+wired live by accident), replaced by per-tenant `syndicationStatus` + evidence fields.
+`tests/adapters/activenet.test.ts` pins both facts.
+
+**To revisit:** re-run the confirming query. If Vancouver Park Board resumes syndication,
+`ingestableTenants()` becomes non-empty and the pinning test fails by design, which is the
+signal to build G-T7-2..T7-6. Do not flip a tenant to `syndicated_current` without that
+fresh query. Independent of ACTIVE, the Park Board's drop-in schedule may be reachable via
+the City of Vancouver **open-data** portal — a different source under different terms, and
+the more promising route to this coverage.
 
 ---
 

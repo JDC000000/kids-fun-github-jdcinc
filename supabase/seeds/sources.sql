@@ -6,7 +6,18 @@
 
 INSERT INTO source (family, name, authority_tier, ingestion_method, baseline_cadence, near_date_cadence)
 VALUES
-  -- Adapter A — ActiveNet / ActiveCommunities (family 1-3, P0)
+  -- Adapter A — ActiveNet / ActiveCommunities (family 1-3, P0). T7 confirming
+  -- query 2026-07-30 (docs/source-register.md §6.2): the TERMS question cleared
+  -- (D-9 — ACTIVE's official Activity Search API v2 is authorised), but all three
+  -- tenants are EXCLUDED on DATA grounds and stay 'pending':
+  --  • Vancouver Park Board — in the API ('ActiveNet CA') but syndication ceased
+  --    ~2024-06: 2025 and 2026 both return ZERO activities; newest drop-in
+  --    listing ends 2023-08-26. Stale, not ingestable.
+  --  • Burnaby / West Vancouver — no municipal organization in the API at all;
+  --    their 2026 records are private clubs/schools on 'AW Camps 3.0'.
+  -- The rec-portal itself (anc.ca.apm.activecommunities.com) remains ToU-barred
+  -- for automated access by any technique. Re-run the confirming query before
+  -- ever enabling these.
   ('activenet',  'City of Vancouver ActiveNet',      'official', 'auto', '1 day', '1 hour'),
   ('activenet',  'City of Burnaby ActiveNet',         'official', 'auto', '1 day', '1 hour'),
   ('activenet',  'District of West Vancouver ActiveNet','official','auto','1 day', '1 hour'),
