@@ -36,6 +36,22 @@ export interface DedupKey {
   key: string;
 }
 
+/**
+ * An adapter's own verdict on the run it just completed. Exists because a run over a
+ * brittle, unofficial source can SUCCEED and still be broken: the vendor moves a key,
+ * the parser yields nothing, and the check run reports a cheerful green over an empty
+ * municipality. Only the adapter knows enough to spot that, so it reports it and the
+ * ingest runner folds it into the check-run status.
+ */
+export interface AdapterRunDiagnostics {
+  /** Machine-readable code, e.g. 'ok' | 'yield_collapse' | 'shape_drift'. */
+  code: string;
+  /** True when this must fail/degrade the run rather than pass quietly. */
+  alert: boolean;
+  /** One line, human-readable, for the health board. */
+  detail: string;
+}
+
 export interface Adapter {
   /** Unique adapter id — matches `source.family` in the DB (e.g. 'activenet'). */
   readonly family: string;
@@ -55,6 +71,15 @@ export interface Adapter {
    * only call this when the source doesn't expose structured data (§5.2).
    */
   normalizeHook?(record: StructuredRecord): Promise<StructuredRecord> | StructuredRecord;
+
+  /**
+   * (D, optional) Self-assess the run just extracted, given the source's trailing
+   * record-count baseline (null on a first run). Adapters over official, stable feeds
+   * can omit it; adapters over undocumented, unversioned surfaces implement it so a
+   * yield collapse or a payload-shape change fails loudly instead of degrading in
+   * silence. Called by ingestSource AFTER extract().
+   */
+  assessRun?(baselineRecordsFound: number | null): AdapterRunDiagnostics | null;
 
   /** (D) Build a stable dedup key for a structured record. */
   dedupKeys(record: StructuredRecord): DedupKey;

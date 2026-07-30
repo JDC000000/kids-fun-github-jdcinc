@@ -10,7 +10,7 @@
 // whole run — they surface via the check-run status/errors for the health board.
 import type { Pool } from 'pg';
 import type { Adapter, StructuredRecord } from './adapter';
-import { startCheckRun, finishCheckRun } from './checkrun';
+import { startCheckRun, finishCheckRun, loadRecordsFoundBaseline } from './checkrun';
 import { resolveSeries } from './series';
 import { resolveVenue } from './venue';
 import { upsertOccurrence } from './upsert';
@@ -76,6 +76,17 @@ export async function ingestSource(
     if (adapter.normalizeHook) {
       const hook = adapter.normalizeHook.bind(adapter);
       records = await Promise.all(records.map((r) => hook(r)));
+    }
+
+    // Adapter self-assessment (optional). A run over an undocumented, unversioned source
+    // can complete without throwing and still be broken — the vendor moves a key, the
+    // parser yields nothing, and the check run reports a cheerful green over an empty
+    // municipality. Adapters that implement assessRun() get to say so, and their verdict
+    // becomes a run error so the status below degrades and the T15 health board sees it.
+    if (adapter.assessRun) {
+      const baseline = await loadRecordsFoundBaseline(pool, sourceId);
+      const verdict = adapter.assessRun(baseline);
+      if (verdict?.alert) errors.push(`run health [${verdict.code}]: ${verdict.detail}`);
     }
 
     // Seeded age bands, loaded once per run for deterministic age normalisation.
