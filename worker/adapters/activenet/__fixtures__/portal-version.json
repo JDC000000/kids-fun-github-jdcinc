@@ -1,0 +1,9 @@
+{
+  "_fixture_note": "BREAKAGE CANARY. The ActiveCommunities endpoints this adapter reads are undocumented, unversioned and unofficial; the only public build stamp is the pair of globals the tenant page shell emits. Captured verbatim from https://anc.ca.apm.activecommunities.com/{tenant}/calendars on 2026-07-30 with the identified KidsFunBot UA. If a re-capture changes these values, tests/adapters/activenet.test.ts fails BY DESIGN — that is the signal to re-verify the parser against a fresh capture before shipping, not to bump the constant.",
+  "capturedAt": "2026-07-30",
+  "source": "window.__version / window.__cuiVersion on https://anc.ca.apm.activecommunities.com/{tenant}/calendars",
+  "tenants": {
+    "vancouver": { "version": "26.9.53", "cuiVersion": "26.9.37" },
+    "burnaby": { "version": "26.9.53", "cuiVersion": "26.9.37" }
+  }
+}

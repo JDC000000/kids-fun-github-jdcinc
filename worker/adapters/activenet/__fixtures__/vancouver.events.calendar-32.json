@@ -1,0 +1,376 @@
+{
+  "headers": {
+    "sessionRefreshedOn": null,
+    "sessionExtendedCount": 0,
+    "response_code": "0000",
+    "response_message": "Successful",
+    "page_info": {
+      "order_by": "",
+      "total_page": 1,
+      "order_option": "ASC",
+      "total_records_per_page": 20,
+      "total_records": 0,
+      "page_number": 1
+    }
+  },
+  "body": {
+    "center_events": [
+      {
+        "center_id": 23,
+        "center_name": "*Kerrisdale Cyclone Taylor Arena",
+        "events": [
+          {
+            "title": "CLOSED - Play Palace - CLEANING BREAK",
+            "start_time": "2026-07-27 11:30:00",
+            "end_time": "2026-07-27 11:59:00",
+            "event_type": 0,
+            "description": "<table width=\"100%\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\"><tbody><tr><td><b>Date & Time</b></td><td>Monday - Friday,11:30am - 12:00pm</td></tr><tr><td><b><br></b></td><td></td></tr></tbody></table><p>30 minute closure to allow for high touch point cleaning.</p><div><div>For detailed admission fees, rental fee and discount  information  please visit: </div><div>Vancouver.ca/PlayPalace<br></div><div><br></div></div>",
+            "event_item_id": 609120,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/closed---play-palace---cleaning-break/609120",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 124,
+                "facility_name": "*Kerrisdale Cyclone Taylor Arena",
+                "center_id": 23,
+                "center_name": "*Kerrisdale Cyclone Taylor Arena",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "CLOSED - Play Palace - CLEANING BREAK",
+            "start_time": "2026-07-28 11:30:00",
+            "end_time": "2026-07-28 11:59:00",
+            "event_type": 0,
+            "description": "<table width=\"100%\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\"><tbody><tr><td><b>Date & Time</b></td><td>Monday - Friday,11:30am - 12:00pm</td></tr><tr><td><b><br></b></td><td></td></tr></tbody></table><p>30 minute closure to allow for high touch point cleaning.</p><div><div>For detailed admission fees, rental fee and discount  information  please visit: </div><div>Vancouver.ca/PlayPalace<br></div><div><br></div></div>",
+            "event_item_id": 609120,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/closed---play-palace---cleaning-break/609120",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 124,
+                "facility_name": "*Kerrisdale Cyclone Taylor Arena",
+                "center_id": 23,
+                "center_name": "*Kerrisdale Cyclone Taylor Arena",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Play Palace - 0-12 yrs",
+            "start_time": "2026-07-26 10:00:00",
+            "end_time": "2026-07-26 12:44:00",
+            "event_type": 0,
+            "description": "<table width=\"100%\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\"><tbody><tr><td><b>Date & Time</b></td><td>Saturday -Sunday, 10:00am - 12:45pm</td></tr><tr><td><b>Sessions</b></td><td>April 10 - Aug 16 , 2025<br><br>All Ages<br><br><b>No Pre Registration Required</b></td></tr></tbody></table><div><span><br></span></div><div><b>Admission Fees</b><br><table border=\"1\" cellpadding=\"4\" cellspacing=\"0\" width=\"100%\"><tbody><tr><td><b>Age</b></td><td><b>1 Visit</b></td><td><b>10-visit card</b></td></tr><tr><td>Under 6mos</td><td>FREE</td><td>FREE</td></tr><tr><td>6-23mos<span style=\"white-space: pre;\"> </span></td><td>$4.94</td><td>$44.92</td></tr><tr><td>2-5yrs</td><td>$6.35</td><td>$57.17</td></tr><tr><td>6-12yrs</td><td>$7.06</td><td>$63.50</td></tr></tbody></table><div><div><br></div><div>For detailed admission fees, rental fee and discount  information  please visit: </div><div>https://kerrisdalecc.com/facilities-rentals/play-palace-2/<br><br><br></div></div>    </div>",
+            "event_item_id": 609271,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/play-palace---0-12-yrs/609271",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 124,
+                "facility_name": "*Kerrisdale Cyclone Taylor Arena",
+                "center_id": 23,
+                "center_name": "*Kerrisdale Cyclone Taylor Arena",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "$6.22",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "CLOSED - Play Palace - CLEANING BREAK",
+            "start_time": "2026-07-26 12:45:00",
+            "end_time": "2026-07-26 13:14:00",
+            "event_type": 0,
+            "description": "<table width=\"100%\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\"><tbody><tr><td><b>Date & Time</b></td><td>Saturday & Sunday, 12:45pm - 1:15pm</td></tr><tr><td><b><br></b></td><td></td></tr></tbody></table><p>30 minute closure to allow for high touch point cleaning.</p><div><div>For detailed admission fees, rental fee and discount  information  please visit: </div><div>Vancouver.ca/PlayPalace<br></div><div><br></div></div>",
+            "event_item_id": 609289,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/closed---play-palace---cleaning-break/609289",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 124,
+                "facility_name": "*Kerrisdale Cyclone Taylor Arena",
+                "center_id": 23,
+                "center_name": "*Kerrisdale Cyclone Taylor Arena",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "no charge",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": true,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Play Palace - 0-12 yrs",
+            "start_time": "2026-07-26 13:15:00",
+            "end_time": "2026-07-26 15:59:00",
+            "event_type": 0,
+            "description": "<table width=\"100%\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\"><tbody><tr><td><b>Date & Time</b></td><td>Saturday -Sunday, 1:15pm - 4:00pm</td></tr><tr><td><b>Sessions</b></td><td>April 10 - Aug 16, 2026<br><br>All Ages<br><br><b>No Pre Registration Required</b></td></tr></tbody></table><span><br></span><div><div><b>Admission Fees</b><br><table border=\"1\" cellpadding=\"4\" cellspacing=\"0\" width=\"100%\"><tbody><tr><td><b>Age</b></td><td><b>1 Visit</b></td><td><b>10-visit card</b></td></tr><tr><td>Under 6mos</td><td>FREE</td><td>FREE</td></tr><tr><td>6-23mos<span style=\"white-space: pre;\"> </span></td><td>$4.94</td><td>$44.92</td></tr><tr><td>2-5yrs</td><td>$6.35</td><td>$57.17</td></tr><tr><td>6-12yrs</td><td>$7.06</td><td>$63.50</td></tr></tbody></table><div><div><br></div><div>For detailed admission fees, rental fee and discount information please visit:</div><div>https://kerrisdalecc.com/facilities-rentals/play-palace-2/</div></div></div><div><br><br></div></div>",
+            "event_item_id": 609288,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/play-palace---0-12-yrs/609288",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 124,
+                "facility_name": "*Kerrisdale Cyclone Taylor Arena",
+                "center_id": 23,
+                "center_name": "*Kerrisdale Cyclone Taylor Arena",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "$6.22",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          },
+          {
+            "title": "Play Palace - Baby Time",
+            "start_time": "2026-07-27 08:30:00",
+            "end_time": "2026-07-27 09:29:00",
+            "event_type": 0,
+            "description": "<table width=\"100%\" border=\"1\" cellspacing=\"0\" cellpadding=\"4\"><tbody><tr><td><b>Date & Time</b></td><td>Mondays, 8:30am - 9:30am</td></tr><tr><td><b>Sessions</b></td><td><p>Apr 13 - Aug 17, 2026</p><p><b>No Pre Registration Required</b></p></td></tr></tbody></table><p>This time is for  children 2 years and under to enjoy the Play Palace with their parent/caregiver.</p><div><div>For detailed admission fees, rental fee and discount  information  please visit: </div><div>Vancouver.ca/PlayPalace<br><br></div></div>",
+            "event_item_id": 609290,
+            "online_new_activity": false,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/play-palace---baby-time/609290",
+            "activity_location_desc": "",
+            "facilities": [
+              {
+                "facility_id": 124,
+                "facility_name": "*Kerrisdale Cyclone Taylor Arena",
+                "center_id": 23,
+                "center_name": "*Kerrisdale Cyclone Taylor Arena",
+                "is_center_valid": true,
+                "event_type_ids": []
+              }
+            ],
+            "reservation_event_type_id": 0,
+            "price": {
+              "show_price_info_online": true,
+              "estimate_price": "$4.33",
+              "prices": [],
+              "registration_type_prices": [],
+              "private_lesson_enroll_now": "",
+              "not_allow_online_team_enroll": false,
+              "search_from_price": null,
+              "search_from_price_desc": "",
+              "show_all_inclusive_pricing": false,
+              "is_package": false,
+              "free": false,
+              "simple_fee": true
+            },
+            "instructors": [
+              {
+                "id": 21,
+                "first_name": "No",
+                "middle_name": "",
+                "last_name": "Instructor",
+                "is_primary_instructor": true,
+                "email": "",
+                "bio": "",
+                "notes": "",
+                "avatar": "",
+                "phone": "",
+                "available_for_online_pre_booked_lessons": true,
+                "show_instructor_online": true,
+                "can_be_scheduled": false,
+                "is_single_name": false
+              }
+            ],
+            "background_color": null,
+            "text_color": null,
+            "action_link": null,
+            "allow_flexible_class": false
+          }
+        ],
+        "total": 6,
+        "extra_notes": ""
+      }
+    ]
+  }
+}

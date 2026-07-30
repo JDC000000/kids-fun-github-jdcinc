@@ -1,0 +1,102 @@
+{
+  "_fixture_note": "SYNTHETIC — the only hand-authored fixture in this directory. Every other file is a verbatim (or count-trimmed, never content-edited) capture from the live portal on 2026-07-30. The live calendar period at capture time (2026-07-26 → 2026-11-08) does not straddle a DST transition in every tenant, so this file reproduces the REAL payload shape around the America/Vancouver 2026 transitions (DST ends 2026-11-01 02:00 PDT → 01:00 PST; DST starts 2026-03-08 02:00 PST → 03:00 PDT) to pin the offset-less-local-time conversion.",
+  "headers": {
+    "response_code": "0000",
+    "response_message": "Successful"
+  },
+  "body": {
+    "center_events": [
+      {
+        "center_id": 44,
+        "center_name": "*Hastings Community Centre",
+        "total": 7,
+        "events": [
+          {
+            "title": "Before fall-back (PDT, UTC-7)",
+            "start_time": "2026-10-31 10:00:00",
+            "end_time": "2026-10-31 11:00:00",
+            "description": "Drop-in.",
+            "event_item_id": 900001,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/dst/900001",
+            "activity_location_desc": "Hastings Community Centre Gymnasium",
+            "facilities": [{ "facility_id": 470, "facility_name": "Gymnasium", "center_id": 44, "center_name": "*Hastings Community Centre" }],
+            "price": { "free": false, "estimate_price": "" },
+            "instructors": []
+          },
+          {
+            "title": "Fall-back morning, pre-transition (PDT)",
+            "start_time": "2026-11-01 00:30:00",
+            "end_time": "2026-11-01 01:00:00",
+            "description": "Drop-in.",
+            "event_item_id": 900002,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/dst/900002",
+            "activity_location_desc": "Hastings Community Centre Gymnasium",
+            "facilities": [{ "facility_id": 470, "facility_name": "Gymnasium", "center_id": 44, "center_name": "*Hastings Community Centre" }],
+            "price": { "free": false, "estimate_price": "" },
+            "instructors": []
+          },
+          {
+            "title": "Fall-back ambiguous hour (occurs twice)",
+            "start_time": "2026-11-01 01:30:00",
+            "end_time": "2026-11-01 02:00:00",
+            "description": "Drop-in.",
+            "event_item_id": 900003,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/dst/900003",
+            "activity_location_desc": "Hastings Community Centre Gymnasium",
+            "facilities": [{ "facility_id": 470, "facility_name": "Gymnasium", "center_id": 44, "center_name": "*Hastings Community Centre" }],
+            "price": { "free": false, "estimate_price": "" },
+            "instructors": []
+          },
+          {
+            "title": "Fall-back morning, post-transition (PST)",
+            "start_time": "2026-11-01 03:00:00",
+            "end_time": "2026-11-01 04:00:00",
+            "description": "Drop-in.",
+            "event_item_id": 900004,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/dst/900004",
+            "activity_location_desc": "Hastings Community Centre Gymnasium",
+            "facilities": [{ "facility_id": 470, "facility_name": "Gymnasium", "center_id": 44, "center_name": "*Hastings Community Centre" }],
+            "price": { "free": false, "estimate_price": "" },
+            "instructors": []
+          },
+          {
+            "title": "After fall-back (PST, UTC-8)",
+            "start_time": "2026-11-02 10:00:00",
+            "end_time": "2026-11-02 11:00:00",
+            "description": "Drop-in.",
+            "event_item_id": 900005,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/dst/900005",
+            "activity_location_desc": "Hastings Community Centre Gymnasium",
+            "facilities": [{ "facility_id": 470, "facility_name": "Gymnasium", "center_id": 44, "center_name": "*Hastings Community Centre" }],
+            "price": { "free": false, "estimate_price": "" },
+            "instructors": []
+          },
+          {
+            "title": "Spring-forward morning, pre-transition (PST)",
+            "start_time": "2026-03-08 01:30:00",
+            "end_time": "2026-03-08 02:00:00",
+            "description": "Drop-in.",
+            "event_item_id": 900006,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/dst/900006",
+            "activity_location_desc": "Hastings Community Centre Gymnasium",
+            "facilities": [{ "facility_id": 470, "facility_name": "Gymnasium", "center_id": 44, "center_name": "*Hastings Community Centre" }],
+            "price": { "free": false, "estimate_price": "" },
+            "instructors": []
+          },
+          {
+            "title": "Spring-forward, post-transition (PDT)",
+            "start_time": "2026-03-08 03:30:00",
+            "end_time": "2026-03-08 04:30:00",
+            "description": "Drop-in.",
+            "event_item_id": 900007,
+            "activity_detail_url": "https://ca.apm.activecommunities.com/vancouver/Activity_Search/dst/900007",
+            "activity_location_desc": "Hastings Community Centre Gymnasium",
+            "facilities": [{ "facility_id": 470, "facility_name": "Gymnasium", "center_id": 44, "center_name": "*Hastings Community Centre" }],
+            "price": { "free": false, "estimate_price": "" },
+            "instructors": []
+          }
+        ]
+      }
+    ]
+  }
+}
