@@ -2,13 +2,29 @@
 // (TSD §5.1 Adapter A). Proves the Adapter contract + config wiring for
 // >=2 tenants.
 //
-// This scaffold does NOT make live requests: every ActiveNet source row is
-// terms_status='pending' (supabase/seeds/sources.sql), and G-T5-6's gate
-// blocks any production run until a terms decision lands (D-6, decisions
-// register). fetch() is a dry-run against a local fixture payload. Wiring a
-// real HTTP fetch is T7-2 onward, once a tenant's terms status clears.
+// STILL FIXTURE-ONLY — and now for a DATA reason, not just a terms reason.
+//
+// The terms blocker cleared (D-9: Jon authorised use of ACTIVE's official
+// Activity Search API v2 on the existing credentials). The T7 confirming query
+// then ran against that API on 2026-07-30 and found the data itself unusable:
+// Vancouver Park Board's 'ActiveNet CA' syndication STOPPED around 2024-06 —
+// zero 2025 and zero 2026 activities, newest drop-in record ending 2023-08-26.
+// Burnaby and West Vancouver have no municipal organization in the API at all.
+// See docs/source-register.md §6.1 and config.ts for the per-tenant evidence.
+//
+// So the live fetch/parse/map path (G-T7-2..T7-6) was deliberately NOT built:
+// there is nothing current to ingest, and wiring it would have meant dismantling
+// the tests/compliance/no-bypass.test.ts tripwire to import ~3-year-old listings.
+// fetch() therefore remains a local fixture dry-run making zero network calls,
+// and this adapter still exposes no isLiveFetchEnabled().
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
-import { ACTIVENET_TENANTS, getTenantConfig, type ActiveNetTenantConfig } from './config';
+import {
+  ACTIVENET_TENANTS,
+  ACTIVE_PUBLIC_BASE_URL,
+  getTenantConfig,
+  ingestableTenants,
+  type ActiveNetTenantConfig,
+} from './config';
 
 interface ActiveNetFixtureEntry {
   id: string;
@@ -44,7 +60,8 @@ export class ActiveNetAdapter implements Adapter {
       costMaxCad: r.cost,
       costStatus: r.cost === 0 ? ('free' as const) : ('known' as const),
       categoryHint: 'open_gym',
-      sourceUrl: this.tenant.calendarBaseUrl,
+      // Never the barred ActiveCommunities portal — see config.ts COMPLIANCE note.
+      sourceUrl: ACTIVE_PUBLIC_BASE_URL,
       raw: r,
     }));
   }
@@ -58,4 +75,4 @@ export function loadActiveNetAdapters(): ActiveNetAdapter[] {
   return ACTIVENET_TENANTS.map((tenant) => new ActiveNetAdapter(tenant));
 }
 
-export { ACTIVENET_TENANTS, getTenantConfig };
+export { ACTIVENET_TENANTS, getTenantConfig, ingestableTenants };
