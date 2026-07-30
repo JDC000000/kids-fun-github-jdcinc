@@ -10,7 +10,8 @@
 //       must be credential-free (no Authorization/Cookie header, no
 //       credentials:include), carrying only an identified bot User-Agent — never a
 //       browser spoof. Every request must be a GET, with ONE named exception
-//       (READ_ONLY_POST_SEARCH, below). Any tenant/source not explicitly enabled
+//       (READ_ONLY_POST_SEARCH, below — host-scoped as well as path-scoped). Any
+//       tenant/source not explicitly enabled
 //       via its KIDS_FUN_LIVE_* env allow-list must make ZERO network requests.
 //
 //   (B) Structural — every adapter's source file is read from disk, its comments
@@ -32,7 +33,7 @@
 // no CSRF/anti-forgery token, no browser-spoofed User-Agent and no headless render.
 //
 // So exactly one prohibition is narrowed, by a NAMED allow-list keyed on adapter
-// family + EXACT path (READ_ONLY_POST_SEARCH). Everything else stays banned for
+// family + EXACT host + EXACT path (READ_ONLY_POST_SEARCH). Everything else stays banned for
 // every adapter INCLUDING the allow-listed one:
 //     Authorization header · Cookie header · credentials:'include' ·
 //     PUT/PATCH/DELETE · headless navigation (puppeteer/playwright/page.*) ·
@@ -78,15 +79,40 @@ afterEach(() => {
 // ── the ONE narrow exception (G-T7R-0 / D-11) ────────────────────────────────
 //
 // A read-only POST search is permitted ONLY for a family listed here, ONLY on an
-// exact path listed here, and ONLY from the files listed here. The list is
-// deliberately declared in the TEST rather than imported from the adapter: a
-// tripwire that reads its own allow-list from the code it polices can be widened
-// by editing that code alone. Widening it must be an edit to this file.
+// exact HOST listed here, ONLY on an exact path listed here, and ONLY from the
+// files listed here. The list is deliberately declared in the TEST rather than
+// imported from the adapter: a tripwire that reads its own allow-list from the
+// code it polices can be widened by editing that code alone. Widening it must be
+// an edit to this file.
+//
+// HOST-SCOPING (added by QA finding A1). D-10's authorisation is host-scoped: Jon
+// overrode ACTIVE Network's Terms of Use for THIS portal, not for read-only POSTs
+// against hosts in general. An earlier revision of this file matched on path alone,
+// so repointing the adapter's host constant left this suite green while a lower-
+// scrutiny adapter test caught it — exactly backwards for the file the project holds
+// to the highest standard. The host is now pinned HERE, three ways:
+//   1. behaviourally — every captured request from an allow-listed family must go to
+//      an allow-listed hostname (GETs included, not just the POSTs);
+//   2. in the POST check — host AND path must both match, on the SAME family entry;
+//   3. structurally — the family's config must declare the pinned host literal, so
+//      repointing that constant fails this file directly.
+// Hostnames are matched EXACTLY (never endsWith), so `anc.ca.apm.activecommunities
+// .com.attacker.example` does not satisfy it.
 
 interface ReadOnlyPostSearchFamily {
   family: string;
   /** Repo-relative files the exception applies to. */
   sourceFiles: string[];
+  /**
+   * EXACT hostnames D-10 authorises for this family. The override is host-scoped;
+   * this is the boundary, not a convenience.
+   */
+  hosts: string[];
+  /**
+   * The file that declares the host, and the literal it must contain — so the host
+   * cannot be repointed without failing this suite.
+   */
+  hostConfigFile: string;
   /** EXACT paths that may be POSTed. Read-only searches; nothing is mutated. */
   postPaths: string[];
   /** Read paths the same files may GET. */
@@ -99,6 +125,8 @@ const READ_ONLY_POST_SEARCH: ReadOnlyPostSearchFamily[] = [
   {
     family: 'activenet',
     sourceFiles: ['worker/adapters/activenet/client.ts'],
+    hosts: ['anc.ca.apm.activecommunities.com'],
+    hostConfigFile: 'worker/adapters/activenet/config.ts',
     postPaths: ['/onlinecalendar/filters', '/onlinecalendar/multicenter/events'],
     getPaths: ['/onlinecalendar/calendars', '/onlinecalendar/centerdetails'],
     endpointPathPattern: /\/onlinecalendar\/[A-Za-z0-9_\-/]+/g,
@@ -107,12 +135,62 @@ const READ_ONLY_POST_SEARCH: ReadOnlyPostSearchFamily[] = [
 
 const POST_ALLOWED_FILES = new Set(READ_ONLY_POST_SEARCH.flatMap((f) => f.sourceFiles));
 
-/** Every path any allow-listed family may POST to, as a flat set for the request check. */
-const ALLOWED_POST_PATHS = new Set(READ_ONLY_POST_SEARCH.flatMap((f) => f.postPaths));
+/** Every hostname any allow-listed family may reach at all. */
+const ALLOWED_HOSTS = new Set(READ_ONLY_POST_SEARCH.flatMap((f) => f.hosts));
 
-/** True when `pathname` ends with an allow-listed read-only search path. */
-function isAllowedReadOnlyPostPath(pathname: string): boolean {
-  return [...ALLOWED_POST_PATHS].some((p) => pathname.endsWith(p));
+function hostnameOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True only when the hostname AND the path are both allow-listed, on the SAME family
+ * entry — so one family's host can never license another family's path. Hostname is an
+ * exact match; the path is a suffix match because the tenant's site path prefixes it
+ * (`/vancouver/rest` + `/onlinecalendar/filters`).
+ */
+function isAllowedReadOnlyPost(url: string): boolean {
+  const hostname = hostnameOf(url);
+  if (!hostname) return false;
+  const { pathname } = new URL(url);
+  return READ_ONLY_POST_SEARCH.some(
+    (f) => f.hosts.includes(hostname) && f.postPaths.some((p) => pathname.endsWith(p))
+  );
+}
+
+/**
+ * Every hostname a source file DECLARES, found two ways so a repoint cannot hide:
+ *   (a) a quoted string that is itself a bare hostname  — 'anc.ca.apm.…com'
+ *   (b) a hostname inside an absolute URL literal       — 'https://anc.ca.apm.…com/x'
+ * Deliberately narrow: (a) is anchored on the quotes, so prose containing a dotted
+ * word ("see docs/source-register.md §6.3") and dotted NON-hosts (a "26.9.53" version
+ * stamp, a `t.dropInCalendarIds.length` expression) are not hostnames and do not match.
+ */
+function hostLiteralsIn(code: string): string[] {
+  const hosts = new Set<string>();
+  for (const m of code.matchAll(/['"`]([a-z0-9-]+(?:\.[a-z0-9-]+)+)['"`]/gi)) {
+    // Require an alphabetic TLD so '26.9.53' is excluded, and drop bare filenames.
+    if (/\.[a-z]{2,}$/i.test(m[1]) && !/\.(ts|tsx|js|json|sql|md|css|svg|png)$/i.test(m[1])) {
+      hosts.add(m[1].toLowerCase());
+    }
+  }
+  for (const m of code.matchAll(/https?:\/\/([a-z0-9][a-z0-9.-]*[a-z0-9])/gi)) {
+    hosts.add(m[1].toLowerCase().replace(/\.$/, ''));
+  }
+  return [...hosts].sort();
+}
+
+/** Every request from an allow-listed family must stay on a D-10-authorised host. */
+function expectAllowedHost(call: CapturedCall): void {
+  const hostname = hostnameOf(call.url);
+  expect(hostname, `unparseable request URL: ${call.url}`).not.toBeNull();
+  expect(
+    ALLOWED_HOSTS.has(hostname!),
+    `${hostname} is not a D-10-authorised host — the override is host-scoped`
+  ).toBe(true);
 }
 
 // ── request-capture helpers ──────────────────────────────────────────────────
@@ -172,19 +250,23 @@ function expectCredentialFreeGet(call: CapturedCall): void {
 
 /**
  * Assert a captured request is EITHER a credential-free GET, OR a credential-free
- * POST to an exact READ_ONLY_POST_SEARCH path. This is the only assertion that
+ * POST to an exact READ_ONLY_POST_SEARCH host + path. This is the only assertion that
  * differs from expectCredentialFreeGet, and only for allow-listed families.
+ *
+ * The HOST is checked twice on purpose: once for every request regardless of method
+ * (D-10 authorises a portal, not a technique), and again inside the POST branch bound
+ * to the same family entry as the path.
  */
 function expectReadOnlyRequest(call: CapturedCall): void {
   const method = (call.init?.method ?? 'GET').toString().toUpperCase();
   expect(['GET', 'POST'], 'only GET or an allow-listed read-only POST').toContain(method);
+  expectAllowedHost(call);
   if (method === 'GET') {
     expect(call.init?.body ?? null, 'a GET carries no body').toBeNull();
   } else {
-    const pathname = new URL(call.url).pathname;
     expect(
-      isAllowedReadOnlyPostPath(pathname),
-      `POST ${pathname} is not an allow-listed READ_ONLY_POST_SEARCH path`
+      isAllowedReadOnlyPost(call.url),
+      `POST ${call.url} is not an allow-listed READ_ONLY_POST_SEARCH host+path`
     ).toBe(true);
   }
   expectCredentialFree(call);
@@ -464,6 +546,21 @@ describe('G-T35-2 (B) adapter source contains no login/paywall/CAPTCHA-bypass co
     }
   });
 
+  it('an allow-listed family pins its HOST in config — repointing it fails HERE', () => {
+    // QA finding A1: previously the host was guarded only by an ordinary adapter test,
+    // so repointing ACTIVENET_PORTAL_HOST left this suite green. D-10 is host-scoped, so
+    // the elevated-scrutiny file owns that boundary itself now. Asserting the host is
+    // the SOLE host literal in the config (not merely present) is what makes a REPOINT
+    // fail, rather than only catching a deletion.
+    for (const family of READ_ONLY_POST_SEARCH) {
+      const code = stripComments(readFileSync(resolve(process.cwd(), family.hostConfigFile), 'utf8'));
+      expect(
+        hostLiteralsIn(code),
+        `${family.hostConfigFile} must declare exactly the D-10-authorised host(s)`
+      ).toEqual(family.hosts);
+    }
+  });
+
   it('an allow-listed file declares ONLY allow-listed endpoint paths', () => {
     // Second layer under the behavioural check: a POST path that never runs in a test
     // still cannot be introduced silently, because the file's endpoint-path literals
@@ -546,11 +643,37 @@ describe('G-T7R-0 (C) tripwire self-check: every other prohibition still bites',
   });
 
   it('a POST to a path OUTSIDE the allow-list is rejected by the request check', () => {
-    expect(isAllowedReadOnlyPostPath('/vancouver/rest/onlinecalendar/filters')).toBe(true);
-    expect(isAllowedReadOnlyPostPath('/vancouver/rest/onlinecalendar/multicenter/events')).toBe(true);
-    expect(isAllowedReadOnlyPostPath('/vancouver/rest/cart/checkout')).toBe(false);
-    expect(isAllowedReadOnlyPostPath('/vancouver/rest/onlinecalendar/register')).toBe(false);
-    expect(isAllowedReadOnlyPostPath('/vancouver/rest/activities/list')).toBe(false);
+    const AC = 'https://anc.ca.apm.activecommunities.com';
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/filters`)).toBe(true);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/multicenter/events`)).toBe(true);
+    expect(isAllowedReadOnlyPost(`${AC}/burnaby/rest/onlinecalendar/filters`)).toBe(true);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/cart/checkout`)).toBe(false);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/register`)).toBe(false);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/activities/list`)).toBe(false);
+  });
+
+  it('a POST to an allow-listed PATH on a NON-allow-listed HOST is rejected (QA A1)', () => {
+    // The exact hole QA found: D-10 authorised a portal, not a technique. The right
+    // path on the wrong host must fail, and near-miss hostnames must not sneak through
+    // a suffix match.
+    for (const host of [
+      'https://evil.example.com',
+      'https://anc.ca.apm.activecommunities.com.attacker.example',
+      'https://not-anc.ca.apm.activecommunities.com',
+      'http://localhost:8080',
+    ]) {
+      expect(
+        isAllowedReadOnlyPost(`${host}/vancouver/rest/onlinecalendar/filters`),
+        `${host} must not be allowed`
+      ).toBe(false);
+    }
+    expect(isAllowedReadOnlyPost('not a url at all')).toBe(false);
+  });
+
+  it('the per-request host guard rejects a non-authorised host for ANY method', () => {
+    // Not just POSTs: a GET drifting off the authorised portal is also out of scope.
+    expect(() => expectAllowedHost({ url: 'https://anc.ca.apm.activecommunities.com/x', init: {} })).not.toThrow();
+    expect(() => expectAllowedHost({ url: 'https://evil.example.com/x', init: {} })).toThrow();
   });
 
   it('a browser-spoofed UA fails the behavioural check', () => {
@@ -570,9 +693,13 @@ describe('G-T7R-0 (C) tripwire self-check: every other prohibition still bites',
     expect(READ_ONLY_POST_SEARCH).toHaveLength(1);
     expect(READ_ONLY_POST_SEARCH[0].family).toBe('activenet');
     expect(READ_ONLY_POST_SEARCH[0].sourceFiles).toEqual(['worker/adapters/activenet/client.ts']);
+    expect(READ_ONLY_POST_SEARCH[0].hosts).toEqual(['anc.ca.apm.activecommunities.com']);
     expect(READ_ONLY_POST_SEARCH[0].postPaths).toEqual([
       '/onlinecalendar/filters',
       '/onlinecalendar/multicenter/events',
     ]);
+    // One host, and it is the one D-10 names. Adding a second is a deliberate,
+    // visible edit that must fail here first.
+    expect(ALLOWED_HOSTS.size).toBe(1);
   });
 });

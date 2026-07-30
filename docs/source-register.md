@@ -288,18 +288,47 @@ override, and it should replace this one.
 
 The last row is the ONLY thing that moved in the compliance tripwire. `tests/compliance/
 no-bypass.test.ts` now carries a named `READ_ONLY_POST_SEARCH` allow-list keyed on adapter
-family + **exact path** (`/onlinecalendar/filters`, `/onlinecalendar/multicenter/events`) —
-`decisions_register D-11`. Every other prohibition still applies **to that same file**:
-Authorization header, Cookie header, `credentials:'include'`, PUT/PATCH/DELETE, headless
-navigation, checkout/cart, anti-forgery-token submission, CAPTCHA handling, password
-credentials, browser-spoofed UA. The zero-network assertion is retained for every tenant
-not named in `KIDS_FUN_LIVE_ACTIVENET`.
+family + **exact host** + **exact path** (`anc.ca.apm.activecommunities.com` ·
+`/onlinecalendar/filters`, `/onlinecalendar/multicenter/events`) — `decisions_register
+D-11`. Every other prohibition still applies **to that same file**: Authorization header,
+Cookie header, `credentials:'include'`, PUT/PATCH/DELETE, headless navigation,
+checkout/cart, anti-forgery-token submission, CAPTCHA handling, password credentials,
+browser-spoofed UA. The zero-network assertion is retained for every tenant not named in
+`KIDS_FUN_LIVE_ACTIVENET`.
+
+**Host-scoping (QA finding A1, closed 2026-07-30).** The first revision of the amendment
+pinned the PATH but not the HOST — `pathname.endsWith()` alone, which was host-agnostic by
+construction. Independent QA proved it by repointing `ACTIVENET_PORTAL_HOST` to a fake host:
+the elevated-scrutiny suite stayed green while an ordinary adapter test caught it — exactly
+backwards for the file this project holds to the highest standard. **D-10's authorisation is
+host-scoped** — Jon overrode ACTIVE Network's Terms of Use for *this portal*, not for
+read-only POSTs against hosts in general — so the tripwire now owns that boundary itself,
+three ways: (1) behaviourally, every captured request from the family must go to an
+allow-listed hostname, GETs included; (2) the POST check requires host AND path to match on
+the SAME allow-list entry; (3) structurally, the family's config must declare the pinned
+host as its ONLY host literal. Hostnames match EXACTLY, never by suffix.
 
 The amendment is itself tested (`(C) tripwire self-check`), and was mutation-verified on
 2026-07-30 by injecting each bypass class into the real adapter and confirming the suite
-goes red: Cookie header (3 failures), anti-forgery header (3), headless import (1),
-browser-spoofed UA (4), `PUT` inside the allow-listed file (4), POST to a non-allow-listed
-path (4). Baseline restored: 60/60 green.
+goes red. **All ten classes bite:**
+
+| Injected into the real adapter | Tests failed |
+|---|---|
+| Cookie header | 3 |
+| Anti-forgery / CSRF header | 3 |
+| Headless-browser import | 1 |
+| Browser-spoofed User-Agent | 4 |
+| `PUT` inside the allow-listed file | 4 |
+| POST to a non-allow-listed path | 4 |
+| **Host repointed to `evil.example.com`** (QA's A1 repro) | **3** |
+| **Host suffix-extended** (`…activecommunities.com.attacker.example`) | **3** |
+| **Second host added alongside the real one** | **1** |
+| **Second host added as a full URL literal** | **1** |
+
+Baseline restored each time: 63/63 green. The last four rows are the A1 fix; the last two
+were not in QA's report — they are the additive repoint routes the exact-match assertion
+also has to cover, tested because closing only the case that was demonstrated would have
+left the obvious neighbouring one open.
 
 #### 6.3.3 Crawl posture
 
