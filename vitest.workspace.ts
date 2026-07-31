@@ -103,6 +103,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/ingestion/confirmed-terms-invariant-db.test.ts',
   'tests/ingestion/framework.test.ts',
   'tests/ingestion/ingest-runner.test.ts',
+  'tests/ingestion/reconcile.test.ts',
   'tests/ingestion/seasonal-watcher-db.test.ts',
   'tests/ingestion/series.test.ts',
   'tests/ingestion/source-runner.test.ts',

@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { enqueueDueJobs } from '../scheduler/tiered';
 import { dequeue, markDone, markFailed, type Job } from '../core/queue';
+import { reconcileAbandonedRuns } from '../core/reconcile';
 import { makeTermsGatedIngestJobHandler } from '../core/source-runner';
 import type { Environment } from '../core/terms-gate';
 import { captureWorkerException } from './sentry';
@@ -34,6 +35,10 @@ export interface SchedulerMetrics {
   jobsSucceeded: number;
   jobsFailed: number;
   lastJobAt: string | null;
+  /** H4: last tick that actually reclaimed abandoned 'running' rows (null = never). */
+  lastReconcileAt: string | null;
+  /** H4: cumulative abandoned rows recovered (jobs + check runs) since boot. */
+  totalReconciled: number;
   lastError: string | null;
 }
 
@@ -113,6 +118,8 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     jobsSucceeded: 0,
     jobsFailed: 0,
     lastJobAt: null,
+    lastReconcileAt: null,
+    totalReconciled: 0,
     lastError: null,
   };
 
@@ -176,7 +183,37 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     }
   }
 
+  // H4: recover rows a dead process left stuck in 'running' before deciding what is due.
+  // Ordering matters — an abandoned job holds idx_job_queue_source_active, which makes
+  // enqueueDueJobs() skip that source as "already in flight", so sweeping first is what
+  // lets a source stranded by a crash become enqueueable again on this very tick.
+  // Runs on the immediate boot tick as well, so a restart reconciles straight away.
+  async function reconcileOnce(): Promise<void> {
+    try {
+      const r = await reconcileAbandonedRuns(pool);
+      const total = r.jobsRequeued + r.jobsDeadLettered + r.checkRunsFailed;
+      if (total > 0) {
+        metrics.lastReconcileAt = new Date().toISOString();
+        metrics.totalReconciled += total;
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[scheduler] reconciled abandoned rows: ${r.jobsRequeued} job(s) requeued, ` +
+            `${r.jobsDeadLettered} dead-lettered, ${r.checkRunsFailed} check run(s) failed`
+        );
+      }
+    } catch (err) {
+      // Never let the sweep take the tick down — enqueueing is the more important job.
+      metrics.lastError = `reconcile: ${errMsg(err)}`;
+      // eslint-disable-next-line no-console
+      console.error('[scheduler] reconcile error:', errMsg(err));
+      await captureWorkerException(err, {
+        tags: { component: 'scheduler', operation: 'reconcile', environment },
+      });
+    }
+  }
+
   async function tickOnce(): Promise<void> {
+    await reconcileOnce();
     try {
       const due = await enqueueDueJobs(pool);
       metrics.ticks += 1;

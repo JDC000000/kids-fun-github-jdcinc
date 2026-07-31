@@ -212,9 +212,18 @@ function mockFetchCapture(body: string, contentType: string): CapturedCall[] {
 function headerLookup(init: CapturedCall['init'], name: string): string | undefined {
   const h = (init?.headers ?? {}) as Record<string, string> | Headers;
   if (typeof (h as Headers).get === 'function') return (h as Headers).get(name) ?? undefined;
-  const rec = h as Record<string, string>;
-  const key = Object.keys(rec).find((k) => k.toLowerCase() === name.toLowerCase());
-  return key ? rec[key] : undefined;
+  // QA finding A2 (defence in depth): the previous hand-rolled scan returned the FIRST
+  // case-insensitive key match, so a plain object carrying two differently-cased UA keys
+  // let the identified one shadow a spoof that `Headers` would actually combine and put on
+  // the wire (`user-agent: KidsFunBot/1.0, Mozilla/5.0 …`). Normalising through the native
+  // Headers API makes this checker see exactly what the transport would send.
+  //
+  // H4 already removed the PRECONDITION — politeFetch no longer emits a second UA key, and
+  // every adapter now routes through it — so this is belt-and-braces rather than the sole
+  // protection. It is kept because the guarantee it depends on lives in a different file
+  // and is not obliged to preserve that property. Absence-assertions (Cookie/Authorization)
+  // were always casing-safe; value-property assertions like the UA check were not.
+  return new Headers(h as Record<string, string>).get(name) ?? undefined;
 }
 
 /** The credential/identity half of the contract — applies to EVERY request, GET or

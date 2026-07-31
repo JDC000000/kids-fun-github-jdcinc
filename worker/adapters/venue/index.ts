@@ -15,6 +15,7 @@
 // KIDS_FUN_LIVE_VENUES=<venueKey>, and is only offered for venues explicitly
 // marked liveCapable after a real robots.txt + ToS review (see config.ts).
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
+import { politeFetch } from '../../health/policy';
 import {
   LAUNCH_VENUES,
   getVenue,
@@ -338,10 +339,22 @@ function buildFixturePages(config: VenueConfig): VenuePayload[] {
 
 // ── live fetch (single credential-free GET per page) ─────────────────────────
 
-async function fetchPage(kind: VenuePayload['kind'], url: string): Promise<VenuePayload> {
-  const response = await fetch(new URL(url), {
-    headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': USER_AGENT },
-  });
+async function fetchPage(
+  kind: VenuePayload['kind'],
+  url: string,
+  venueKey: string
+): Promise<VenuePayload> {
+  // H4: routed through the shared polite seam rather than global fetch(). This adapter
+  // was the last one still calling fetch() directly, which meant it had no request
+  // deadline (the hang this fix exists for), no per-source rate limiting and no 403/429
+  // circuit breaker. Its own identified UA is passed through unchanged — politeFetch
+  // leaves a caller-supplied User-Agent alone — so the crawl identity does not change.
+  const response = await politeFetch(
+    `venue_html::${venueKey}`,
+    new URL(url),
+    { headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': USER_AGENT } },
+    { family: 'venue_html' }
+  );
   if (!response.ok) {
     throw new Error(`Venue ${kind} page fetch failed: ${response.status} ${response.statusText}`);
   }
@@ -376,8 +389,8 @@ export class VenueAdapter implements Adapter {
       const pages: VenuePayload[] = [];
       // Live venues currently expose a schema.org open-hours page; the events
       // page is only wired when the venue publishes schema.org Event data.
-      if (this.config.hoursUrl) pages.push(await fetchPage('hours', this.config.hoursUrl));
-      if (this.config.eventsUrl) pages.push(await fetchPage('events', this.config.eventsUrl));
+      if (this.config.hoursUrl) pages.push(await fetchPage('hours', this.config.hoursUrl, this.config.venueKey));
+      if (this.config.eventsUrl) pages.push(await fetchPage('events', this.config.eventsUrl, this.config.venueKey));
       return pages;
     }
     return buildFixturePages(this.config);
