@@ -3,7 +3,8 @@ import type { Pool } from 'pg';
 import { healthz, type HealthState } from './healthz';
 import { chromiumSmoke } from './chromium-smoke';
 import { createPool } from './db';
-import { startScheduler } from './scheduler';
+import { startScheduler, type SchedulerHandle } from './scheduler';
+import { buildShutdownDeps, runShutdown, SHUTDOWN_BUDGET_MS } from './shutdown';
 import { captureWorkerException, closeWorkerSentry, initWorkerSentry } from './sentry';
 
 // KIDS FUN ingestion-worker entrypoint (G-T1-2 + G-T5-3). Long-running Node process:
@@ -26,6 +27,7 @@ const state: HealthState = {
 
 const abort = new AbortController();
 let pool: Pool | null = null;
+let schedulerHandle: SchedulerHandle | null = null;
 
 // Start the cadence-driven scheduler if a database is configured. The health
 // server always starts regardless, so a missing or unreachable DB never makes
@@ -38,8 +40,8 @@ function startWorkloadIfConfigured(): void {
   }
   try {
     pool = createPool();
-    const handle = startScheduler(pool, { signal: abort.signal });
-    state.scheduler = handle.metrics;
+    schedulerHandle = startScheduler(pool, { signal: abort.signal });
+    state.scheduler = schedulerHandle.metrics;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[worker] failed to start scheduler:', err instanceof Error ? err.message : String(err));
@@ -96,22 +98,52 @@ server.listen(PORT, () => {
   startWorkloadIfConfigured();
 });
 
+/**
+ * Last-resort exit if runShutdown() itself wedges.
+ *
+ * Sized to fire INSIDE the runtime's stop grace window, which the previous 8000 did not:
+ * neither worker/fly.toml nor worker/fly.production.toml sets `kill_timeout`, and Fly's
+ * documented default is 5 seconds before SIGKILL. An 8s net on a 5s leash never nets
+ * anything — the machine was already gone. This is a NARROWING, not a widening: the real
+ * fix is that the sequence below is budgeted (SHUTDOWN_BUDGET_MS) rather than open-ended.
+ */
+const HARD_EXIT_MS = SHUTDOWN_BUDGET_MS + 1_000;
+
 let shuttingDown = false;
-const shutdown = (): void => {
+const shutdown = (signalName: string): void => {
   if (shuttingDown) return;
   shuttingDown = true;
-  abort.abort();
-  server.close(() => {
-    Promise.resolve(pool ? pool.end() : undefined)
-      .then(() => closeWorkerSentry())
-      .catch(() => undefined)
-      .finally(() => process.exit(0));
-  });
-  // Hard safety net so the machine always exits within the runtime's grace window.
-  setTimeout(() => process.exit(0), 8000).unref();
+  // eslint-disable-next-line no-console
+  console.log(`[worker] ${signalName} received — graceful shutdown starting`);
+
+  const hardExit = setTimeout(() => {
+    // eslint-disable-next-line no-console
+    console.warn('[worker] shutdown exceeded its budget — exiting now');
+    process.exit(0);
+  }, HARD_EXIT_MS);
+  hardExit.unref();
+
+  // The wiring itself lives in buildShutdownDeps() so it can be tested: this module runs
+  // side effects on import (binds a port, registers these handlers), so anything written
+  // inline here is unreachable from a test — which is exactly how a dropped
+  // closeAllConnections() could pass the whole suite (QA finding A1).
+  void runShutdown(
+    buildShutdownDeps({
+      server,
+      pool,
+      abort,
+      scheduler: schedulerHandle,
+      closeSentry: () => closeWorkerSentry(),
+    })
+  )
+    .catch((err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error('[worker] shutdown failed:', err instanceof Error ? err.message : String(err));
+    })
+    .finally(() => process.exit(0));
 };
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('unhandledRejection', (reason) => {
   // eslint-disable-next-line no-console
   console.error('[worker] unhandled rejection:', reason);

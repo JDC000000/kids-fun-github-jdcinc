@@ -52,10 +52,40 @@ export interface SchedulerOptions {
   immediate?: boolean;
 }
 
+/**
+ * A job this process has CLAIMED (job_queue.status='running') and not yet finalised.
+ *
+ * H6: exists so the shutdown path can tell the database the truth about what this process
+ * was holding at the moment it was told to stop, WITHOUT waiting for the job itself — a
+ * live ActiveNet fetch can legitimately run for minutes and the runtime's stop grace
+ * period is 5 seconds, so "wait for the job" was never an option.
+ */
+export interface InFlightJob {
+  jobId: string;
+  sourceId: string | null;
+  /** When this process claimed the job — the lower bound on the check-run row it owns. */
+  claimedAt: Date;
+}
+
+/** How often quiesce() re-checks. Small enough to be invisible in a 3.5s shutdown budget. */
+const QUIESCE_POLL_MS = 25;
+
 export interface SchedulerHandle {
   metrics: SchedulerMetrics;
   /** Resolves once both loops have exited (after the abort signal fires). */
   done: Promise<void>;
+  /** Jobs claimed and not yet finalised. Empty when the worker is idle (H6). */
+  inFlightJobs: () => InFlightJob[];
+  /**
+   * Resolves true once NO scheduler operation is touching the pool (no tick mid-query, no
+   * job mid-flight), or false if `timeoutMs` elapses first.
+   *
+   * This is the precondition for pool.end(): "nothing this process issued is still in
+   * flight and expected to complete". Before H6 the pool was closed from inside
+   * server.close()'s callback, which fires when the HTTP server has no open connections —
+   * a condition with nothing whatsoever to do with whether a job was mid-fetch.
+   */
+  quiesce: (timeoutMs: number) => Promise<boolean>;
 }
 
 function errMsg(err: unknown): string {
@@ -125,6 +155,48 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
 
   const baseHandler = makeTermsGatedIngestJobHandler(pool, environment);
 
+  // H6 shutdown-ordering state.
+  //   `inFlight`       — the jobs whose DB rows the shutdown path has to release.
+  //   `busyOperations` — whether ANY scheduler operation is still in progress. This is what
+  //                      gates pool.end().
+  //
+  // busyOperations deliberately counts the WHOLE operation, not just the instants a query is
+  // on the wire: tracked(processOneJob) spans dequeue + the handler's entire live fetch +
+  // markDone/markFailed. That breadth IS the fix. Narrowing it to "a query is executing right
+  // now" would let pool.end() fire during the fetch — i.e. in the window between the check
+  // run being opened and its result being written — which is precisely the original bug.
+  //
+  // The two are separate because they answer different questions: a tick mid-enqueueDueJobs
+  // is busy but holds no job, so it must delay pool.end() without producing an abandon write.
+  const inFlight = new Map<string, InFlightJob>();
+  let busyOperations = 0;
+
+  async function tracked<T>(op: () => Promise<T>): Promise<T> {
+    busyOperations += 1;
+    try {
+      return await op();
+    } finally {
+      busyOperations -= 1;
+    }
+  }
+
+  function quiesce(timeoutMs: number): Promise<boolean> {
+    if (busyOperations === 0) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const deadline = Date.now() + Math.max(0, timeoutMs);
+      const poll = setInterval(() => {
+        if (busyOperations === 0) {
+          clearInterval(poll);
+          resolve(true);
+        } else if (Date.now() >= deadline) {
+          clearInterval(poll);
+          resolve(false);
+        }
+      }, QUIESCE_POLL_MS);
+      poll.unref?.();
+    });
+  }
+
   // Claim + run one due job using the existing queue primitives (dequeue /
   // markDone / markFailed). Returns true when a job was processed so the loop can
   // immediately drain the next one. A *job* failure is marked/retried by the
@@ -136,6 +208,9 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     if (!job) return false;
     metrics.jobsProcessed += 1;
     metrics.lastJobAt = new Date().toISOString();
+    // Registered BEFORE the handler runs and cleared only after the job is finalised, so
+    // the shutdown path's snapshot can never miss a job that is genuinely still held.
+    inFlight.set(job.id, { jobId: job.id, sourceId: job.sourceId, claimedAt: new Date() });
     try {
       await baseHandler(job);
       await markDone(pool, job.id);
@@ -160,6 +235,8 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
         },
       });
       await markFailed(pool, job.id, errMsg(err));
+    } finally {
+      inFlight.delete(job.id);
     }
     return true;
   }
@@ -168,7 +245,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     while (!signal?.aborted) {
       let processed = false;
       try {
-        processed = await processOneJob();
+        processed = await tracked(processOneJob);
       } catch (err) {
         // dequeue / markDone / markFailed failed (e.g. DB unreachable). Record and
         // back off — never crash the process, so the health server survives.
@@ -239,11 +316,11 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
   }
 
   async function tickLoop(): Promise<void> {
-    if (immediate) await tickOnce();
+    if (immediate) await tracked(tickOnce);
     while (!signal?.aborted) {
       await sleep(schedulerTickMs, signal);
       if (signal?.aborted) break;
-      await tickOnce();
+      await tracked(tickOnce);
     }
   }
 
@@ -253,5 +330,5 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
   console.log(
     `[scheduler] started env=${environment} tick=${schedulerTickMs}ms poll=${pollIntervalMs}ms immediate=${immediate}`
   );
-  return { metrics, done };
+  return { metrics, done, inFlightJobs: () => [...inFlight.values()], quiesce };
 }
