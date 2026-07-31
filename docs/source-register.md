@@ -32,9 +32,10 @@ true (verified in code — see §3):
 2. **Env allow-list** — the adapter's live path is additionally gated behind an
    environment allow-list: `KIDS_FUN_LIVE_LIBRARY_SYSTEMS` (e.g. `vpl,rpl`),
    `KIDS_FUN_LIVE_CITY_CALENDARS` (e.g. `vancouver`), `KIDS_FUN_LIVE_VENUES`, and
-   `KIDS_FUN_LIVE_ACTIVENET` (e.g. `vancouver,burnaby` — see §6.3). Absent the env var,
+   `KIDS_FUN_LIVE_ACTIVENET` (e.g. `vancouver,burnaby` — see §6.3) and
+   `KIDS_FUN_LIVE_PERFECTMIND` (e.g. `nvrc` — see §6.4). Absent the env var,
    the adapter returns fixtures and makes **zero** network calls. (`.env.example`
-   documents all four but sets none, so a fresh/dev environment is fixture-only by
+   documents these but sets none, so a fresh/dev environment is fixture-only by
    default.)
 
 Default posture is therefore fail-closed: a source stays fixture-only until it is
@@ -82,16 +83,17 @@ Verified by reading the actual adapter + core code (not config flags):
   the production live adapters (`worker/adapters/library`, `worker/adapters/citycalendar`,
   `worker/adapters/venue`) each issue exactly **one credential-free GET** — no
   `Authorization`/`Cookie` header, no request body, no `credentials: 'include'`, carrying
-  only an identified bot User-Agent (never a browser spoof). **PerfectMind** still makes
-  **zero** network calls and exposes no live-fetch capability. **ActiveNet** is now
-  live-capable under D-10 (§6.3) and is held to the same contract with ONE named
-  exception: it may POST to two exact read-only search paths
-  (`READ_ONLY_POST_SEARCH`, D-11), and only when its tenant is named in
-  `KIDS_FUN_LIVE_ACTIVENET` — un-named tenants still make **zero** network calls, asserted
-  behaviourally. A comment-stripped source scan additionally asserts none of the fifteen
-  adapter files contain login/credential, CAPTCHA, headless-navigation
+  only an identified bot User-Agent (never a browser spoof). **ActiveNet** (§6.3) and, as
+  of T8, **PerfectMind** (§6.4) are live-capable under D-10 and are held to the same
+  contract with TWO named exceptions — one per family, each pinned to its own exact hosts
+  and exact read-only search paths (`READ_ONLY_POST_SEARCH`, D-11) — and only when the
+  tenant is named in `KIDS_FUN_LIVE_ACTIVENET` / `KIDS_FUN_LIVE_PERFECTMIND`. Un-named
+  tenants still make **zero** network calls, asserted behaviourally. The host/path check is
+  **family-scoped**, so one family's authorised host can never license another family's
+  path. A comment-stripped source scan additionally asserts none of the eighteen adapter
+  files contain login/credential, CAPTCHA, headless-navigation
   (`puppeteer`/`playwright`/`page.*`), checkout/cart, anti-forgery-token-submission, or
-  PUT/PATCH/DELETE code — the allow-listed file included.
+  PUT/PATCH/DELETE code — the allow-listed files included.
 - **Attribute & summarise** (`tests/compliance/attribution.test.ts`, G-T35-3): the
   ingestion contract (`worker/core/adapter.ts` `StructuredRecord`) **requires**
   `sourceUrl` on every record and carries **no** editorial-body field — so there is
@@ -149,7 +151,8 @@ this round.
 | Family / name(s) | Status | Note |
 |---|---|---|
 | `activenet` / District of West Vancouver | **excluded — ZERO drop-in data** | Portal live, online-calendar module empty. See §6.3 |
-| `perfectmind` / City of Richmond, NVRC, (New Westminster = candidate) | pending, fixture-only | See §6.1 (future source T8) |
+| `perfectmind` / NVRC (North Vancouver) | **live-capable under D-10/D-11, staged OFF** | Drop-in confirmed: 9 calendars. See §6.4 |
+| `perfectmind` / City of Richmond | **excluded — ZERO drop-in data** | Registration widget only; drop-in published as PDFs. See §6.4 |
 | `venue_html` / Vancouver Aquarium, Science World | pending, fixture-only | Semi-automated venue HTML; separate terms review needed |
 | `seasonal_watcher` / Stanley Park Miniature Railway, Burnaby Central Railway, Cypress Mountain | pending, fixture-only | Status-page watchers |
 | `city_calendar` / (other municipalities) | n/a | Only Vancouver is live |
@@ -163,7 +166,12 @@ third-party rec-portal sites** — a materially different risk profile from the 
 plain-GET syndication feeds. This audit does **not** build or scope them; it records what
 would have to be checked *first*:
 
-- **PerfectMind / Xplor BookMe4** (Richmond, NVRC, New West): pages are dynamic widgets
+- **PerfectMind / Xplor BookMe4** (Richmond, NVRC, New West): **SUPERSEDED by §6.4 — the
+  assessment below is WRONG and is preserved only as a record of what was believed before
+  the API was probed.** BookMe4 needs no headless render and no anti-forgery token
+  (verified 2026-07-30, re-verified 2026-07-31: plain HTTP, identified UA, HTTP 200). New
+  Westminster was never seeded as a source row and has been dropped from config. The
+  original text follows. Pages are dynamic widgets
   requiring headless render + anti-forgery token handling (`requiresRender: true`). Before
   enabling: (a) read each tenant's actual ToS and `perfectmind.com` / tenant robots.txt;
   (b) confirm whether a public JSON/iCal endpoint exists that avoids headless rendering
@@ -181,6 +189,9 @@ Guardrail: `tests/compliance/no-bypass.test.ts` is the tripwire. It has now been
 ONCE, by G-T7R-0, for ActiveNet only — a single named `READ_ONLY_POST_SEARCH` allowance
 (§6.3). **PerfectMind is untouched**: it still makes zero network calls and exposes no
 live-fetch capability, and wiring it live would require its own revisit of that test.
+> **UPDATE (T8, 2026-07-31):** that revisit has now happened, exactly as this paragraph
+> anticipated — see §6.4. PerfectMind is live-capable under the same D-10/D-11 authority,
+> with its own host-pinned `READ_ONLY_POST_SEARCH` entry. It remains staged OFF.
 
 ### 6.2 ActiveNet via the OFFICIAL ACTIVE API (T7, D-9) — excluded on data grounds
 
@@ -201,7 +212,8 @@ render. The one compliant path is ACTIVE's own official **Activity Search API v2
 purpose is third-party redistribution of activity listings. Jon authorised use of that API
 on the existing credentials and personally accepted its caching/data-retention restriction
 (D-9). That authorisation covers **this API only** — not the portal, not other
-ACTIVE-family APIs, and not PerfectMind (T8, still separately parked).
+ACTIVE-family APIs, and not PerfectMind (T8, still separately parked *at the time this
+was written* — T8 has since landed under D-10/D-11; see §6.4).
 
 **2. Data — FAILED.** The confirming query ran against the official API on **2026-07-30**
 (read-only, Vancouver-scoped, official host only). The credentials work and the API is
@@ -268,7 +280,8 @@ recording it:
 
 D-10 authorises **reading**. It does not authorise deception or defeating access controls,
 and none was needed: see §6.3.2. It covers **ActiveCommunities portal tenants only** — not
-PerfectMind (T8, still parked and still making zero network calls), not other ACTIVE
+PerfectMind (T8 — *at the time this was written*; T8 has since been built under the same
+D-10/D-11 authority and is scoped to its own two hosts, see §6.4), not other ACTIVE
 products, not any other barred host.
 
 **Preference on record:** if ACTIVE's official Activity Search API ever resumes carrying
@@ -468,6 +481,202 @@ are `class_program`. The taxonomy is not tuned for this source's vocabulary.
    portal; the shared staging environment's `source` rows still need the out-of-band
    `terms_status`/`robots_status` promotion described in §1 before anything ingests. That
    promotion is an operator action, deliberately not performed here.
+
+---
+
+### 6.4 PerfectMind / Xplor BookMe4 rec-portal (T8) — live-capable under D-10/D-11, and one honest zero
+
+Built by T8 (2026-07-31) under the SAME authority as T7: **decisions_register D-10**
+(Jon's direct, twice-stated, informed override of the vendor's Terms of Use prohibition on
+automated portal access) and **D-11** (the narrow read-only-POST-as-query compliance
+amendment). No new legal decision was made by this task. The risk is restated here
+unsoftened: we are reading a third party's portal against its published terms on an
+explicit business decision. Xplor would be within its stated terms to block us and we
+would have no recourse; the polite engineering below bounds the *operational* risk, not
+the *terms* risk.
+
+**§6.1's "requires headless render + anti-forgery token handling" is WRONG and is
+superseded by this section.** That assessment was written in Round 13 (2026-07-13) before
+anyone probed the real API. Measured 2026-07-30 and independently re-measured 2026-07-31:
+
+> `POST https://nvrc.perfectmind.com/23734/Clients/BookMe4BookingPagesV2/ClassesV2`
+> with **no cookie, no session, no `__RequestVerificationToken`, no browser-spoofed UA and
+> no headless render** — only the project's own identified `KidsFunBot/1.0` UA —
+> returns **HTTP 200 and ~130 KB of JSON.**
+
+The BookMe4 shell *does* embed an anti-forgery token and its own client *does* post it
+(`$.ajaxAntiForgeryPost`). The server does not require it. We therefore never send one:
+`buildFormBody()` is a **closed allow-list** of five field names, and
+`tests/adapters/perfectmind.test.ts` + `tests/compliance/no-bypass.test.ts` assert the
+absence on the wire rather than leaving it true by omission.
+
+The NextRec rebrand did **not** move tenant URLs — `nvrc.nextrec.com` and
+`richmondcity.nextrec.com` are NXDOMAIN; the `perfectmind.com` tenant hosts are current.
+
+#### Compliance: D-11 needed a narrow, real amendment (it did NOT already cover this)
+
+This was checked directly against `tests/compliance/no-bypass.test.ts` rather than
+assumed. The existing `READ_ONLY_POST_SEARCH` entry is **host-scoped** (QA finding A1 from
+T7, and rightly so), so PerfectMind's different hosts were **not** covered by it. One
+family was added — two hosts, two paths, one source file — and nothing else about the
+prohibition list moved. Three things were tightened at the same time, because adding a
+second family to a list that had only ever held one is exactly where a tripwire quietly
+loosens:
+
+- `isAllowedReadOnlyPost()` and `expectAllowedHost()` are now **family-scoped**. Without
+  this, every family added would have widened the check for every *existing* family, since
+  a request would only have had to satisfy *some* entry.
+- A new test asserts one family's host can never license another family's path, in both
+  directions, plus the near-miss hostname cases. **QA found the first version of that test
+  vacuous** — today's two families have disjoint host sets, so the pre-existing host+path
+  coupling already rejected every cross-family combination and deleting the family filter
+  left the suite green. `family` is now a **required** parameter (omitting it is a compile
+  error, not a silent no-op) and the matcher is exercised against a synthetic allow-list
+  where two families **share** a host, which is the only configuration in which family
+  scoping is load-bearing — and one the real list could grow into at any time.
+- A new test asserts `/BookMe4BookingPages/Courses` appears nowhere in the adapter. That
+  is an honesty guard, not a bypass guard: it is the endpoint that would let a future
+  change present registered courses as drop-in coverage.
+
+#### Measured contract: pagination is TWO NESTED LOOPS
+
+This took two passes to get right and the first one shipped a real bug. Both passes are
+recorded, because the wrong conclusion is the instructive part.
+
+| Finding | Evidence |
+|---|---|
+| **`page` is a 14-day STRIDE SELECTOR** (the vendor's `numberOfDaysToLoad: 14`) | `page=0` covers 07-31..08-13; `page=1` covers 08-14..08-27. |
+| **`after` is a cursor WITHIN a stride** | `page=0` no cursor → 54 records 07-31..08-05; `after=2026-08-05` → 58 records 08-06..08-11; `after=2026-08-11` → 15 records 08-12..08-13; `after=2026-08-13` → **0 records + `0001-01-01`**. |
+| **`"0001-01-01"` is END-OF-**STRIDE**, not end-of-data** | Stride 0 returns it at day 13 while `page=1` still holds 08-14..08-27 (50 + 56 + … records). |
+| `dateString` is **ignored** server-side | Absent, `2026-08-06` and `20260806` all returned the byte-identical payload. Windowing is entirely client-side. |
+| Corroborated against the vendor's own client | `ClassBookingV2Controller.js?07231003` posts `{calendarId, widgetId, page, dateString, values, after}`, sets `me.after = result.nextKey`, and increments `page` **only** on an empty response — i.e. "empty ⇒ this stride is done, move to the next". |
+
+**The bug the first build shipped, and how it was caught.** The first pass ablated `page`
+and `after` independently, saw that `page=1` returned 08-14..08-18 while `page=0` had
+ended at 08-05, and concluded `page` "silently drops" 08-06..08-13. That was backwards:
+the missing days are reachable, and only reachable, by continuing the *cursor* inside
+stride 0. Acting on the wrong conclusion, the client pinned `page: 0` — which capped every
+run at **day 13 of a declared 28-day window**, while reporting `truncated: false` and no
+warnings. Independent QA caught it by driving the real client against the live portal and
+noticing the returned span was exactly half the declared window; estimated loss was ≥209
+occurrences per run across NVRC's calendars.
+
+Neither loop alone is sufficient: cursor-only stops at day 13, stride-only drops
+everything past each stride's first ~55 records.
+
+**A second, smaller coverage bug rode in behind the first (QA C1).** With the walk fixed,
+the *window* was still off by one: `defaultWindow` declared an inclusive
+`[today, today + 28]` — 29 days — while two strides cover 28, so the final declared day
+was never fetched. QA measured 41 real occurrences lost on that one day. It rolls forward
+daily rather than accumulating, which is exactly why nothing noticed. Fixed by making the
+window span exactly `DEFAULT_WINDOW_DAYS` rather than buying a third stride (~50% more
+requests to gain one day at the far edge of a deliberately approximate horizon). Note that
+`worker/adapters/activenet/index.ts` carries the same off-by-one; it is harmless there,
+because ActiveNet fetches its whole calendar period in one request and windows
+client-side, so the extra day is simply kept rather than lost. The fix walks the cursor within a stride
+and the stride within a ceiling, resetting the cursor at each boundary, stopping after two
+consecutive empty strides. Crawl depth is **derived** from the ingest window
+(`stridesForWindow(28) = 2`) so the two can never drift apart again, and the run report
+now carries `stridesRequired` / `minStridesWalked` so under-coverage is visible rather than
+silent. Five mutations of this logic — pinning `page: 0`, treating the sentinel as
+end-of-data (in both its empty and data-bearing forms), failing to reset the cursor, and
+treating an empty batch as end-of-data — are each proven to fail the suite.
+
+#### Cost honesty: the price field is wrong on 100% of the calendar we sampled
+
+Same trap as ActiveNet, but total rather than partial. On NVRC's Open Gym calendar,
+**50 of 50** records carry `PriceRange: "No fee"` — and every one of them has `$3` in its
+own `EventName` and "Regular admission fees apply" in its `Details`. NVRC's own page ships
+JavaScript that rewrites the rendered `Event price No fee` label into "Regular admission
+rates apply": the vendor knows the field is wrong and patches it in the browser. So
+`PriceRange` can **never** produce `free` on its own; fee language anywhere in the listing
+wins, and `free` requires two independent corroborating signals.
+
+#### Age: better than expected, and deterministic
+
+The scoping pass expected to parse the display string `DisplayableRestrictionsForCourses`
+("Age: 8+"). The live payload is better than that: it carries **structured** `MinAge`,
+`MinAgeMonths`, `MaxAge`, `MaxAgeMonths` and `NoAgeRestriction`. The adapter reads those
+first and emits a canonical phrase that **T13's existing normaliser** (`worker/core/age.ts`)
+resolves — deliberate reuse, so there is one age convention in the codebase rather than
+two. Two vendor quirks are handled explicitly: `MinAgeMonths` is an *additional* months
+component (`7 y 12m` = 8 years), and `MaxAge: 0, MaxAgeMonths: 0` means *no maximum*, not
+a maximum of zero. **100% of the captured fixture resolves deterministically.**
+
+#### Coverage, as measured (not projected)
+
+| Tenant | Org / host | Status | Measured |
+|---|---|---|---|
+| **NVRC / North Vancouver** | `23734` · `nvrc.perfectmind.com` | **live-capable, staged OFF** | 12 categories; `**Drop-In Schedules` holds **9 calendars** (Art, Fitness Studio Workout, Indoor Playtime (Parent Participation), North Shore Neighbourhood House, Open Gym, Parkgate Society, Skate, Swim, Youth Services). Open Gym alone: **127 occurrences across stride 0** (07-31..08-13, 4 requests) plus **106+ more in stride 1** (08-14..08-27) — the stride-1 half is exactly what the first build silently missed. One calendar (North Shore Neighbourhood House) has an **empty `BookingLink`** and is expected to yield zero — flagged at runtime, not hidden. |
+| **Richmond** | `23650` · `richmondcity.perfectmind.com` | **ZERO drop-in coverage** | See below. |
+
+**G-T8-1 came back NULL, and that is reported plainly rather than papered over.**
+Richmond's only public widget is a **registration** widget. Its 8 categories hold 122
+calendars, of which the 22 `ClassesV2` can serve are **13 `*Registered Visits` facility
+calendars** (book-ahead, paid, adult/senior-skewed — yoga, cycle-fit, table tennis 55+,
+badminton 18+), **5** "Events and Seasonal Programs" (one each under 55+, Adults,
+Children, Preschoolers, Youth), 1 "Luncheons and Dinners", 1 "Wellness Clinics" and 2
+plant-sale calendars — 13+5+1+1+2 = 22. **No drop-in category exists on the tenant at
+all.** Richmond publishes its actual walk-in drop-in
+schedules (public swim, public skate, gym, drop-in fitness) as **PDFs on richmond.ca**.
+
+Search scope for the null result: 4 widget IDs probed (`15f6af07…` registration,
+`9f0e23da…` Cultural Centre All Programs, `83166e26…` invalid, plus enumeration of every
+`perfectmind.com` link on richmond.ca's schedules and fitness-schedules pages); the
+tenant's BookMe4 start page references only its own widget; and every BookingType-2
+calendar on the tenant was listed and checked. Richmond is therefore configured with
+`dropInCategoryNames: []` and `enabled: false`, and **cannot** live-fetch even when named
+in the env allow-list. It is **not** backfilled with registered visits or courses. If
+Richmond ever does publish a drop-in widget, `richmond.classes.registered-visits.json` is
+kept as a fixture precisely so the claim stays falsifiable.
+
+#### Gates and current state
+
+Triple-gated, same pattern as T7, **all three currently closed**:
+
+1. **config** — `tenant.enabled` **and** a non-empty `dropInCategoryNames` (Richmond fails
+   this permanently, by measurement).
+2. **env** — `KIDS_FUN_LIVE_PERFECTMIND=<tenantKey,...>`, **unset everywhere**.
+3. **DB** — `source.terms_status` / `robots_status` via `worker/core/terms-gate.ts`, still
+   `pending` for both PerfectMind rows.
+
+**Run length — MEASURED, and an earlier estimate here was wrong.** QA's first full live
+end-to-end run of the fixed adapter (2026-07-31) used **47 of 140 requests (34%) and took
+138.2s fetch-only (~2.3 min)**. An earlier version of this paragraph projected ~7 minutes
+and called NVRC the longest-running source on the project; both were wrong, because they
+assumed the request cap would be spent. The cap is a **runaway bound, not a budget** —
+~3x headroom is deliberate, since sizing it nearer the operating point would convert a
+future vendor change into a `RequestCapExceededError` instead of absorbing it. T7's
+Vancouver run (~14 min total) remains the longest.
+
+Long runs are safe here regardless, confirmed rather than assumed: no per-job wall-clock
+watchdog exists anywhere in the scheduler (only H4's per-request deadline) and production
+cadence is daily. The absence of scheduling jitter is a pre-existing, project-wide scaling
+note that would only bite at a source count this project is not near — not a T8 issue.
+
+**Live fetch was NOT enabled by this task, in staging or anywhere else.** The dev stream
+deliberately built to opt-in/dry-run-by-default and left enablement to the orchestrator,
+matching T7's own pattern. Everything measured above came from a bounded set of manual
+verification probes against the live portal (~20 requests total, spaced ≥2s, identified
+UA), not from an enabled worker run.
+
+**Coverage detection.** Two distinct health codes, deliberately not merged.
+`coverage_truncated` fires when a calendar's stride stopped on the page ceiling with the
+vendor's cursor still advancing — "cut off with data still arriving", unambiguously bad.
+`coverage_shortfall` fires when a walk ended on consecutive empty strides with part of the
+declared window never fetched — possibly a calendar that genuinely ended, possibly a real
+gap, and worth a human glance either way. Blurring them into one code would let the benign
+case train people to ignore the malignant one. The early-exit path also now emits a named
+warning instead of returning silently: an unreported short walk is the same
+looks-clean-over-a-partial-window signature as the original stride bug, merely relocated.
+(The two-empty-stride tolerance itself is load-bearing and was NOT reduced — NVRC's Skate
+Schedules has a genuinely empty stride 0 with all its records in stride 1.)
+
+**Breakage detection:** the BookMe4 asset build stamp (`?07231003`, re-measured
+2026-07-31) is pinned as a canary and raises `asset_build_drift` on the T15 health board;
+unrecognised payload keys raise `shape_drift`; a yield collapse against the trailing
+baseline raises `yield_collapse`; 403/429/cap/protocol failures map to their own codes.
+All are written through `worker/core/checkrun.ts` — the same machinery T7 uses, not a fork.
 
 ---
 
