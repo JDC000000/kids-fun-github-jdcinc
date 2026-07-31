@@ -39,8 +39,32 @@
 //     already treats it as "the ingestion default" — app/admin/qa-queue vocab);
 //   • STATUS_CLASS[needs_review] = 'hidden' (lib/search/filters/status.ts): the row is
 //     kept OUT of parent-facing results until a human reviews it — the conservative
-//     BR-05 posture, whereas 'manual_candidate' = 'expected' is still surfaced and is
-//     reserved for T14 dedup / T34 manually-entered leads, not auto-ingested rows.
+//     BR-05 posture, whereas 'manual_candidate' = 'expected' is still surfaced.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// G-T10-3 AMENDMENT (IR-08) — one sentence above is now WRONG, deliberately.
+//
+// The original text said 'manual_candidate' is "reserved for T14 dedup / T34 manually-
+// entered leads, not auto-ingested rows". IR-08 changes exactly that: an EDITORIAL /
+// aggregator source's ingested records must land as 'manual_candidate' — a LEAD awaiting
+// official-source verification — instead of ever being written as 'confirmed'. The
+// sentence is corrected rather than deleted so the change of intent is visible.
+//
+// Nothing is forked to do this. 'manual_candidate' already means precisely "a surfaced
+// lead that has not been verified", and every downstream treatment an editorial candidate
+// needs already exists and is already correct:
+//   • lib/search/filters/status.ts  STATUS_CLASS.manual_candidate = 'expected'  → never in
+//     the primary/confirmed result list; only the separate "expected" broadening section.
+//   • lib/search/rank.ts            STATUS_SCORE.manual_candidate = 0.2         → ranked
+//     below every live/confirmed state.
+//   • app/preview/_data/format.ts   renders it as UNVERIFIED, never as confirmed.
+//   • app/admin/qa-queue           REVIEW_STATES includes it, so a human can verify and
+//     promote it to 'confirmed' — which IS the "official-source verification" step.
+//   • worker/health/{stale,season}.ts both EXCLUDE it from their auto-demotion/
+//     inheritance lists, so an unverified lead is never silently relabelled.
+// The whole of G-T10-3 is therefore ONE decision at the write path (below) plus this
+// correction — not a second, parallel "editorial" pipeline.
+// ─────────────────────────────────────────────────────────────────────────────
 import type { Pool } from 'pg';
 import {
   cadenceAdherent,
@@ -146,6 +170,77 @@ export function scoreToLabel(score: number): ConfidenceLabel {
  *  and not manual_candidate. */
 export function statusForConfidence(label: ConfidenceLabel): 'confirmed' | 'needs_review' {
   return label === 'high' || label === 'medium' ? 'confirmed' : 'needs_review';
+}
+
+// ── the composed write-path status decision (BR-13 + IR-08 + Round 27) ────────
+
+/** Every status_state an ingested record may be written with. Nothing else is reachable. */
+export type IngestStatusState = 'confirmed' | 'needs_review' | 'manual_candidate';
+
+/**
+ * The authority tier whose records are LEADS, not statements of fact: editorial /
+ * aggregator listings (a "10 best things to do with kids" round-up, a what's-on blog).
+ * They may be right, but the official source has not been consulted, so they are never
+ * written as confirmed. IR-08 / TSD §5 row 11.
+ */
+export const CANDIDATE_AUTHORITY_TIER = 'editorial';
+
+export function isCandidateAuthorityTier(tier: string | null | undefined): boolean {
+  return tier === CANDIDATE_AUTHORITY_TIER;
+}
+
+export interface IngestStatusInput {
+  /** The BR-13 confidence label already computed for this record. */
+  confidenceLabel: ConfidenceLabel;
+  /** source.authority_tier for the owning source (official/editorial/partner/manual). */
+  authorityTier: string | null | undefined;
+  /** isTermsApprovedForProduction(source.terms_status) — the Round 27 cap. */
+  sourceTermsApproved: boolean;
+}
+
+/**
+ * THE single decision that turns a scored record into the status_state it is written
+ * with. Three gates compose here, in this order, and the order is the point: each one
+ * can only ever make the outcome MORE conservative than the one before it.
+ *
+ *   1. BR-13 confidence gate (statusForConfidence)
+ *        medium/high → 'confirmed'   ·   low/unscored → 'needs_review' (hidden)
+ *
+ *   2. IR-08 editorial-candidate gate  ← G-T10-3, the only new rule
+ *        an EDITORIAL-tier source's would-be-'confirmed' record becomes
+ *        'manual_candidate': surfaced as an explicitly UNVERIFIED lead, never as fact,
+ *        and promotable to 'confirmed' only by the admin QA queue's human verification.
+ *        It does NOT touch a 'needs_review' verdict, because 'needs_review' is HIDDEN
+ *        and 'manual_candidate' is VISIBLE-but-unverified — promoting a record the
+ *        confidence gate just rejected into visibility would invert BR-05. So a
+ *        low-confidence editorial record stays hidden, which is strictly safer and
+ *        still satisfies "never rendered as confirmed".
+ *        Note this is tier-scoped, not family-scoped: 'partner' is deliberately NOT
+ *        included. An authorised organizer feed (G-T10-2) is a FIRST-PARTY statement by
+ *        the people running the event; an editorial round-up is a third party's summary
+ *        of someone else's event. Only the latter is a lead.
+ *
+ *   3. Round 27 terms cap (the application-layer counterpart of migration 0021's
+ *      write-time trigger)
+ *        a source that is not terms-approved for production may not surface AT ALL, so
+ *        both 'confirmed' AND 'manual_candidate' are held down to 'needs_review'.
+ *        'manual_candidate' is included because it is a VISIBLE class ('expected'), and
+ *        the incident this cap exists to prevent was pending-source rows becoming
+ *        user-visible — which manual_candidate would also be.
+ *
+ * Pure and total: same inputs → same output, every combination defined. The full matrix
+ * is asserted in tests/ingestion/editorial-candidate.test.ts.
+ */
+export function statusForIngestedRecord(input: IngestStatusInput): IngestStatusState {
+  const byConfidence = statusForConfidence(input.confidenceLabel);
+
+  const withCandidateGate: IngestStatusState =
+    byConfidence === 'confirmed' && isCandidateAuthorityTier(input.authorityTier)
+      ? 'manual_candidate'
+      : byConfidence;
+
+  if (!input.sourceTermsApproved && withCandidateGate !== 'needs_review') return 'needs_review';
+  return withCandidateGate;
 }
 
 // ── whole formula ──────────────────────────────────────────────────────────────

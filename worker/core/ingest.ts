@@ -16,7 +16,12 @@ import { resolveVenue } from './venue';
 import { upsertOccurrence } from './upsert';
 import { recordProvenance } from './provenance';
 import { classifyPrimaryCategory, resolvePrimaryCategoryId, applyOccurrenceCategoryTags } from './taxonomy';
-import { computeConfidence, loadSourceConfidenceContext, statusForConfidence } from './confidence';
+import {
+  computeConfidence,
+  loadSourceConfidenceContext,
+  statusForConfidence,
+  statusForIngestedRecord,
+} from './confidence';
 import { isTermsApprovedForProduction } from './terms-gate';
 import { parseAgeText, computeAgeBandMatches, loadAgeBands, upsertOccurrenceAge } from './age';
 
@@ -35,6 +40,13 @@ export interface IngestSummary {
   suitabilityTagsWritten: number;
   /** G-T13-6: occurrences the BR-13 confidence gate routed to needs_review (low/unscored). */
   lowConfidenceFlagged: number;
+  /**
+   * G-T10-3 (IR-08): occurrences written as `manual_candidate` — an EDITORIAL-tier
+   * source's records, entering as unverified leads rather than confirmed fact. Counted
+   * so an editorial run is legible on the health board instead of looking like a run
+   * that confirmed nothing.
+   */
+  editorialCandidates: number;
   errors: string[];
 }
 
@@ -69,6 +81,7 @@ export async function ingestSource(
   let secondaryCategoriesWritten = 0;
   let suitabilityTagsWritten = 0;
   let lowConfidenceFlagged = 0;
+  let editorialCandidates = 0;
 
   try {
     const raw = await adapter.fetch();
@@ -162,11 +175,18 @@ export async function ingestSource(
         });
         const confidenceStatus = statusForConfidence(confidence.label);
         if (confidenceStatus === 'needs_review') lowConfidenceFlagged += 1;
-        // Terms cap (Round 27): a non-approved source can never surface 'confirmed';
-        // hold it at needs_review. Confidence accounting above is left intact so
-        // lowConfidenceFlagged keeps meaning "the BR-13 gate held this", not "terms did".
-        const statusState =
-          confidenceStatus === 'confirmed' && !sourceTermsApproved ? 'needs_review' : confidenceStatus;
+        // The composed write-path decision: BR-13 confidence gate, then IR-08's
+        // editorial-candidate gate (G-T10-3), then the Round 27 terms cap. All three
+        // live in worker/core/confidence.ts's statusForIngestedRecord() so the
+        // precedence between them is stated once and unit-testable without a DB.
+        // The confidence accounting above is left intact, so lowConfidenceFlagged keeps
+        // meaning "the BR-13 gate held this" — not "terms did" or "editorial did".
+        const statusState = statusForIngestedRecord({
+          confidenceLabel: confidence.label,
+          authorityTier: confidenceCtx.authorityTier,
+          sourceTermsApproved,
+        });
+        if (statusState === 'manual_candidate') editorialCandidates += 1;
 
         const { occurrenceId, created } = await upsertOccurrence(pool, series.seriesId, record, {
           primaryCategoryId,
@@ -228,6 +248,7 @@ export async function ingestSource(
     secondaryCategoriesWritten,
     suitabilityTagsWritten,
     lowConfidenceFlagged,
+    editorialCandidates,
     errors,
   };
 }

@@ -71,6 +71,54 @@ function gradeToMonths(g: string): number {
   return (grade + 5) * YEARS; // start age of that grade
 }
 
+// ── free-text age WORDING extraction (the step BEFORE parseAgeText) ───────────
+//
+// parseAgeText() resolves wording that has already been isolated. Pulling that
+// wording OUT of a prose description is a separate job, and it belongs here rather
+// than inside an adapter: G-T10-2 needed it for Eventbrite descriptions and would
+// otherwise have authored a THIRD private copy of the same idea.
+//
+// KNOWN DUPLICATION, recorded rather than silently widened: two adapters already
+// carry their own tuned variants —
+//   • worker/adapters/library/index.ts   (AGE_RANGE_RE + AGE_HINT_RE) — the pair
+//     this helper is modelled on, for the same reason: BiblioCommons descriptions
+//     are free prose in which an explicit "ages 5-9" should beat a bare "family".
+//   • worker/adapters/citycalendar/index.ts (AGE_HINT_RE) — deliberately DIFFERENT
+//     (narrower 30-char window, includes seniors/adults) because the Trumba feed's
+//     structured "Audiences" field is preferred first and the regex is only a
+//     fallback for the rare item without one.
+// They are NOT interchangeable today, so this helper does not rewrite them — that
+// consolidation is a real, separately-QA'd change to two other adapters' behaviour
+// and is logged as a follow-up, not smuggled into this task.
+
+/**
+ * An explicit numeric age/grade range — the strongest signal, preferred when present.
+ * Widened by one alternation over the library adapter's version: `aged` as well as
+ * `age`/`ages`, because "children aged 3-6" is ordinary prose in an organizer-written
+ * Eventbrite description and the narrower pattern silently loses it to a bare "family"
+ * keyword elsewhere in the same text. Verified against the fixture in
+ * worker/adapters/eventbrite/__fixtures__/.
+ */
+const AGE_RANGE_RE = /(?:age[sd]?|grades?)\s*[\dK][^.<\n]{0,40}/i;
+/** An audience keyword — the weaker fallback when no numeric range is stated. */
+const AGE_KEYWORD_RE =
+  /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers)?|kindergarten|family|families|all ages)[^.<\n]{0,40}/i;
+
+/**
+ * Pull the age WORDING out of free prose, preferring an explicit numeric range over an
+ * audience keyword. Returns undefined when the text says nothing about age — which is a
+ * neutral signal (no age claim), not a parse failure, and is what the confidence
+ * formula's `ageResolved: null` case expects. Feed the result to parseAgeText().
+ */
+export function extractAgeWording(...texts: Array<string | null | undefined>): string | undefined {
+  const hay = texts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  if (!hay) return undefined;
+  const range = AGE_RANGE_RE.exec(hay);
+  if (range) return range[0].trim();
+  const keyword = AGE_KEYWORD_RE.exec(hay);
+  return keyword ? keyword[0].trim() : undefined;
+}
+
 /**
  * Deterministically resolve free-text age wording into an inclusive-min /
  * exclusive-max month range. Returns { resolved:false } (null bounds) when the

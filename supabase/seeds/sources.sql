@@ -45,7 +45,17 @@ VALUES
   ('seasonal_watcher', 'Stanley Park Miniature Railway status page', 'official', 'semi', '7 days', '1 day'),
   ('seasonal_watcher', 'Burnaby Central Railway status page',        'official', 'semi', '7 days', '1 day'),
   ('seasonal_watcher', 'Cypress Mountain tubing/sliding status page','official', 'semi', '7 days', '1 day'),
-  -- Adapter C — City calendars + organizer-scoped Eventbrite (family 10, P0/P1)
+  -- Adapter C — City calendars + organizer-scoped Eventbrite (family 10, P0/P1).
+  -- T10 / G-T10-2 (2026-07-31): the Eventbrite connector is now BUILT
+  -- (worker/adapters/eventbrite/) and provably organizer-scoped, but ZERO organizers are
+  -- authorised, so this row stays a placeholder and resolves to NO adapter — deliberately,
+  -- the same honest zero as Science World above. Eventbrite has no anonymous read path
+  -- (every call needs an organizer's OAuth authorisation or private token) and KIDS FUN
+  -- holds no Eventbrite credential. Its own anonymous area-wide search endpoint was
+  -- retired in 2019/2020, so the broad query IR-03 forbids no longer exists to make.
+  -- authority_tier 'partner', NOT 'editorial': an organizer describing their OWN event is
+  -- first-party, so G-T10-3's editorial → manual_candidate gate correctly does not apply.
+  -- Onboarding a real organizer is a DATA change — see docs/source-register.md §6.5.
   ('city_calendar',      'City of Vancouver events calendar', 'official', 'auto',    '1 day', NULL),
   ('eventbrite_organizer','Organizer-scoped Eventbrite (placeholder — none configured yet)', 'partner', 'partner', '1 day', NULL)
 ON CONFLICT (family, name) DO NOTHING;

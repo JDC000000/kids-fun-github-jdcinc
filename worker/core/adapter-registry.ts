@@ -9,6 +9,7 @@ import { ActiveNetAdapter, ACTIVENET_TENANTS } from '../adapters/activenet';
 import { PerfectMindAdapter, PERFECTMIND_TENANTS } from '../adapters/perfectmind';
 import { LibraryAdapter, LIBRARY_SYSTEMS } from '../adapters/library';
 import { CityCalendarAdapter, CITY_CALENDARS } from '../adapters/citycalendar';
+import { EventbriteAdapter, EVENTBRITE_ORGANIZERS } from '../adapters/eventbrite';
 import { VenueAdapter, LAUNCH_VENUES } from '../adapters/venue';
 
 export interface SourceRegistryRow {
@@ -36,6 +37,14 @@ export function buildAdapterRegistry(): Map<string, Adapter> {
   }
   for (const calendar of CITY_CALENDARS) {
     registry.set(key(calendar.sourceFamily, calendar.sourceName), new CityCalendarAdapter(calendar));
+  }
+  // G-T10-2. EVENTBRITE_ORGANIZERS is empty today — no organizer has authorised
+  // KIDS FUN (see worker/adapters/eventbrite/config.ts), so this registers NOTHING and
+  // the seeded `eventbrite_organizer` placeholder source correctly resolves to null,
+  // exactly as Science World's unbuilt venue row does. The loop exists so onboarding an
+  // authorised organizer stays a DATA change (one config entry) rather than a code one.
+  for (const organizer of EVENTBRITE_ORGANIZERS) {
+    registry.set(key(organizer.sourceFamily, organizer.sourceName), new EventbriteAdapter(organizer));
   }
   for (const venue of LAUNCH_VENUES) {
     registry.set(key(venue.sourceFamily, venue.sourceName), new VenueAdapter(venue));

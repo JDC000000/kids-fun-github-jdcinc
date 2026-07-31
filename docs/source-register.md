@@ -156,7 +156,7 @@ this round.
 | `venue_html` / Vancouver Aquarium, Science World | pending, fixture-only | Semi-automated venue HTML; separate terms review needed |
 | `seasonal_watcher` / Stanley Park Miniature Railway, Burnaby Central Railway, Cypress Mountain | pending, fixture-only | Status-page watchers |
 | `city_calendar` / (other municipalities) | n/a | Only Vancouver is live |
-| `eventbrite_organizer` / placeholder | pending, `partner` tier | **partner-required** — none configured |
+| `eventbrite_organizer` / placeholder | **adapter BUILT (T10 / G-T10-2), zero organizers authorised** | **partner-required** — none configured. Connector is complete and provably organizer-scoped; it stays off because no organizer has authorised KIDS FUN and Eventbrite has no anonymous read path. See §6.5 |
 
 ### 6.1 Future sources — pre-enablement checklist (informs the held T7/T8 decision)
 
@@ -680,6 +680,81 @@ All are written through `worker/core/checkrun.ts` — the same machinery T7 uses
 
 ---
 
+### 6.5 Organizer-scoped Eventbrite (T10 / G-T10-2) — built, provably scoped, ZERO organizers authorised
+
+**Status: an honest zero, of the same kind as Richmond (§6.4) and West Vancouver (§6.3).**
+The adapter family `worker/adapters/eventbrite/` is complete, tested and wired into the
+adapter registry. It reads nothing today, and cannot, because nobody has authorised it.
+
+**What was checked, and what was found (2026-07-31).**
+
+1. **Eventbrite has NO anonymous read path.** Every organizer-scoped call requires either
+   an OAuth app plus that organizer's explicit authorisation, or a private token the
+   organizer hands over. There is no public, credential-free endpoint that returns another
+   party's events.
+2. **The anonymous area-wide search endpoint the acceptance criterion forbids no longer
+   exists.** `GET /v3/events/search/` — the one that accepted `location.address`,
+   `location.within`, `location.latitude/longitude` — was removed from public access on
+   **2019-12-12** and began denying all requests on **2020-02-20**. Eventbrite's own
+   migration guidance points callers at `GET /v3/organizations/:organization_id/events/`,
+   which is exactly the organizer-scoped endpoint IR-03 requires. For anyone wanting broad
+   multi-creator coverage, Eventbrite directs them to apply to its **distribution partner
+   programme** — a business relationship, not an API call.
+3. **KIDS FUN holds no Eventbrite credential of any kind.** The project credential store
+   was checked directly (connector list only — no secret values read): there is no
+   Eventbrite connector. This matches what `supabase/seeds/sources.sql` and §6 of this
+   register have said since they were written ("partner-required — none configured").
+
+**Therefore G-T10-2 shipped the code half and correctly did NOT ship a live feed.** No
+organizer feed was invented to demo against, and no real organizer was approached for data
+— that is Jon's call, not an engineering one.
+
+**Two ways to make it live, both business steps:**
+- a named partner organizer authorises KIDS FUN directly and provides a token; or
+- Eventbrite's distribution-partner programme approves the project.
+
+Once either lands, onboarding is a **data** change: one entry in
+`worker/adapters/eventbrite/config.ts`, one `source` row, the token in the env var that
+entry names, and `KIDS_FUN_LIVE_EVENTBRITE=<key>` — plus a `terms_status`/`robots_status`
+decision recorded here. No new code.
+
+**How the organizer-scoping guarantee is made structural, not promised.** IR-03 says the
+connector must only pull configured organizer feeds and that *no anonymous area-query path
+exists* — "exists", not "is used". Four mechanisms, so no single edit undoes it:
+
+| Mechanism | Where | What it guarantees |
+|---|---|---|
+| No URL parameter anywhere | `client.ts` | Callers pass an organizer CONFIG, never a URL. The organizer id is interpolated into a PATH SEGMENT, so the endpoint cannot return another organizer's events |
+| Closed query allow-list | `client.ts` `ALLOWED_QUERY_PARAMS` | The builder iterates the ALLOW-LIST, not the caller's object, so `location.*` / `q` / `within` / `categories` are unreachable rather than merely unused |
+| Runtime tripwire on the final URL | `client.ts` `assertOrganizerScopedUrl()` | Production code (not a test) that throws unless host, path shape, organization id and every parameter check out. Fails closed at runtime, not just red in CI |
+| Compliance suite | `tests/compliance/eventbrite-organizer-scope.test.ts` (71 tests) | Behavioural (spied fetch) + structural (source read from disk, comments stripped, scanned for area-query and bypass fingerprints) + a self-check proving each scanner actually bites |
+
+**Four independent gates keep it off**, any one of which means zero network activity:
+config entry with `enabled: true` · the `KIDS_FUN_LIVE_EVENTBRITE` env allow-list · the
+organizer's token present in its configured env var · the DB terms/robots gate enforced
+inside `politeFetch`. Today gate 1 fails (the list is empty) and gate 3 has nothing to
+satisfy it.
+
+**On the `Authorization` header — a NAMED narrowing, recorded here on purpose.**
+`tests/compliance/no-bypass.test.ts` bans `Authorization` outright for every adapter in its
+`ADAPTER_SOURCES` list, correctly: those adapters read PUBLIC pages, where a credential
+could only mean logging in as somebody to reach content we were not offered. This family is
+the opposite case by definition — an organizer-granted bearer token is the *only* way to
+honour "organizer-owned/authorized feeds only". Rather than quietly omitting the family
+from that file's scan, its own compliance suite **re-runs every prohibition from it**
+(CAPTCHA · password · Cookie · `credentials:'include'` · headless navigation/library ·
+checkout/cart · anti-forgery token · POST · PUT/PATCH/DELETE) and narrows exactly one item:
+the `Authorization` header, permitted only in `client.ts`, only as `Bearer ${token}` read
+from an env var, with the token proven absent from every URL. Coverage is therefore
+complete and the single thing that moved is visible in both files.
+
+**Not yet verified against a live response.** The payload types and the fixture in
+`worker/adapters/eventbrite/__fixtures__/` are transcribed from Eventbrite's published API
+documentation, not captured from a real call — because no real call has ever been possible.
+Re-verify field-by-field the first time an organizer is onboarded.
+
+---
+
 ## 7. Flags for human review (‹L3› — not silently decided)
 
 - **F-1 (medium) — Politeness primitives not wired into the live adapter fetch path.**
@@ -702,6 +777,30 @@ All are written through `worker/core/checkrun.ts` — the same machinery T7 uses
   the production `source` rows for VPL, RPL, and City-of-Vancouver actually read
   `terms_status ∈ {allowed, summarise_only}` + `robots_status = allowed`** — I could not
   read the production DB from the CI/audit environment.
+
+- **F-4 (info, needs ratification not investigation) — G-T10-3's implementation is
+  deliberately STRICTER than the literal text of its own acceptance criterion.** Registered
+  here, at QA's request (T10 finding F5), the same way G-T10-2's `Authorization` narrowing is
+  registered in §6.5 — a deviation that lives only in a code comment is not registered.
+  - **The AC text says:** "editorial/aggregator items enter as `manual_candidate`", and
+    verifies "an editorial item lands as `manual_candidate`, absent from confirmed results."
+  - **What was built:** an editorial-tier record that the BR-13 confidence gate would have
+    made `confirmed` becomes `manual_candidate` — the AC's case exactly. But an editorial
+    record the confidence gate already rejected stays `needs_review`, *not*
+    `manual_candidate`.
+  - **Why.** `needs_review` is `hidden`; `manual_candidate` is `expected`, i.e. user-visible
+    as an unverified lead (`lib/search/filters/status.ts`). Applying the AC's sentence
+    literally would therefore *promote* a record BR-05 had just held back into visibility —
+    inverting the safety gate in the name of satisfying a status label. The editorial gate
+    only ever REPLACES a would-be-`confirmed` verdict; it never overrides a stricter one.
+    Both readings satisfy "never rendered confirmed"; only this one also satisfies BR-05.
+  - **Independently reviewed:** QA derived the full 40-cell (confidence × tier × terms)
+    matrix empirically and concurred, recommending the **AC text** be amended to match the
+    implementation rather than the implementation changed. That amendment is a scope-doc
+    edit and is **not** made here — flagged for whoever owns
+    `kids-fun-scope-to-task-v1.1.md`.
+  - **No investigation needed; this is a ratification item.** Asserted exhaustively in
+    `tests/ingestion/editorial-candidate.test.ts`.
 
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source
