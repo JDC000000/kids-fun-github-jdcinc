@@ -87,6 +87,10 @@ export const REQUESTS_PER_MINUTE_BY_FAMILY: Record<string, number> = {
   library: 20,
   library_bibliocommons: 20,
   library_communico: 20,
+  // NVDPL generic RSS (D-12): a single GET of one ~120 KB document per run — the lightest
+  // live source in the project. Listed explicitly rather than inherited from the default
+  // so this table stays the one place the whole crawl footprint is visible.
+  library_generic_rss: 20,
   seasonal: 10, // status pages: gentler, low-value-change
   seasonal_watcher: 10,
   // Museum/attraction HTML pages: one or two GETs per venue-run, so the default floor

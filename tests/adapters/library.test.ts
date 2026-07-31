@@ -126,6 +126,13 @@ describe('Library adapter scaffold (G-T9-1/2)', () => {
       feedBaseUrl: 'https://gwonly.bibliocommons.com/events',
       gatewayEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/gwonly/events',
       liveEventsLimit: 20,
+      // `liveCapable` is REQUIRED as of the NVDPL/D-12 change (2026-07-31). The live gate
+      // used to read `platform === 'bibliocommons'`, which meant any object with that
+      // platform string could live-fetch if the env named it. It now requires an explicit
+      // per-system declaration that a reviewed live path exists — strictly fail-closed, and
+      // the reason this synthetic system has to opt in here. Not a weakened assertion: the
+      // test still proves the gateway parser works, it just has to say so out loud.
+      liveCapable: true,
     };
     process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'gwonly';
     const fetchMock = vi.fn(async () => ({

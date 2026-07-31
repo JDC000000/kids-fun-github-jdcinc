@@ -12,6 +12,11 @@ describe('source→adapter registry (G-T5/G-T7-G-T9)', () => {
     expect(resolveAdapterForSourceRow({ family: 'perfectmind', name: 'City of Richmond PerfectMind' }, registry)?.family).toBe('perfectmind');
     expect(resolveAdapterForSourceRow({ family: 'library_bibliocommons', name: 'Richmond Public Library BiblioEvents' }, registry)?.family).toBe('library');
     expect(resolveAdapterForSourceRow({ family: 'library_communico', name: 'Coquitlam Public Library Communico' }, registry)?.family).toBe('library');
+    // NVDPL (D-12): a new tenant needed NO registry code — buildAdapterRegistry iterates
+    // LIBRARY_SYSTEMS, so the config entry plus a seed row is the whole wiring. The name
+    // must match supabase/seeds/sources.sql EXACTLY or the source silently resolves to no
+    // adapter and never ingests, which is why it is asserted here rather than assumed.
+    expect(resolveAdapterForSourceRow({ family: 'library_generic_rss', name: 'North Vancouver District Public Library Events RSS' }, registry)?.family).toBe('library');
     // T11: venue_html sources now resolve to the VenueAdapter (Round 22 / Task LL).
     expect(resolveAdapterForSourceRow({ family: 'venue_html', name: 'H.R. MacMillan Space Centre' }, registry)?.family).toBe('venue_html');
     expect(resolveAdapterForSourceRow({ family: 'venue_html', name: 'Vancouver Aquarium' }, registry)?.family).toBe('venue_html');

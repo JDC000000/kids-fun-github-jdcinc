@@ -153,6 +153,7 @@ this round.
 | `activenet` / District of West Vancouver | **excluded — ZERO drop-in data** | Portal live, online-calendar module empty. See §6.3 |
 | `perfectmind` / NVRC (North Vancouver) | **live-capable under D-10/D-11, staged OFF** | Drop-in confirmed: 9 calendars. See §6.4 |
 | `perfectmind` / City of Richmond | **excluded — ZERO drop-in data** | Registration widget only; drop-in published as PDFs. See §6.4 |
+| `library_generic_rss` / **NVDPL (North Vancouver District Public Library)** | **live-capable under D-12, staged OFF** | Public RSS feed, 97 items, **46 emitted / 47 kid-relevant** — but its **robots.txt is UNREADABLE**. See §6.5 |
 | `venue_html` / Vancouver Aquarium, Science World | pending, fixture-only | Semi-automated venue HTML; separate terms review needed |
 | `seasonal_watcher` / Stanley Park Miniature Railway, Burnaby Central Railway, Cypress Mountain | pending, fixture-only | Status-page watchers |
 | `city_calendar` / (other municipalities) | n/a | Only Vancouver is live |
@@ -680,6 +681,175 @@ All are written through `worker/core/checkrun.ts` — the same machinery T7 uses
 
 ---
 
+### 6.5 NVDPL library RSS (`library_generic_rss`) — live-capable under D-12, with the robots.txt problem stated plainly
+
+**Source:** `https://nvdpl.events.mylibrary.digital/rss` — HTTP 200, `application/rss+xml`,
+~117 KB, **97 items**, unauthenticated, no API key, no query parameters.
+**Verified firsthand 2026-07-31** by the implementing stream (one GET, identified bot UA),
+independently of the scoping pass that found it.
+
+#### 6.5.1 robots.txt: UNREADABLE. Stated without softening.
+
+**`nvdpl.events.mylibrary.digital/robots.txt` returns HTTP 403 behind a Cloudflare managed
+challenge.** We do not know what it says. We cannot know what it says without solving a bot
+challenge, which this project does not do.
+
+Under this project's **own T11 precedent** — Vancouver Aquarium was excluded as fixture-only
+because `vanaqua.org/robots.txt` returned an Akamai "Access Denied" — **an unreadable
+robots.txt is FAIL-CLOSED, not cleared.** That is still the project's default, and this entry
+does not change it.
+
+**What cleared NVDPL specifically: decision record D-12, an explicit human override.** Jon
+was asked directly (routed as an ‹L3› decision, not self-approved in-project) and personally
+accepted this risk for **NVDPL by name**. His words, relayed by the operator: *"if we have new
+solutions or ideas, let's try it. update the TSD memory and other documents. test it and
+report against it."*
+
+**The affirmative argument the decision rested on** — recorded because it is an argument, not
+a clearance, and the distinction is the reason this was routed at all: **an RSS feed is by
+definition published for automated syndication.** That is the same
+"intended-for-syndication" bar that made the BiblioCommons library feeds (§2.1) and the
+Trumba city calendar ToS-tractable in the first place. A feed exists to be machine-read; the
+`/rss` path answers 200 to an identified bot with no challenge, while every HTML path on the
+same host (`/events`, `/events/ical`, `/events/feed`) answers 403. The publisher's own
+behaviour distinguishes the feed from the site.
+
+**Scope — read this narrowly, because it was granted narrowly:**
+
+- It applies to **NVDPL only, by name**.
+- It does **NOT** reopen the **T11 Vancouver Aquarium exclusion** (§6, still correctly
+  fixture-only).
+- It does **NOT** establish "an unreadable robots.txt is acceptable" as project policy. Any
+  future source with this same fact pattern needs **its own routed human decision**.
+- It authorises **fetching this feed**. It discharges nothing else — see §6.5.2.
+
+#### 6.5.2 What the override does NOT excuse (compliance work done anyway)
+
+- **No auth, no cookie, no session — proved, not asserted.** One plain GET, no
+  `Authorization`, no `Cookie`, no `credentials: 'include'`, no body, identified
+  `KidsFunBot` UA (never a browser spoof). **The host DOES set a session cookie**
+  (`set-cookie: PHPSESSID=…; path=/; secure; HttpOnly`, observed live) — we neither store
+  nor return it, and `tests/compliance/no-bypass.test.ts` asserts two consecutive fetches
+  are byte-identical with no `Cookie` header, so no session can accumulate across runs.
+- **Rate-limited through the SHARED seam.** `politeFetch` (`worker/health/policy.ts`), not a
+  fork: per-source rate limiter, 403/429 breaker, conditional headers, the H4 request
+  deadline. Registered at `library_generic_rss: 20/min` (a 3 s floor) in the same table as
+  every other family. Footprint: **one GET of one document per daily tick** — the lightest
+  live source in the project.
+- **No headless browser, no challenge-solving, no HTML scraping.** Deliberately no
+  per-event page fetch even though that is where a venue would be richest: those paths are
+  Cloudflare-challenged, and fetching them would be exactly the escalation D-12 did not
+  authorise. Venue is recovered from the RSS payload alone.
+- **Attribute-and-summarise unchanged.** Every record carries `sourceUrl`; no editorial body
+  field exists to fill (§4).
+
+#### 6.5.3 The data — measured on our own pull, correcting the scoping figure upward
+
+| Measure | Value (2026-07-31, our own capture) |
+|---|---|
+| Items in feed | **97** (scoping pass saw 99 hours earlier — rolling ~1-month window, expected drift) |
+| Carry the `Date/Time` field | **97 / 97 (100%)** |
+| Carry it in the SINGLE-DATE shape | **96 / 97** — see §6.5.4 |
+| **Classify kid-relevant** | **47 / 97 (48%)** |
+| **Emitted as occurrence records** | **46** (the 47th is a multi-day range — §6.5.4) |
+| Not kid programming | 49 (Tech Cafés, Pins & Needles, Philosophy Gym, Writer's Group, Discussion Lounges, Discover: 3D Printing/Cricut) |
+| Service notices, not events | 1 (`Library Closure: BC Day`) |
+| Unparseable dates | **0** |
+
+**⚠️ On the 31% figure: do not treat it as this source's kid-relevant rate, and do not treat
+48% as contradicting it.** The scoping pass measured **31% (31/99)** against a 12-name
+keyword list. That was a **conservative floor, not a ceiling.** Re-measuring with a
+classifier reviewed item-by-item against the actual feed admits a further ~16 items that are
+unambiguously kid programming and were simply not on that list: *Summer Reading Rave* (×5),
+*Summer Fun at Parkgate* (×2), *Koala Koders: Scratch — Ages 9-11* (×2), *Toddlertime* (×2),
+*Intro to Dungeons and Dragons (Tweens)*, *Camp Parkgate Stuffy Sleepover*, *Summer Reading
+Club Celebration* (×2), *Family Fun Day*. **Both numbers are recorded here on purpose** so
+nobody later reads a single number as gospel — and so nobody assumes the whole feed is kid
+programming, which is the failure mode this row exists to prevent. The classifier is
+`classifyKidRelevance()` in `worker/adapters/library/generic-rss.ts`; its vocabulary is
+documented inline with the measurement each token is justified by.
+
+**Structurally:** NVDPL is the library family's **4th tenant** and the first on a new
+`generic_rss` platform handler. Adding it needed **no change to
+`worker/core/adapter-registry.ts`** — the registry iterates `LIBRARY_SYSTEMS`, so the wiring
+was a config entry plus a seed row, which is the family's original design premise holding up.
+
+#### 6.5.4 Payload traps, each one measured (and two the scoping pass missed)
+
+The feed is **materially thinner** than BiblioCommons: every item carries exactly `title`,
+`link`, `guid`, `pubDate`, `description`, `media:content`. **No** branch, age, cost,
+cancellation or location element. Hence:
+
+1. **The event date is FREE TEXT inside `description`** —
+   `<strong>Date/Time:</strong> Tue, 4 Aug 2026, 10:30am - 11:00am`. Deterministic parser,
+   rejecting rather than guessing on anything off-shape (impossible dates included: `31 Feb`
+   is refused, not silently rolled to 3 March).
+2. **`pubDate` is the PUBLICATION date, not the event date.** **Measured: 96 of 97 items
+   carry a pubDate on a different calendar day from the event** (spread March→July for an
+   August window). Using it would have produced a wrong date for ~99% of records while the
+   run looked perfectly healthy. It is retained as provenance only, and an item with no
+   parseable description date is **dropped, never back-filled from `pubDate`**.
+3. **Local wall clock, no offset.** Converted via the shared DST-correct
+   `worker/core/time.ts` (`zonedLocalToUtcIso`, `America/Vancouver`) — reused, not
+   reimplemented. Asserted for both PDT and PST so a fixed offset cannot pass.
+4. **No structured venue.** Resolved from the payload alone, strongest evidence first: the
+   feed's own trailing address block (4/97 items, e.g. Viewlynn Park) → a curated location
+   name in the title → the same in the description prose. **Resolution rate on the live
+   pull: 14 of 46 records** to a specific location; the other **32 degrade gracefully** to
+   the system as venue with municipality `North Vancouver` and **no address and no
+   coordinates** — an honest gap, not a fabricated pin. **The curated table carries NO
+   coordinates at all**, deliberately: they would have to come from a geocoder (never
+   called) or from memory (fabrication). Geo for NVDPL branches is a job for the venue-geo
+   constant workstream against a verified dataset. A test pins the absence so adding
+   unverified coordinates is a visible change.
+5. **NOT EVERY ITEM IS AN EVENT — missed by the scoping pass.** `Library Closure: BC Day`
+   publishes a valid `Date/Time` ("Mon, 3 Aug 2026, 10:00am - 6:00pm") and would ingest as
+   an 8-hour drop-in activity on a statutory holiday when the library is shut. Filtered on a
+   title-anchored notice pattern, and counted.
+6. **THE DATE SHAPE IS NOT UNIFORM — the scoping pass's "100% one consistent shape" is
+   wrong, and this was found by re-measuring rather than trusting it.** 100% carry the
+   *field*; **96/97 carry that *shape***. `Kindergarten Book Bags` publishes a **multi-day
+   range with a second full date on the end side** —
+   `Mon, 24 Aug 2026, 10:00am - Sat, 29 Aug 2026, 5:00pm`. Both forms are parsed; the
+   multi-day form is a registration *window*, not a single occurrence, so it is **excluded
+   from records and counted** (`multiDayRanges`) rather than published as a 143-hour
+   activity or silently dropped.
+
+#### 6.5.5 Gates and current state
+
+**Triple-gated, all three currently CLOSED:**
+
+1. **config** — `liveCapable: true` on the system entry. *(This replaced a
+   `platform === 'bibliocommons'` check that conflated "a parser exists" with "this tenant is
+   cleared" — a fail-closed tightening: Coquitlam, and any synthetic config, can no longer
+   live-fetch merely by being named in the env var.)*
+2. **env** — `KIDS_FUN_LIVE_LIBRARY_SYSTEMS` must name `nvdpl`. **Unset everywhere**;
+   `.env.example` documents it commented-out with the D-12 caveat attached.
+3. **DB** — `source.terms_status` / `robots_status` via `worker/core/terms-gate.ts`, both
+   `pending` for the NVDPL row. Enforced inside `politeFetch` independently of 1 and 2.
+
+Default posture is fixture-only with **zero network calls**, asserted behaviourally. The
+fixture is a real 4-item slice of the live feed run through the same parser, so the
+no-network path cannot drift from the live one.
+
+**Live fetch was NOT enabled by this task.** Flipping it on is an operator/Jon action, same
+as every other adapter — and D-12 explicitly requires a live-fetch proof before any SP
+credit.
+
+**Breakage detection (`assessRun`).** This source's date, venue and audience all come out of
+free text, so it can answer 200 with a valid feed and yield nothing — a green run over an
+empty municipality. Four alerting codes: `empty_feed`, `yield_collapse` (items but no
+records), **`date_shape_drift`** (>20% of items fail the free-text date parse — the way this
+adapter will actually break, since one reworded vendor string degrades it silently), and
+`truncated_by_limit`. Every verdict states the full tally, so a thin run is diagnosable
+without a re-pull.
+
+**Classification:** **summarise-only** — same posture as the other library feeds. DB
+`terms_status` should be `summarise_only` with `robots_status` recorded honestly (see the
+flag in §7).
+
+---
+
 ## 7. Flags for human review (‹L3› — not silently decided)
 
 - **F-1 (medium) — Politeness primitives not wired into the live adapter fetch path.**
@@ -703,10 +873,34 @@ All are written through `worker/core/checkrun.ts` — the same machinery T7 uses
   `terms_status ∈ {allowed, summarise_only}` + `robots_status = allowed`** — I could not
   read the production DB from the CI/audit environment.
 
+- **F-4 (MEDIUM, added 2026-07-31 by the NVDPL build) — what `robots_status` should the
+  NVDPL row actually carry, given robots.txt cannot be read?** `worker/core/terms-gate.ts`
+  requires `robots_status = 'allowed'` to permit a live fetch, and the vocabulary has no
+  value meaning *"unreadable, risk accepted by named human decision"*. Setting it to
+  `allowed` would make the production DB assert something **we did not verify and cannot
+  verify** — every other `allowed` row on this project is backed by a robots.txt somebody
+  actually read, and flattening this case into the same value erases exactly the distinction
+  D-12 was careful to preserve. **Not resolved here, and deliberately not worked around:**
+  the adapter ships gated OFF, so nothing depends on the answer yet. Two options for
+  whoever enables it — (a) set `allowed` and record the override in the row's own audit
+  note, accepting that the field is then imprecise; or (b) add a distinct
+  `override_unverifiable` status that the gate treats as passing but which reads honestly in
+  the admin UI and in any future audit. **Recommend (b)**, since D-12 is explicitly scoped to
+  one source and a value that says so keeps the next source with this fact pattern from
+  inheriting the clearance by copy-paste — which is precisely what D-12's own scope
+  paragraph forbids. Flagged to the operator/Jon, not decided by the implementing stream.
+- **F-5 (info, 2026-07-31) — NVDPL branch geo is genuinely absent, by choice.** 32 of 46
+  NVDPL records resolve to no specific branch and none of the curated NVDPL locations carry
+  coordinates (§6.5.4 trap 4). This is honest rather than complete: coordinates were not
+  invented. Whoever owns the venue-geo constant workstream should treat NVDPL's three
+  branches (Lynn Valley, Capilano, Parkgate) plus Viewlynn/Seylynn Park as a small, known
+  gap with a verified-dataset fix, not as a bug in this adapter.
+
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source
 has an *unclear* status that I have silently resolved; F-3 is the one item that needs a
-production-DB confirmation I cannot perform from here.
+production-DB confirmation I cannot perform from here, and **F-4 is a genuine open
+question the NVDPL build declined to answer unilaterally.**
 
 ---
 
@@ -721,3 +915,33 @@ production-DB confirmation I cannot perform from here.
   `vpl.bibliocommons.com/robots.txt` + `/info/terms`, `yourlibrary.bibliocommons.com/robots.txt`,
   `gateway.bibliocommons.com/robots.txt` (404). BiblioCommons RSS-only ToS clause
   cross-checked across 10+ library installations.
+
+### 8.1 NVDPL (§6.5) — evidence added 2026-07-31 by the implementing stream
+
+- **External requests: exactly ONE.** A single GET of
+  `https://nvdpl.events.mylibrary.digital/rss` with the identified bot UA. No robots.txt
+  re-probe (the scoping pass's 403 was taken as given rather than re-hammering a
+  challenge-protected path), no HTML path touched, no per-event page fetched, nothing
+  persisted to any database.
+- **Response, recorded verbatim:** `HTTP/2 200` · `content-type: application/rss+xml;
+  charset=utf-8` · `server: cloudflare` · `cf-cache-status: DYNAMIC` ·
+  `set-cookie: PHPSESSID=…; path=/; secure; HttpOnly` · 116,729 bytes.
+- **Every figure in §6.5.3 was produced by running the shipped parser over that captured
+  response**, not by hand-counting and not by trusting the scoping document — which is how
+  the two corrections in §6.5.4 (traps 5 and 6) were found.
+- **Test evidence:** `tests/adapters/library-nvdpl-rss.test.ts` (48 tests: date-shape
+  matrix incl. DST both ways, 12-hour boundaries, midnight/month rollover, rejection cases,
+  pubDate-trap assertions, venue precedence + graceful degradation, classifier
+  include/exclude on real feed titles, multi-day exclusion, run-health codes, triple gate) +
+  NVDPL cases added to `tests/compliance/no-bypass.test.ts` (single credential-free GET,
+  exact feed URL pinned, PHPSESSID never echoed across two fetches, zero calls when not
+  env-enabled, off-by-default roster, structural bypass scan extended to the two new
+  adapter files). Full local suite: **`tsc --noEmit` ✔ · `eslint .` ✔ · vitest unit
+  1274/1274 ✔**.
+- **One deliberate behaviour change to shared code, disclosed rather than buried:** the
+  library live gate moved from `platform === 'bibliocommons'` to an explicit per-system
+  `liveCapable` flag (§6.5.5 gate 1). It is strictly fail-closed — VPL and RPL are
+  unchanged, Coquitlam and any synthetic config now cannot live-fetch even if named in the
+  env var. One pre-existing test (`tests/adapters/library.test.ts`, the gateway-only
+  parser guard) had to add `liveCapable: true` to its synthetic config as a result; the
+  assertion itself was not weakened.

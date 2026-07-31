@@ -28,6 +28,14 @@ VALUES
   ('library_bibliocommons','Vancouver Public Library BiblioEvents','official','auto','1 day', NULL),
   ('library_bibliocommons','Richmond Public Library BiblioEvents', 'official','auto','1 day', NULL),
   ('library_communico',    'Coquitlam Public Library Communico',   'official','auto','1 day', NULL),
+  -- NVDPL (North Vancouver District Public Library) — the library family's 4th tenant and
+  -- its only `generic_rss` platform, added under decision record D-12 (2026-07-31).
+  -- terms_status/robots_status stay 'pending' here like every other row: D-12 is Jon's
+  -- acceptance of the UNREADABLE-robots.txt risk (HTTP 403, Cloudflare managed challenge)
+  -- for THIS SOURCE BY NAME, which unblocks building the adapter — it is not a promotion
+  -- of this row, and it does not generalise to any other source. Enabling live ingestion
+  -- is still an explicit out-of-band ops action. See docs/source-register.md §6.5.
+  ('library_generic_rss',  'North Vancouver District Public Library Events RSS', 'official','auto','1 day', NULL),
   -- Adapter D — Venue (family 4-5, P0). Round 22 / Task LL terms review (see
   -- docs/source-register.md §2/§6 + worker/adapters/venue/config.ts):
   --  • H.R. MacMillan Space Centre — robots permits (Disallow /wp-admin/ only) +

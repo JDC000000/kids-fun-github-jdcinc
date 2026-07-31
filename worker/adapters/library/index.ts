@@ -1,7 +1,11 @@
 // worker/adapters/library/index.ts — G-T9-1/2: Library adapter scaffold
 // (TSD §5.1 Adapter B, PRD §8 fam 7). Family 'library'; the extract() parser is
-// selected per-system by platform (BiblioCommons vs Communico), the Communico
-// parser doubling as the generic per-system feed fallback.
+// selected per-system by platform (BiblioCommons, Communico, or generic_rss), the
+// Communico parser doubling as the generic per-system feed fallback.
+//
+// The generic_rss handler (NVDPL, D-12) lives in ./generic-rss.ts rather than here:
+// its feed carries no structured fields at all, so it needs a free-text date parser,
+// a venue resolver and a kid-relevance classifier that the other two platforms don't.
 //
 // Default mode remains fixture-only. Richmond Public Library / BiblioCommons can
 // be explicitly live-enabled with KIDS_FUN_LIVE_LIBRARY_SYSTEMS=rpl after D-6
@@ -14,6 +18,17 @@ import { politeFetch } from '../../health/policy';
 // worker/core/time.ts, rather than a second copy of a DST rule that can rot.
 import { zonedLocalToUtcIso } from '../../core/time';
 import { LIBRARY_SYSTEMS, getLibrarySystem, type LibraryBranchLocation, type LibrarySystemConfig } from './config';
+// Dependency-free XML/HTML text helpers, shared with the generic_rss handler rather
+// than duplicated (see ./rss-text.ts header).
+import { decodeXmlText, finiteFloat, firstTag, stripHtml, tagBlocks } from './rss-text';
+import {
+  GENERIC_RSS_FIXTURE_XML,
+  assessGenericRssRun,
+  parseGenericRss,
+  type GenericRssEvent,
+  type GenericRssHealthVerdict,
+  type GenericRssParseDiagnostics,
+} from './generic-rss';
 
 /** BiblioCommons/BiblioEvents-shaped event after normalisation from gateway JSON. */
 interface BiblioEvent {
@@ -86,20 +101,6 @@ function liveEnabledFor(systemKey: string): boolean {
     .filter(Boolean)
     .includes(systemKey.toLowerCase());
 }
-
-function stripHtml(html = ''): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 
 function categoryHint(title: string, typeNames: string[] = []): string | undefined {
   const t = `${title} ${typeNames.join(' ')}`.toLowerCase();
@@ -185,42 +186,10 @@ async function fetchBiblioCommonsEvents(system: LibrarySystemConfig): Promise<Bi
 // (no XML-parser dep, no lockfile churn) and matches the adapter's existing
 // regex-based stripHtml style.
 
-function decodeXmlText(value = ''): string {
-  return value
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&')
-    .trim();
-}
-
-function tagBlocks(xml: string, tag: string): string[] {
-  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'gi');
-  const out: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(xml)) !== null) out.push(match[1]);
-  return out;
-}
-
-function firstTag(xml: string, tag: string): string | undefined {
-  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i');
-  const match = re.exec(xml);
-  return match ? decodeXmlText(match[1]) : undefined;
-}
-
 function toUtcIso(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
-}
-
-function finiteFloat(value: string | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  const n = Number.parseFloat(value);
-  return Number.isFinite(n) ? n : undefined;
 }
 
 function eventIdFromLink(link: string): string {
@@ -356,17 +325,64 @@ async function fetchBiblioCommonsRss(system: LibrarySystemConfig): Promise<Bibli
   return parseBiblioCommonsRss(system, xml);
 }
 
+// --- generic_rss feed path (NVDPL, D-12) ---------------------------------------
+// Same seam, same politeness, same single unauthenticated GET as the BiblioCommons RSS
+// path above — the ONLY difference is which parser reads the body. Deliberately does not
+// fork politeFetch: rate limiting, the 403/429 breaker, the identified UA, the request
+// deadline and the conditional headers all stay in one place.
+
+async function fetchGenericRss(system: LibrarySystemConfig): Promise<GenericRssEvent[]> {
+  if (!system.rssEventsUrl) {
+    throw new Error(`No RSS URL configured for ${system.systemKey}`);
+  }
+  const response = await politeFetch(
+    libraryPolicyKey(system),
+    new URL(system.rssEventsUrl),
+    { headers: { accept: 'application/rss+xml, application/xml, text/xml' } },
+    { family: system.sourceFamily }
+  );
+  if (!response.ok) {
+    throw new Error(`Generic RSS fetch failed: ${response.status} ${response.statusText}`);
+  }
+  return parseAndRecordGenericRss(system, await response.text());
+}
+
+/** Parse a generic_rss body and record its tallies for assessRun(). Used by BOTH the live
+ *  and fixture paths, so run health is exercised in tests rather than only in production. */
+function parseAndRecordGenericRss(system: LibrarySystemConfig, xml: string): GenericRssEvent[] {
+  const { events, diagnostics } = parseGenericRss(system, xml);
+  lastGenericRssDiagnostics.set(system.systemKey, diagnostics);
+  return events;
+}
+
+/** Last run's parse tallies per system, so assessRun() can report on what fetch() saw.
+ *  Module-scoped for the same reason the PerfectMind adapter keeps its own run health:
+ *  the Adapter interface hands assessRun() only a baseline count, not the parse result. */
+const lastGenericRssDiagnostics = new Map<string, GenericRssParseDiagnostics>();
+
 export class LibraryAdapter implements Adapter {
   readonly family = 'library';
 
   constructor(private readonly system: LibrarySystemConfig) {}
 
+  /**
+   * TRIPLE GATE. All three must hold before a single byte leaves the process:
+   *   1. config  — `liveCapable: true` on this system (a reviewed live path exists);
+   *   2. env     — this systemKey named in KIDS_FUN_LIVE_LIBRARY_SYSTEMS;
+   *   3. DB      — terms_status ∈ {allowed, summarise_only} AND robots_status = 'allowed',
+   *                enforced independently inside politeFetch (worker/health/policy.ts),
+   *                so it holds even if 1 and 2 are misconfigured.
+   * Default posture with no env var set is fixture-only and ZERO network calls.
+   */
   isLiveFetchEnabled(): boolean {
-    return this.system.platform === 'bibliocommons' && liveEnabledFor(this.system.systemKey);
+    return this.system.liveCapable === true && liveEnabledFor(this.system.systemKey);
   }
 
   async fetch(): Promise<unknown[]> {
     if (this.isLiveFetchEnabled()) {
+      if (this.system.platform === 'generic_rss') {
+        return fetchGenericRss(this.system);
+      }
       // Prefer the ToS-permitted RSS/XML feed where configured (e.g. VPL);
       // fall back to the public JSON gateway (e.g. RPL) otherwise.
       if (this.system.rssEventsUrl) {
@@ -376,6 +392,12 @@ export class LibraryAdapter implements Adapter {
     }
 
     // Synthetic per-platform feed fixtures (no live request). Shape only.
+    if (this.system.platform === 'generic_rss') {
+      // Mirrors a real NVDPL item, escaped-HTML description and all, so the fixture path
+      // exercises the same parser the live path does rather than a hand-built object that
+      // could drift from it.
+      return parseAndRecordGenericRss(this.system, GENERIC_RSS_FIXTURE_XML);
+    }
     if (this.system.platform === 'bibliocommons') {
       const events: BiblioEvent[] = [
         {
@@ -406,6 +428,33 @@ export class LibraryAdapter implements Adapter {
   }
 
   extract(raw: unknown[]): StructuredRecord[] {
+    if (this.system.platform === 'generic_rss') {
+      return (raw as GenericRssEvent[]).map((e) => ({
+        sourceRecordId: e.id,
+        title: e.title,
+        venueName: e.venueName,
+        // Every venue field stays undefined unless the curated table or the feed's own
+        // address block supplied it. A geo-less venue is the honest outcome here, not a
+        // failure — see the branchLocations comment in ./config.ts.
+        venueAddress: e.location?.address || undefined,
+        venueLat: e.location?.lat,
+        venueLng: e.location?.lng,
+        venueMunicipalityName: e.location?.municipalityName || undefined,
+        venueDisplayArea: e.location?.displayArea || undefined,
+        // Parsed from the free-text Date/Time inside `description`, NEVER from pubDate.
+        startDatetimeUtc: e.startsAt,
+        endDatetimeUtc: e.endsAt,
+        // NVDPL library programming is free to attend; the feed publishes no cost field,
+        // and 'free' matches the rest of the library family.
+        costStatus: 'free' as const,
+        ageText: e.ages,
+        categoryHint: e.categoryHint,
+        sourceUrl: e.url,
+        // The feed exposes no registration flag at all, so no bookingUrl is asserted.
+        locationUrl: e.location?.locationUrl || undefined,
+        raw: e,
+      }));
+    }
     if (this.system.platform === 'bibliocommons') {
       return (raw as BiblioEvent[]).map((e) => ({
         sourceRecordId: e.id,
@@ -439,6 +488,20 @@ export class LibraryAdapter implements Adapter {
       sourceUrl: e.detailUrl,
       raw: e,
     }));
+  }
+
+  /**
+   * Only the generic_rss platform self-assesses. The BiblioCommons feeds publish
+   * structured, versioned fields whose breakage is loud; NVDPL's date, venue and audience
+   * all come out of free text, so this source can answer HTTP 200 with a perfectly valid
+   * feed and still yield nothing — a green run over an empty municipality. That is what
+   * this reports. Returns null for the other platforms rather than inventing a verdict.
+   */
+  assessRun(): GenericRssHealthVerdict | null {
+    if (this.system.platform !== 'generic_rss') return null;
+    const diagnostics = lastGenericRssDiagnostics.get(this.system.systemKey);
+    if (!diagnostics) return null;
+    return assessGenericRssRun(this.system, diagnostics);
   }
 
   dedupKeys(record: StructuredRecord): DedupKey {
