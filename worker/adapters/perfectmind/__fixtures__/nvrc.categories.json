@@ -1,0 +1,574 @@
+[
+ {
+  "Name": "**Drop-In Schedules",
+  "OriginalName": "**Drop-In Schedules",
+  "ShowCalendarCategory": true,
+  "Calendars": [
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/Classes?calendarId=ac98512e-5adf-4555-97b1-d7d76492dd5f&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "ac98512e-5adf-4555-97b1-d7d76492dd5f",
+    "Name": "Art Schedules",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/Classes?calendarId=443499b3-3e7d-454d-acae-4e02474fef9f&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "443499b3-3e7d-454d-acae-4e02474fef9f",
+    "Name": "Fitness Studio Workout Schedules",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/Classes?calendarId=596945cd-add0-4d02-bf55-ce5fc93d772e&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "596945cd-add0-4d02-bf55-ce5fc93d772e",
+    "Name": "Indoor Playtime (Parent Participation)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": null,
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "ae8005d5-2f4f-44cd-9ebb-ed077f609dfc",
+    "Name": "North Shore Neighbourhood House Schedules",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/Classes?calendarId=d313e7d8-0d72-4e0b-92c5-98d8017ab64e&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "d313e7d8-0d72-4e0b-92c5-98d8017ab64e",
+    "Name": "Open Gym Schedules",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/Classes?calendarId=002670b7-9d8e-464c-8e2e-aa4a44e20408&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "002670b7-9d8e-464c-8e2e-aa4a44e20408",
+    "Name": "Parkgate Society Schedules",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/Classes?calendarId=9290cb7e-d450-4972-b327-b89aa12b2a69&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "9290cb7e-d450-4972-b327-b89aa12b2a69",
+    "Name": "Skate Schedules",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/Classes?calendarId=fabf60eb-7cf3-40c3-8004-79e50fdc6db0&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "fabf60eb-7cf3-40c3-8004-79e50fdc6db0",
+    "Name": "Swim Schedules",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/Classes?calendarId=829acf32-dd84-43cd-9401-6ef950a813a4&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 2,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "829acf32-dd84-43cd-9401-6ef950a813a4",
+    "Name": "Youth Services Schedules",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   }
+  ]
+ },
+ {
+  "Name": "Youth",
+  "OriginalName": "Youth",
+  "ShowCalendarCategory": true,
+  "Calendars": [
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=ead68fa0-6384-44ef-9566-8bb8d672f940&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "ead68fa0-6384-44ef-9566-8bb8d672f940",
+    "Name": "Arts Dance (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": null,
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "4c3d9881-9a2f-471a-ac91-1bd8cb1ff530",
+    "Name": "Arts Drama (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": null,
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "3b70c5c2-f116-4ba7-b6be-fe0f34115f86",
+    "Name": "Arts Music (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=0b64ce80-8bdb-4c09-b358-c33376149412&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "0b64ce80-8bdb-4c09-b358-c33376149412",
+    "Name": "Arts Pottery (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=bf9f6904-e77b-4fdd-8d1c-23bc0d6c08f7&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "bf9f6904-e77b-4fdd-8d1c-23bc0d6c08f7",
+    "Name": "Arts Visual (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=583e03ee-01a3-4c2a-a798-15eea7db348a&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "583e03ee-01a3-4c2a-a798-15eea7db348a",
+    "Name": "Camps Full Day (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=1110b89d-5137-4e62-baed-654c9a9bc078&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "1110b89d-5137-4e62-baed-654c9a9bc078",
+    "Name": "Camps Part Day (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=3f03981b-a70e-433b-8cfa-8e25d5d60547&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "3f03981b-a70e-433b-8cfa-8e25d5d60547",
+    "Name": "Certifications & Leadership (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": null,
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "f8f0697e-8105-46c1-8075-fcee9187c0c6",
+    "Name": "Community and Special Events (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=04b1b9f5-2223-4c53-b1d9-8398c2add7a5&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "04b1b9f5-2223-4c53-b1d9-8398c2add7a5",
+    "Name": "Fitness Centre",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": null,
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "5b375803-6676-4348-b7fa-ba8826befecc",
+    "Name": "Fitness Outdoor (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=75cb388b-c174-4ff3-8cbf-2e4f76de2206&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "75cb388b-c174-4ff3-8cbf-2e4f76de2206",
+    "Name": "Fitness Spin (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": null,
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "b0d86b23-c1c2-4030-a9b4-b9816cf65a16",
+    "Name": "Fitness Training 13-18yrs",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": null,
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "e032c2d0-3301-44e6-bfeb-e9e6cdd1667f",
+    "Name": "Fitness Workshop Youth",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=6c64c1ef-5eeb-4b3b-a76c-7a41e6023c01&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "6c64c1ef-5eeb-4b3b-a76c-7a41e6023c01",
+    "Name": "Fitness Yoga (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=20808abc-a056-4da1-9b7b-bf3a518e811c&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "20808abc-a056-4da1-9b7b-bf3a518e811c",
+    "Name": "General Programs (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=55750522-acd5-4f3d-9323-1198a5f1c307&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "55750522-acd5-4f3d-9323-1198a5f1c307",
+    "Name": "Martial Arts (10-20yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": null,
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "f19252fd-f5a6-41db-a29e-f42ae9729ad2",
+    "Name": "Skating Youth (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=164da848-567d-4aab-866a-7d832c860378&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "164da848-567d-4aab-866a-7d832c860378",
+    "Name": "Sports (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=f44e0817-b9b4-4c42-ab50-6bac84455167&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "f44e0817-b9b4-4c42-ab50-6bac84455167",
+    "Name": "Swimming - Aquatic Leadership (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=e918ef67-c970-40b5-a3c5-66ecd1d15397&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "e918ef67-c970-40b5-a3c5-66ecd1d15397",
+    "Name": "Swimming (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   },
+   {
+    "Items": [],
+    "Category": null,
+    "BookingLink": "/23734/Clients/BookMe4BookingPages/BookingCoursesPage?calendarId=bf5d68d7-7be3-4365-a980-73d2d29d607b&widgetId=a28b2c65-61af-407f-80d1-eaa58f30a94a&embed=False",
+    "MakeupBookingLink": null,
+    "BookingTypeInfo": {
+     "BookingType": 3,
+     "IsSchoolProgram": false,
+     "IsCustomBookingOnline": false,
+     "IsCustomBookingAdmin": false,
+     "IsCustomBooking": false
+    },
+    "AssignedServices": null,
+    "PreventDuplicateBookingWithinEventGroup": false,
+    "Id": "bf5d68d7-7be3-4365-a980-73d2d29d607b",
+    "Name": "Tennis (10-18yrs)",
+    "EventObjectId": "00000000-0000-0000-0000-000000000000"
+   }
+  ]
+ }
+]

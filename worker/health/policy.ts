@@ -99,6 +99,13 @@ export const REQUESTS_PER_MINUTE_BY_FAMILY: Record<string, number> = {
   // total. Stated explicitly rather than inherited from the default so the crawl
   // footprint of the highest-volume source is visible in config.
   activenet: 20,
+  // PerfectMind BookMe4 widgets (T8): the project's second PAGINATED source — 1 category
+  // request plus a cursor walk per drop-in calendar. Same 20/min = 3s floor as ActiveNet,
+  // for the same reason (comfortably inside D-10's ">=1s spacing, single-threaded per
+  // host" engineering condition), with the per-run request cap in the tenant config
+  // bounding the total. Stated explicitly rather than inherited so the crawl footprint of
+  // every high-volume source is visible in one table.
+  perfectmind: 20,
 };
 
 export function requestsPerMinuteFor(family?: string): number {

@@ -1,5 +1,6 @@
 // tests/compliance/no-bypass.test.ts — G-T35-2 (Round 18 / Task Z, ‹L3›),
-// amended by G-T7R-0 (T7 REBUILD) for the read-only POST-search exception.
+// amended by G-T7R-0 (T7 REBUILD) for the read-only POST-search exception,
+// and by G-T8-3 (T8) for a SECOND family under the same exception (PerfectMind).
 //
 // Compliance guardrail: NO live adapter performs a login / paywall / checkout /
 // CAPTCHA bypass. This is verified two ways against the *real* adapter code
@@ -9,8 +10,9 @@
 //       a spied global fetch, and the real outgoing requests are inspected: they
 //       must be credential-free (no Authorization/Cookie header, no
 //       credentials:include), carrying only an identified bot User-Agent — never a
-//       browser spoof. Every request must be a GET, with ONE named exception
-//       (READ_ONLY_POST_SEARCH, below — host-scoped as well as path-scoped). Any
+//       browser spoof. Every request must be a GET, with the named
+//       READ_ONLY_POST_SEARCH exceptions only (below — host-scoped and
+//       family-scoped as well as path-scoped). Any
 //       tenant/source not explicitly enabled
 //       via its KIDS_FUN_LIVE_* env allow-list must make ZERO network requests.
 //
@@ -62,7 +64,11 @@ import { resolve } from 'node:path';
 import { LibraryAdapter, LIBRARY_SYSTEMS } from '../../worker/adapters/library';
 import { CityCalendarAdapter, CITY_CALENDARS } from '../../worker/adapters/citycalendar';
 import { ActiveNetAdapter, ACTIVENET_TENANTS, getTenantConfig } from '../../worker/adapters/activenet';
-import { PerfectMindAdapter, PERFECTMIND_TENANTS } from '../../worker/adapters/perfectmind';
+import {
+  PerfectMindAdapter,
+  PERFECTMIND_TENANTS,
+  getPerfectMindTenant,
+} from '../../worker/adapters/perfectmind';
 import { VenueAdapter, getVenue } from '../../worker/adapters/venue';
 import { clearPolicyState } from '../../worker/health/policy';
 import type { Adapter } from '../../worker/core/adapter';
@@ -131,6 +137,35 @@ const READ_ONLY_POST_SEARCH: ReadOnlyPostSearchFamily[] = [
     getPaths: ['/onlinecalendar/calendars', '/onlinecalendar/centerdetails'],
     endpointPathPattern: /\/onlinecalendar\/[A-Za-z0-9_\-/]+/g,
   },
+  {
+    // T8 / G-T8-3 — the SECOND family under D-11, added deliberately and narrowly.
+    //
+    // Why an amendment was needed at all: the entry above is HOST-scoped (QA finding A1,
+    // and rightly so), so PerfectMind's different hosts were NOT covered by it. The
+    // brief's suggestion that D-11 might already cover this generically was checked
+    // against this file rather than assumed, and it does not — `ALLOWED_HOSTS`,
+    // `POST_ALLOWED_FILES` and the drift guard at the bottom were all pinned to
+    // ActiveNet alone. Widening by one family, two hosts, two paths and one file is
+    // therefore a real edit to the highest-scrutiny file in the repo, held to the same
+    // elevated standard as the original: nothing else about the prohibition list moves.
+    //
+    // Two hosts because PerfectMind is one tenant per SUBDOMAIN rather than one tenant
+    // per path segment. Each is named exactly; there is no wildcard and no suffix match.
+    //
+    // NOTE what is NOT here: `/BookMe4BookingPages/Courses` (registered courses, not
+    // drop-ins — including it would let the adapter manufacture drop-in coverage that
+    // does not exist) and any anti-forgery submission. The BookMe4 shell posts a
+    // `__RequestVerificationToken` and the server does not require it, so the
+    // anti-forgery prohibition stays absolutely banned for this family too — asserted
+    // behaviourally below, not merely by omission.
+    family: 'perfectmind',
+    sourceFiles: ['worker/adapters/perfectmind/client.ts'],
+    hosts: ['nvrc.perfectmind.com', 'richmondcity.perfectmind.com'],
+    hostConfigFile: 'worker/adapters/perfectmind/config.ts',
+    postPaths: ['/BookMe4V2/GetCategoriesDataV2', '/BookMe4BookingPagesV2/ClassesV2'],
+    getPaths: [],
+    endpointPathPattern: /\/BookMe4[A-Za-z0-9_\-/]*/g,
+  },
 ];
 
 const POST_ALLOWED_FILES = new Set(READ_ONLY_POST_SEARCH.flatMap((f) => f.sourceFiles));
@@ -150,13 +185,20 @@ function hostnameOf(url: string): string | null {
  * True only when the hostname AND the path are both allow-listed, on the SAME family
  * entry — so one family's host can never license another family's path. Hostname is an
  * exact match; the path is a suffix match because the tenant's site path prefixes it
- * (`/vancouver/rest` + `/onlinecalendar/filters`).
+ * (`/vancouver/rest` + `/onlinecalendar/filters`, `/23734/Clients` +
+ * `/BookMe4BookingPagesV2/ClassesV2`).
+ *
+ * `family` narrows the search to ONE entry. Added with T8's second family: without it,
+ * every added family silently widens the check for every EXISTING family, because a
+ * request would only have to satisfy *some* entry. Callers that know which adapter they
+ * drove pass it, which keeps each family's boundary exactly as tight as it was when it
+ * was reviewed alone.
  */
-function isAllowedReadOnlyPost(url: string): boolean {
+function isAllowedReadOnlyPost(url: string, family?: string): boolean {
   const hostname = hostnameOf(url);
   if (!hostname) return false;
   const { pathname } = new URL(url);
-  return READ_ONLY_POST_SEARCH.some(
+  return READ_ONLY_POST_SEARCH.filter((f) => family == null || f.family === family).some(
     (f) => f.hosts.includes(hostname) && f.postPaths.some((p) => pathname.endsWith(p))
   );
 }
@@ -183,13 +225,18 @@ function hostLiteralsIn(code: string): string[] {
   return [...hosts].sort();
 }
 
-/** Every request from an allow-listed family must stay on a D-10-authorised host. */
-function expectAllowedHost(call: CapturedCall): void {
+/** Every request from an allow-listed family must stay on a D-10-authorised host —
+ *  and, when the caller names the family, on THAT family's hosts specifically. */
+function expectAllowedHost(call: CapturedCall, family?: string): void {
   const hostname = hostnameOf(call.url);
   expect(hostname, `unparseable request URL: ${call.url}`).not.toBeNull();
+  const allowed =
+    family == null
+      ? ALLOWED_HOSTS
+      : new Set(READ_ONLY_POST_SEARCH.filter((f) => f.family === family).flatMap((f) => f.hosts));
   expect(
-    ALLOWED_HOSTS.has(hostname!),
-    `${hostname} is not a D-10-authorised host — the override is host-scoped`
+    allowed.has(hostname!),
+    `${hostname} is not a D-10-authorised host${family ? ` for family '${family}'` : ''} — the override is host-scoped`
   ).toBe(true);
 }
 
@@ -266,15 +313,15 @@ function expectCredentialFreeGet(call: CapturedCall): void {
  * (D-10 authorises a portal, not a technique), and again inside the POST branch bound
  * to the same family entry as the path.
  */
-function expectReadOnlyRequest(call: CapturedCall): void {
+function expectReadOnlyRequest(call: CapturedCall, family?: string): void {
   const method = (call.init?.method ?? 'GET').toString().toUpperCase();
   expect(['GET', 'POST'], 'only GET or an allow-listed read-only POST').toContain(method);
-  expectAllowedHost(call);
+  expectAllowedHost(call, family);
   if (method === 'GET') {
     expect(call.init?.body ?? null, 'a GET carries no body').toBeNull();
   } else {
     expect(
-      isAllowedReadOnlyPost(call.url),
+      isAllowedReadOnlyPost(call.url, family),
       `POST ${call.url} is not an allow-listed READ_ONLY_POST_SEARCH host+path`
     ).toBe(true);
   }
@@ -380,7 +427,7 @@ describe('G-T7R-0 (A) ActiveNet live path — credential-free reads on allow-lis
   it('every request is a credential-free GET or an allow-listed read-only POST', async () => {
     const calls = await driveActiveNet('vancouver', [5]);
     expect(calls.length, 'calendars + filters + events (no centres ⇒ no centerdetails)').toBeGreaterThan(0);
-    for (const call of calls) expectReadOnlyRequest(call);
+    for (const call of calls) expectReadOnlyRequest(call, 'activenet');
   });
 
   it('the POSTs it does make are EXACTLY the two named read-only searches', async () => {
@@ -411,7 +458,7 @@ describe('G-T7R-0 (A) ActiveNet live path — credential-free reads on allow-lis
 
   it('Burnaby behaves identically — the exception is per family, not per tenant', async () => {
     const calls = await driveActiveNet('burnaby', [1]);
-    for (const call of calls) expectReadOnlyRequest(call);
+    for (const call of calls) expectReadOnlyRequest(call, 'activenet');
   });
 });
 
@@ -449,13 +496,130 @@ describe('G-T7R-0 (A) sources NOT explicitly enabled make ZERO network calls', (
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('PerfectMind adapter performs no fetch and never reports live', async () => {
+  it('PerfectMind with no env allow-list performs no fetch and reports not-live', async () => {
+    delete process.env.KIDS_FUN_LIVE_PERFECTMIND;
     const spy = vi.spyOn(globalThis, 'fetch');
-    const adapter: Adapter = new PerfectMindAdapter(PERFECTMIND_TENANTS[0]);
-    expect(adapter.isLiveFetchEnabled?.() ?? false, 'never live').toBe(false);
-    const raw = await adapter.fetch();
-    expect(Array.isArray(raw)).toBe(true);
+    for (const tenant of PERFECTMIND_TENANTS) {
+      const adapter: Adapter = new PerfectMindAdapter(tenant);
+      expect(adapter.isLiveFetchEnabled?.() ?? false, `${tenant.tenantKey} never live`).toBe(false);
+      const raw = await adapter.fetch();
+      expect(Array.isArray(raw)).toBe(true);
+    }
     expect(spy, 'PerfectMind fetch() made no network request').not.toHaveBeenCalled();
+  });
+
+  it('a PerfectMind tenant NOT named in the allow-list stays fixture-only', async () => {
+    process.env.KIDS_FUN_LIVE_PERFECTMIND = 'nvrc';
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const richmond = new PerfectMindAdapter(getPerfectMindTenant('richmond')!);
+    expect(richmond.isLiveFetchEnabled()).toBe(false);
+    await richmond.fetch();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('Richmond can never live-fetch — it has no drop-in categories (G-T8-1 null result)', async () => {
+    // The measured outcome of G-T8-1: Richmond's only public widget is a REGISTRATION
+    // widget. Config keeps it off even when the env names it, so a future operator
+    // cannot enable drop-in coverage that does not exist by setting an env var.
+    process.env.KIDS_FUN_LIVE_PERFECTMIND = 'richmond';
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const richmond = new PerfectMindAdapter(getPerfectMindTenant('richmond')!);
+    expect(richmond.isLiveFetchEnabled(), 'config keeps it off even when env names it').toBe(false);
+    await richmond.fetch();
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('G-T8-3 (A) PerfectMind live path — credential-free, token-free reads on allow-listed paths only', () => {
+  /** Drive the adapter under fake timers so the 3s politeness floor between requests
+   *  costs virtual time, not wall-clock. The rate limiter itself is exercised for real. */
+  async function drivePerfectMind(tenantKey: string): Promise<CapturedCall[]> {
+    process.env.KIDS_FUN_LIVE_PERFECTMIND = tenantKey;
+    const adapter = new PerfectMindAdapter(getPerfectMindTenant(tenantKey)!);
+    expect(adapter.isLiveFetchEnabled(), `${tenantKey} live-enabled by env`).toBe(true);
+
+    // One category holding one ClassesV2-servable calendar, then an end-of-data cursor,
+    // so the run makes both kinds of request and terminates.
+    let call = 0;
+    const calls: CapturedCall[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown, init?: unknown) => {
+      calls.push({ url: String(input), init: init as CapturedCall['init'] });
+      const body =
+        call++ === 0
+          ? JSON.stringify([
+              {
+                Name: '**Drop-In Schedules',
+                Calendars: [
+                  {
+                    Id: '11111111-2222-3333-4444-555555555555',
+                    Name: 'Open Gym Schedules',
+                    BookingLink: '/x',
+                    BookingTypeInfo: { BookingType: 2 },
+                  },
+                ],
+              },
+            ])
+          : JSON.stringify({ classes: [], classesMaxEndDateString: null, nextKey: '0001-01-01' });
+      return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch);
+
+    vi.useFakeTimers();
+    const pending = adapter.fetch();
+    await vi.advanceTimersByTimeAsync(300_000);
+    await pending;
+    vi.useRealTimers();
+    return calls;
+  }
+
+  it('every request is a credential-free, allow-listed read-only POST', async () => {
+    const calls = await drivePerfectMind('nvrc');
+    expect(calls.length, 'categories + at least one classes page').toBeGreaterThan(1);
+    for (const call of calls) expectReadOnlyRequest(call, 'perfectmind');
+  });
+
+  it('the POSTs it makes are EXACTLY the two named read-only searches', async () => {
+    const calls = await drivePerfectMind('nvrc');
+    const paths = calls.map((c) => new URL(c.url).pathname);
+    expect(paths.length).toBeGreaterThan(0);
+    for (const p of paths) {
+      expect([
+        '/23734/Clients/BookMe4V2/GetCategoriesDataV2',
+        '/23734/Clients/BookMe4BookingPagesV2/ClassesV2',
+      ]).toContain(p);
+    }
+  });
+
+  it('NO request carries an anti-forgery token, in any form', async () => {
+    // The load-bearing assertion of this family's amendment. The vendor's OWN client
+    // posts `__RequestVerificationToken` via `$.ajaxAntiForgeryPost`; the server does not
+    // require it, and we must never send one. `expectCredentialFree` already checks
+    // headers and bodies for it, but this asserts it explicitly and by name so the
+    // guarantee is proven rather than true by omission — which is exactly the standard
+    // the brief asked for.
+    const calls = await drivePerfectMind('nvrc');
+    for (const call of calls) {
+      const body = typeof call.init?.body === 'string' ? call.init.body : '';
+      expect(body, 'no anti-forgery token in a PerfectMind body').not.toMatch(
+        /__requestverificationtoken|csrf/i
+      );
+      const fields = new Set([...new URLSearchParams(body).keys()]);
+      // A CLOSED expected field set: anything new here is a deliberate, visible edit.
+      for (const key of fields) {
+        expect(
+          ['widgetId', 'calendarId', 'page', 'dateString', 'after'],
+          `unexpected POST field "${key}" — the body allow-list is closed`
+        ).toContain(key);
+      }
+      expect(fields.has('widgetId'), 'the widget id is always present').toBe(true);
+    }
+  });
+
+  it('POST bodies are search filters — no credential, no session, no cart', async () => {
+    const calls = await drivePerfectMind('nvrc');
+    for (const call of calls) {
+      const body = typeof call.init?.body === 'string' ? call.init.body : '';
+      expect(body).not.toMatch(/password|username|token|session|cart|checkout/i);
+    }
   });
 });
 
@@ -484,6 +648,9 @@ const ADAPTER_SOURCES = [
   'worker/adapters/activenet/health.ts',
   'worker/adapters/perfectmind/index.ts',
   'worker/adapters/perfectmind/config.ts',
+  'worker/adapters/perfectmind/client.ts',
+  'worker/adapters/perfectmind/parse.ts',
+  'worker/adapters/perfectmind/health.ts',
   'worker/adapters/venue/index.ts',
   'worker/adapters/venue/config.ts',
   'worker/adapters/venue/separate.ts',
@@ -588,20 +755,32 @@ describe('G-T35-2 (B) adapter source contains no login/paywall/CAPTCHA-bypass co
   });
 
   it('the ToS-cleared and D-10-authorised live adapters are the ONLY ones exposing live fetch', () => {
-    // library + citycalendar + venue + (T7 REBUILD) activenet implement
-    // isLiveFetchEnabled(); PerfectMind still does not — it can never flip to live
-    // without new code AND this test being revisited.
-    const liveLibrary = new LibraryAdapter(LIBRARY_SYSTEMS.find((s) => s.systemKey === 'vpl')!);
-    const liveCity = new CityCalendarAdapter(CITY_CALENDARS[0]);
-    const liveVenue = new VenueAdapter(getVenue('hr-macmillan-space-centre')!);
-    const activenet = new ActiveNetAdapter(ACTIVENET_TENANTS[0]);
-    const perfectmind = new PerfectMindAdapter(PERFECTMIND_TENANTS[0]);
+    // library + citycalendar + venue + (T7 REBUILD) activenet + (T8) perfectmind all
+    // implement isLiveFetchEnabled(). PerfectMind USED to be asserted here as having no
+    // such method at all; T8 changed that deliberately under the same D-10/D-11
+    // authority, so the guarantee moves rather than disappearing: every live-capable
+    // adapter must be OFF by default, which is what the roster below asserts.
+    delete process.env.KIDS_FUN_LIVE_ACTIVENET;
+    delete process.env.KIDS_FUN_LIVE_PERFECTMIND;
+    delete process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS;
+    delete process.env.KIDS_FUN_LIVE_CITY_CALENDARS;
+    delete process.env.KIDS_FUN_LIVE_VENUES;
 
-    expect(typeof liveLibrary.isLiveFetchEnabled).toBe('function');
-    expect(typeof liveCity.isLiveFetchEnabled).toBe('function');
-    expect(typeof liveVenue.isLiveFetchEnabled).toBe('function');
-    expect(typeof activenet.isLiveFetchEnabled).toBe('function');
-    expect((perfectmind as { isLiveFetchEnabled?: unknown }).isLiveFetchEnabled).toBeUndefined();
+    const liveCapable: Array<[string, Adapter]> = [
+      ['library', new LibraryAdapter(LIBRARY_SYSTEMS.find((s) => s.systemKey === 'vpl')!)],
+      ['citycalendar', new CityCalendarAdapter(CITY_CALENDARS[0])],
+      ['venue', new VenueAdapter(getVenue('hr-macmillan-space-centre')!)],
+      ['activenet', new ActiveNetAdapter(ACTIVENET_TENANTS[0])],
+      ['perfectmind', new PerfectMindAdapter(PERFECTMIND_TENANTS[0])],
+    ];
+
+    for (const [name, adapter] of liveCapable) {
+      expect(typeof adapter.isLiveFetchEnabled, `${name} declares isLiveFetchEnabled`).toBe('function');
+      expect(
+        adapter.isLiveFetchEnabled!(),
+        `${name} must be OFF with no KIDS_FUN_LIVE_* env var set`
+      ).toBe(false);
+    }
   });
 });
 
@@ -696,19 +875,88 @@ describe('G-T7R-0 (C) tripwire self-check: every other prohibition still bites',
     ).not.toThrow();
   });
 
-  it('the allow-list is exactly one family, one adapter, two paths', () => {
+  it('the allow-list is exactly two families, one adapter file each, two paths each', () => {
     // A drift guard on the exception itself: widening it should be a visible,
-    // deliberate edit that fails this assertion first.
-    expect(READ_ONLY_POST_SEARCH).toHaveLength(1);
-    expect(READ_ONLY_POST_SEARCH[0].family).toBe('activenet');
-    expect(READ_ONLY_POST_SEARCH[0].sourceFiles).toEqual(['worker/adapters/activenet/client.ts']);
-    expect(READ_ONLY_POST_SEARCH[0].hosts).toEqual(['anc.ca.apm.activecommunities.com']);
-    expect(READ_ONLY_POST_SEARCH[0].postPaths).toEqual([
+    // deliberate edit that fails this assertion first. T8 widened it from one family to
+    // two, which is precisely why this assertion had to be edited by hand — that is the
+    // mechanism working, not a nuisance.
+    expect(READ_ONLY_POST_SEARCH).toHaveLength(2);
+
+    const [activenet, perfectmind] = READ_ONLY_POST_SEARCH;
+
+    expect(activenet.family).toBe('activenet');
+    expect(activenet.sourceFiles).toEqual(['worker/adapters/activenet/client.ts']);
+    expect(activenet.hosts).toEqual(['anc.ca.apm.activecommunities.com']);
+    expect(activenet.postPaths).toEqual([
       '/onlinecalendar/filters',
       '/onlinecalendar/multicenter/events',
     ]);
-    // One host, and it is the one D-10 names. Adding a second is a deliberate,
-    // visible edit that must fail here first.
-    expect(ALLOWED_HOSTS.size).toBe(1);
+
+    expect(perfectmind.family).toBe('perfectmind');
+    expect(perfectmind.sourceFiles).toEqual(['worker/adapters/perfectmind/client.ts']);
+    // Two hosts because PerfectMind is one tenant per SUBDOMAIN, not per path segment.
+    expect(perfectmind.hosts).toEqual(['nvrc.perfectmind.com', 'richmondcity.perfectmind.com']);
+    expect(perfectmind.postPaths).toEqual([
+      '/BookMe4V2/GetCategoriesDataV2',
+      '/BookMe4BookingPagesV2/ClassesV2',
+    ]);
+    // The registered-COURSES endpoint is deliberately absent: reading it would let the
+    // adapter present registered courses as drop-in coverage.
+    expect(perfectmind.postPaths).not.toContain('/BookMe4BookingPages/Courses');
+
+    // Three hosts total, all D-10-named. Adding a fourth is a deliberate, visible edit
+    // that must fail here first.
+    expect(ALLOWED_HOSTS.size).toBe(3);
+  });
+
+  it('one family’s host can never license another family’s path (family scoping)', () => {
+    // The hole T8 could have opened: with two families in the list, an unscoped check
+    // would let an ActiveNet POST path pass on a PerfectMind host and vice versa,
+    // because it would only have to satisfy SOME entry. Family scoping is what stops it.
+    const PM = 'https://nvrc.perfectmind.com';
+    const AC = 'https://anc.ca.apm.activecommunities.com';
+
+    expect(isAllowedReadOnlyPost(`${PM}/23734/Clients/BookMe4BookingPagesV2/ClassesV2`, 'perfectmind')).toBe(true);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/filters`, 'activenet')).toBe(true);
+
+    // Right path, wrong family's host.
+    expect(isAllowedReadOnlyPost(`${PM}/vancouver/rest/onlinecalendar/filters`, 'activenet')).toBe(false);
+    expect(isAllowedReadOnlyPost(`${AC}/23734/Clients/BookMe4BookingPagesV2/ClassesV2`, 'perfectmind')).toBe(false);
+    // Right host, wrong family's path — rejected even without naming a family, because
+    // host and path must match on the SAME entry.
+    expect(isAllowedReadOnlyPost(`${PM}/vancouver/rest/onlinecalendar/filters`)).toBe(false);
+    expect(isAllowedReadOnlyPost(`${AC}/23734/Clients/BookMe4BookingPagesV2/ClassesV2`)).toBe(false);
+
+    // Near-miss hostnames must not sneak through a suffix match.
+    for (const host of [
+      'https://evil.example.com',
+      'https://nvrc.perfectmind.com.attacker.example',
+      'https://not-nvrc.perfectmind.com',
+      'https://perfectmind.com',
+    ]) {
+      expect(
+        isAllowedReadOnlyPost(`${host}/23734/Clients/BookMe4BookingPagesV2/ClassesV2`, 'perfectmind'),
+        `${host} must not be allowed`
+      ).toBe(false);
+    }
+
+    // And the per-request host guard is family-scoped too.
+    expect(() => expectAllowedHost({ url: `${PM}/x`, init: {} }, 'perfectmind')).not.toThrow();
+    expect(() => expectAllowedHost({ url: `${AC}/x`, init: {} }, 'perfectmind')).toThrow();
+    expect(() => expectAllowedHost({ url: `${PM}/x`, init: {} }, 'activenet')).toThrow();
+  });
+
+  it('the registered-COURSES endpoint appears nowhere in the PerfectMind adapter', () => {
+    // Not a compliance bypass — a HONESTY guard, and the reason it lives in this file is
+    // that it has the same "must be a visible, deliberate edit" property. G-T8-1 found
+    // Richmond exposes 1,207 registered courses and ZERO drop-in occurrences; reading
+    // the Courses endpoint would let a future change quietly present those as drop-in
+    // coverage, which is the single outcome the task's acceptance criteria forbid.
+    for (const rel of ADAPTER_SOURCES.filter((f) => f.startsWith('worker/adapters/perfectmind/'))) {
+      const code = stripComments(readFileSync(resolve(process.cwd(), rel), 'utf8'));
+      expect(code, `${rel} must not reference the registered-Courses endpoint`).not.toMatch(
+        /BookMe4BookingPages\/Courses/
+      );
+    }
   });
 });
