@@ -6,17 +6,21 @@
 // per-record lookup and NOT a geocoder call.
 //
 // NO GEOCODER AT INGEST. This matches the `city_calendar` precedent (curated geo only,
-// so a venue can never be mis-located by a fuzzy geocode). Lat/lng for these centres is
-// a later venue-enrichment pass (the Vancouver open-data join), deliberately out of
-// scope here.
+// so a venue can never be mis-located by a fuzzy geocode). Lat/lng comes from
+// ./venue-geo.ts — a committed, per-entry-attributed constant derived ONCE by hand from
+// Vancouver's OGL-licensed open data plus curated pool/rink coordinates. Zero network
+// calls; exact (normalised) name match only, never a fuzzy join.
 //
 // Unmapped centres are a WARNING, never a silent null: a centre that appears in the
 // feed but not in centerdetails means the batch missed something, and that must be
-// visible in the run output.
+// visible in the run output. The same rule now applies to geo — a facility with no
+// entry in venue-geo.ts is NAMED in the run warnings, so the ~74% of Vancouver drop-in
+// volume that happens at pools and rinks can never be mistaken for "geo solved".
 import type { StructuredRecord } from '../../core/adapter';
 import type { ActiveNetCentreDetail } from './client';
 import { stripCentreSentinel } from './parse';
 import type { ActiveNetTenantConfig } from './config';
+import { lookupVenueGeo, hasVenueGeoTable, type ActiveNetVenueGeo } from './venue-geo';
 
 export interface ResolvedVenue {
   centreId: number;
@@ -24,6 +28,16 @@ export interface ResolvedVenue {
   venueAddress?: string;
   venuePhone?: string;
   venueMunicipalityName: string;
+  /** Curated coordinates for this facility, when venue-geo.ts has an entry. */
+  geo?: ActiveNetVenueGeo;
+  /**
+   * Whether this venue's TENANT has a curated geo table at all. Carried per-venue
+   * (rather than passed to applyVenues) purely so the missing-geo warning can tell
+   * "this tenant was never derived" apart from "this facility slipped through a
+   * tenant that was" — two different problems that want two different responses,
+   * and applyVenues has no other way to know which it is looking at.
+   */
+  geoTableAvailable: boolean;
 }
 
 /** Join the address fields into one line, skipping blanks (address2 is usually empty). */
@@ -41,6 +55,7 @@ export function buildVenueIndex(
   details: ActiveNetCentreDetail[]
 ): Map<number, ResolvedVenue> {
   const index = new Map<number, ResolvedVenue>();
+  const geoTableAvailable = hasVenueGeoTable(tenant.tenantKey);
   for (const detail of details) {
     if (!Number.isFinite(detail.id)) continue;
     const name = stripCentreSentinel(detail.name);
@@ -51,6 +66,10 @@ export function buildVenueIndex(
       venueAddress: formatAddress(detail),
       venuePhone: (detail.phone ?? '').trim() || undefined,
       venueMunicipalityName: tenant.municipality,
+      // Committed constant, exact normalised name match. No network, no geocoder,
+      // no fuzzy fallback — a miss is reported by applyVenues, never guessed at.
+      geo: lookupVenueGeo(tenant.tenantKey, name),
+      geoTableAvailable,
     });
   }
   return index;
@@ -62,6 +81,15 @@ export interface VenueApplyResult {
   unmappedCentreIds: number[];
   /** Records that ended up with no street address. */
   recordsWithoutAddress: number;
+  /**
+   * Facility names present in the feed that ./venue-geo.ts has no entry for, sorted.
+   * Reported as NAMES (not a count) deliberately: "geo coverage is 67%" reads as
+   * nearly-solved, whereas "Britannia Pool, Hillcrest Rink, … have no coordinates"
+   * says which parents get no distance on which listings.
+   */
+  venuesWithoutGeo: string[];
+  /** Records that ended up with no coordinates. */
+  recordsWithoutGeo: number;
   warnings: string[];
 }
 
@@ -77,9 +105,9 @@ function centreIdOf(record: StructuredRecord): number | undefined {
 }
 
 /**
- * Attach venue name/address/municipality to each record. Records keep the venue name
- * parse.ts already derived when centerdetails has nothing better; only the address and
- * the canonical name come from the index.
+ * Attach venue name/address/municipality/geo to each record. Records keep the venue name
+ * parse.ts already derived when centerdetails has nothing better; only the address, the
+ * canonical name and the coordinates come from the index.
  */
 export function applyVenues(
   records: StructuredRecord[],
@@ -88,6 +116,7 @@ export function applyVenues(
   const unmapped = new Set<number>();
   const warnings: string[] = [];
   let recordsWithoutAddress = 0;
+  let recordsWithoutGeo = 0;
 
   const out = records.map((record) => {
     const centreId = centreIdOf(record);
@@ -95,14 +124,21 @@ export function applyVenues(
     if (!venue) {
       if (centreId != null) unmapped.add(centreId);
       recordsWithoutAddress += 1;
+      recordsWithoutGeo += 1;
       return record;
     }
     if (!venue.venueAddress) recordsWithoutAddress += 1;
+    if (!venue.geo) recordsWithoutGeo += 1;
     return {
       ...record,
       venueName: venue.venueName,
       venueAddress: venue.venueAddress,
       venueMunicipalityName: venue.venueMunicipalityName,
+      // resolveVenue() COALESCE-enriches an existing venue row, so attaching geo here
+      // is the whole of the write path — no core or DB change is needed.
+      venueLat: venue.geo?.lat,
+      venueLng: venue.geo?.lng,
+      venueDisplayArea: venue.geo?.displayArea ?? record.venueDisplayArea,
     } satisfies StructuredRecord;
   });
 
@@ -112,5 +148,31 @@ export function applyVenues(
       `centerdetails did not resolve ${unmappedCentreIds.length} centre(s) present in the feed: ${unmappedCentreIds.join(', ')}`
     );
   }
-  return { records: out, unmappedCentreIds, recordsWithoutAddress, warnings };
+
+  // Every facility the feed resolved but venue-geo.ts does not cover, BY NAME. Derived
+  // from the index rather than from the records so a newly-added facility surfaces on
+  // the first run it appears in the roster, even before it carries any occurrences.
+  const venues = [...index.values()];
+  const venuesWithoutGeo = venues
+    .filter((v) => !v.geo)
+    .map((v) => v.venueName)
+    .sort((a, b) => a.localeCompare(b));
+
+  if (venuesWithoutGeo.length > 0) {
+    const noTable = venues.every((v) => !v.geoTableAvailable);
+    warnings.push(
+      noTable
+        ? `no curated venue-geo table for this tenant — ${venuesWithoutGeo.length} centre(s) present in the feed will have no coordinates: ${venuesWithoutGeo.join(', ')}`
+        : `venue-geo.ts has no entry for ${venuesWithoutGeo.length} centre(s) present in the feed: ${venuesWithoutGeo.join(', ')}`
+    );
+  }
+
+  return {
+    records: out,
+    unmappedCentreIds,
+    recordsWithoutAddress,
+    venuesWithoutGeo,
+    recordsWithoutGeo,
+    warnings,
+  };
 }
