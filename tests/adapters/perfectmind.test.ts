@@ -16,6 +16,7 @@ import {
   ingestableTenants,
   defaultWindow,
   windowDays,
+  shortfallCalendarsFor,
   DEFAULT_WINDOW_DAYS,
 } from '../../worker/adapters/perfectmind';
 import {
@@ -1048,27 +1049,118 @@ describe('T8 adapter — triple gate, dry-run default, honest reporting', () => 
     expect(assessRunHealth({ ...base, truncatedCalendars: [] }).alert).toBe(false);
   });
 
-  it('a stride SHORTFALL alerts under its own distinct code (QA Q1)', () => {
-    // Separate code from truncation on purpose: truncation is "cut off with data still
-    // arriving" (unambiguous), shortfall is "stopped on empty strides with window left"
-    // (possibly benign). One code would let the benign case train people to ignore the
-    // malignant one.
+  it('coverage_shortfall requires PRODUCED DATA, then a short stop (QA predicate fix)', () => {
+    // The predicate is the design. Three positions were held on this; the first two were
+    // measurably wrong, and each wrong case is asserted here so neither can come back.
     const base = {
       tenantKey: 'nvrc',
-      occurrencesParsed: 500,
-      requestsUsed: 40,
+      occurrencesParsed: 1061,
+      requestsUsed: 47,
       baselineOccurrences: null,
       unrecognisedKeys: [] as string[],
       warnings: [] as string[],
     };
-    expect(assessRunHealth({ ...base, stridesRequired: 2, minStridesWalked: 2 }).alert).toBe(false);
-    const verdict = assessRunHealth({ ...base, stridesRequired: 4, minStridesWalked: 2 });
+
+    // THE REAL SIGNAL: a calendar that produced data and then stopped short.
+    const verdict = assessRunHealth({ ...base, shortfallCalendars: ['Open Gym Schedules'] });
     expect(verdict).toMatchObject({ code: 'coverage_shortfall', alert: true, status: 'partial' });
-    expect(verdict.detail).toMatch(/walked 2 of 4 stride/);
-    // Truncation still wins when both are present — it is the less ambiguous signal.
+    expect(verdict.detail).toMatch(/produced data and then stopped short/);
+    expect(verdict.detail).toMatch(/Open Gym Schedules/);
+
+    // NOT a shortfall: nothing qualified. This is the state a FAILED calendar
+    // (stridesWalked 0, occurrenceCount 0) and a legitimately EMPTY one both reduce to
+    // under the corrected predicate — the old one alerted on both.
+    expect(assessRunHealth({ ...base, shortfallCalendars: [] }).alert).toBe(false);
+
+    // Truncation still takes precedence — it is the less ambiguous signal.
     expect(
-      assessRunHealth({ ...base, stridesRequired: 4, minStridesWalked: 2, truncatedCalendars: ['X'] }).code
+      assessRunHealth({ ...base, shortfallCalendars: ['A'], truncatedCalendars: ['B'] }).code
     ).toBe('coverage_truncated');
+  });
+
+  it('a FAILED calendar is labelled a failure, NOT a coverage problem (live bug, QA)', async () => {
+    // MEASURED, not hypothetical. Under the old predicate a per-calendar fetch failure was
+    // recorded with stridesWalked:0, which satisfied `minStridesWalked < stridesRequired`
+    // and produced coverage_shortfall — mislabelling a payload-contract failure as a
+    // coverage problem, while the correct label sat unreachable. This drives the real
+    // adapter through that exact path.
+    process.env.KIDS_FUN_LIVE_PERFECTMIND = 'nvrc';
+    const adapter = new PerfectMindAdapter(nvrc);
+    const categories = JSON.stringify([
+      {
+        Name: '**Drop-In Schedules',
+        Calendars: [
+          { Id: 'a'.repeat(36), Name: 'Broken Calendar', BookingLink: '/x', BookingTypeInfo: { BookingType: 2 } },
+        ],
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation((async (url: unknown) => {
+      if (String(url).includes('GetCategoriesDataV2')) return new Response(categories, { status: 200 });
+      return new Response('<html>not json</html>', { status: 200 });
+    }) as typeof fetch);
+
+    vi.useFakeTimers();
+    const pending = adapter.fetch();
+    await vi.advanceTimersByTimeAsync(600_000);
+    const raw = await pending;
+    vi.useRealTimers();
+    adapter.extract(raw);
+
+    const report = adapter.lastRunReport()!;
+    expect(report.minStridesWalked, 'a failed calendar records zero strides walked').toBe(0);
+    expect(report.minStridesWalked).toBeLessThan(report.stridesRequired);
+    // ...and precisely BECAUSE it produced nothing, it is NOT a coverage shortfall.
+    expect(report.shortfallCalendars, 'produced no data — not a coverage problem').toEqual([]);
+    expect(report.health.code).not.toBe('coverage_shortfall');
+    expect(report.warnings.join(' '), 'the real failure is still reported').toMatch(/non-JSON|contract/i);
+  });
+
+  it('the shortfall PREDICATE itself, exercised directly (unreachable via fetch today)', () => {
+    // WHY THIS IS A DIRECT UNIT TEST AND NOT AN ADAPTER-LEVEL ONE: at the current 28-day
+    // window the condition cannot occur through fetch() at all — 2 strides, and the only
+    // path yielding stridesWalked:0 is a fetch failure, which the occurrenceCount half
+    // now excludes. That means NO behavioural test can distinguish "guard present" from
+    // "guard deleted", and a mutation removing the guard entirely passed silently until
+    // the predicate was pulled out where it could be exercised. Logic that is unreachable
+    // today still has to be provably correct for the day the window widens, or it is
+    // decoration that someone will trust later.
+    const required = 6;
+    const cal = (name: string, occurrenceCount: number, stridesWalked: number) => ({
+      calendarName: name, calendarId: 'id-' + name, occurrenceCount, stridesWalked,
+    });
+
+    expect(
+      shortfallCalendarsFor(
+        [
+          cal('Producing then stopped', 120, 3), // THE signal
+          cal('Failed fetch', 0, 0),             // v1 mislabelled this as coverage
+          cal('Legitimately empty (NSNH)', 0, 2), // v1 would alert forever at a wide window
+          cal('Complete', 400, 6),               // walked the whole window
+        ],
+        required
+      ),
+      'only "produced data AND THEN stopped short" qualifies'
+    ).toEqual(['Producing then stopped']);
+
+    // Boundary: walking exactly the required strides is not a shortfall.
+    expect(shortfallCalendarsFor([cal('Exact', 10, required)], required)).toEqual([]);
+    // Boundary: one stride short WITH data is.
+    expect(shortfallCalendarsFor([cal('OneShort', 10, required - 1)], required)).toEqual(['OneShort']);
+    // Falls back to the id when a calendar has no name.
+    expect(
+      shortfallCalendarsFor([{ calendarName: undefined, calendarId: 'guid-1', occurrenceCount: 5, stridesWalked: 1 }], required)
+    ).toEqual(['guid-1']);
+  });
+
+  it('a legitimately EMPTY calendar never alerts (NVRC North Shore Neighbourhood House)', () => {
+    // The config already documents NSNH as "expected to yield nothing" (empty
+    // BookingLink). Under the old predicate it would have alerted on every single run at
+    // any widened window, while 1,061 occurrences ingested correctly around it.
+    expect(nvrc.evidenceNote).toMatch(/North Shore Neighbourhood House/);
+    const shortfall = [{ calendarName: 'North Shore Neighbourhood House Schedules', occurrenceCount: 0, stridesWalked: 2 }]
+      .filter((c) => c.occurrenceCount > 0 && c.stridesWalked < 6)
+      .map((c) => c.calendarName);
+    expect(shortfall, 'zero-yield drops out of the population entirely').toEqual([]);
   });
 
   it('env alone cannot enable a tenant config says has nothing (Richmond)', () => {

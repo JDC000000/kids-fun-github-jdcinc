@@ -17,19 +17,17 @@
 //      for. Added for QA C2, which observed that the run report carried coverage numbers
 //      that NOTHING alerted on — "under-coverage is visible" was only half true.
 //
-//   5. COVERAGE SHORTFALL — a walk that ended on consecutive empty strides with part of
-//      the declared window never fetched (QA Q1).
+//   5. COVERAGE SHORTFALL — a calendar that PRODUCED DATA and then stopped short of the
+//      declared window (QA Q1, predicate corrected). The "produced data" half is
+//      load-bearing: without it the check mislabels fetch failures and fires forever on
+//      calendars that are legitimately empty. See the predicate note in assessRunHealth.
 //
-//      TRUNCATION AND SHORTFALL ARE SEPARATE CODES ON PURPOSE. An earlier revision of
-//      this file argued only truncation should alert, on the grounds that a short
-//      calendar legitimately walks fewer strides and alerting would false-positive. That
-//      reasoning was half right and is superseded: the false-positive worry is real, but
-//      the answer is to DISTINGUISH the two rather than to drop one. Truncation means
-//      "cut off with data still arriving" — unambiguously bad. Shortfall means "stopped
-//      on empty strides with window left" — possibly a calendar that ended, possibly a
-//      real gap, and in either case worth a human glance rather than silence. Blurring
-//      them into one code would have made the benign case train people to ignore the
-//      malignant one.
+//      TRUNCATION AND SHORTFALL ARE SEPARATE CODES ON PURPOSE, and that split survived
+//      independent review after being challenged twice. Truncation means "cut off with
+//      data still arriving" — unambiguous. Shortfall means "was producing, then went
+//      quiet with window left" — worth a look. Blurring them into one code would let the
+//      softer signal train people to ignore the harder one. What DID have to change was
+//      the shortfall predicate, not the split; see assessRunHealth.
 //   6. ASSET-BUILD-STAMP DRIFT — the BookMe4 static-asset stamp (`?07231003`) moving.
 //      This one is specific to this vendor: the whole schedule surface is rendered by a
 //      versioned JS bundle, so the stamp changing is the earliest available warning that
@@ -71,10 +69,10 @@ export interface PerfectMindRunDiagnostics {
   /** Calendars whose slice stopped on the per-stride page ceiling with the cursor still
    *  advancing — real, quantified under-coverage. */
   truncatedCalendars?: string[];
-  /** Strides the declared window required, and the fewest any calendar actually walked.
-   *  A shortfall means a walk ended on consecutive empty strides with window left. */
-  stridesRequired?: number;
-  minStridesWalked?: number;
+  /** Calendars that PRODUCED DATA and then stopped short of the declared window. See the
+   *  predicate note in assessRunHealth — "produced data AND THEN stopped" is doing real
+   *  work here; a bare stride comparison mislabels failures and empty calendars. */
+  shortfallCalendars?: string[];
   /** Set when the live BookMe4 asset build stamp differs from the pinned one. */
   observedAssetBuildStamp?: string | null;
   expectedAssetBuildStamp?: string;
@@ -158,28 +156,44 @@ export function assessRunHealth(diag: PerfectMindRunDiagnostics): PerfectMindHea
     };
   }
 
-  if (
-    diag.stridesRequired != null &&
-    diag.minStridesWalked != null &&
-    diag.minStridesWalked < diag.stridesRequired
-  ) {
-    // QA Q1's other half. Kept DISTINCT from coverage_truncated on purpose: truncation
-    // means "we were cut off with data still arriving" (unambiguously bad), whereas a
-    // shortfall means "we stopped on consecutive empty strides with window remaining"
-    // — which may be a calendar that genuinely ended, or a real gap the walk gave up on.
-    // Two codes let the board tell those apart; one code would blur them.
+  if (diag.shortfallCalendars?.length) {
+    // THE PREDICATE IS THE WHOLE DESIGN HERE, and it took three attempts. Both wrong
+    // versions are recorded because each was wrong in an instructive way.
     //
-    // Structurally unreachable at the current 28-day window (2 strides — a walk cannot
-    // exit early AND leave strides unwalked), so this costs nothing today and is already
-    // correct if the window ever grows. That is the point: the guard lands BEFORE the
-    // change that would need it, not after.
+    //   v1 — `minStridesWalked < stridesRequired`. Wrong in BOTH directions:
+    //        • It fired TODAY on a per-calendar FETCH FAILURE. A calendar whose fetch
+    //          throws is recorded with `stridesWalked: 0`, which satisfies the comparison,
+    //          so a payload-contract failure was reported as a COVERAGE problem — while
+    //          codeForError already held the correct `payload_contract` label, unreachable.
+    //          The comment that stood here claimed the check was "structurally unreachable
+    //          at the current window". That was simply false, and measurably so.
+    //        • At a widened window it would fire forever on NVRC's North Shore
+    //          Neighbourhood House — a calendar this project's OWN config documents as
+    //          "expected to yield nothing" (empty BookingLink). Measured: 1,061
+    //          occurrences ingesting correctly elsewhere while NSNH alerted every run.
+    //
+    //   v2 — drop the alert entirely. The author's own re-derived position on finding v1's
+    //        noise. Also wrong: it discards a real signal to escape a bad predicate, when
+    //        the predicate was the only thing at fault.
+    //
+    //   v3 — this. `occurrenceCount > 0 AND stridesWalked < stridesRequired`:
+    //        "produced data, AND THEN stopped short." Zero-yield and failed calendars leave
+    //        the population entirely — free to be labelled by the code that actually
+    //        describes them — and what remains is precisely the suspicious shape: a
+    //        calendar demonstrably producing, then a mid-window gap the walk gave up on.
+    //        The alert now means what its name says.
+    //
+    // Still DISTINCT from coverage_truncated. Truncation is "cut off with data still
+    // arriving" (unambiguous); a shortfall is "was producing, then went quiet across two
+    // consecutive strides with window left" — worth a look, not necessarily broken.
     return {
       code: 'coverage_shortfall',
       status: 'partial',
       alert: true,
       detail:
-        `incomplete coverage for ${diag.tenantKey}: walked ${diag.minStridesWalked} of ` +
-        `${diag.stridesRequired} stride(s) — part of the declared window was never fetched`,
+        `incomplete coverage for ${diag.tenantKey}: ${diag.shortfallCalendars.length} calendar(s) ` +
+        `produced data and then stopped short of the declared window — ` +
+        diag.shortfallCalendars.join(', '),
       occurrences: diag.occurrencesParsed,
     };
   }

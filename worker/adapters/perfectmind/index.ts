@@ -102,6 +102,32 @@ export function windowDays(window: FetchWindow): number {
   return Math.round((end - start) / 86_400_000) + 1;
 }
 
+/**
+ * Calendars that PRODUCED DATA and then stopped short of the declared window.
+ *
+ * Extracted and exported rather than inlined, for a reason worth stating: at the current
+ * 28-day window this condition is UNREACHABLE through `fetch()` (2 strides — a walk cannot
+ * both exit early and leave strides unwalked, and the one path that yields
+ * `stridesWalked: 0`, a per-calendar fetch failure, is excluded by the `occurrenceCount`
+ * half). So no adapter-level test can tell "guard present" from "guard deleted", and a
+ * mutation removing it passed silently until this was pulled out where it can be exercised
+ * directly. Unreachable-today logic still has to be provably correct for the day the
+ * window widens — otherwise it is decoration that will be trusted later.
+ *
+ * Evaluated PER CALENDAR, never against a min across all of them: a scalar min lets one
+ * failed calendar speak for the whole tenant and cannot name the culprit in the alert.
+ * See health.ts for why `occurrenceCount > 0` is load-bearing (it is what keeps fetch
+ * failures and legitimately-empty calendars out of a COVERAGE alert).
+ */
+export function shortfallCalendarsFor(
+  calendars: Pick<CalendarFetchResult, 'calendarName' | 'calendarId' | 'occurrenceCount' | 'stridesWalked'>[],
+  stridesRequired: number
+): string[] {
+  return calendars
+    .filter((c) => c.occurrenceCount > 0 && c.stridesWalked < stridesRequired)
+    .map((c) => c.calendarName ?? c.calendarId);
+}
+
 /** What one fetch() produced — the single element fetch() returns, consumed by extract(). */
 export interface PerfectMindRawPayload {
   tenantKey: string;
@@ -121,11 +147,13 @@ export interface PerfectMindRunReport {
   requestsUsed: number;
   calendarsFetched: number;
   calendarsTruncated: number;
-  /** Strides the window required vs the fewest any calendar actually walked. A shortfall
-   *  raises `coverage_shortfall` — a walk that stopped on empty strides with window left.
-   *  Structurally unreachable at the current 28-day window; correct if it ever grows. */
+  /** Strides the window required vs the fewest any calendar walked. DIAGNOSTIC only —
+   *  the alarm is `shortfallCalendars`, because a bare comparison of these two mislabels
+   *  failed and legitimately-empty calendars (see health.ts). */
   stridesRequired: number;
   minStridesWalked: number;
+  /** Calendars that produced data and THEN stopped short — raises `coverage_shortfall`. */
+  shortfallCalendars: string[];
   /** Calendars cut short with data still arriving — raises `coverage_truncated`. Kept
    *  distinct from a shortfall: this one is unambiguously bad. */
   truncatedCalendars: string[];
@@ -256,6 +284,7 @@ export class PerfectMindAdapter implements Adapter {
     const minStridesWalked = payload.calendars.length
       ? Math.min(...payload.calendars.map((c) => c.stridesWalked))
       : stridesRequired;
+    const shortfallCalendars = shortfallCalendarsFor(payload.calendars, stridesRequired);
 
     this.report = {
       tenantKey: payload.tenantKey,
@@ -265,6 +294,7 @@ export class PerfectMindAdapter implements Adapter {
       calendarsFetched: payload.calendars.length,
       calendarsTruncated: truncatedCalendars.length,
       truncatedCalendars,
+      shortfallCalendars,
       stridesRequired,
       minStridesWalked,
       parse: parsed.stats,
@@ -279,8 +309,7 @@ export class PerfectMindAdapter implements Adapter {
         baselineOccurrences: null,
         unrecognisedKeys: payload.unrecognisedKeys,
         truncatedCalendars,
-        stridesRequired,
-        minStridesWalked,
+        shortfallCalendars,
         warnings,
       }),
     };
@@ -308,8 +337,7 @@ export class PerfectMindAdapter implements Adapter {
       baselineOccurrences: baselineRecordsFound,
       unrecognisedKeys: this.report.unrecognisedKeys,
       truncatedCalendars: this.report.truncatedCalendars,
-      stridesRequired: this.report.stridesRequired,
-      minStridesWalked: this.report.minStridesWalked,
+      shortfallCalendars: this.report.shortfallCalendars,
       warnings: this.report.warnings,
     });
     this.report = { ...this.report, health: verdict };
