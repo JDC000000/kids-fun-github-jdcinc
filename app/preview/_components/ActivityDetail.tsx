@@ -142,6 +142,12 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
           )}
           <ReportWrongInfo occurrenceId={occurrenceId} />
         </div>
+        {/* NOTE (G-VENUE-3, QA F1): a per-venue open-data licence notice used to render
+            here and was REMOVED — it matched on venue NAME, and a name is not
+            provenance, so it claimed OGL licensing for coordinates that never came
+            from the City. The attribution now lives site-wide in SiteFooter, where it
+            is unconditionally true. Do not reintroduce a per-record version without a
+            provenance column on `venue`. See docs/source-register.md §6.6. */}
       </section>
 
       {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action. */}

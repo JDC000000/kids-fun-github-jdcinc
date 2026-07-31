@@ -443,7 +443,7 @@ describe('G-T7R-3 parse against real captured payloads', () => {
 // ── G-T7R-4 venues ───────────────────────────────────────────────────────────────────
 
 describe('G-T7R-4 venue resolution from centerdetails (no geocoder)', () => {
-  it('joins street address + municipality onto every record, with no lat/lng', () => {
+  it('joins street address + municipality onto every record, and geo from the committed constant', () => {
     const details = fixture<{ body: { center_details: Array<{ id: number }> } }>(
       'vancouver.centerdetails.json'
     ).body.center_details;
@@ -463,10 +463,16 @@ describe('G-T7R-4 venue resolution from centerdetails (no geocoder)', () => {
     const applied = applyVenues(records, index);
     expect(applied.unmappedCentreIds).toEqual([]);
     expect(applied.recordsWithoutAddress).toBe(0);
+    // G-VENUE-2: calendar 5 runs entirely at community centres, all of which the
+    // constant covers — so geo is attached for every record, with no network call.
+    expect(applied.recordsWithoutGeo).toBe(0);
     for (const r of applied.records) {
       expect(r.venueAddress).toBeTruthy();
-      expect(r.venueLat, 'no geocoder at ingest').toBeUndefined();
-      expect(r.venueLng).toBeUndefined();
+      expect(r.venueLat, 'geo comes from the committed constant, never a geocoder').toBeTypeOf(
+        'number'
+      );
+      expect(r.venueLng).toBeTypeOf('number');
+      expect(r.venueDisplayArea).toBeTruthy();
     }
   });
 
