@@ -23,12 +23,19 @@
 //      `location.viewport.*`, `q`, `categories`, `within`) is outside that set and
 //      therefore unreachable.
 //
-//   3. A RUNTIME TRIPWIRE ON THE FINAL URL.  assertOrganizerScopedUrl() runs on the
-//      fully-built URL immediately before the single fetch call site, and throws
-//      unless the host is EXACTLY EVENTBRITE_API_HOST, the path matches the
-//      organizer-scoped shape exactly, and no forbidden parameter is present. It is
-//      production code, not a test: a future edit that reintroduced an area query
-//      would fail closed at runtime, not just go red in CI.
+//   3. A RUNTIME TRIPWIRE ON THE FINAL URL.  assertOrganizerScopedUrl() throws unless the
+//      host is EXACTLY EVENTBRITE_API_HOST, the path matches the organizer-scoped shape
+//      exactly, and no forbidden or credential-shaped parameter is present. It is
+//      production code, not a test: a future edit that reintroduced an area query would
+//      fail closed at runtime, not just go red in CI.
+//      It runs at BOTH call sites, deliberately, because they prove different things:
+//      once inside buildOrganizationEventsUrl (fail fast at construction, precise error)
+//      and again in fetchOrganizerEvents immediately before politeFetch — the second is
+//      what makes the guarantee about what is SENT rather than what was BUILT. QA proved
+//      the difference by appending a parameter to the url AFTER the builder returned.
+//      Both call sites, and their ORDER relative to the fetch, are pinned structurally in
+//      tests/compliance/eventbrite-organizer-scope.test.ts — deleting either one, or
+//      moving the assert after the fetch, fails there.
 //
 // tests/compliance/eventbrite-organizer-scope.test.ts then proves all three
 // behaviourally (spied fetch) AND structurally (this file is read from disk, its
@@ -94,9 +101,20 @@ export const ALLOWED_QUERY_PARAMS = {
 
 /**
  * Any parameter under this prefix is a geographic area query by construction — the
- * defining shape of what IR-03 forbids. Named explicitly as defence in depth: the closed
- * ALLOWED_QUERY_PARAMS set above already rejects it, and this rejects it again by
- * category rather than by omission.
+ * defining shape of what IR-03 forbids.
+ *
+ * QA F4 — "this guard is redundant; removing it is behaviourally invisible." Correct
+ * TODAY, and it is KEPT anyway, deliberately. It is redundant only while
+ * ALLOWED_QUERY_PARAMS stays closed and small; the moment someone adds a legitimate
+ * parameter to that set (a future vendor filter, a pagination tweak), the allow-list stops
+ * being a blanket "no" and this becomes the thing still standing between the adapter and
+ * an area query. Deleting a guard because it is currently unreachable is how guards die
+ * just before they are needed.
+ *
+ * What QA was right about is that "kept for a reason" must be checkable, not asserted. The
+ * two rejections carry DIFFERENT error messages ("forbidden area-query parameter" vs "not
+ * in the closed allow-list"), and the compliance suite pins location.* to the FORMER — so
+ * the test proves this guard fires, not the allow-list standing in front of it.
  *
  * WHY THERE IS NO DENY-LIST OF SPECIFIC PARAMETER NAMES HERE. The obvious companion —
  * an array literal of every banned parameter (`location.address`, `q`, `within`,
@@ -175,14 +193,27 @@ export function assertOrganizerScopedUrl(url: URL, expectedOrganizationId?: stri
     if (name.startsWith(FORBIDDEN_PARAM_PREFIX)) {
       throw new OrganizerScopeViolationError(`forbidden area-query parameter "${name}"`, raw);
     }
+    // A credential must never be smuggled into the URL (Eventbrite historically accepted
+    // `?token=`; banned here so it can never land in a log, a Referer or an error string).
+    //
+    // QA F2 FIX — matched on the parameter NAME, never on the raw query string. The first
+    // version tested /token|auth|key=/ against url.search, which also sees VALUES: an
+    // opaque Eventbrite continuation cursor that merely CONTAINS "auth" or "token" as a
+    // substring ("abcAUTHxyz", "tokenish123") threw and aborted an otherwise legitimate
+    // run. Failing closed and loud was the right direction, but on the wrong signal —
+    // we control parameter names, we do not control the vendor's cursor alphabet.
+    //
+    // Deliberately NARROW (token/auth only). The closed allow-list below is the actual
+    // guarantee — it already refuses every parameter not named in ALLOWED_QUERY_PARAMS,
+    // so this branch exists to give the credential case a PRECISE error rather than to
+    // add coverage. Listing more credential words here would buy nothing and would itself
+    // trip the family's bypass scan, which bans those literals in code for good reason.
+    if (/token|auth/i.test(name)) {
+      throw new OrganizerScopeViolationError(`credential-shaped query parameter "${name}"`, raw);
+    }
     if (!permitted.has(name)) {
       throw new OrganizerScopeViolationError(`parameter "${name}" is not in the closed allow-list`, raw);
     }
-  }
-  // A token must never be smuggled into the URL (Eventbrite historically accepted
-  // `?token=`; it is banned here so a credential can never land in a log or a Referer).
-  if (/token|auth|key=/i.test(url.search)) {
-    throw new OrganizerScopeViolationError('credential-shaped value in the query string', raw);
   }
 }
 
@@ -311,6 +342,18 @@ export async function fetchOrganizerEvents(
       throw new EventbriteRequestCapExceededError(config.maxRequestsPerRun);
     }
     const url = buildOrganizationEventsUrl(config.organizationId, continuation);
+    // QA F1 FIX — assert on the FINAL url, HERE, immediately before the request.
+    //
+    // The builder asserts too (fail fast at construction, with a precise error), and that
+    // is kept. But an assertion inside the builder only proves what was BUILT, not what is
+    // SENT: QA's defeat attempt appended `access_token` to the url AFTER the build
+    // returned, and the tripwire never saw it — only the behavioural test caught it. The
+    // file header claimed this check ran "immediately before the single fetch call site";
+    // it did not, and rather than soften the comment to match weaker code, the code now
+    // does what the comment always said. Two asserts, deliberately, because they prove
+    // different things — and the call site itself is pinned structurally in
+    // tests/compliance/eventbrite-organizer-scope.test.ts so DELETING this line fails.
+    assertOrganizerScopedUrl(url, config.organizationId);
 
     const response = await politeFetch(
       policyKey,

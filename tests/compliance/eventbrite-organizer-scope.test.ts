@@ -431,8 +431,44 @@ describe('G-T10-2 (A) assertOrganizerScopedUrl rejects every anonymous-area shap
     expect(() => assertOrganizerScopedUrl(new URL(`http://${EVENTBRITE_API_HOST}/v3/organizations/1/events/`))).toThrow(
       OrganizerScopeViolationError
     );
-    expect(() => assertOrganizerScopedUrl(new URL(`${ORG}?token=secret`))).toThrow(
-      OrganizerScopeViolationError
+    for (const q of ['token=secret', 'access_token=secret', 'api_key=secret', 'auth=secret']) {
+      expect(() => assertOrganizerScopedUrl(new URL(`${ORG}?${q}`)), `${q} must be rejected`).toThrow(
+        OrganizerScopeViolationError
+      );
+    }
+  });
+
+  it('QA F2 — an opaque cursor VALUE containing "auth"/"token" is legitimate, not a credential', () => {
+    // The regression QA found: the credential check used to match /token|auth|key=/ against
+    // the whole query STRING, which includes VALUES. Eventbrite's continuation cursor is an
+    // opaque vendor-generated blob, so one that merely contains those letters aborted a
+    // perfectly legitimate run. We control parameter NAMES; we do not control the vendor's
+    // cursor alphabet. Every one of these threw before the fix.
+    for (const cursor of ['abcAUTHxyz', 'tokenish123', 'MTIzauth456', 'keyed=stuff', 'AUTHORIZATION']) {
+      expect(
+        () => buildOrganizationEventsUrl(TEST_ORGANIZATION_ID, cursor),
+        `cursor ${cursor} is opaque vendor data, not a credential`
+      ).not.toThrow();
+    }
+    // …and the NAME-based check still bites, so the fix narrowed the signal without
+    // weakening the guarantee.
+    expect(() => assertOrganizerScopedUrl(new URL(`${ORG}?access_token=x`))).toThrow(
+      /credential-shaped query parameter/
+    );
+  });
+
+  it('QA F4 — the location.* guard is the thing that fires, not the allow-list in front of it', () => {
+    // QA correctly observed the prefix guard is redundant while the allow-list stays closed,
+    // and it is kept for the case where that stops being true (see client.ts). "Kept for a
+    // reason" has to be checkable, so this pins WHICH rejection fires, by message: a
+    // location.* parameter must be refused as an AREA QUERY specifically.
+    expect(() => assertOrganizerScopedUrl(new URL(`${ORG}?location.address=vancouver`))).toThrow(
+      /forbidden area-query parameter/
+    );
+    // A merely-unknown parameter takes the other branch — proving the two are distinct and
+    // that the assertion above is not just the allow-list wearing the area-query's name.
+    expect(() => assertOrganizerScopedUrl(new URL(`${ORG}?some_new_vendor_param=1`))).toThrow(
+      /not in the closed allow-list/
     );
   });
 
@@ -589,6 +625,142 @@ describe('G-T10-2 (B) no anonymous area-query path EXISTS in the adapter source'
         `client.ts declares a non-organizer-scoped endpoint path: ${path}`
       ).toBe(true);
     }
+  });
+
+  // ── QA F1: the tripwire's CALL SITES, pinned ────────────────────────────────
+  //
+  // WHY THIS EXISTS, in QA's words: assertOrganizerScopedUrl() itself was thoroughly
+  // mutation-tested, but the WIRING to it was not — QA deleted the single call inside
+  // buildOrganizationEventsUrl and the ENTIRE suite stayed green (1314/1314 unit, 385 db,
+  // both tsc, eslint), byte-identical to baseline. A guarantee whose invocation nothing
+  // pins is a guarantee one keystroke from being decorative. Same class as no-bypass's own
+  // historical A1 finding, which this project treats as must-fix.
+  //
+  // Two things are pinned here, not one: that each call site EXISTS, and that the
+  // fetch-path one runs BEFORE the request. The ordering half is the other half of F1 —
+  // QA's defeat attempt appended a parameter to the url AFTER the builder returned, which
+  // the tripwire never saw. Asserting mere presence would not have caught that.
+
+  /**
+   * A named function's body, brace-matched. Input must already be comment-stripped.
+   *
+   * The parameter list is skipped by PAREN-matching first, before looking for the opening
+   * brace. Found the hard way: `fetchOrganizerEvents`'s signature contains
+   * `opts: { fetchImpl?: typeof fetch } = {}`, so naively taking the first `{` after the
+   * function name returned the PARAMETER TYPE as the body — an assertion that would then
+   * have passed or failed for reasons having nothing to do with the code it was policing.
+   */
+  function functionBody(code: string, name: string): string {
+    const sig = new RegExp(`function\\s+${name}\\s*\\(`).exec(code);
+    if (!sig) throw new Error(`function ${name} not found — did it get renamed?`);
+    // Paren-match across the whole parameter list, however many braces it contains.
+    let parens = 0;
+    let afterParams = -1;
+    for (let i = sig.index + sig[0].length - 1; i < code.length; i += 1) {
+      if (code[i] === '(') parens += 1;
+      else if (code[i] === ')') {
+        parens -= 1;
+        if (parens === 0) {
+          afterParams = i + 1;
+          break;
+        }
+      }
+    }
+    if (afterParams === -1) throw new Error(`unbalanced parameter list reading ${name}`);
+    const open = code.indexOf('{', afterParams);
+    if (open === -1) throw new Error(`no body found for ${name}`);
+    let depth = 0;
+    for (let i = open; i < code.length; i += 1) {
+      if (code[i] === '{') depth += 1;
+      else if (code[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return code.slice(open, i + 1);
+      }
+    }
+    throw new Error(`unbalanced braces reading ${name}`);
+  }
+
+  const GUARD_CALL = 'assertOrganizerScopedUrl(';
+  const FETCH_CALL = 'politeFetch(';
+
+  function clientCode(): string {
+    return stripComments(
+      readFileSync(resolve(process.cwd(), 'worker/adapters/eventbrite/client.ts'), 'utf8')
+    );
+  }
+
+  it('the URL BUILDER calls the tripwire — deleting that call fails HERE', () => {
+    expect(
+      functionBody(clientCode(), 'buildOrganizationEventsUrl'),
+      'buildOrganizationEventsUrl must call assertOrganizerScopedUrl'
+    ).toContain(GUARD_CALL);
+  });
+
+  it('the FETCH PATH calls the tripwire, and calls it BEFORE the request', () => {
+    const body = functionBody(clientCode(), 'fetchOrganizerEvents');
+    expect(body, 'fetchOrganizerEvents must assert on the final url').toContain(GUARD_CALL);
+    expect(body, 'fetchOrganizerEvents must actually issue the request here').toContain(FETCH_CALL);
+    // The ordering half. An assert AFTER the fetch validates nothing that was sent.
+    expect(
+      body.indexOf(GUARD_CALL),
+      'the tripwire must run BEFORE politeFetch, not after it'
+    ).toBeLessThan(body.indexOf(FETCH_CALL));
+  });
+
+  it('there is exactly ONE request call site in the whole family, and it is the guarded one', () => {
+    // The ordering pin above is only meaningful if there is ONE place a request can be
+    // issued from. A second, unguarded request elsewhere would slip past it entirely.
+    for (const rel of EVENTBRITE_SOURCES) {
+      const code = stripComments(readFileSync(resolve(process.cwd(), rel), 'utf8'));
+      const expected = rel.endsWith('client.ts') ? 1 : 0;
+      expect(
+        [...code.matchAll(/\b(politeFetch|guardedLiveFetch)\s*\(/g)].length,
+        `${rel} must contain exactly ${expected} polite-fetch call site(s)`
+      ).toBe(expected);
+
+      // …and nothing in the family may call the GLOBAL fetch directly, bypassing the
+      // politeness/terms seam. The Adapter interface's own `fetch()` METHOD shares the
+      // name and is not a network call, so it is neutralised first rather than being
+      // matched and excused — otherwise this assertion would be reporting on the wrong
+      // thing while looking green.
+      const withoutAdapterMethod = code.replace(/\basync\s+fetch\s*\(\s*\)/g, 'ADAPTER_FETCH_METHOD');
+      expect(
+        [...withoutAdapterMethod.matchAll(/(?<![.\w])fetch\s*\(/g)].length,
+        `${rel} must not call the global fetch directly — every request goes through politeFetch`
+      ).toBe(0);
+    }
+  });
+
+  // (C)-style self-checks: a pin nobody has proved can fail is not a pin. These drive the
+  // SAME helpers against synthetic bodies carrying exactly the mutations QA performed.
+  it('(C) the call-site pin BITES: a builder body with the guard removed is caught', () => {
+    const mutated = `
+      function buildOrganizationEventsUrl(organizationId, continuation) {
+        const url = new URL('https://host/v3/organizations/' + organizationId + '/events/');
+        return url;
+      }`;
+    expect(functionBody(mutated, 'buildOrganizationEventsUrl')).not.toContain(GUARD_CALL);
+  });
+
+  it('(C) the ORDERING pin BITES: an assert placed after the fetch is caught', () => {
+    const mutated = `
+      async function fetchOrganizerEvents(config, token) {
+        const url = buildOrganizationEventsUrl(config.organizationId);
+        const response = await politeFetch(key, url, {}, {});
+        assertOrganizerScopedUrl(url, config.organizationId);
+        return response;
+      }`;
+    const body = functionBody(mutated, 'fetchOrganizerEvents');
+    expect(body).toContain(GUARD_CALL); // presence alone would PASS…
+    expect(body.indexOf(GUARD_CALL)).toBeGreaterThan(body.indexOf(FETCH_CALL)); // …ordering catches it
+  });
+
+  it('(C) the extractor fails loudly on a rename rather than passing vacuously', () => {
+    // The quiet way a source-reading pin dies: the function is renamed, the regex misses,
+    // and an empty body trivially satisfies every assertion. It must throw instead.
+    expect(() => functionBody('function somethingElse() { return 1; }', 'fetchOrganizerEvents')).toThrow(
+      /not found/
+    );
   });
 
   it('the config module declares the organizer-scoped template and nothing else', () => {

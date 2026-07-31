@@ -778,6 +778,30 @@ Re-verify field-by-field the first time an organizer is onboarded.
   `terms_status ∈ {allowed, summarise_only}` + `robots_status = allowed`** — I could not
   read the production DB from the CI/audit environment.
 
+- **F-4 (info, needs ratification not investigation) — G-T10-3's implementation is
+  deliberately STRICTER than the literal text of its own acceptance criterion.** Registered
+  here, at QA's request (T10 finding F5), the same way G-T10-2's `Authorization` narrowing is
+  registered in §6.5 — a deviation that lives only in a code comment is not registered.
+  - **The AC text says:** "editorial/aggregator items enter as `manual_candidate`", and
+    verifies "an editorial item lands as `manual_candidate`, absent from confirmed results."
+  - **What was built:** an editorial-tier record that the BR-13 confidence gate would have
+    made `confirmed` becomes `manual_candidate` — the AC's case exactly. But an editorial
+    record the confidence gate already rejected stays `needs_review`, *not*
+    `manual_candidate`.
+  - **Why.** `needs_review` is `hidden`; `manual_candidate` is `expected`, i.e. user-visible
+    as an unverified lead (`lib/search/filters/status.ts`). Applying the AC's sentence
+    literally would therefore *promote* a record BR-05 had just held back into visibility —
+    inverting the safety gate in the name of satisfying a status label. The editorial gate
+    only ever REPLACES a would-be-`confirmed` verdict; it never overrides a stricter one.
+    Both readings satisfy "never rendered confirmed"; only this one also satisfies BR-05.
+  - **Independently reviewed:** QA derived the full 40-cell (confidence × tier × terms)
+    matrix empirically and concurred, recommending the **AC text** be amended to match the
+    implementation rather than the implementation changed. That amendment is a scope-doc
+    edit and is **not** made here — flagged for whoever owns
+    `kids-fun-scope-to-task-v1.1.md`.
+  - **No investigation needed; this is a ratification item.** Asserted exhaustively in
+    `tests/ingestion/editorial-candidate.test.ts`.
+
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source
 has an *unclear* status that I have silently resolved; F-3 is the one item that needs a
