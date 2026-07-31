@@ -734,8 +734,31 @@ export async function fetchCalendar(
     if (strideYield === 0) {
       emptyStridesInARow += 1;
       if (emptyStridesInARow >= MAX_EMPTY_STRIDES_IN_A_ROW) {
-        // Two quiet fortnights in a row: the calendar has genuinely run out. Not a
-        // warning — this is the normal, expected way a short calendar ends.
+        // Two quiet fortnights in a row: stop asking.
+        //
+        // QA Q1 — THIS USED TO RETURN SILENTLY, and the comment that stood here argued
+        // it should ("not a warning — this is the normal, expected way a short calendar
+        // ends"). That argument is wrong in the one case that matters: when the walk ends
+        // with strides STILL REMAINING, the run covered less of the window than it
+        // declared and said nothing about it. That is B1's exact signature — a clean-
+        // looking run over a partly-unexamined window — merely relocated from the stride
+        // selector to the exit condition.
+        //
+        // Ending ON the last stride is genuinely normal and stays quiet. Ending EARLY is
+        // reported, names the stride, and leaves `stridesWalked` where it actually
+        // stopped so the caller can see the shortfall rather than infer it.
+        //
+        // (The empty-stride tolerance itself is deliberately NOT reduced: QA's live sweep
+        // found NVRC's Skate Schedules has a genuinely empty stride 0 with all its records
+        // in stride 1, so MAX_EMPTY_STRIDES_IN_A_ROW = 1 would silently drop a whole real
+        // calendar today. The value is load-bearing exactly as it stands.)
+        const stridesRemaining = strides - (stride + 1);
+        if (stridesRemaining > 0) {
+          result.warnings.push(
+            `stopped after ${MAX_EMPTY_STRIDES_IN_A_ROW} consecutive empty stride(s) at stride ${stride} ` +
+              `with ${stridesRemaining} stride(s) of the declared window never fetched`
+          );
+        }
         return result;
       }
     } else {

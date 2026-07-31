@@ -92,13 +92,18 @@ export interface PerfectMindTenantConfig {
    * multi-stride run die on RequestCapExceededError partway through — a loud failure
    * rather than the silent half-window this adapter shipped with once, but still wrong.
    *
-   * RUN LENGTH AT THIS CAP IS ~7 MINUTES of wall clock at the 3s politeness floor, and
-   * that is CONFIRMED SAFE rather than assumed (orchestrator check, 2026-07-31): there is
-   * no per-job wall-clock watchdog anywhere in the scheduler — only H4's per-REQUEST
-   * deadline in worker/health/policy.ts — production cadence is daily, and T7's
-   * comparable ~14-minute Vancouver run completed normally with no forced termination.
-   * The absence of scheduling jitter is a pre-existing project-wide scaling note, not
-   * something this adapter introduces. See shared memory `dffcf5f0`.
+   * RUN LENGTH IS MEASURED, NOT ESTIMATED. QA's first full live end-to-end run of the
+   * fixed adapter (2026-07-31): **47 of 140 requests used (34%), 138.2s fetch-only**.
+   * An earlier note here guessed ~7 minutes from the cap; that was wrong — it assumed the
+   * cap would be spent, and the cap is a RUNAWAY BOUND, not a budget. NVRC is therefore
+   * NOT the longest-running source on the project (T7's Vancouver run, ~14 min total,
+   * still is). The ~3x headroom is deliberate: sizing this nearer the operating point
+   * would convert a future vendor change into a RequestCapExceededError instead of
+   * absorbing it.
+   *
+   * Long runs are safe here regardless — no per-job wall-clock watchdog exists anywhere
+   * in the scheduler (only H4's per-REQUEST deadline in worker/health/policy.ts) and
+   * production cadence is daily. See shared memory `dffcf5f0`.
    */
   maxRequestsPerRun: number;
   /** What was measured for this tenant, in one line. Evidence, not aspiration. */

@@ -71,8 +71,8 @@ export interface FetchWindow {
  * rolls forward daily rather than accumulating, which is exactly why it was invisible.
  *
  * Fixed by shrinking the window to match the name rather than by buying a third stride:
- * covering the 29th day would have cost a whole extra stride (~36 requests, ~2 minutes of
- * run time) to gain one day at the far edge of a horizon that exists to be approximate.
+ * covering the 29th day would have cost a whole extra stride (~50% more requests) to gain
+ * one day at the far edge of a horizon that exists to be approximate.
  *
  * NOTE for whoever touches worker/adapters/activenet/index.ts: it has the SAME
  * off-by-one (its `defaultWindow` also declares 29 inclusive days for a 28-day constant).
@@ -121,13 +121,13 @@ export interface PerfectMindRunReport {
   requestsUsed: number;
   calendarsFetched: number;
   calendarsTruncated: number;
-  /** Strides the window required, and the fewest any calendar actually walked.
-   *  DIAGNOSTIC, not an alarm: a genuinely short calendar legitimately walks fewer
-   *  strides (two empty strides in a row ends it). The alarm is `truncatedCalendars`. */
+  /** Strides the window required vs the fewest any calendar actually walked. A shortfall
+   *  raises `coverage_shortfall` — a walk that stopped on empty strides with window left.
+   *  Structurally unreachable at the current 28-day window; correct if it ever grows. */
   stridesRequired: number;
   minStridesWalked: number;
-  /** Names of calendars whose slice was cut short with data still available. This is the
-   *  coverage signal that actually alerts (health code `coverage_truncated`). */
+  /** Calendars cut short with data still arriving — raises `coverage_truncated`. Kept
+   *  distinct from a shortfall: this one is unambiguously bad. */
   truncatedCalendars: string[];
   parse: ParseResult['stats'];
   warnings: string[];
@@ -252,6 +252,10 @@ export class PerfectMindAdapter implements Adapter {
     const truncatedCalendars = payload.calendars
       .filter((c) => c.truncated)
       .map((c) => c.calendarName ?? c.calendarId);
+    const stridesRequired = stridesForWindow(windowDays(payload.window));
+    const minStridesWalked = payload.calendars.length
+      ? Math.min(...payload.calendars.map((c) => c.stridesWalked))
+      : stridesRequired;
 
     this.report = {
       tenantKey: payload.tenantKey,
@@ -261,10 +265,8 @@ export class PerfectMindAdapter implements Adapter {
       calendarsFetched: payload.calendars.length,
       calendarsTruncated: truncatedCalendars.length,
       truncatedCalendars,
-      stridesRequired: stridesForWindow(windowDays(payload.window)),
-      minStridesWalked: payload.calendars.length
-        ? Math.min(...payload.calendars.map((c) => c.stridesWalked))
-        : 0,
+      stridesRequired,
+      minStridesWalked,
       parse: parsed.stats,
       warnings,
       unrecognisedKeys: payload.unrecognisedKeys,
@@ -277,6 +279,8 @@ export class PerfectMindAdapter implements Adapter {
         baselineOccurrences: null,
         unrecognisedKeys: payload.unrecognisedKeys,
         truncatedCalendars,
+        stridesRequired,
+        minStridesWalked,
         warnings,
       }),
     };
@@ -304,6 +308,8 @@ export class PerfectMindAdapter implements Adapter {
       baselineOccurrences: baselineRecordsFound,
       unrecognisedKeys: this.report.unrecognisedKeys,
       truncatedCalendars: this.report.truncatedCalendars,
+      stridesRequired: this.report.stridesRequired,
+      minStridesWalked: this.report.minStridesWalked,
       warnings: this.report.warnings,
     });
     this.report = { ...this.report, health: verdict };

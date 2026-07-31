@@ -17,14 +17,20 @@
 //      for. Added for QA C2, which observed that the run report carried coverage numbers
 //      that NOTHING alerted on — "under-coverage is visible" was only half true.
 //
-//      Deliberately keyed on TRUNCATION rather than on `stridesWalked < stridesRequired`,
-//      which is the reading a literal fix would have taken. Walking fewer strides than the
-//      window needs is NORMAL and common: a genuinely short calendar hits two consecutive
-//      empty strides and stops early, exactly as intended. Alerting on that would fire a
-//      false positive on every quiet calendar and train the health board to be ignored —
-//      worse than not alerting at all. Truncation is the signal that actually means
-//      "there was more data and we stopped asking".
-//   5. ASSET-BUILD-STAMP DRIFT — the BookMe4 static-asset stamp (`?07231003`) moving.
+//   5. COVERAGE SHORTFALL — a walk that ended on consecutive empty strides with part of
+//      the declared window never fetched (QA Q1).
+//
+//      TRUNCATION AND SHORTFALL ARE SEPARATE CODES ON PURPOSE. An earlier revision of
+//      this file argued only truncation should alert, on the grounds that a short
+//      calendar legitimately walks fewer strides and alerting would false-positive. That
+//      reasoning was half right and is superseded: the false-positive worry is real, but
+//      the answer is to DISTINGUISH the two rather than to drop one. Truncation means
+//      "cut off with data still arriving" — unambiguously bad. Shortfall means "stopped
+//      on empty strides with window left" — possibly a calendar that ended, possibly a
+//      real gap, and in either case worth a human glance rather than silence. Blurring
+//      them into one code would have made the benign case train people to ignore the
+//      malignant one.
+//   6. ASSET-BUILD-STAMP DRIFT — the BookMe4 static-asset stamp (`?07231003`) moving.
 //      This one is specific to this vendor: the whole schedule surface is rendered by a
 //      versioned JS bundle, so the stamp changing is the earliest available warning that
 //      the JSON contract underneath it may have moved too.
@@ -52,6 +58,7 @@ export type PerfectMindHealthCode =
   | 'shape_drift'
   | 'asset_build_drift'
   | 'coverage_truncated'
+  | 'coverage_shortfall'
   | 'fetch_failed';
 
 export interface PerfectMindRunDiagnostics {
@@ -64,6 +71,10 @@ export interface PerfectMindRunDiagnostics {
   /** Calendars whose slice stopped on the per-stride page ceiling with the cursor still
    *  advancing — real, quantified under-coverage. */
   truncatedCalendars?: string[];
+  /** Strides the declared window required, and the fewest any calendar actually walked.
+   *  A shortfall means a walk ended on consecutive empty strides with window left. */
+  stridesRequired?: number;
+  minStridesWalked?: number;
   /** Set when the live BookMe4 asset build stamp differs from the pinned one. */
   observedAssetBuildStamp?: string | null;
   expectedAssetBuildStamp?: string;
@@ -143,6 +154,32 @@ export function assessRunHealth(diag: PerfectMindRunDiagnostics): PerfectMindHea
       detail:
         `incomplete coverage for ${diag.tenantKey}: ${diag.truncatedCalendars.length} calendar(s) ` +
         `stopped on the page ceiling with data still available — ${diag.truncatedCalendars.join(', ')}`,
+      occurrences: diag.occurrencesParsed,
+    };
+  }
+
+  if (
+    diag.stridesRequired != null &&
+    diag.minStridesWalked != null &&
+    diag.minStridesWalked < diag.stridesRequired
+  ) {
+    // QA Q1's other half. Kept DISTINCT from coverage_truncated on purpose: truncation
+    // means "we were cut off with data still arriving" (unambiguously bad), whereas a
+    // shortfall means "we stopped on consecutive empty strides with window remaining"
+    // — which may be a calendar that genuinely ended, or a real gap the walk gave up on.
+    // Two codes let the board tell those apart; one code would blur them.
+    //
+    // Structurally unreachable at the current 28-day window (2 strides — a walk cannot
+    // exit early AND leave strides unwalked), so this costs nothing today and is already
+    // correct if the window ever grows. That is the point: the guard lands BEFORE the
+    // change that would need it, not after.
+    return {
+      code: 'coverage_shortfall',
+      status: 'partial',
+      alert: true,
+      detail:
+        `incomplete coverage for ${diag.tenantKey}: walked ${diag.minStridesWalked} of ` +
+        `${diag.stridesRequired} stride(s) — part of the declared window was never fetched`,
       occurrences: diag.occurrencesParsed,
     };
   }

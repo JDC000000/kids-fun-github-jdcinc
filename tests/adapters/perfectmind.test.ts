@@ -27,6 +27,7 @@ import {
   RequestBudget,
   END_OF_STRIDE_CURSOR,
   MAX_PAGES_PER_STRIDE,
+  MAX_EMPTY_STRIDES_IN_A_ROW,
   STRIDE_DAYS,
   stridesForWindow,
   WidgetBlockedError,
@@ -399,6 +400,65 @@ describe('G-T8-3 fetch client — form bodies, cursor pagination, circuit breake
     expect(result.stridesWalked, 'stops after 2 empty strides, not all 12').toBe(2);
     expect(calls).toBe(2);
     expect(result.truncated).toBe(false);
+  });
+
+  it('an EARLY exit on empty strides WARNS when window remains (QA Q1)', async () => {
+    // The defect QA found, and it is B1's signature relocated: the early return used to
+    // be silent, on the argument that a short calendar ending is normal. It IS normal —
+    // when it happens on the last stride. Ending EARLY with window left is a run that
+    // covered less than it declared and said nothing.
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ classes: [], nextKey: END_OF_STRIDE_CURSOR }), {
+        status: 200,
+      })) as typeof fetch;
+
+    const early = await fetchCalendar(
+      nvrc,
+      { calendarId: 'CAL', calendarName: 'Quiet', categoryName: 'c' },
+      { budget: new RequestBudget('nvrc', 50), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      6 // six strides asked for; it will stop after two empty ones
+    );
+    expect(early.stridesWalked, 'stops where it actually stopped').toBe(2);
+    expect(early.warnings.join(' ')).toMatch(/4 stride\(s\) of the declared window never fetched/);
+
+    // ...and stays QUIET when the walk ends on the last stride anyway, so a genuinely
+    // short calendar does not generate noise on every run.
+    const complete = await fetchCalendar(
+      nvrc,
+      { calendarId: 'CAL', calendarName: 'Quiet', categoryName: 'c' },
+      { budget: new RequestBudget('nvrc', 50), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      2
+    );
+    expect(complete.stridesWalked).toBe(2);
+    expect(complete.warnings, 'no window left unfetched — nothing to report').toEqual([]);
+  });
+
+  it('MAX_EMPTY_STRIDES_IN_A_ROW is load-bearing at 2 — an empty stride 0 is real', async () => {
+    // QA's live sweep: NVRC's Skate Schedules has a genuinely EMPTY stride 0 with all its
+    // records in stride 1. Tolerating only ONE empty stride would silently drop that whole
+    // calendar today. Pinned so nobody "tidies" the constant down.
+    expect(MAX_EMPTY_STRIDES_IN_A_ROW).toBe(2);
+    const fetchImpl = (async (_u: unknown, init?: unknown) => {
+      const stride = Number(new URLSearchParams(String((init as { body?: string })?.body ?? '')).get('page'));
+      if (stride === 0) {
+        return new Response(JSON.stringify({ classes: [], nextKey: END_OF_STRIDE_CURSOR }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ classes: [{ EventId: 'skate' }], nextKey: END_OF_STRIDE_CURSOR }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const result = await fetchCalendar(
+      nvrc,
+      { calendarId: 'CAL', calendarName: 'Skate Schedules', categoryName: '**Drop-In Schedules' },
+      { budget: new RequestBudget('nvrc', 50), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      2
+    );
+    expect(result.occurrenceCount, 'stride 1 data survives an empty stride 0').toBe(1);
   });
 
   it('stops when the cursor does not ADVANCE — a vendor echoing a fixed key cannot loop us', async () => {
@@ -985,9 +1045,30 @@ describe('T8 adapter — triple gate, dry-run default, honest reporting', () => 
     const verdict = assessRunHealth({ ...base, truncatedCalendars: ['Open Gym Schedules'] });
     expect(verdict).toMatchObject({ code: 'coverage_truncated', alert: true, status: 'partial' });
     expect(verdict.detail).toMatch(/Open Gym Schedules/);
-    // A genuinely SHORT calendar walks fewer strides and must NOT alert — alerting on
-    // stride count would fire on every quiet calendar and train the board to be ignored.
     expect(assessRunHealth({ ...base, truncatedCalendars: [] }).alert).toBe(false);
+  });
+
+  it('a stride SHORTFALL alerts under its own distinct code (QA Q1)', () => {
+    // Separate code from truncation on purpose: truncation is "cut off with data still
+    // arriving" (unambiguous), shortfall is "stopped on empty strides with window left"
+    // (possibly benign). One code would let the benign case train people to ignore the
+    // malignant one.
+    const base = {
+      tenantKey: 'nvrc',
+      occurrencesParsed: 500,
+      requestsUsed: 40,
+      baselineOccurrences: null,
+      unrecognisedKeys: [] as string[],
+      warnings: [] as string[],
+    };
+    expect(assessRunHealth({ ...base, stridesRequired: 2, minStridesWalked: 2 }).alert).toBe(false);
+    const verdict = assessRunHealth({ ...base, stridesRequired: 4, minStridesWalked: 2 });
+    expect(verdict).toMatchObject({ code: 'coverage_shortfall', alert: true, status: 'partial' });
+    expect(verdict.detail).toMatch(/walked 2 of 4 stride/);
+    // Truncation still wins when both are present — it is the less ambiguous signal.
+    expect(
+      assessRunHealth({ ...base, stridesRequired: 4, minStridesWalked: 2, truncatedCalendars: ['X'] }).code
+    ).toBe('coverage_truncated');
   });
 
   it('env alone cannot enable a tenant config says has nothing (Richmond)', () => {

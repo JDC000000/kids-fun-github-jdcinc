@@ -569,7 +569,7 @@ the *window* was still off by one: `defaultWindow` declared an inclusive
 `[today, today + 28]` — 29 days — while two strides cover 28, so the final declared day
 was never fetched. QA measured 41 real occurrences lost on that one day. It rolls forward
 daily rather than accumulating, which is exactly why nothing noticed. Fixed by making the
-window span exactly `DEFAULT_WINDOW_DAYS` rather than buying a third stride (~36 extra
+window span exactly `DEFAULT_WINDOW_DAYS` rather than buying a third stride (~50% more
 requests to gain one day at the far edge of a deliberately approximate horizon). Note that
 `worker/adapters/activenet/index.ts` carries the same off-by-one; it is harmless there,
 because ActiveNet fetches its whole calendar period in one request and windows
@@ -640,19 +640,37 @@ Triple-gated, same pattern as T7, **all three currently closed**:
 3. **DB** — `source.terms_status` / `robots_status` via `worker/core/terms-gate.ts`, still
    `pending` for both PerfectMind rows.
 
-**Run length.** ~140 requests at the 3s politeness floor is roughly 7 minutes per NVRC
-run — the longest-running source on the project. Confirmed safe 2026-07-31 rather than
-assumed: there is no per-job wall-clock watchdog anywhere in the scheduler (only H4's
-per-request deadline), production cadence is daily, and a comparable ~14-minute ActiveNet
-run completed normally the same night. The absence of scheduling jitter is a pre-existing,
-project-wide scaling note that would only bite at a source count this project is not near
-— not a T8 issue.
+**Run length — MEASURED, and an earlier estimate here was wrong.** QA's first full live
+end-to-end run of the fixed adapter (2026-07-31) used **47 of 140 requests (34%) and took
+138.2s fetch-only (~2.3 min)**. An earlier version of this paragraph projected ~7 minutes
+and called NVRC the longest-running source on the project; both were wrong, because they
+assumed the request cap would be spent. The cap is a **runaway bound, not a budget** —
+~3x headroom is deliberate, since sizing it nearer the operating point would convert a
+future vendor change into a `RequestCapExceededError` instead of absorbing it. T7's
+Vancouver run (~14 min total) remains the longest.
+
+Long runs are safe here regardless, confirmed rather than assumed: no per-job wall-clock
+watchdog exists anywhere in the scheduler (only H4's per-request deadline) and production
+cadence is daily. The absence of scheduling jitter is a pre-existing, project-wide scaling
+note that would only bite at a source count this project is not near — not a T8 issue.
 
 **Live fetch was NOT enabled by this task, in staging or anywhere else.** The dev stream
 deliberately built to opt-in/dry-run-by-default and left enablement to the orchestrator,
 matching T7's own pattern. Everything measured above came from a bounded set of manual
 verification probes against the live portal (~20 requests total, spaced ≥2s, identified
 UA), not from an enabled worker run.
+
+**Coverage detection.** Two distinct health codes, deliberately not merged.
+`coverage_truncated` fires when a calendar's stride stopped on the page ceiling with the
+vendor's cursor still advancing — "cut off with data still arriving", unambiguously bad.
+`coverage_shortfall` fires when a walk ended on consecutive empty strides with part of the
+declared window never fetched — possibly a calendar that genuinely ended, possibly a real
+gap, and worth a human glance either way. Blurring them into one code would let the benign
+case train people to ignore the malignant one. The early-exit path also now emits a named
+warning instead of returning silently: an unreported short walk is the same
+looks-clean-over-a-partial-window signature as the original stride bug, merely relocated.
+(The two-empty-stride tolerance itself is load-bearing and was NOT reduced — NVRC's Skate
+Schedules has a genuinely empty stride 0 with all its records in stride 1.)
 
 **Breakage detection:** the BookMe4 asset build stamp (`?07231003`, re-measured
 2026-07-31) is pinned as a canary and raises `asset_build_drift` on the T15 health board;
