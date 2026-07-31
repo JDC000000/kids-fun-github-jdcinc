@@ -22,8 +22,10 @@ import {
   unrecognisedClassKeys,
   KNOWN_CLASS_KEYS,
   RequestBudget,
-  END_OF_DATA_CURSOR,
-  MAX_PAGES_PER_CALENDAR,
+  END_OF_STRIDE_CURSOR,
+  MAX_PAGES_PER_STRIDE,
+  STRIDE_DAYS,
+  stridesForWindow,
   WidgetBlockedError,
   WidgetRateLimitedError,
   type BookMe4Class,
@@ -74,6 +76,7 @@ function asCalendar(classes: BookMe4Class[], name = 'Open Gym Schedules'): Calen
     classes,
     occurrenceCount: classes.length,
     pagesFetched: 1,
+    stridesWalked: 2,
     truncated: false,
     warnings: [],
   };
@@ -169,34 +172,194 @@ describe('G-T8-3 fetch client — form bodies, cursor pagination, circuit breake
     expect(warnings.join(' ')).toMatch(/"\*\*Drop-In Schedules" is ABSENT/);
   });
 
-  it('paginates by the `after` CURSOR and stops on the end-of-data sentinel', async () => {
-    // The corrected contract: `page` is pinned to 0 and `after` carries the cursor.
-    // Paginating by `page` was measured to SKIP occurrences (07-31..08-05 then
-    // 08-14..08-18, losing 08-06..08-13), so this asserts the fix, not just the loop.
+  it('derives crawl depth from the ingest window', () => {
+    expect(STRIDE_DAYS).toBe(14);
+    expect(stridesForWindow(28), 'a 28-day window needs 2 strides').toBe(2);
+    expect(stridesForWindow(14)).toBe(1);
+    expect(stridesForWindow(15), 'a partial stride still has to be walked').toBe(2);
+    expect(stridesForWindow(0), 'never zero — always fetch something').toBe(1);
+  });
+
+  /**
+   * A faithful stand-in for the real portal, built from the measured walk in client.ts's
+   * header: `page` selects a 14-day stride, `after` walks a cursor inside it, and the
+   * "0001-01-01" sentinel means END OF STRIDE, not end of data.
+   */
+  function fakePortal(opts: { days: number; perDay: number; pageSize: number; startDate: string }) {
+    const bodies: string[] = [];
+    const start = Date.parse(`${opts.startDate}T00:00:00Z`);
+    const dayOf = (i: number) => new Date(start + i * 86_400_000).toISOString().slice(0, 10);
+    const all = Array.from({ length: opts.days }, (_, d) =>
+      Array.from({ length: opts.perDay }, (_, n) => ({
+        EventId: `e${d}-${n}`,
+        OccurrenceDate: dayOf(d).replace(/-/g, ''),
+        date: dayOf(d),
+      }))
+    ).flat();
+
+    const fetchImpl = (async (_u: unknown, init?: unknown) => {
+      const body = String((init as { body?: string })?.body ?? '');
+      bodies.push(body);
+      const params = new URLSearchParams(body);
+      const stride = Number(params.get('page') ?? '0');
+      const after = params.get('after') || '';
+
+      const strideStart = dayOf(stride * STRIDE_DAYS);
+      const strideEnd = dayOf((stride + 1) * STRIDE_DAYS - 1);
+      const inStride = all.filter((r) => r.date >= strideStart && r.date <= strideEnd);
+      const remaining = after ? inStride.filter((r) => r.date > after) : inStride;
+
+      if (remaining.length === 0) {
+        return new Response(
+          JSON.stringify({ classes: [], classesMaxEndDateString: null, nextKey: '0001-01-01' }),
+          { status: 200 }
+        );
+      }
+      // The portal returns whole days up to roughly pageSize records.
+      const batch: typeof remaining = [];
+      for (const r of remaining) {
+        if (batch.length >= opts.pageSize && r.date !== batch[batch.length - 1].date) break;
+        batch.push(r);
+      }
+      return new Response(JSON.stringify({ classes: batch, nextKey: batch[batch.length - 1].date }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    return { fetchImpl, bodies, all };
+  }
+
+  it('ACCEPTANCE (QA B1): a real walk covers the FULL declared window, not one stride', async () => {
+    // THE BUG THIS EXISTS TO CATCH. The first build pinned `page: 0`, so it could never
+    // see past day 13 of a declared 28-day window — and it reported truncated:false with
+    // no warnings while doing it. QA proved it against the live portal. The bar here is
+    // not "a pagination test passes"; it is "the returned records actually span the whole
+    // window", which is the only assertion the old implementation cannot satisfy.
+    const WINDOW_DAYS = 28;
+    const portal = fakePortal({ days: WINDOW_DAYS, perDay: 9, pageSize: 50, startDate: '2026-07-31' });
+
+    const result = await fetchCalendar(
+      nvrc,
+      { calendarId: 'CAL', calendarName: 'Open Gym Schedules', categoryName: '**Drop-In Schedules' },
+      { budget: new RequestBudget('nvrc', 140), fetchImpl: portal.fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      stridesForWindow(WINDOW_DAYS)
+    );
+
+    const dates = [...new Set(result.classes.map((c) => c.OccurrenceDate))].sort();
+    expect(dates[0], 'starts at the window start').toBe('20260731');
+    expect(dates[dates.length - 1], 'reaches the window END — day 27, not day 13').toBe('20260827');
+    expect(dates.length, 'every day in the window is represented').toBe(WINDOW_DAYS);
+    expect(result.occurrenceCount, 'nothing dropped between strides').toBe(portal.all.length);
+    expect(result.stridesWalked).toBe(2);
+    expect(result.truncated).toBe(false);
+
+    // And the mechanism: `page` DID advance, and the cursor reset at each stride boundary.
+    const pages = portal.bodies.map((b) => new URLSearchParams(b).get('page'));
+    expect(new Set(pages), '`page` is a stride selector and must move').toEqual(new Set(['0', '1']));
+    const firstOfStride1 = portal.bodies.find((b) => new URLSearchParams(b).get('page') === '1')!;
+    expect(
+      new URLSearchParams(firstOfStride1).get('after'),
+      'the cursor RESETS when the stride advances'
+    ).toBe('');
+  });
+
+  it('the sentinel ends a STRIDE, not the walk — stride 1 is still fetched after it', async () => {
+    const portal = fakePortal({ days: 28, perDay: 9, pageSize: 50, startDate: '2026-07-31' });
+    const result = await fetchCalendar(
+      nvrc,
+      { calendarId: 'CAL', calendarName: 'Open Gym Schedules', categoryName: '**Drop-In Schedules' },
+      { budget: new RequestBudget('nvrc', 140), fetchImpl: portal.fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      2
+    );
+    // Stride 0 hands back the sentinel at day 13; the walk must continue into stride 1.
+    expect(result.classes.some((c) => c.OccurrenceDate === '20260813')).toBe(true);
+    expect(result.classes.some((c) => c.OccurrenceDate === '20260814')).toBe(true);
+    expect(END_OF_STRIDE_CURSOR).toBe('0001-01-01');
+  });
+
+  it('a stride ending with DATA + the sentinel still advances to the next stride', async () => {
+    // FOUND BY MUTATION, not by design. The `fakePortal` above only ever emits the
+    // sentinel on an EMPTY response, so `if (batch.length === 0) break` always fired
+    // first and the sentinel branch was never actually executed — a mutation that turned
+    // that branch into `return result` (i.e. "sentinel = end of ALL data", the original
+    // B1 bug in its second form) left the whole suite green.
+    //
+    // The live portal happens to send the sentinel alone today, but nothing in the
+    // contract promises that, and a vendor that starts attaching it to the final
+    // populated page would silently re-introduce the half-window bug. So this drives the
+    // sentinel arriving WITH records.
+    const fetchImpl = (async (_u: unknown, init?: unknown) => {
+      const params = new URLSearchParams(String((init as { body?: string })?.body ?? ''));
+      const stride = Number(params.get('page') ?? '0');
+      if (stride > 1) {
+        return new Response(JSON.stringify({ classes: [], nextKey: END_OF_STRIDE_CURSOR }), { status: 200 });
+      }
+      // Data AND the end-of-stride sentinel in the same response.
+      return new Response(
+        JSON.stringify({
+          classes: [{ EventId: `s${stride}`, OccurrenceDate: stride === 0 ? '20260805' : '20260819' }],
+          nextKey: END_OF_STRIDE_CURSOR,
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const result = await fetchCalendar(
+      nvrc,
+      { calendarId: 'CAL', calendarName: 'Open Gym Schedules', categoryName: '**Drop-In Schedules' },
+      { budget: new RequestBudget('nvrc', 20), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      2
+    );
+
+    expect(result.stridesWalked, 'the sentinel ends the STRIDE, not the walk').toBe(2);
+    expect(result.classes.map((c) => c.OccurrenceDate)).toEqual(['20260805', '20260819']);
+  });
+
+  it('walks the `after` cursor WITHIN a stride, carrying the previous nextKey', async () => {
     const page1 = fixture<{ classes: BookMe4Class[]; nextKey: string }>('nvrc.classes.open-gym.page1.json');
     const page2 = fixture<{ classes: BookMe4Class[]; nextKey: string }>('nvrc.classes.open-gym.page2.json');
     const bodies: string[] = [];
     let call = 0;
     const fetchImpl = (async (_u: unknown, init?: unknown) => {
       bodies.push(String((init as { body?: string })?.body ?? ''));
-      const payload =
-        call++ === 0 ? page1 : { ...page2, nextKey: END_OF_DATA_CURSOR };
+      const payload = call++ === 0 ? page1 : { classes: [], nextKey: END_OF_STRIDE_CURSOR };
       return new Response(JSON.stringify(payload), { status: 200 });
+    }) as typeof fetch;
+
+    await fetchCalendar(
+      nvrc,
+      { calendarId: 'CAL', calendarName: 'Open Gym Schedules', categoryName: '**Drop-In Schedules' },
+      { budget: new RequestBudget('nvrc', 10), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      1
+    );
+    expect(new URLSearchParams(bodies[0]).get('after'), 'first page has no cursor').toBe('');
+    expect(new URLSearchParams(bodies[1]).get('after'), 'second carries the first nextKey').toBe(
+      page1.nextKey
+    );
+    expect(page2.classes.length, 'fixture page 2 is real cursor-walked data').toBeGreaterThan(0);
+  });
+
+  it('gives up after two consecutive EMPTY strides', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ classes: [], nextKey: END_OF_STRIDE_CURSOR }), { status: 200 });
     }) as typeof fetch;
 
     const result = await fetchCalendar(
       nvrc,
-      { calendarId: 'CAL', calendarName: 'Open Gym Schedules', categoryName: '**Drop-In Schedules' },
-      { budget: new RequestBudget('nvrc', 10), fetchImpl, sleepImpl: async () => {} }
+      { calendarId: 'CAL', calendarName: 'Quiet', categoryName: 'c' },
+      { budget: new RequestBudget('nvrc', 50), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      12
     );
-
-    expect(result.pagesFetched).toBe(2);
-    expect(result.occurrenceCount).toBe(page1.classes.length + page2.classes.length);
+    expect(result.stridesWalked, 'stops after 2 empty strides, not all 12').toBe(2);
+    expect(calls).toBe(2);
     expect(result.truncated).toBe(false);
-    // Page 1 asks with an empty cursor; page 2 carries page 1's nextKey. `page` never moves.
-    expect(new URLSearchParams(bodies[0]).get('after')).toBe('');
-    expect(new URLSearchParams(bodies[1]).get('after')).toBe(page1.nextKey);
-    expect(bodies.every((b) => new URLSearchParams(b).get('page') === '0')).toBe(true);
   });
 
   it('stops when the cursor does not ADVANCE — a vendor echoing a fixed key cannot loop us', async () => {
@@ -208,11 +371,13 @@ describe('G-T8-3 fetch client — form bodies, cursor pagination, circuit breake
     const result = await fetchCalendar(
       nvrc,
       { calendarId: 'CAL', calendarName: 'Stuck', categoryName: 'c' },
-      { budget: new RequestBudget('nvrc', 50), fetchImpl, sleepImpl: async () => {} }
+      { budget: new RequestBudget('nvrc', 50), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      1
     );
-    // First page sets the cursor; second returns the SAME key, which stops the walk.
+    // First page sets the cursor; second returns the SAME key, which ends that stride.
     expect(result.pagesFetched).toBe(2);
-    expect(result.pagesFetched).toBeLessThan(MAX_PAGES_PER_CALENDAR);
+    expect(result.pagesFetched).toBeLessThan(MAX_PAGES_PER_STRIDE);
     expect(result.warnings.join(' ')).toMatch(/cursor did not advance/);
   });
 
@@ -230,11 +395,13 @@ describe('G-T8-3 fetch client — form bodies, cursor pagination, circuit breake
     const result = await fetchCalendar(
       nvrc,
       { calendarId: 'CAL', calendarName: 'Endless', categoryName: 'c' },
-      { budget: new RequestBudget('nvrc', 100), fetchImpl, sleepImpl: async () => {} }
+      { budget: new RequestBudget('nvrc', 100), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      1
     );
-    expect(result.pagesFetched).toBe(MAX_PAGES_PER_CALENDAR);
+    expect(result.pagesFetched).toBe(MAX_PAGES_PER_STRIDE);
     expect(result.truncated).toBe(true);
-    expect(result.warnings.join(' ')).toMatch(/slice may be incomplete/);
+    expect(result.warnings.join(' ')).toMatch(/this stride may be incomplete/);
   });
 
   it('403 and 429 circuit-break the run instead of retrying into a block', async () => {
@@ -253,7 +420,9 @@ describe('G-T8-3 fetch client — form bodies, cursor pagination, circuit breake
         fetchCalendar(
           nvrc,
           { calendarId: 'CAL', calendarName: 'Blocked', categoryName: 'c' },
-          { budget: new RequestBudget('nvrc', 10), fetchImpl, sleepImpl: async () => {} }
+          { budget: new RequestBudget('nvrc', 10), fetchImpl, sleepImpl: async () => {} },
+          undefined,
+          1
         )
       ).rejects.toBeInstanceOf(ErrorType);
       expect(calls, `HTTP ${status} is never retried in-run`).toBe(1);
@@ -278,7 +447,9 @@ describe('G-T8-3 fetch client — form bodies, cursor pagination, circuit breake
       fetchCalendar(
         nvrc,
         { calendarId: 'CAL', calendarName: 'Greedy', categoryName: 'c' },
-        { budget, fetchImpl, sleepImpl: async () => {} }
+        { budget, fetchImpl, sleepImpl: async () => {} },
+        undefined,
+        1
       )
     ).rejects.toThrow(/request cap/i);
     expect(budget.spent).toBe(3);
@@ -684,5 +855,10 @@ describe('T8 adapter — triple gate, dry-run default, honest reporting', () => 
     expect(report.calendarsFetched).toBe(1);
     expect(report.calendarsTruncated).toBe(0);
     expect(report.parse.costStatusCounts.free, 'the fixture is honestly not free').toBe(0);
+    // Coverage depth is REPORTED, not assumed. A run that walked fewer strides than the
+    // window needs covered less than it declared — the exact failure that shipped once,
+    // silently. Surfacing both numbers is what makes it visible next time.
+    expect(report.stridesRequired).toBe(2);
+    expect(report.minStridesWalked).toBe(report.stridesRequired);
   });
 });

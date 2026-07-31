@@ -29,7 +29,12 @@ import {
   policyKeyFor,
   type PerfectMindTenantConfig,
 } from './config';
-import { RequestBudget, fetchTenant, type CalendarFetchResult } from './client';
+import {
+  RequestBudget,
+  fetchTenant,
+  stridesForWindow,
+  type CalendarFetchResult,
+} from './client';
 import { parseTenantCalendars, type ParseResult } from './parse';
 import { assessRunHealth, type PerfectMindHealthVerdict } from './health';
 
@@ -81,6 +86,10 @@ export interface PerfectMindRunReport {
   requestsUsed: number;
   calendarsFetched: number;
   calendarsTruncated: number;
+  /** Strides the window required, and the fewest any calendar actually walked. If the
+   *  second is below the first, the run covered less than it declared. */
+  stridesRequired: number;
+  minStridesWalked: number;
   parse: ParseResult['stats'];
   warnings: string[];
   unrecognisedKeys: string[];
@@ -99,6 +108,7 @@ function fixtureCalendars(tenant: PerfectMindTenantConfig): CalendarFetchResult[
       categoryName: '**Drop-In Schedules',
       occurrenceCount: 1,
       pagesFetched: 0,
+      stridesWalked: stridesForWindow(DEFAULT_WINDOW_DAYS),
       truncated: false,
       warnings: [],
       classes: [
@@ -170,7 +180,9 @@ export class PerfectMindAdapter implements Adapter {
     }
 
     const budget = new RequestBudget(this.tenant.tenantKey, this.tenant.maxRequestsPerRun);
-    const result = await fetchTenant(this.tenant, { budget });
+    // Crawl depth is DERIVED from the declared window, never hard-coded. The two drifting
+    // apart is exactly how this adapter once ingested 14 days while claiming 28.
+    const result = await fetchTenant(this.tenant, { budget }, stridesForWindow(DEFAULT_WINDOW_DAYS));
     return [
       {
         tenantKey: result.tenantKey,
@@ -201,6 +213,10 @@ export class PerfectMindAdapter implements Adapter {
       requestsUsed: payload.requestsUsed,
       calendarsFetched: payload.calendars.length,
       calendarsTruncated: payload.calendars.filter((c) => c.truncated).length,
+      stridesRequired: stridesForWindow(DEFAULT_WINDOW_DAYS),
+      minStridesWalked: payload.calendars.length
+        ? Math.min(...payload.calendars.map((c) => c.stridesWalked))
+        : 0,
       parse: parsed.stats,
       warnings,
       unrecognisedKeys: payload.unrecognisedKeys,

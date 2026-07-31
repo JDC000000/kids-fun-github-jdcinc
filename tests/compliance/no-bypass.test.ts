@@ -188,19 +188,34 @@ function hostnameOf(url: string): string | null {
  * (`/vancouver/rest` + `/onlinecalendar/filters`, `/23734/Clients` +
  * `/BookMe4BookingPagesV2/ClassesV2`).
  *
- * `family` narrows the search to ONE entry. Added with T8's second family: without it,
- * every added family silently widens the check for every EXISTING family, because a
- * request would only have to satisfy *some* entry. Callers that know which adapter they
- * drove pass it, which keeps each family's boundary exactly as tight as it was when it
- * was reviewed alone.
+ * `family` narrows the search to ONE entry, and is REQUIRED. Added with T8's second
+ * family: without it, every added family silently widens the check for every EXISTING
+ * family, because a request would only have to satisfy *some* entry.
+ *
+ * REQUIRED, not optional (QA finding A1). The first version made it optional, which made
+ * the whole mechanism a silent no-op if a caller forgot it — QA proved the point by
+ * deleting the argument at every call site and watching the suite stay green. A required
+ * parameter turns that omission into a compile error. The `list` parameter exists so the
+ * family filter can be exercised for real, against a synthetic allow-list where two
+ * families SHARE a host — see the mutation test below. Without that, the assertion is
+ * vacuous today, because the two real families' host sets happen to be disjoint and the
+ * pre-existing host+path coupling already rejects every cross-family combination.
  */
-function isAllowedReadOnlyPost(url: string, family?: string): boolean {
+function matchesReadOnlyPost(
+  list: ReadOnlyPostSearchFamily[],
+  url: string,
+  family: string
+): boolean {
   const hostname = hostnameOf(url);
   if (!hostname) return false;
   const { pathname } = new URL(url);
-  return READ_ONLY_POST_SEARCH.filter((f) => family == null || f.family === family).some(
-    (f) => f.hosts.includes(hostname) && f.postPaths.some((p) => pathname.endsWith(p))
-  );
+  return list
+    .filter((f) => f.family === family)
+    .some((f) => f.hosts.includes(hostname) && f.postPaths.some((p) => pathname.endsWith(p)));
+}
+
+function isAllowedReadOnlyPost(url: string, family: string): boolean {
+  return matchesReadOnlyPost(READ_ONLY_POST_SEARCH, url, family);
 }
 
 /**
@@ -227,16 +242,15 @@ function hostLiteralsIn(code: string): string[] {
 
 /** Every request from an allow-listed family must stay on a D-10-authorised host —
  *  and, when the caller names the family, on THAT family's hosts specifically. */
-function expectAllowedHost(call: CapturedCall, family?: string): void {
+function expectAllowedHost(call: CapturedCall, family: string): void {
   const hostname = hostnameOf(call.url);
   expect(hostname, `unparseable request URL: ${call.url}`).not.toBeNull();
-  const allowed =
-    family == null
-      ? ALLOWED_HOSTS
-      : new Set(READ_ONLY_POST_SEARCH.filter((f) => f.family === family).flatMap((f) => f.hosts));
+  const allowed = new Set(
+    READ_ONLY_POST_SEARCH.filter((f) => f.family === family).flatMap((f) => f.hosts)
+  );
   expect(
     allowed.has(hostname!),
-    `${hostname} is not a D-10-authorised host${family ? ` for family '${family}'` : ''} — the override is host-scoped`
+    `${hostname} is not a D-10-authorised host for family '${family}' — the override is host-scoped`
   ).toBe(true);
 }
 
@@ -313,7 +327,7 @@ function expectCredentialFreeGet(call: CapturedCall): void {
  * (D-10 authorises a portal, not a technique), and again inside the POST branch bound
  * to the same family entry as the path.
  */
-function expectReadOnlyRequest(call: CapturedCall, family?: string): void {
+function expectReadOnlyRequest(call: CapturedCall, family: string): void {
   const method = (call.init?.method ?? 'GET').toString().toUpperCase();
   expect(['GET', 'POST'], 'only GET or an allow-listed read-only POST').toContain(method);
   expectAllowedHost(call, family);
@@ -831,13 +845,16 @@ describe('G-T7R-0 (C) tripwire self-check: every other prohibition still bites',
   });
 
   it('a POST to a path OUTSIDE the allow-list is rejected by the request check', () => {
+    // `family` is REQUIRED (QA finding A1). These call sites previously omitted it, which
+    // is exactly how the mechanism could be a silent no-op — omitting it is now a type
+    // error, and these were the two places that proved it.
     const AC = 'https://anc.ca.apm.activecommunities.com';
-    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/filters`)).toBe(true);
-    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/multicenter/events`)).toBe(true);
-    expect(isAllowedReadOnlyPost(`${AC}/burnaby/rest/onlinecalendar/filters`)).toBe(true);
-    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/cart/checkout`)).toBe(false);
-    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/register`)).toBe(false);
-    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/activities/list`)).toBe(false);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/filters`, 'activenet')).toBe(true);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/multicenter/events`, 'activenet')).toBe(true);
+    expect(isAllowedReadOnlyPost(`${AC}/burnaby/rest/onlinecalendar/filters`, 'activenet')).toBe(true);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/cart/checkout`, 'activenet')).toBe(false);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/onlinecalendar/register`, 'activenet')).toBe(false);
+    expect(isAllowedReadOnlyPost(`${AC}/vancouver/rest/activities/list`, 'activenet')).toBe(false);
   });
 
   it('a POST to an allow-listed PATH on a NON-allow-listed HOST is rejected (QA A1)', () => {
@@ -851,17 +868,19 @@ describe('G-T7R-0 (C) tripwire self-check: every other prohibition still bites',
       'http://localhost:8080',
     ]) {
       expect(
-        isAllowedReadOnlyPost(`${host}/vancouver/rest/onlinecalendar/filters`),
+        isAllowedReadOnlyPost(`${host}/vancouver/rest/onlinecalendar/filters`, 'activenet'),
         `${host} must not be allowed`
       ).toBe(false);
     }
-    expect(isAllowedReadOnlyPost('not a url at all')).toBe(false);
+    expect(isAllowedReadOnlyPost('not a url at all', 'activenet')).toBe(false);
   });
 
   it('the per-request host guard rejects a non-authorised host for ANY method', () => {
     // Not just POSTs: a GET drifting off the authorised portal is also out of scope.
-    expect(() => expectAllowedHost({ url: 'https://anc.ca.apm.activecommunities.com/x', init: {} })).not.toThrow();
-    expect(() => expectAllowedHost({ url: 'https://evil.example.com/x', init: {} })).toThrow();
+    expect(() =>
+      expectAllowedHost({ url: 'https://anc.ca.apm.activecommunities.com/x', init: {} }, 'activenet')
+    ).not.toThrow();
+    expect(() => expectAllowedHost({ url: 'https://evil.example.com/x', init: {} }, 'activenet')).toThrow();
   });
 
   it('a browser-spoofed UA fails the behavioural check', () => {
@@ -922,10 +941,9 @@ describe('G-T7R-0 (C) tripwire self-check: every other prohibition still bites',
     // Right path, wrong family's host.
     expect(isAllowedReadOnlyPost(`${PM}/vancouver/rest/onlinecalendar/filters`, 'activenet')).toBe(false);
     expect(isAllowedReadOnlyPost(`${AC}/23734/Clients/BookMe4BookingPagesV2/ClassesV2`, 'perfectmind')).toBe(false);
-    // Right host, wrong family's path — rejected even without naming a family, because
-    // host and path must match on the SAME entry.
-    expect(isAllowedReadOnlyPost(`${PM}/vancouver/rest/onlinecalendar/filters`)).toBe(false);
-    expect(isAllowedReadOnlyPost(`${AC}/23734/Clients/BookMe4BookingPagesV2/ClassesV2`)).toBe(false);
+    // Right host, wrong family's path.
+    expect(isAllowedReadOnlyPost(`${PM}/vancouver/rest/onlinecalendar/filters`, 'perfectmind')).toBe(false);
+    expect(isAllowedReadOnlyPost(`${AC}/23734/Clients/BookMe4BookingPagesV2/ClassesV2`, 'activenet')).toBe(false);
 
     // Near-miss hostnames must not sneak through a suffix match.
     for (const host of [
@@ -944,6 +962,55 @@ describe('G-T7R-0 (C) tripwire self-check: every other prohibition still bites',
     expect(() => expectAllowedHost({ url: `${PM}/x`, init: {} }, 'perfectmind')).not.toThrow();
     expect(() => expectAllowedHost({ url: `${AC}/x`, init: {} }, 'perfectmind')).toThrow();
     expect(() => expectAllowedHost({ url: `${PM}/x`, init: {} }, 'activenet')).toThrow();
+  });
+
+  it('family scoping is LOAD-BEARING, proved on a shared host (QA finding A1)', () => {
+    // WHY THIS TEST EXISTS, in QA's words: the assertions above are VACUOUS against the
+    // real allow-list. Today's two families have DISJOINT host sets, so the pre-existing
+    // host+path coupling already rejects every cross-family combination — deleting the
+    // family filter entirely left the whole suite green. A test that cannot fail when the
+    // mechanism it names is removed is not a test of that mechanism.
+    //
+    // So this drives the same matcher against a SYNTHETIC allow-list where two families
+    // SHARE a host and differ only by path. That is the only configuration in which
+    // family scoping is the sole thing standing between family A's host and family B's
+    // path — and it is a configuration the real list could grow into at any time (two
+    // tenants of the same vendor, or a vendor consolidating onto one hostname).
+    const SHARED = 'shared.example.com';
+    const synthetic: ReadOnlyPostSearchFamily[] = [
+      {
+        family: 'alpha',
+        sourceFiles: [],
+        hosts: [SHARED],
+        hostConfigFile: '',
+        postPaths: ['/alpha/search'],
+        getPaths: [],
+        endpointPathPattern: /x/g,
+      },
+      {
+        family: 'beta',
+        sourceFiles: [],
+        hosts: [SHARED],
+        hostConfigFile: '',
+        postPaths: ['/beta/search'],
+        getPaths: [],
+        endpointPathPattern: /x/g,
+      },
+    ];
+
+    // Each family reaches its own path on the shared host.
+    expect(matchesReadOnlyPost(synthetic, `https://${SHARED}/alpha/search`, 'alpha')).toBe(true);
+    expect(matchesReadOnlyPost(synthetic, `https://${SHARED}/beta/search`, 'beta')).toBe(true);
+
+    // THE ASSERTION THAT ONLY FAMILY SCOPING CAN SATISFY: same host, other family's path.
+    // Remove the `.filter(f => f.family === family)` from matchesReadOnlyPost and these
+    // two flip to true — which is precisely the mutation QA ran to prove the old test was
+    // vacuous. Verified by hand-running that mutation; both go red.
+    expect(matchesReadOnlyPost(synthetic, `https://${SHARED}/beta/search`, 'alpha')).toBe(false);
+    expect(matchesReadOnlyPost(synthetic, `https://${SHARED}/alpha/search`, 'beta')).toBe(false);
+
+    // An unknown family name matches nothing at all — a typo fails closed, not open.
+    expect(matchesReadOnlyPost(synthetic, `https://${SHARED}/alpha/search`, 'gamma')).toBe(false);
   });
 
   it('the registered-COURSES endpoint appears nowhere in the PerfectMind adapter', () => {

@@ -527,23 +527,49 @@ loosens:
   this, every family added would have widened the check for every *existing* family, since
   a request would only have had to satisfy *some* entry.
 - A new test asserts one family's host can never license another family's path, in both
-  directions, plus the near-miss hostname cases.
+  directions, plus the near-miss hostname cases. **QA found the first version of that test
+  vacuous** — today's two families have disjoint host sets, so the pre-existing host+path
+  coupling already rejected every cross-family combination and deleting the family filter
+  left the suite green. `family` is now a **required** parameter (omitting it is a compile
+  error, not a silent no-op) and the matcher is exercised against a synthetic allow-list
+  where two families **share** a host, which is the only configuration in which family
+  scoping is load-bearing — and one the real list could grow into at any time.
 - A new test asserts `/BookMe4BookingPages/Courses` appears nowhere in the adapter. That
   is an honesty guard, not a bypass guard: it is the endpoint that would let a future
   change present registered courses as drop-in coverage.
 
-#### Measured contract (verified by ablation, and it contradicts the original brief)
+#### Measured contract: pagination is TWO NESTED LOOPS
+
+This took two passes to get right and the first one shipped a real bug. Both passes are
+recorded, because the wrong conclusion is the instructive part.
 
 | Finding | Evidence |
 |---|---|
-| **Pagination is by the `after` cursor, NOT by `page`/`dateString`** | `page=0` + no cursor → 55 occurrences, 07-31..08-05. `page=0, after=2026-08-05` → 58 occurrences, 08-06..08-11 (**seamless**). `page=1` → 50 occurrences, **08-14..08-18 — a silent gap of 08-06..08-13**. `page=2` → gap of 08-19..08-27. |
-| `dateString` is **ignored** server-side | `dateString=2026-08-06` and `dateString=20260806` both returned the byte-identical payload to omitting it. Windowing is therefore entirely client-side. |
-| `nextKey` is the cursor; `"0001-01-01"` is its end-of-data sentinel | .NET `DateTime.MinValue`; returned by every empty response. |
-| Corroborated against the vendor's own client | `/Scripts/BookMe4/Controllers/ClassBookingV2Controller.js?07231003` posts `{calendarId, widgetId, page, dateString, values, after}` and sets `me.after = result.nextKey`. Its `page` counter increments **only** on an empty response — it is a skip-ahead lever, not the page cursor. |
+| **`page` is a 14-day STRIDE SELECTOR** (the vendor's `numberOfDaysToLoad: 14`) | `page=0` covers 07-31..08-13; `page=1` covers 08-14..08-27. |
+| **`after` is a cursor WITHIN a stride** | `page=0` no cursor → 54 records 07-31..08-05; `after=2026-08-05` → 58 records 08-06..08-11; `after=2026-08-11` → 15 records 08-12..08-13; `after=2026-08-13` → **0 records + `0001-01-01`**. |
+| **`"0001-01-01"` is END-OF-**STRIDE**, not end-of-data** | Stride 0 returns it at day 13 while `page=1` still holds 08-14..08-27 (50 + 56 + … records). |
+| `dateString` is **ignored** server-side | Absent, `2026-08-06` and `20260806` all returned the byte-identical payload. Windowing is entirely client-side. |
+| Corroborated against the vendor's own client | `ClassBookingV2Controller.js?07231003` posts `{calendarId, widgetId, page, dateString, values, after}`, sets `me.after = result.nextKey`, and increments `page` **only** on an empty response — i.e. "empty ⇒ this stride is done, move to the next". |
 
-Using `page` as the paginator — as originally briefed — would have silently dropped most
-of the data on any busy calendar. This is recorded because the correction, not the code,
-is the load-bearing part.
+**The bug the first build shipped, and how it was caught.** The first pass ablated `page`
+and `after` independently, saw that `page=1` returned 08-14..08-18 while `page=0` had
+ended at 08-05, and concluded `page` "silently drops" 08-06..08-13. That was backwards:
+the missing days are reachable, and only reachable, by continuing the *cursor* inside
+stride 0. Acting on the wrong conclusion, the client pinned `page: 0` — which capped every
+run at **day 13 of a declared 28-day window**, while reporting `truncated: false` and no
+warnings. Independent QA caught it by driving the real client against the live portal and
+noticing the returned span was exactly half the declared window; estimated loss was ≥209
+occurrences per run across NVRC's calendars.
+
+Neither loop alone is sufficient: cursor-only stops at day 13, stride-only drops
+everything past each stride's first ~55 records. The fix walks the cursor within a stride
+and the stride within a ceiling, resetting the cursor at each boundary, stopping after two
+consecutive empty strides. Crawl depth is **derived** from the ingest window
+(`stridesForWindow(28) = 2`) so the two can never drift apart again, and the run report
+now carries `stridesRequired` / `minStridesWalked` so under-coverage is visible rather than
+silent. Five mutations of this logic — pinning `page: 0`, treating the sentinel as
+end-of-data (in both its empty and data-bearing forms), failing to reset the cursor, and
+treating an empty batch as end-of-data — are each proven to fail the suite.
 
 #### Cost honesty: the price field is wrong on 100% of the calendar we sampled
 
@@ -570,15 +596,17 @@ a maximum of zero. **100% of the captured fixture resolves deterministically.**
 
 | Tenant | Org / host | Status | Measured |
 |---|---|---|---|
-| **NVRC / North Vancouver** | `23734` · `nvrc.perfectmind.com` | **live-capable, staged OFF** | 12 categories; `**Drop-In Schedules` holds **9 calendars** (Art, Fitness Studio Workout, Indoor Playtime (Parent Participation), North Shore Neighbourhood House, Open Gym, Parkgate Society, Skate, Swim, Youth Services). Open Gym alone: **55 occurrences over 07-31..08-05** in one page. One calendar (North Shore Neighbourhood House) has an **empty `BookingLink`** and is expected to yield zero — flagged at runtime, not hidden. |
+| **NVRC / North Vancouver** | `23734` · `nvrc.perfectmind.com` | **live-capable, staged OFF** | 12 categories; `**Drop-In Schedules` holds **9 calendars** (Art, Fitness Studio Workout, Indoor Playtime (Parent Participation), North Shore Neighbourhood House, Open Gym, Parkgate Society, Skate, Swim, Youth Services). Open Gym alone: **127 occurrences across stride 0** (07-31..08-13, 4 requests) plus **106+ more in stride 1** (08-14..08-27) — the stride-1 half is exactly what the first build silently missed. One calendar (North Shore Neighbourhood House) has an **empty `BookingLink`** and is expected to yield zero — flagged at runtime, not hidden. |
 | **Richmond** | `23650` · `richmondcity.perfectmind.com` | **ZERO drop-in coverage** | See below. |
 
 **G-T8-1 came back NULL, and that is reported plainly rather than papered over.**
 Richmond's only public widget is a **registration** widget. Its 8 categories hold 122
 calendars, of which the 22 `ClassesV2` can serve are **13 `*Registered Visits` facility
 calendars** (book-ahead, paid, adult/senior-skewed — yoga, cycle-fit, table tennis 55+,
-badminton 18+), 6 "Events and Seasonal Programs" and 2 plant-sale calendars. **No drop-in
-category exists on the tenant at all.** Richmond publishes its actual walk-in drop-in
+badminton 18+), **5** "Events and Seasonal Programs" (one each under 55+, Adults,
+Children, Preschoolers, Youth), 1 "Luncheons and Dinners", 1 "Wellness Clinics" and 2
+plant-sale calendars — 13+5+1+1+2 = 22. **No drop-in category exists on the tenant at
+all.** Richmond publishes its actual walk-in drop-in
 schedules (public swim, public skate, gym, drop-in fitness) as **PDFs on richmond.ca**.
 
 Search scope for the null result: 4 widget IDs probed (`15f6af07…` registration,

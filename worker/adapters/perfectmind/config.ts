@@ -83,7 +83,15 @@ export interface PerfectMindTenantConfig {
   /** Config-level "this tenant has ingestable drop-in data". Runtime additionally
    *  requires the KIDS_FUN_LIVE_PERFECTMIND env allow-list AND the DB terms gate. */
   enabled: boolean;
-  /** Hard per-run request cap for this tenant (bounds the crawl footprint). */
+  /**
+   * Hard per-run request cap for this tenant (bounds the crawl footprint).
+   *
+   * SIZE IT AGAINST THE STRIDE ARITHMETIC, not intuition. Cost is
+   *   1 (categories) + calendars x strides x (cursor pages + 1 terminator)
+   * where strides = ceil(windowDays / 14). A cap set for a single stride will make a
+   * multi-stride run die on RequestCapExceededError partway through — a loud failure
+   * rather than the silent half-window this adapter shipped with once, but still wrong.
+   */
   maxRequestsPerRun: number;
   /** What was measured for this tenant, in one line. Evidence, not aspiration. */
   evidenceNote: string;
@@ -100,9 +108,12 @@ export const PERFECTMIND_TENANTS: PerfectMindTenantConfig[] = [
     sourceName: 'NVRC (North Vancouver) PerfectMind',
     dropInCategoryNames: ['**Drop-In Schedules'],
     enabled: true,
-    maxRequestsPerRun: 60,
+    // 1 categories + 9 calendars x 2 strides (28-day window / 14-day stride) x up to ~5
+    // pages (measured: 4 for the busiest calendar, incl. its empty terminator) = ~91.
+    // 140 leaves headroom for a busier week without letting a runaway walk go unbounded.
+    maxRequestsPerRun: 140,
     evidenceNote:
-      '2026-07-31 re-verified: 12 categories; the "**Drop-In Schedules" category holds 9 calendars (Art, Fitness Studio Workout, Indoor Playtime (Parent Participation), North Shore Neighbourhood House, Open Gym, Parkgate Society, Skate, Swim, Youth Services). Open Gym alone returned 55 occurrences over 2026-07-31..08-05 in one page. North Shore Neighbourhood House carries an EMPTY BookingLink and is expected to yield nothing.',
+      '2026-07-31 re-verified: 12 categories; the "**Drop-In Schedules" category holds 9 calendars (Art, Fitness Studio Workout, Indoor Playtime (Parent Participation), North Shore Neighbourhood House, Open Gym, Parkgate Society, Skate, Swim, Youth Services). Open Gym alone returned 127 occurrences across stride 0 (2026-07-31..08-13, 4 requests) and 106+ more in stride 1 (08-14..08-27) — the stride-1 half is what the first build of this adapter silently missed. North Shore Neighbourhood House carries an EMPTY BookingLink and is expected to yield nothing.',
   },
   {
     tenantKey: 'richmond',
@@ -120,7 +131,7 @@ export const PERFECTMIND_TENANTS: PerfectMindTenantConfig[] = [
     enabled: false,
     maxRequestsPerRun: 4,
     evidenceNote:
-      'ZERO drop-in coverage on PerfectMind. G-T8-1, 2026-07-31: the tenant is live, but its only public widget is a REGISTRATION widget. Its 8 categories hold 122 calendars, of which the 22 ClassesV2 can serve are 13 "*Registered Visits" facility calendars (book-ahead paid adult/senior slots — yoga, cycle-fit, table tennis 55+, badminton 18+), 6 "Events and Seasonal Programs" and 2 plant sales. NO drop-in category exists. Richmond publishes its actual walk-in drop-in schedules (public swim, public skate, gym, drop-in fitness) as PDFs on richmond.ca. Report as zero; do NOT backfill with registered visits or courses and call it drop-in coverage.',
+      'ZERO drop-in coverage on PerfectMind. G-T8-1, 2026-07-31: the tenant is live, but its only public widget is a REGISTRATION widget. Its 8 categories hold 122 calendars, of which the 22 ClassesV2 can serve are 13 "*Registered Visits" facility calendars (book-ahead paid adult/senior slots — yoga, cycle-fit, table tennis 55+, badminton 18+), 5 "Events and Seasonal Programs" (one each under 55+, Adults, Children, Preschoolers, Youth), 1 "Luncheons and Dinners", 1 "Wellness Clinics" and 2 plant sales (13+5+1+1+2 = 22). NO drop-in category exists. Richmond publishes its actual walk-in drop-in schedules (public swim, public skate, gym, drop-in fitness) as PDFs on richmond.ca. Report as zero; do NOT backfill with registered visits or courses and call it drop-in coverage.',
   },
 ];
 

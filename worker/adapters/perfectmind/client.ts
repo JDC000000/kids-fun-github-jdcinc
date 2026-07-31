@@ -13,39 +13,54 @@
 //
 // ── MEASURED CONTRACT QUIRKS (verified by ablation, not assumed) ─────────────────────
 //
-//  1. PAGINATION IS BY `after`, NOT BY `page`/`dateString`. This is the single most
-//     important finding in this file and it CONTRADICTS the task brief, which said to
-//     "paginate via page/dateString". Measured against NVRC's Open Gym calendar on
-//     2026-07-31 (today = 2026-07-31):
+//  1. PAGINATION IS TWO NESTED LOOPS: `after` walks WITHIN a stride, `page` selects the
+//     STRIDE. Both are load-bearing. `dateString` is inert.
 //
-//       page=0, no cursor              -> 55 occurrences, 07-31..08-05, nextKey 2026-08-05
-//       page=0, dateString=2026-08-06  -> IDENTICAL to the above. dateString is IGNORED.
-//       page=0, dateString=20260806    -> IDENTICAL. (Format is irrelevant; it is ignored.)
-//       page=0, after=2026-08-05       -> 58 occurrences, 08-06..08-11. SEAMLESS.
-//       page=1, no cursor              -> 50 occurrences, 08-14..08-18. GAP of 08-06..08-13.
-//       page=2, no cursor              -> 50 occurrences, 08-28..09-01. GAP of 08-19..08-27.
+//     ⚠️ THE FIRST VERSION OF THIS FILE GOT THIS HALF WRONG AND THE COMMENT THAT USED TO
+//     SIT HERE ASSERTED THE WRONG CONCLUSION WITH CONFIDENCE. It claimed `page` "silently
+//     drops" data and pinned `page: 0` forever. What actually happens is that `page` is a
+//     14-day STRIDE SELECTOR (the vendor's own `numberOfDaysToLoad: 14`), so pinning it
+//     to 0 caps the adapter at day 13 REGARDLESS of the window it claims to ingest — and
+//     it does so while reporting `truncated: false` and no warnings, which is the worst
+//     possible failure shape. QA caught it by driving the real client against the real
+//     portal and noticing the returned span was exactly half the declared window.
+//     Recorded at length because the wrong conclusion was the dangerous part, not the code.
 //
-//     So `page` advances by a fixed ~14-day stride (the vendor's own
-//     `numberOfDaysToLoad: 14`) while each response is ALSO capped at ~50-60 records —
-//     which means paginating by `page` SILENTLY DROPS every occurrence between the
-//     record cap and the end of the stride. On a busy calendar that is most of the data.
-//     `after` is the real cursor and loses nothing.
+//     Full walk, measured against NVRC's Open Gym calendar on 2026-07-31
+//     (today = 2026-07-31, so stride 0 = 07-31..08-13 and stride 1 = 08-14..08-27):
 //
-//     Corroborated against the vendor's own client
+//       page=0, no cursor         -> 54 records, 07-31..08-05, nextKey 2026-08-05
+//       page=0, after=2026-08-05  -> 58 records, 08-06..08-11, nextKey 2026-08-11
+//       page=0, after=2026-08-11  -> 15 records, 08-12..08-13, nextKey 2026-08-13
+//       page=0, after=2026-08-13  ->  0 records,            -, nextKey 0001-01-01  <- stride 0 done
+//       page=1, no cursor         -> 50 records, 08-14..08-18, nextKey 2026-08-18
+//       page=1, after=2026-08-18  -> 56 records, 08-19..08-24, nextKey 2026-08-24
+//       page=1, after=2026-08-27  ->  0 records,            -, nextKey 0001-01-01  <- stride 1 done
+//
+//     Note what the earlier ablation missed: `page=1, no cursor` looked like it "skipped"
+//     08-06..08-13, but that data is not skipped at all — it is reachable, and only
+//     reachable, by continuing the CURSOR inside stride 0. Neither loop alone is
+//     sufficient: cursor-only stops at day 13, stride-only drops everything past each
+//     stride's first ~55 records.
+//
+//     `dateString` IS genuinely inert. Ablated three ways: absent, `2026-08-06`, and
+//     `20260806` all returned the byte-identical payload. It is sent empty purely for
+//     contract fidelity with the vendor's own client and must never bound anything.
+//
+//     Corroborated against that client
 //     (/Scripts/BookMe4/Controllers/ClassBookingV2Controller.js?07231003), which posts
-//     `{ calendarId, widgetId, page: pagesLoaded, dateString, values, after }` and does
-//     `me.after = result.nextKey` after each response. Its `pagesLoaded` starts at 0 and
-//     is incremented ONLY when a response comes back EMPTY — i.e. `page` is a
-//     skip-ahead-over-a-quiet-stretch lever, not the page cursor. We model exactly that.
+//     `{ calendarId, widgetId, page: pagesLoaded, dateString, values, after }`, does
+//     `me.after = result.nextKey` after each response, and increments `pagesLoaded` ONLY
+//     when a response comes back EMPTY. That last detail is the whole contract in one
+//     line: an empty response means "this stride is finished, move to the next one" —
+//     which is exactly what fetchCalendar() below now implements.
 //
-//  2. `nextKey` IS THE CURSOR, and `"0001-01-01"` is its end-of-data sentinel (.NET
-//     DateTime.MinValue). A response with zero classes carries it; a response with data
-//     carries the last occurrence date it returned.
+//  2. `nextKey` IS THE CURSOR, and `"0001-01-01"` (.NET `DateTime.MinValue`) is an
+//     END-OF-STRIDE sentinel — NOT end-of-data. Reading it as end-of-data is precisely
+//     the bug described above: stride 0 hands it back at day 13 while stride 1 still
+//     holds a fortnight of occurrences.
 //
-//  3. `dateString` IS SENT ANYWAY, empty, for contract fidelity with the vendor's own
-//     client — measured to be ignored, so it is never used to bound anything.
-//
-//  4. THE VENDOR'S CLIENT SENDS AN ANTI-FORGERY TOKEN AND WE DO NOT. The shell embeds
+//  3. THE VENDOR'S CLIENT SENDS AN ANTI-FORGERY TOKEN AND WE DO NOT. The shell embeds
 //     `__RequestVerificationToken` and the browser posts it via `$.ajaxAntiForgeryPost`.
 //     The server does not require it (verified: 200 OK without). Not sending it is a
 //     compliance requirement, not an optimisation — see buildFormBody(), which is a
@@ -72,8 +87,21 @@ export const ENDPOINTS = {
   classes: '/BookMe4BookingPagesV2/ClassesV2',
 } as const;
 
-/** `nextKey` sentinel meaning "no more data" — .NET `DateTime.MinValue`. */
-export const END_OF_DATA_CURSOR = '0001-01-01';
+/** `nextKey` sentinel meaning "this STRIDE is exhausted" — .NET `DateTime.MinValue`.
+ *  Deliberately NOT named END_OF_DATA: reading it as end-of-data is the exact bug this
+ *  module shipped with once, and a name is the cheapest place to prevent a repeat. */
+export const END_OF_STRIDE_CURSOR = '0001-01-01';
+
+/** Days covered by one `page` stride — the vendor's own `numberOfDaysToLoad: 14`,
+ *  observed inline in the BookMe4 page shell and confirmed by the walk in the header. */
+export const STRIDE_DAYS = 14;
+
+/** Strides needed to cover `windowDays` of schedule. Derived, not hard-coded, so the
+ *  ingest window and the crawl depth can never drift apart — the drift that produced the
+ *  half-empty window in the first place. */
+export function stridesForWindow(windowDays: number): number {
+  return Math.max(1, Math.ceil(windowDays / STRIDE_DAYS));
+}
 
 /** Transient-server-error retries. 429/403 are NEVER retried in-run. */
 const MAX_TRANSIENT_RETRIES = 2;
@@ -81,15 +109,16 @@ const TRANSIENT_BACKOFF_BASE_MS = 2_000;
 /** Never sleep longer than this inside a run — beyond it, circuit-break instead. */
 const MAX_IN_RUN_BACKOFF_MS = 30_000;
 
-/** Hard ceiling on cursor pages per calendar. A cursor loop over a vendor-controlled
+/** Hard ceiling on cursor pages WITHIN one stride. A cursor loop over a vendor-controlled
  *  key is exactly the shape that can spin forever if the vendor's `nextKey` ever stops
- *  advancing, so it is bounded independently of the request budget. */
-export const MAX_PAGES_PER_CALENDAR = 12;
+ *  advancing, so it is bounded independently of the request budget. Measured need is 3-4
+ *  pages for the busiest NVRC calendar; 12 is ~3x headroom. */
+export const MAX_PAGES_PER_STRIDE = 12;
 
-/** Consecutive EMPTY responses tolerated before a calendar is considered finished. The
- *  vendor's own client bumps `page` once on an empty response and gives up on the
- *  second (`loadZeroEventsInARow > 1`); we mirror that exactly. */
-export const MAX_EMPTY_PAGES_IN_A_ROW = 2;
+/** Consecutive EMPTY STRIDES tolerated before a calendar is considered finished. The
+ *  vendor's own client bumps `page` once on an empty response and gives up on the second
+ *  (`loadZeroEventsInARow > 1`); we mirror that, at stride granularity. */
+export const MAX_EMPTY_STRIDES_IN_A_ROW = 2;
 
 // ── run observability (mirrors H6's ActiveNet treatment, deliberately) ───────────────
 // Same problem, same shape of answer: a paginated crawl against a 3s politeness floor is
@@ -274,9 +303,13 @@ export interface CalendarFetchResult {
   categoryName?: string;
   classes: BookMe4Class[];
   occurrenceCount: number;
+  /** Total requests spent on this calendar, across all strides. */
   pagesFetched: number;
-  /** True when the cursor loop stopped on MAX_PAGES_PER_CALENDAR rather than on the
-   *  vendor saying "no more" — i.e. the slice may be incomplete. Reported, not hidden. */
+  /** How many 14-day strides were actually walked. A run that walks fewer strides than
+   *  the window needs is covering less than it claims — surfaced so that can be seen. */
+  stridesWalked: number;
+  /** True when a stride stopped on MAX_PAGES_PER_STRIDE rather than on the vendor saying
+   *  "no more" — i.e. the slice may be incomplete. Reported, not hidden. */
   truncated: boolean;
   warnings: string[];
 }
@@ -583,10 +616,11 @@ export function selectDropInCalendars(
   return { calendars, warnings };
 }
 
-/** One cursor page of a calendar's occurrences. */
+/** One cursor page within one stride of a calendar's occurrences. */
 export async function fetchClassesPage(
   tenant: PerfectMindTenantConfig,
   calendarId: string,
+  stride: number,
   after: string | undefined,
   opts: ClientOptions
 ): Promise<ClassesV2Response & { unrecognisedKeys: string[] }> {
@@ -594,9 +628,9 @@ export async function fetchClassesPage(
     tenant,
     'classes',
     endpointUrl(tenant, 'classes'),
-    // page is pinned to 0 — see header note 1. It is the vendor's skip-ahead lever, and
-    // advancing it is what causes silent data loss.
-    buildFormBody({ widgetId: tenant.widgetId, calendarId, page: 0, after }),
+    // `page` IS the stride selector and MUST advance — see header note 1. Pinning it to 0
+    // caps the crawl at day 13 while still reporting a clean run.
+    buildFormBody({ widgetId: tenant.widgetId, calendarId, page: stride, after }),
     opts
   );
   if (body == null || typeof body !== 'object' || Array.isArray(body)) {
@@ -608,23 +642,37 @@ export async function fetchClassesPage(
 }
 
 /**
- * Walk one calendar's cursor to exhaustion (or to MAX_PAGES_PER_CALENDAR).
+ * Walk one calendar over `strides` fourteen-day strides, exhausting the `after` cursor
+ * inside each one. TWO NESTED LOOPS, because the vendor's pagination is two nested loops
+ * (header note 1):
+ *
+ *   outer — `page` 0..strides-1, each covering 14 days from today
+ *   inner — `after` = the previous response's `nextKey`, until this stride is exhausted
+ *
+ * Stride transition: an EMPTY response, or the `"0001-01-01"` END_OF_STRIDE_CURSOR
+ * sentinel, means "this stride is finished" — increment `page`, RESET the cursor, keep
+ * going. It does NOT mean end-of-data, and treating it as such is the bug this function
+ * shipped with once (it capped every run at day 13 of a 28-day window while reporting
+ * `truncated: false`).
  *
  * Termination, in precedence order:
- *   1. `nextKey` is absent, empty, or the END_OF_DATA_CURSOR sentinel → done.
- *   2. `nextKey` did not ADVANCE past the previous cursor → done. This is the guard that
- *      makes the loop provably finite even if the vendor starts echoing a fixed key back;
- *      without it a cursor loop is an infinite loop waiting to happen.
- *   3. MAX_EMPTY_PAGES_IN_A_ROW consecutive empty pages → done (mirrors the vendor's own
- *      `loadZeroEventsInARow > 1`).
- *   4. MAX_PAGES_PER_CALENDAR reached → done, and `truncated` is set so the caller can
- *      report an incomplete slice instead of implying completeness.
+ *   1. MAX_EMPTY_STRIDES_IN_A_ROW consecutive strides yielding nothing → done. Mirrors
+ *      the vendor's own `loadZeroEventsInARow > 1`.
+ *   2. All `strides` walked → done, having covered the caller's window.
+ *   3. Inner: the cursor did not ADVANCE → end that stride. This is what makes the walk
+ *      provably finite even if the vendor starts echoing a fixed key back; without it a
+ *      cursor loop is an infinite loop waiting to happen.
+ *   4. Inner: MAX_PAGES_PER_STRIDE reached with the cursor still advancing → `truncated`
+ *      is set so the caller reports an incomplete slice instead of implying completeness.
+ *
+ * The request budget bounds everything from the outside regardless.
  */
 export async function fetchCalendar(
   tenant: PerfectMindTenantConfig,
   calendar: DiscoveredCalendar,
   opts: ClientOptions,
-  onUnrecognised?: (key: string) => void
+  onUnrecognised?: (key: string) => void,
+  strides = 1
 ): Promise<CalendarFetchResult> {
   const result: CalendarFetchResult = {
     calendarId: calendar.calendarId,
@@ -633,44 +681,68 @@ export async function fetchCalendar(
     classes: [],
     occurrenceCount: 0,
     pagesFetched: 0,
+    stridesWalked: 0,
     truncated: false,
     warnings: [],
   };
 
-  let cursor: string | undefined;
-  let emptyInARow = 0;
+  let emptyStridesInARow = 0;
 
-  for (let page = 0; page < MAX_PAGES_PER_CALENDAR; page += 1) {
-    const body = await fetchClassesPage(tenant, calendar.calendarId, cursor, opts);
-    result.pagesFetched += 1;
-    body.unrecognisedKeys.forEach((k) => onUnrecognised?.(k));
+  for (let stride = 0; stride < strides; stride += 1) {
+    result.stridesWalked = stride + 1;
+    let cursor: string | undefined;
+    let strideYield = 0;
+    let pagesInStride = 0;
 
-    const batch = body.classes ?? [];
-    result.classes.push(...batch);
-    result.occurrenceCount += batch.length;
+    // Inner loop: exhaust this stride's cursor.
+    for (;;) {
+      const body = await fetchClassesPage(tenant, calendar.calendarId, stride, cursor, opts);
+      result.pagesFetched += 1;
+      pagesInStride += 1;
+      body.unrecognisedKeys.forEach((k) => onUnrecognised?.(k));
 
-    if (batch.length === 0) {
-      emptyInARow += 1;
-      if (emptyInARow >= MAX_EMPTY_PAGES_IN_A_ROW) return result;
+      const batch = body.classes ?? [];
+      result.classes.push(...batch);
+      result.occurrenceCount += batch.length;
+      strideYield += batch.length;
+
+      // An empty response ends the stride — the vendor's own signal to move `page` on.
+      if (batch.length === 0) break;
+
+      const next = (body.nextKey ?? '').trim();
+      if (!next || next === END_OF_STRIDE_CURSOR) break;
+      if (cursor != null && next <= cursor) {
+        // ISO `yyyy-MM-dd` compares correctly as a string. A non-advancing cursor is the
+        // vendor telling us nothing new, however it dresses it up.
+        result.warnings.push(
+          `stride ${stride}: cursor did not advance past ${cursor} — stopping this stride to avoid a loop`
+        );
+        break;
+      }
+      cursor = next;
+
+      if (pagesInStride >= MAX_PAGES_PER_STRIDE) {
+        result.truncated = true;
+        result.warnings.push(
+          `stride ${stride}: stopped at the ${MAX_PAGES_PER_STRIDE}-page ceiling with the cursor still ` +
+            `advancing (last ${cursor}) — this stride may be incomplete`
+        );
+        break;
+      }
+    }
+
+    if (strideYield === 0) {
+      emptyStridesInARow += 1;
+      if (emptyStridesInARow >= MAX_EMPTY_STRIDES_IN_A_ROW) {
+        // Two quiet fortnights in a row: the calendar has genuinely run out. Not a
+        // warning — this is the normal, expected way a short calendar ends.
+        return result;
+      }
     } else {
-      emptyInARow = 0;
+      emptyStridesInARow = 0;
     }
-
-    const next = (body.nextKey ?? '').trim();
-    if (!next || next === END_OF_DATA_CURSOR) return result;
-    if (cursor != null && next <= cursor) {
-      // ISO `yyyy-MM-dd` compares correctly as a string. A non-advancing cursor is the
-      // vendor telling us nothing new, however it dresses it up.
-      result.warnings.push(`cursor did not advance past ${cursor} — stopping to avoid a loop`);
-      return result;
-    }
-    cursor = next;
   }
 
-  result.truncated = true;
-  result.warnings.push(
-    `stopped at the ${MAX_PAGES_PER_CALENDAR}-page ceiling with the cursor still advancing (last ${cursor}) — slice may be incomplete`
-  );
   return result;
 }
 
@@ -687,7 +759,8 @@ export async function fetchCalendar(
  */
 export async function fetchTenant(
   tenant: PerfectMindTenantConfig,
-  opts: ClientOptions
+  opts: ClientOptions,
+  strides = 1
 ): Promise<TenantFetchResult> {
   const warnings: string[] = [];
   const unrecognisedKeys = new Set<string>();
@@ -697,7 +770,7 @@ export async function fetchTenant(
   // eslint-disable-next-line no-console
   console.log(
     `${RUN_LOG} ${tenant.tenantKey} run start — categories ${JSON.stringify(tenant.dropInCategoryNames)}, ` +
-      `cap ${opts.budget.cap} request(s)`
+      `${strides} stride(s) x ${STRIDE_DAYS}d, cap ${opts.budget.cap} request(s)`
   );
 
   const tree = await fetchCategoryTree(tenant, opts);
@@ -715,7 +788,7 @@ export async function fetchTenant(
     const startedAt = Date.now();
     let result: CalendarFetchResult;
     try {
-      result = await fetchCalendar(tenant, calendar, opts, (k) => unrecognisedKeys.add(k));
+      result = await fetchCalendar(tenant, calendar, opts, (k) => unrecognisedKeys.add(k), strides);
     } catch (err) {
       if (
         err instanceof WidgetBlockedError ||
@@ -733,6 +806,7 @@ export async function fetchTenant(
         classes: [],
         occurrenceCount: 0,
         pagesFetched: 0,
+        stridesWalked: 0,
         truncated: false,
         warnings: [detail],
       };
@@ -741,7 +815,8 @@ export async function fetchTenant(
     // eslint-disable-next-line no-console
     console.log(
       `${RUN_LOG} ${tenant.tenantKey} calendar "${calendar.calendarName}" (${index + 1}/${total}) — ` +
-        `${result.occurrenceCount} occurrence(s) over ${result.pagesFetched} page(s)` +
+        `${result.occurrenceCount} occurrence(s) over ${result.stridesWalked} stride(s)/` +
+        `${result.pagesFetched} page(s)` +
         `${result.truncated ? ' [TRUNCATED]' : ''} in ${Date.now() - startedAt}ms, ` +
         `req ${opts.budget.spent}/${opts.budget.cap}`
     );
