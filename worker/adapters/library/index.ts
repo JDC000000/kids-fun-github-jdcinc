@@ -344,21 +344,28 @@ async function fetchGenericRss(system: LibrarySystemConfig): Promise<GenericRssE
   if (!response.ok) {
     throw new Error(`Generic RSS fetch failed: ${response.status} ${response.statusText}`);
   }
-  return parseAndRecordGenericRss(system, await response.text());
+  return parseAndRecordGenericRss(system, await response.text(), true);
 }
 
 /** Parse a generic_rss body and record its tallies for assessRun(). Used by BOTH the live
  *  and fixture paths, so run health is exercised in tests rather than only in production. */
-function parseAndRecordGenericRss(system: LibrarySystemConfig, xml: string): GenericRssEvent[] {
+function parseAndRecordGenericRss(
+  system: LibrarySystemConfig,
+  xml: string,
+  live: boolean
+): GenericRssEvent[] {
   const { events, diagnostics } = parseGenericRss(system, xml);
-  lastGenericRssDiagnostics.set(system.systemKey, diagnostics);
+  lastGenericRssDiagnostics.set(system.systemKey, { diagnostics, live });
   return events;
 }
 
 /** Last run's parse tallies per system, so assessRun() can report on what fetch() saw.
  *  Module-scoped for the same reason the PerfectMind adapter keeps its own run health:
  *  the Adapter interface hands assessRun() only a baseline count, not the parse result. */
-const lastGenericRssDiagnostics = new Map<string, GenericRssParseDiagnostics>();
+const lastGenericRssDiagnostics = new Map<
+  string,
+  { diagnostics: GenericRssParseDiagnostics; live: boolean }
+>();
 
 export class LibraryAdapter implements Adapter {
   readonly family = 'library';
@@ -370,8 +377,17 @@ export class LibraryAdapter implements Adapter {
    *   1. config  — `liveCapable: true` on this system (a reviewed live path exists);
    *   2. env     — this systemKey named in KIDS_FUN_LIVE_LIBRARY_SYSTEMS;
    *   3. DB      — terms_status ∈ {allowed, summarise_only} AND robots_status = 'allowed',
-   *                enforced independently inside politeFetch (worker/health/policy.ts),
-   *                so it holds even if 1 and 2 are misconfigured.
+   *                enforced independently of 1 and 2, in TWO places (QA finding F-C
+   *                corrected this pointer — it is NOT politeFetch):
+   *                  • worker/core/source-runner.ts — evaluateLiveFetchGate() per run;
+   *                  • worker/scheduler/tiered.ts — the same predicate in SQL, so an
+   *                    un-cleared source is never even enqueued.
+   *                politeFetch does rate-limiting, the identified UA and the request
+   *                deadline — NOT the terms gate. Note that worker/health/policy.ts DOES
+   *                export a `guardedLiveFetch` that composes the gate with politeFetch,
+   *                and it reads like the enforcement point, but it currently has ZERO
+   *                callers — which is most likely why this comment was wrong to begin
+   *                with. Do not rely on it; the two sites above are the real gate.
    * Default posture with no env var set is fixture-only and ZERO network calls.
    */
   isLiveFetchEnabled(): boolean {
@@ -396,7 +412,7 @@ export class LibraryAdapter implements Adapter {
       // Mirrors a real NVDPL item, escaped-HTML description and all, so the fixture path
       // exercises the same parser the live path does rather than a hand-built object that
       // could drift from it.
-      return parseAndRecordGenericRss(this.system, GENERIC_RSS_FIXTURE_XML);
+      return parseAndRecordGenericRss(this.system, GENERIC_RSS_FIXTURE_XML, false);
     }
     if (this.system.platform === 'bibliocommons') {
       const events: BiblioEvent[] = [
@@ -497,11 +513,11 @@ export class LibraryAdapter implements Adapter {
    * feed and still yield nothing — a green run over an empty municipality. That is what
    * this reports. Returns null for the other platforms rather than inventing a verdict.
    */
-  assessRun(): GenericRssHealthVerdict | null {
+  assessRun(baselineRecordsFound: number | null = null): GenericRssHealthVerdict | null {
     if (this.system.platform !== 'generic_rss') return null;
-    const diagnostics = lastGenericRssDiagnostics.get(this.system.systemKey);
-    if (!diagnostics) return null;
-    return assessGenericRssRun(this.system, diagnostics);
+    const last = lastGenericRssDiagnostics.get(this.system.systemKey);
+    if (!last) return null;
+    return assessGenericRssRun(this.system, last.diagnostics, baselineRecordsFound, last.live);
   }
 
   dedupKeys(record: StructuredRecord): DedupKey {

@@ -92,7 +92,7 @@ export interface GenericRssParseDiagnostics {
    * Records actually EMITTED. Deliberately not named `kidRelevant`: an item can classify
    * kid-relevant and still not be emitted (a multi-day range, an unparseable date), so a
    * field called `kidRelevant` holding the emit count would understate the classifier's
-   * own hit rate — measured on the live pull, 47 items classify kid-relevant but 46 emit.
+   * own hit rate — measured on the live pull, 42 items classify kid-relevant but 41 emit.
    */
   emitted: number;
   /** Skipped: service notices (closures), not programming. */
@@ -105,8 +105,17 @@ export interface GenericRssParseDiagnostics {
   notKidRelevant: number;
   /** Skipped: missing title/link, i.e. structurally unusable. */
   malformedItems: number;
-  /** True when liveEventsLimit cut the emit list short. */
-  truncatedByLimit: boolean;
+  /**
+   * Skipped: would have been emitted, but `liveEventsLimit` was already reached.
+   *
+   * A COUNT, not a boolean — and that is the fix for a real defect. This started life as
+   * `truncatedByLimit: boolean`, which meant a truncated run reported "something was cut"
+   * without saying how much, and left the skip buckets NOT summing to `itemsInFeed`: the
+   * gap was silent in exactly the case where the number matters most. The invariant the
+   * buckets exist to uphold — every non-emitted item is accounted for in exactly one
+   * bucket — is asserted directly in tests/adapters/library-nvdpl-rss.test.ts.
+   */
+  droppedByLimit: number;
 }
 
 export interface GenericRssParseResult {
@@ -259,13 +268,31 @@ const NON_EVENT_TITLE_RE = /^\s*(?:library\s+)?closur(?:e|es)\b|^\s*closed\b|\bc
  * Audience vetoes. An explicit adults/seniors-only marker beats any incidental family
  * wording in the same item ("deeper than is tolerated by friends and family" — a real
  * description in this feed, on an adult philosophy discussion group).
+ *
+ * THE SECOND GROUP OF MARKERS EXISTS BECAUSE OF A REAL MISCLASSIFICATION (QA finding F-A).
+ * NVDPL runs a "Summer Reading Rave" series — 5 occurrences in the live feed — which is
+ * ADULT programming: silent-reading sessions with a mocktail, some of them after the branch
+ * closes to the public. Every one was being emitted as kid content, because `summer reading`
+ * is a kid-programming token in the title vocabulary below and a title match short-circuits
+ * before the description is ever read. Worse, they were then cited in
+ * docs/source-register.md as evidence the classifier had IMPROVED.
+ *
+ * The discriminator is deliberately SEMANTIC ("with other adults", "mocktail") rather than
+ * the series name: matching the literal string "Summer Reading Rave" would break the moment
+ * NVDPL renames it, and would not catch the next adult event that reuses a kid-sounding
+ * title. Verified against the live feed — these markers hit exactly those 5 items and
+ * nothing else, and specifically do NOT catch the "Summer Reading CLUB Celebration" items
+ * (medal ceremonies for kids who read 50 days), which are genuine kid programming and stay
+ * included. `after hours` / `after dark` were CONSIDERED AND REJECTED as markers: "Camp
+ * Parkgate Stuffy Sleepover" is a real after-hours event FOR CHILDREN, so that phrasing does
+ * not discriminate.
  */
 // NOTE the deliberate absence of a TRAILING \b on the "NN+" alternatives. `\b` after
 // `\+` can never match — `+` is a non-word character, so "(55+)" and "55+." both failed
 // the veto until a test caught it. The age-marker forms are therefore bounded on the left
 // only; the word forms keep both boundaries.
 const ADULT_ONLY_RE =
-  /\b(?:18|19|55)\s*\+|\b(?:adults?\s+only|seniors?\s+only|adult\s+program)\b/i;
+  /\b(?:18|19|55)\s*\+|\b(?:adults?\s+only|seniors?\s+only|adult\s+program)\b|\bwith\s+other\s+adults\b|\bmocktails?\b|\bafter\s+the\s+library\s+doors\s+close\b/i;
 
 /**
  * KID/FAMILY PROGRAM NAMES, in the TITLE. Deliberately restricted to tokens that are
@@ -301,10 +328,14 @@ export type KidRelevance =
  * Classify one item. Order matters: a service notice is not programming at all, and an
  * adults-only marker vetoes before any positive signal is consulted.
  *
- * Measured on the live 2026-07-31 pull: 47 of 97 items (48%) classify kid-relevant, with
+ * Measured on the live 2026-07-31 pull: 42 of 97 items (43%) classify kid-relevant, with
  * every inclusion and every exclusion reviewed by hand. NOTE for anyone comparing against
  * the scoping pass's 31% — see docs/source-register.md; that figure was a conservative
  * floor from a 12-name keyword list, not a ceiling, and both numbers are recorded there.
+ *
+ * An earlier revision of this classifier reported 47/97 (48%). That was WRONG: it counted
+ * the 5 adult "Summer Reading Rave" occurrences as kid programming (QA finding F-A). 43% is
+ * the corrected figure, independently re-derived by QA to the same number.
  */
 export function classifyKidRelevance(title: string, descriptionText: string): KidRelevance {
   if (NON_EVENT_TITLE_RE.test(title)) return { kidRelevant: false, reason: 'non_event_notice' };
@@ -473,7 +504,7 @@ export function parseGenericRss(system: LibrarySystemConfig, xml: string): Gener
     unparseableDateTime: 0,
     notKidRelevant: 0,
     malformedItems: 0,
-    truncatedByLimit: false,
+    droppedByLimit: 0,
   };
 
   for (const item of items) {
@@ -525,7 +556,7 @@ export function parseGenericRss(system: LibrarySystemConfig, xml: string): Gener
     );
 
     if (events.length >= limit) {
-      diagnostics.truncatedByLimit = true;
+      diagnostics.droppedByLimit += 1;
       continue;
     }
     diagnostics.emitted += 1;
@@ -563,32 +594,79 @@ export function parseGenericRss(system: LibrarySystemConfig, xml: string): Gener
  */
 export const MAX_UNPARSEABLE_DATE_SHARE = 0.2;
 
+/**
+ * A run emitting less than this share of its trailing baseline has collapsed.
+ *
+ * WHY THIS MATTERS MORE HERE THAN FOR A STRUCTURED SOURCE. Everything this adapter emits
+ * beyond title and link is recovered from free text, so the realistic failure is PARTIAL,
+ * not total: NVDPL rewords the Date/Time label for some templates, or shortens the rolling
+ * window, and yield falls 46 → 5 while the feed still answers 200 and `emitted > 0`. The
+ * absolute-zero checks below would pass that as green. This is the check that catches it.
+ *
+ * 0.5 deliberately MIRRORS the project's existing `YIELD_COLLAPSE_RATIO` (ActiveNet and
+ * PerfectMind both use it) so the project has ONE collapse semantic rather than a third
+ * opinion. It is redeclared here rather than imported because the canonical value currently
+ * lives duplicated inside two other adapter families' health modules, and consolidating it
+ * into `worker/core/checkrun.ts` (which already owns `loadRecordsFoundBaseline`) means
+ * editing files outside this task's declared file_scope. Flagged as a follow-up instead of
+ * done unilaterally — see the note in docs/source-register.md §7.
+ */
+export const YIELD_COLLAPSE_RATIO = 0.5;
+
 export interface GenericRssHealthVerdict {
   code: string;
   alert: boolean;
   detail: string;
 }
 
-/** Fold parse diagnostics into a verdict for the health board. */
+/**
+ * Fold parse diagnostics into a verdict for the health board.
+ *
+ * `baselineRecordsFound` is the source's trailing record count (null on a first run, or when
+ * the caller has no DB). `live` says whether the run that produced `diagnostics` actually hit
+ * the network.
+ *
+ * ⚠️ THE FIXTURE TRAP, which ActiveNet documented and this would otherwise have repeated: a
+ * fixture dry-run emits 2 records. Compared against a live baseline of ~46 that is a 96%
+ * "collapse", so every fixture run — i.e. the DEFAULT posture, and every CI run — would fire
+ * a false alert. A non-live run is therefore never compared to a baseline at all.
+ */
 export function assessGenericRssRun(
   system: LibrarySystemConfig,
-  diagnostics: GenericRssParseDiagnostics
+  diagnostics: GenericRssParseDiagnostics,
+  baselineRecordsFound: number | null = null,
+  live = false
 ): GenericRssHealthVerdict {
   const {
     itemsInFeed, emitted, unparseableDateTime, nonEventNotices,
-    multiDayRanges, notKidRelevant, malformedItems, truncatedByLimit,
+    multiDayRanges, notKidRelevant, malformedItems, droppedByLimit,
   } = diagnostics;
   const tally =
     `${emitted} emitted of ${itemsInFeed} feed items ` +
     `(skipped: ${notKidRelevant} not-kid, ${nonEventNotices} notices, ` +
     `${multiDayRanges} multi-day ranges, ${unparseableDateTime} unparseable dates, ` +
-    `${malformedItems} malformed)`;
+    `${malformedItems} malformed, ${droppedByLimit} over limit)`;
 
   if (itemsInFeed === 0) {
     return { code: 'empty_feed', alert: true, detail: `${system.systemKey}: feed returned zero items` };
   }
   if (emitted === 0) {
     return { code: 'yield_collapse', alert: true, detail: `${system.systemKey}: ${tally}` };
+  }
+  // Baseline collapse — only meaningful for a live run with a known, non-zero baseline.
+  if (
+    live &&
+    baselineRecordsFound != null &&
+    baselineRecordsFound > 0 &&
+    emitted < baselineRecordsFound * YIELD_COLLAPSE_RATIO
+  ) {
+    return {
+      code: 'yield_collapse',
+      alert: true,
+      detail:
+        `${system.systemKey}: ${emitted} records vs trailing baseline ${baselineRecordsFound} ` +
+        `(< ${YIELD_COLLAPSE_RATIO * 100}%) — ${tally}`,
+    };
   }
   if (unparseableDateTime / itemsInFeed > MAX_UNPARSEABLE_DATE_SHARE) {
     return {
@@ -599,11 +677,13 @@ export function assessGenericRssRun(
       )}% of items — ${tally}`,
     };
   }
-  if (truncatedByLimit) {
+  if (droppedByLimit > 0) {
     return {
       code: 'truncated_by_limit',
       alert: true,
-      detail: `${system.systemKey}: liveEventsLimit=${system.liveEventsLimit} cut the run short — ${tally}`,
+      // States HOW MANY were lost, not merely that truncation happened — the difference
+      // between an actionable alert and one someone has to re-pull the feed to interpret.
+      detail: `${system.systemKey}: liveEventsLimit=${system.liveEventsLimit} dropped ${droppedByLimit} record(s) — ${tally}`,
     };
   }
   return { code: 'ok', alert: false, detail: `${system.systemKey}: ${tally}` };

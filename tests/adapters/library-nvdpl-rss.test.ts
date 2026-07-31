@@ -8,6 +8,7 @@ import {
   parseGenericRss,
   resolveLocation,
 } from '../../worker/adapters/library/generic-rss';
+import { stripHtml } from '../../worker/adapters/library/rss-text';
 
 // NVDPL (North Vancouver District Public Library) — the library family's 4th tenant and
 // its only `generic_rss` platform. Decision record D-12, 2026-07-31.
@@ -281,6 +282,54 @@ describe('NVDPL generic_rss — kid-relevance classification (trap 5)', () => {
     });
   });
 
+  it('REJECTS the adult "Summer Reading Rave" series (QA F-A regression)', () => {
+    // 5 real occurrences were being emitted as kid programming — and then CITED in the
+    // compliance doc as evidence the classifier had improved. `summer reading` is a kid
+    // token in the title vocabulary and a title match short-circuits, so the adult
+    // description was never consulted. Verbatim descriptions from the live feed.
+    const raves: Array<[string, string]> = [
+      ['Summer Reading Rave at Parkgate',
+       'Step away from the noise and join us for a different kind of rave. Bring your current read, grab a mocktail and snack, and enjoy dedicated offline reading time at the library in a cozy, low-key atmosphere.'],
+      ['Summer Reading Rave at Seylynn Park',
+       'Bring your current read, grab a drink and a snack, and enjoy dedicated offline reading time and fresh air with other adults at Seylynn Park.'],
+      ['Summer Reading Rave at Caffè Artigiano',
+       'Bring your current read, grab a coffee and a snack, and enjoy dedicated offline reading time and fresh air with other adults at Caffè Artigiano Edgemont.'],
+      ['Summer Reading Rave: After Hours at Parkgate Library',
+       'Join us in the library "after dark"! Bring your current read, grab a mocktail and snack, and enjoy dedicated offline reading time with other adults after the library doors close for the day.'],
+      ['Summer Reading Rave: After Hours at Lynn Valley Library',
+       'Join us in the library "after dark"! Bring your current read, grab a mocktail and snack, and enjoy dedicated offline reading time with other adults after the library doors close for the day.'],
+    ];
+    for (const [title, body] of raves) {
+      expect(classifyKidRelevance(title, body), title).toEqual({
+        kidRelevant: false,
+        reason: 'adult_only',
+      });
+    }
+  });
+
+  it('KEEPS the genuinely-kid "Summer Reading CLUB Celebration" items (no over-correction)', () => {
+    // The discriminator has to be narrow: these are medal ceremonies for children who read
+    // 50 days. A blanket "summer reading" veto would have thrown them out with the Raves.
+    for (const [title, body] of [
+      ['Capilano Library Summer Reading Club Celebration',
+       'Have you completed your 50 days of reading for Summer Reading Club? If so, you’re invited to our celebration of reading! Join us at Capilano Library for a medal presentation with music and activities to follow.'],
+      ['Family Fun Day and Lynn Valley Library Summer Reading Club Celebration',
+       'Our medal ceremony will be held in the Lynn Valley Plaza as a part of Family Fun Day. Join us for the medal ceremony, music, activities, and fun!'],
+    ] as Array<[string, string]>) {
+      expect(classifyKidRelevance(title, body), title).toMatchObject({ kidRelevant: true });
+    }
+  });
+
+  it('does not veto an after-hours KID event — "after hours" is not an adult discriminator', () => {
+    // Camp Parkgate Stuffy Sleepover is a real after-hours event FOR CHILDREN. This is why
+    // `after hours` / `after dark` were rejected as markers in favour of "with other
+    // adults" / "mocktail".
+    expect(
+      classifyKidRelevance('Camp Parkgate Stuffy Sleepover',
+        'Grab your favourite stuffy and join us for a camping adventure at the library! Camping-themed stories, songs, rhymes, a tasty snack, and a fun craft. Your stuffy will stay behind for a special sleepover.')
+    ).toMatchObject({ kidRelevant: true });
+  });
+
   it('an explicit adults-only marker VETOES an otherwise family-sounding item', () => {
     expect(classifyKidRelevance('Family History Workshop (55+)', 'Bring your family tree. Ages 55+.')).toEqual({
       kidRelevant: false,
@@ -362,10 +411,62 @@ describe('NVDPL generic_rss — multi-day ranges are excluded and COUNTED, not s
   });
 });
 
+describe('NVDPL generic_rss — the diagnostics buckets ACCOUNT FOR EVERY ITEM', () => {
+  // THE INVARIANT, and why it is a test rather than a comment: the buckets exist so that
+  // "why did a 97-item feed yield 41 records?" is answerable off the health board without
+  // re-pulling the feed. That only holds if every non-emitted item lands in exactly ONE
+  // bucket. It briefly did NOT hold — an earlier revision recorded truncation as a boolean
+  // and counted the dropped items nowhere, so the buckets silently failed to reconcile in
+  // precisely the case where the missing number mattered most. Asserted across limits so
+  // the truncating and non-truncating paths are both covered.
+  const bucketSum = (d: Record<string, number | boolean>) =>
+    (d.emitted as number) + (d.nonEventNotices as number) + (d.multiDayRanges as number) +
+    (d.unparseableDateTime as number) + (d.notKidRelevant as number) +
+    (d.malformedItems as number) + (d.droppedByLimit as number);
+
+  const MIXED_FEED = feed(
+    item('Babytime', description('Tue, 4 Aug 2026, 10:30am - 11:00am'), '1'),
+    item('Family Storytime', description('Wed, 5 Aug 2026, 10:30am - 11:00am'), '2'),
+    item('Toddlertime', description('Thu, 6 Aug 2026, 10:30am - 11:00am'), '3'),
+    item('Pins and Needles', description('Tue, 4 Aug 2026, 1:00pm - 2:00pm', 'Fibre arts for needle workers.'), '4'),
+    item('Library Closure: BC Day', description('Mon, 3 Aug 2026, 10:00am - 6:00pm', 'All locations closed.'), '5'),
+    item('Kindergarten Book Bags', description('Mon, 24 Aug 2026, 10:00am - Sat, 29 Aug 2026, 5:00pm', 'Incoming kindergarteners.'), '6'),
+    item('Babytime', '&lt;p&gt;No date at all, ages 0-2.&lt;/p&gt;', '7'),
+    '<item><description>no title, no link</description></item>'
+  );
+
+  for (const limit of [1, 2, 3, 60]) {
+    it(`reconciles to itemsInFeed at liveEventsLimit=${limit}`, () => {
+      const system = { ...nvdpl(), liveEventsLimit: limit };
+      const { events, diagnostics } = parseGenericRss(system, MIXED_FEED);
+      expect(
+        bucketSum(diagnostics as unknown as Record<string, number>),
+        `buckets must account for all ${diagnostics.itemsInFeed} items: ${JSON.stringify(diagnostics)}`
+      ).toBe(diagnostics.itemsInFeed);
+      // And the limit is genuinely enforced, not merely reported.
+      expect(events.length).toBeLessThanOrEqual(limit);
+      expect(diagnostics.emitted).toBe(events.length);
+    });
+  }
+
+  it('counts the items truncation actually cost, rather than only that it happened', () => {
+    const { diagnostics } = parseGenericRss({ ...nvdpl(), liveEventsLimit: 1 }, MIXED_FEED);
+    // 3 kid items are emittable (Babytime, Family Storytime, Toddlertime); 1 emits, 2 are lost.
+    expect(diagnostics.emitted).toBe(1);
+    expect(diagnostics.droppedByLimit).toBe(2);
+  });
+
+  it('drops NOTHING to the limit when the feed fits', () => {
+    const { diagnostics } = parseGenericRss({ ...nvdpl(), liveEventsLimit: 60 }, MIXED_FEED);
+    expect(diagnostics.droppedByLimit).toBe(0);
+    expect(diagnostics.emitted).toBe(3);
+  });
+});
+
 describe('NVDPL generic_rss — run health', () => {
   const diagnostics = (over: Record<string, unknown> = {}) => ({
-    itemsInFeed: 97, emitted: 46, nonEventNotices: 1, multiDayRanges: 1,
-    unparseableDateTime: 0, notKidRelevant: 49, malformedItems: 0, truncatedByLimit: false,
+    itemsInFeed: 97, emitted: 41, nonEventNotices: 1, multiDayRanges: 1,
+    unparseableDateTime: 0, notKidRelevant: 54, malformedItems: 0, droppedByLimit: 0,
     ...over,
   });
 
@@ -393,14 +494,51 @@ describe('NVDPL generic_rss — run health', () => {
     });
   });
 
-  it('ALERTS when liveEventsLimit truncated the run', () => {
-    expect(assessGenericRssRun(nvdpl(), diagnostics({ truncatedByLimit: true }))).toMatchObject({
-      code: 'truncated_by_limit', alert: true,
-    });
+  it('ALERTS when liveEventsLimit truncated the run, and says HOW MANY were lost', () => {
+    const verdict = assessGenericRssRun(nvdpl(), diagnostics({ droppedByLimit: 12 }));
+    expect(verdict).toMatchObject({ code: 'truncated_by_limit', alert: true });
+    // "was truncated" is not actionable; "dropped 12 record(s)" is.
+    expect(verdict.detail).toContain('dropped 12 record(s)');
   });
 
   it('every verdict states the tally, so a thin run is diagnosable without a re-pull', () => {
-    expect(assessGenericRssRun(nvdpl(), diagnostics()).detail).toContain('46 emitted of 97 feed items');
+    expect(assessGenericRssRun(nvdpl(), diagnostics()).detail).toContain('41 emitted of 97 feed items');
+  });
+
+  it('ALERTS on a PARTIAL yield collapse against the trailing baseline (live runs only)', () => {
+    // The realistic failure for a free-text source: yield falls 46 -> 5 while the feed still
+    // answers 200 and emitted > 0, so every absolute-zero check passes it as green.
+    const verdict = assessGenericRssRun(nvdpl(), diagnostics({ emitted: 5 }), 41, true);
+    expect(verdict).toMatchObject({ code: 'yield_collapse', alert: true });
+    expect(verdict.detail).toContain('trailing baseline 41');
+  });
+
+  it('does NOT alert when a live run is merely a bit thinner than baseline', () => {
+    expect(assessGenericRssRun(nvdpl(), diagnostics({ emitted: 36 }), 41, true)).toMatchObject({
+      code: 'ok', alert: false,
+    });
+  });
+
+  it('a FIXTURE run is never compared to a live baseline — the false-alert trap', () => {
+    // 2 fixture records against a live baseline of 41 is a 95% "collapse". Comparing them
+    // would fire on every fixture run, i.e. the default posture and every CI run.
+    expect(
+      assessGenericRssRun(nvdpl(), diagnostics({ itemsInFeed: 4, emitted: 2, notKidRelevant: 1, nonEventNotices: 1, multiDayRanges: 0 }), 41, false)
+    ).toMatchObject({ code: 'ok', alert: false });
+  });
+
+  it('a first run (no baseline) does not alert', () => {
+    expect(assessGenericRssRun(nvdpl(), diagnostics({ emitted: 3 }), null, true)).toMatchObject({
+      code: 'ok', alert: false,
+    });
+  });
+
+  it('the adapter passes the runner’s baseline through, and a fixture run stays quiet', async () => {
+    // ingestSource calls assessRun(baseline). A fixture run must not alert even when the
+    // runner hands it a live baseline.
+    const adapter = new LibraryAdapter(nvdpl());
+    adapter.extract(await adapter.fetch());
+    expect(adapter.assessRun(41)).toMatchObject({ code: 'ok', alert: false });
   });
 
   it('the adapter reports health after a fixture run too, not only a live one', async () => {
@@ -505,5 +643,55 @@ describe('NVDPL generic_rss — the config entry itself', () => {
       expect(location.lat).toBeUndefined();
       expect(location.lng).toBeUndefined();
     }
+  });
+});
+
+describe('rss-text stripHtml — entity decoding is PINNED (QA F-B)', () => {
+  // QA proved this fix was unpinned by deleting all six named-entity replacements plus both
+  // numeric-character-ref replacements: the full 1274-test suite still passed. The fix was
+  // real (a raw `&ndash;` was reaching an ageText field) but nothing held it in place. These
+  // assertions are per-entity-class deliberately, so deleting any ONE replacement fails.
+  it('decodes each named entity the feed actually emits', () => {
+    for (const [raw, want] of [
+      ['&nbsp;', ''],            // collapses to whitespace, then trims
+      ['a&ndash;b', 'a–b'],
+      ['a&mdash;b', 'a—b'],
+      ['it&rsquo;s', 'it’s'],
+      ['&lsquo;x&rsquo;', '‘x’'],
+      ['&ldquo;x&rdquo;', '“x”'],
+      ['a&amp;b', 'a&b'],
+      ['it&#39;s', "it's"],
+      ['say &quot;hi&quot;', 'say "hi"'],
+    ] as Array<[string, string]>) {
+      expect(stripHtml(raw), `stripHtml(${raw})`).toBe(want);
+    }
+  });
+
+  it('decodes DECIMAL and HEX numeric character references', () => {
+    expect(stripHtml('caf&#233;')).toBe('café');       // decimal
+    expect(stripHtml('caf&#xe9;')).toBe('café');       // hex, lowercase x
+    expect(stripHtml('caf&#XE9;')).toBe('café');       // hex, uppercase X
+    expect(stripHtml('5 &#8211; 10')).toBe('5 – 10');  // the &ndash; codepoint, numerically
+  });
+
+  it('leaves an out-of-range numeric reference verbatim rather than corrupting it', () => {
+    // Above the BMP bound the helper deliberately declines, so a malformed reference stays
+    // visible as data instead of becoming a replacement character.
+    expect(stripHtml('&#99999999;')).toBe('&#99999999;');
+  });
+
+  it('normalises a literal U+00A0 as well as the entity', () => {
+    expect(stripHtml('a b')).toBe('a b');
+  });
+
+  it('strips markup and script/style content', () => {
+    expect(stripHtml('<p>hi</p><script>evil()</script><style>x{}</style>')).toBe('hi');
+  });
+
+  it('regression: the real ageText that leaked a raw entity now reads cleanly', () => {
+    // Verbatim from the live feed's "Baby Social" description.
+    expect(stripHtml('For 0 &ndash; 18-month-old babies and their caregivers')).toBe(
+      'For 0 – 18-month-old babies and their caregivers'
+    );
   });
 });

@@ -153,7 +153,7 @@ this round.
 | `activenet` / District of West Vancouver | **excluded — ZERO drop-in data** | Portal live, online-calendar module empty. See §6.3 |
 | `perfectmind` / NVRC (North Vancouver) | **live-capable under D-10/D-11, staged OFF** | Drop-in confirmed: 9 calendars. See §6.4 |
 | `perfectmind` / City of Richmond | **excluded — ZERO drop-in data** | Registration widget only; drop-in published as PDFs. See §6.4 |
-| `library_generic_rss` / **NVDPL (North Vancouver District Public Library)** | **live-capable under D-12, staged OFF** | Public RSS feed, 97 items, **46 emitted / 47 kid-relevant** — but its **robots.txt is UNREADABLE**. See §6.5 |
+| `library_generic_rss` / **NVDPL (North Vancouver District Public Library)** | **live-capable under D-12, staged OFF** | Public RSS feed, 97 items, **41 emitted / 42 kid-relevant (43%)** — but its **robots.txt is UNREADABLE**. See §6.5 |
 | `venue_html` / Vancouver Aquarium, Science World | pending, fixture-only | Semi-automated venue HTML; separate terms review needed |
 | `seasonal_watcher` / Stanley Park Miniature Railway, Burnaby Central Railway, Cypress Mountain | pending, fixture-only | Status-page watchers |
 | `city_calendar` / (other municipalities) | n/a | Only Vancouver is live |
@@ -750,24 +750,48 @@ behaviour distinguishes the feed from the site.
 | Items in feed | **97** (scoping pass saw 99 hours earlier — rolling ~1-month window, expected drift) |
 | Carry the `Date/Time` field | **97 / 97 (100%)** |
 | Carry it in the SINGLE-DATE shape | **96 / 97** — see §6.5.4 |
-| **Classify kid-relevant** | **47 / 97 (48%)** |
-| **Emitted as occurrence records** | **46** (the 47th is a multi-day range — §6.5.4) |
-| Not kid programming | 49 (Tech Cafés, Pins & Needles, Philosophy Gym, Writer's Group, Discussion Lounges, Discover: 3D Printing/Cricut) |
+| **Classify kid-relevant** | **42 / 97 (43%)** |
+| **Emitted as occurrence records** | **41** (the 42nd is a multi-day range — §6.5.4) |
+| Not kid programming | 54 (Tech Cafés, Pins & Needles, Philosophy Gym, Writer's Group, Discussion Lounges, Discover: 3D Printing/Cricut, **and the 5 adult Summer Reading Raves — see the correction below**) |
 | Service notices, not events | 1 (`Library Closure: BC Day`) |
 | Unparseable dates | **0** |
 
-**⚠️ On the 31% figure: do not treat it as this source's kid-relevant rate, and do not treat
-48% as contradicting it.** The scoping pass measured **31% (31/99)** against a 12-name
-keyword list. That was a **conservative floor, not a ceiling.** Re-measuring with a
-classifier reviewed item-by-item against the actual feed admits a further ~16 items that are
-unambiguously kid programming and were simply not on that list: *Summer Reading Rave* (×5),
-*Summer Fun at Parkgate* (×2), *Koala Koders: Scratch — Ages 9-11* (×2), *Toddlertime* (×2),
-*Intro to Dungeons and Dragons (Tweens)*, *Camp Parkgate Stuffy Sleepover*, *Summer Reading
-Club Celebration* (×2), *Family Fun Day*. **Both numbers are recorded here on purpose** so
-nobody later reads a single number as gospel — and so nobody assumes the whole feed is kid
+**⚠️ CORRECTION, 2026-07-31 (QA finding F-A) — an earlier revision of this section claimed
+48% and cited adult events as the proof.** It reported **47/97 (48%)** and led its evidence
+list with *Summer Reading Rave* (×5). Those 5 occurrences are **adult programming**:
+silent-reading sessions with a mocktail, two of them after the branch closes to the public
+("...offline reading time **with other adults after the library doors close for the day**" —
+verbatim). They were misclassified because `summer reading` is a kid token in the title
+vocabulary and a title match short-circuits before the description is read. So the shipped
+document was citing 5 adult events as evidence the classifier had *improved*. That is the
+worst version of this mistake, not a rounding error, and it is recorded here rather than
+quietly overwritten. **Corrected figure: 42/97 (43%)** — re-derived independently by QA to
+the same number, and the classifier now vetoes that series on semantic markers ("with other
+adults", "mocktail") rather than on the series name, which would break on a rename.
+
+**On the 31% figure: do not treat it as this source's kid-relevant rate, and do not treat 43%
+as contradicting it.** The scoping pass measured **31% (31/99)** against a 12-name keyword
+list — a **conservative floor, not a ceiling.** Re-measuring with a hand-reviewed classifier
+admits **13 further occurrences across 9 titles** that are unambiguously kid programming and
+were simply not on that list: *Family Storytime with CCS* (×3), *Toddlertime* (×2), *Koala
+Koders: Scratch — Ages 9-11* (×2), *Summer Fun at Parkgate* (×2, Doodle Afternoon and LEGO
+Build-a-thon), *Intro to Dungeons and Dragons (Tweens)*, *Camp Parkgate Stuffy Sleepover*,
+*Capilano Library Summer Reading Club Celebration*, *Family Fun Day and Lynn Valley Summer
+Reading Club Celebration*. **Being honest about the weakest of those:** 3 of the 13 are
+*Family Storytime with CCS*, which the scoping pass's own "Family Storytime" name plausibly
+already intended to cover — so the genuinely-additional count is nearer **10**, not 13.
+Note the **Summer Reading CLUB Celebration** items are correctly IN (medal ceremonies for
+children who completed 50 days of reading) while the **RAVE** items are correctly OUT; that
+distinction is the whole reason the veto had to be narrow rather than a blanket "summer
+reading" exclusion.
+
+**All three numbers are recorded here on purpose** — 31% floor, the wrong 48%, the corrected
+43% — so nobody reads a single figure as gospel, and so nobody assumes the whole feed is kid
 programming, which is the failure mode this row exists to prevent. The classifier is
 `classifyKidRelevance()` in `worker/adapters/library/generic-rss.ts`; its vocabulary is
-documented inline with the measurement each token is justified by.
+documented inline with the measurement each token is justified by, including which candidate
+markers were **rejected** and why (`after hours` does not discriminate — *Camp Parkgate
+Stuffy Sleepover* is a real after-hours event for children).
 
 **Structurally:** NVDPL is the library family's **4th tenant** and the first on a new
 `generic_rss` platform handler. Adding it needed **no change to
@@ -795,7 +819,7 @@ cancellation or location element. Hence:
 4. **No structured venue.** Resolved from the payload alone, strongest evidence first: the
    feed's own trailing address block (4/97 items, e.g. Viewlynn Park) → a curated location
    name in the title → the same in the description prose. **Resolution rate on the live
-   pull: 14 of 46 records** to a specific location; the other **32 degrade gracefully** to
+   pull: 11 of 41 records** to a specific location; the other **30 degrade gracefully** to
    the system as venue with municipality `North Vancouver` and **no address and no
    coordinates** — an honest gap, not a fabricated pin. **The curated table carries NO
    coordinates at all**, deliberately: they would have to come from a geocoder (never
@@ -826,7 +850,18 @@ cancellation or location element. Hence:
 2. **env** — `KIDS_FUN_LIVE_LIBRARY_SYSTEMS` must name `nvdpl`. **Unset everywhere**;
    `.env.example` documents it commented-out with the D-12 caveat attached.
 3. **DB** — `source.terms_status` / `robots_status` via `worker/core/terms-gate.ts`, both
-   `pending` for the NVDPL row. Enforced inside `politeFetch` independently of 1 and 2.
+   `pending` for the NVDPL row. Enforced independently of 1 and 2, in **two** places
+   (**corrected by QA finding F-C — it is NOT `politeFetch`**, which only does rate-limiting,
+   the identified UA and the request deadline):
+   - `worker/core/source-runner.ts` — `evaluateLiveFetchGate()` per run;
+   - `worker/scheduler/tiered.ts` — the same predicate in SQL, so an un-cleared source is
+     never even enqueued.
+
+   The gate is genuinely real and load-bearing; only the earlier file pointer was wrong.
+   Worth knowing for the next auditor: `worker/health/policy.ts` **does** export a
+   `guardedLiveFetch()` that composes the gate with `politeFetch` and reads exactly like the
+   enforcement point — but it currently has **zero callers**, which is almost certainly how
+   the wrong pointer got written. Do not rely on it.
 
 Default posture is fixture-only with **zero network calls**, asserted behaviourally. The
 fixture is a real 4-item slice of the live feed run through the same parser, so the
@@ -837,12 +872,32 @@ as every other adapter — and D-12 explicitly requires a live-fetch proof befor
 credit.
 
 **Breakage detection (`assessRun`).** This source's date, venue and audience all come out of
-free text, so it can answer 200 with a valid feed and yield nothing — a green run over an
-empty municipality. Four alerting codes: `empty_feed`, `yield_collapse` (items but no
-records), **`date_shape_drift`** (>20% of items fail the free-text date parse — the way this
-adapter will actually break, since one reworded vendor string degrades it silently), and
-`truncated_by_limit`. Every verdict states the full tally, so a thin run is diagnosable
-without a re-pull.
+free text, so it can answer 200 with a valid feed and yield nothing — or, more likely, yield
+*less* — a green run over a half-empty municipality. Codes:
+
+- `empty_feed` — the feed returned zero items.
+- `yield_collapse` — two distinct cases under one code. **Absolute:** items in the feed but
+  zero records out. **Partial:** a live run emitting **<50% of its trailing baseline**
+  (`YIELD_COLLAPSE_RATIO`, mirroring the value ActiveNet and PerfectMind already use, so the
+  project has one collapse semantic rather than a third opinion). The partial case is the
+  important one here: the realistic failure for a free-text source is 41 records → 5, not
+  41 → 0, and every absolute-zero check passes that as green.
+- `date_shape_drift` — >20% of items fail the free-text date parse. The single most likely
+  way this adapter breaks, since one reworded vendor string degrades it silently.
+- `truncated_by_limit` — states **how many** records the cap dropped, not merely that it
+  truncated.
+
+⚠️ **A fixture run is never compared to a baseline.** A fixture dry-run emits 2 records;
+against a live baseline of ~41 that is a 95% "collapse", so comparing them would fire a false
+alert on every fixture run — i.e. the default posture and every CI run. ActiveNet documented
+this trap and this adapter would otherwise have repeated it.
+
+Every verdict states the full tally, and the tally **reconciles**: each of the 97 feed items
+lands in exactly one bucket (emitted / not-kid / notice / multi-day / unparseable / malformed
+/ over-limit), so "why did 97 items yield 41 records?" is answerable off the health board
+without re-pulling the feed. Asserted as an invariant across several `liveEventsLimit` values,
+because an earlier revision recorded truncation as a boolean and silently failed to reconcile
+in exactly the case where the missing number mattered most.
 
 **Classification:** **summarise-only** — same posture as the other library feeds. DB
 `terms_status` should be `summarise_only` with `robots_status` recorded honestly (see the
@@ -889,12 +944,24 @@ flag in §7).
   one source and a value that says so keeps the next source with this fact pattern from
   inheriting the clearance by copy-paste — which is precisely what D-12's own scope
   paragraph forbids. Flagged to the operator/Jon, not decided by the implementing stream.
-- **F-5 (info, 2026-07-31) — NVDPL branch geo is genuinely absent, by choice.** 32 of 46
+- **F-5 (info, 2026-07-31) — NVDPL branch geo is genuinely absent, by choice.** 30 of 41
   NVDPL records resolve to no specific branch and none of the curated NVDPL locations carry
   coordinates (§6.5.4 trap 4). This is honest rather than complete: coordinates were not
   invented. Whoever owns the venue-geo constant workstream should treat NVDPL's three
   branches (Lynn Valley, Capilano, Parkgate) plus Viewlynn/Seylynn Park as a small, known
   gap with a verified-dataset fix, not as a bug in this adapter.
+
+- **F-6 (low, 2026-07-31) — `YIELD_COLLAPSE_RATIO` is now declared in three places.**
+  `worker/adapters/activenet/health.ts`, `worker/adapters/perfectmind/health.ts` and now
+  `worker/adapters/library/generic-rss.ts` each declare `0.5` independently. All three agree
+  today, which is exactly when a duplicated constant is cheapest to consolidate and hardest
+  to notice. The right home is `worker/core/checkrun.ts`, which already owns
+  `loadRecordsFoundBaseline` and is the canonical source of baseline semantics.
+  **Deliberately NOT done by the NVDPL stream:** the fix edits two other adapter families'
+  files, outside that task's declared `file_scope`, while its branch was under active
+  independent review — a scope expansion the collision-avoidance convention exists to
+  prevent, over one numeric literal. Verified collision-safe (no in-flight branch touches
+  those three files) and mechanical, so it is a clean small follow-up for whoever wants it.
 
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source
@@ -929,10 +996,21 @@ question the NVDPL build declined to answer unilaterally.**
 - **Every figure in §6.5.3 was produced by running the shipped parser over that captured
   response**, not by hand-counting and not by trusting the scoping document — which is how
   the two corrections in §6.5.4 (traps 5 and 6) were found.
-- **Test evidence:** `tests/adapters/library-nvdpl-rss.test.ts` (48 tests: date-shape
+- **Re-pulled live a second time (2026-07-31, after QA)** to re-derive §6.5.3 following the
+  F-A correction: HTTP/2 200, 97 items again. The Summer Reading Rave descriptions quoted in
+  §6.5.3 are verbatim from that pull, and the candidate adult markers were tested feed-wide
+  for over-reach before being adopted (`with other adults` hit 4 items, `mocktail` 3, union
+  exactly the 5 Raves, nothing else; `after hours`/`after dark` hit only 2 and were rejected
+  anyway because a kid event uses that phrasing).
+- **Test evidence:** `tests/adapters/library-nvdpl-rss.test.ts` (**68 tests**: date-shape
   matrix incl. DST both ways, 12-hour boundaries, midnight/month rollover, rejection cases,
   pubDate-trap assertions, venue precedence + graceful degradation, classifier
-  include/exclude on real feed titles, multi-day exclusion, run-health codes, triple gate) +
+  include/exclude on real feed titles, the **F-A Summer-Reading-Rave regression** with
+  verbatim live descriptions plus its no-over-correction counterpart, multi-day exclusion,
+  the **bucket-reconciliation invariant** across four limit values, run-health codes incl.
+  partial-collapse-vs-baseline and the fixture-run false-alert trap, **entity-decoding
+  assertions pinned against QA's own mutation** (deleting the 8 replacements now fails 3
+  tests; it previously failed none), and the triple gate) +
   NVDPL cases added to `tests/compliance/no-bypass.test.ts` (single credential-free GET,
   exact feed URL pinned, PHPSESSID never echoed across two fetches, zero calls when not
   env-enabled, off-by-default roster, structural bypass scan extended to the two new
