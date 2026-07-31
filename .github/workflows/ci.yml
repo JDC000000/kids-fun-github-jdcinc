@@ -75,6 +75,18 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # H5 — the Typecheck above CANNOT see the worker. Root tsconfig.json excludes
+      # "worker" and compiles with lib "dom"; the worker has its own tsconfig, its own
+      # dependency tree, and a Node-only lib ("ES2022", no dom) that resolves a different
+      # set of globals. worker/Dockerfile builds it separately at image-build time, so a
+      # change can be green through Typecheck, Lint, tests and the Vercel frontend deploy
+      # and still fail the worker's container build — which is exactly what H4 shipped
+      # (`DOMException` resolved under the root's dom lib, not under the worker's).
+      # Nothing in this workflow had ever run the worker's own build. Now it does.
+      - name: Worker build (isolated tsconfig — mirrors worker/Dockerfile)
+        run: npm ci && npm run build
+        working-directory: worker
+
       - name: Lint
         run: npx eslint .
 
