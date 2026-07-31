@@ -147,7 +147,7 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             provenance, so it claimed OGL licensing for coordinates that never came
             from the City. The attribution now lives site-wide in SiteFooter, where it
             is unconditionally true. Do not reintroduce a per-record version without a
-            provenance column on `venue`. See docs/source-register.md §6.5. */}
+            provenance column on `venue`. See docs/source-register.md §6.6. */}
       </section>
 
       {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action. */}

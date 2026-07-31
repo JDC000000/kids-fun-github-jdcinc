@@ -24,7 +24,7 @@
 // IDENTITY is verified from the dataset's own `license`/`license_url` metadata. The
 // posture is fail-safe: the attribution renders unconditionally wherever this data
 // surfaces, which satisfies the condition under any reading of it.
-// See docs/source-register.md §6.5.
+// See docs/source-register.md §6.6.
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // WHY A COMMITTED CONSTANT AND NOT AN ADAPTER. This is the same shape the codebase
@@ -63,7 +63,7 @@
 // venues the licensed open dataset cannot locate. Those coordinates are curated,
 // per-entry attributed, and are the reason this file exists at all; the open-data join
 // is a labour-saver for the community centres, not the substance.
-// See docs/source-register.md §6.5.
+// See docs/source-register.md §6.6.
 //
 // COORDINATE SOURCE, as opposed to NAME resolution — the two are counted separately and
 // it matters: 25 entries take their point verbatim from a City dataset, 11 are
@@ -129,7 +129,7 @@ export interface ActiveNetVenueGeo {
 
 /** Attribution string mandated by the Open Government Licence – Vancouver, VERBATIM.
  *  The licence's one hard condition. Rendered wherever these venues surface to a user
- *  (the condition is about publication, not source code) — docs/source-register.md §6.5. */
+ *  (the condition is about publication, not source code) — docs/source-register.md §6.6. */
 export const OGL_VANCOUVER_ATTRIBUTION =
   'Contains information licensed under the Open Government Licence – Vancouver';
 

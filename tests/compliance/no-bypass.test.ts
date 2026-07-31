@@ -659,6 +659,11 @@ const ADAPTER_SOURCES = [
   'worker/adapters/activenet/client.ts',
   'worker/adapters/activenet/parse.ts',
   'worker/adapters/activenet/venues.ts',
+  // G-VENUE-1: a committed constant, not a fetcher — listed anyway. The scan is an
+  // explicit list, not a glob, so a new file in an adapter directory silently escapes
+  // it otherwise, and "this one can't make requests" is exactly the assumption a
+  // tripwire exists to stop anyone having to trust.
+  'worker/adapters/activenet/venue-geo.ts',
   'worker/adapters/activenet/health.ts',
   'worker/adapters/perfectmind/index.ts',
   'worker/adapters/perfectmind/config.ts',
