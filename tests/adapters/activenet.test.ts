@@ -15,7 +15,7 @@
 //     than a green run over an empty municipality.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   ACTIVENET_TENANTS,
   ACTIVENET_PORTAL_VERSION,
@@ -76,6 +76,16 @@ const VANCOUVER = getTenantConfig('vancouver')!;
 const BURNABY = getTenantConfig('burnaby')!;
 /** The captured window — used so fixture assertions don't drift with the wall clock. */
 const CAPTURE_WINDOW = { startDate: '2026-07-26', endDate: '2026-11-08' };
+
+// H6 added per-request/run logging to the client (see the file header there and
+// tests/adapters/activenet-observability.test.ts, which asserts on it). This suite drives
+// fetchTenant more than a dozen times, including a 23-calendar cap run, so its output is
+// silenced here to keep the report readable. Silenced, not disabled: the logging's own
+// contract is tested in the file above.
+beforeEach(() => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

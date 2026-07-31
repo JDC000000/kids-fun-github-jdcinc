@@ -53,6 +53,30 @@ const TRANSIENT_BACKOFF_BASE_MS = 2_000;
 /** Never sleep longer than this inside a run — beyond it, circuit-break instead. */
 const MAX_IN_RUN_BACKOFF_MS = 30_000;
 
+// ── run observability (H6) ──────────────────────────────────────────────────────────
+// THE PROBLEM THIS FIXES, observed 2026-07-31: the first real live Vancouver run took
+// NINE MINUTES and emitted nothing at all between "job claimed" and "operator killed it".
+// From `flyctl logs` there was no way to tell a healthy-but-slow run from a wedged one —
+// and both are plausible here. Vancouver is 23 calendars ≈ 47 requests against a 3-second
+// politeness floor, so ~2.5 minutes of the wall clock is *deliberate sleeping* before the
+// portal has answered anything; add a few seconds of server time per request and a
+// legitimate run is minutes long by construction.
+//
+// So every request now says what it is doing, what it cost, and how long it took. This is
+// deliberately console.* and deliberately one greppable line per event: it matches the
+// rest of the worker (`[scheduler] tick #N …`), needs no dependency, and costs a string
+// concat per HTTP request against a 3s floor. It is a diagnosis aid, not telemetry.
+//
+// NEVER logged: response bodies, headers, or anything a caller supplied. Only the tenant
+// key, the endpoint NAME, the request path, HTTP status, timings and the budget counters.
+// There are no credentials anywhere in this flow — the discipline is kept regardless.
+const CLIENT_LOG = '[activenet:client]';
+const RUN_LOG = '[activenet]';
+
+function errLabel(err: unknown): string {
+  return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+}
+
 // ── typed failures (the circuit breaker's vocabulary) ────────────────────────────────
 
 export class ActiveNetFetchError extends Error {
@@ -298,26 +322,82 @@ async function request<TBody>(
   opts: ClientOptions
 ): Promise<{ body: TBody; unrecognised: string[] }> {
   const sleep = opts.sleepImpl ?? defaultSleep;
+  const attemptsAllowed = MAX_TRANSIENT_RETRIES + 1;
   let lastStatus = 0;
 
   for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt += 1) {
-    opts.budget.spend();
-    const res = await politeFetch(policyKeyFor(tenant), url, init, {
-      family: ADAPTER_FAMILY,
-      fetchImpl: opts.fetchImpl,
-      sleepImpl: opts.sleepImpl,
-    });
+    try {
+      opts.budget.spend();
+    } catch (err) {
+      // Run-ending and, until now, completely silent: the cap is what stops a crawl dead,
+      // so it has to be the loudest line in the log rather than an unexplained abort.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `${CLIENT_LOG} ${tenant.tenantKey} ${endpoint} request budget exhausted at ${opts.budget.cap} — aborting run`
+      );
+      throw err;
+    }
+    // One label per attempt, carrying everything needed to read a slow run: which tenant,
+    // which endpoint, which attempt, and how much of the tenant's hard cap is spent.
+    const label = `${tenant.tenantKey} ${endpoint} attempt ${attempt + 1}/${attemptsAllowed} req ${opts.budget.spent}/${opts.budget.cap}`;
+    // eslint-disable-next-line no-console
+    console.log(`${CLIENT_LOG} ${label} start ${url.pathname}`);
+
+    const startedAt = Date.now();
+    let res: Response;
+    try {
+      res = await politeFetch(policyKeyFor(tenant), url, init, {
+        family: ADAPTER_FAMILY,
+        fetchImpl: opts.fetchImpl,
+        sleepImpl: opts.sleepImpl,
+      });
+    } catch (err) {
+      // politeFetch threw instead of answering: a blown per-request deadline (H4) or an
+      // already-armed crawl backoff. Both previously left this layer silent, which is
+      // exactly how a run that stopped making progress looked identical to one that never
+      // started. The elapsed time is the tell — ~32s means the deadline burned.
+      // eslint-disable-next-line no-console
+      console.warn(`${CLIENT_LOG} ${label} threw after ${Date.now() - startedAt}ms: ${errLabel(err)}`);
+      throw err;
+    }
+    const elapsedMs = Date.now() - startedAt;
+    // eslint-disable-next-line no-console
+    console.log(`${CLIENT_LOG} ${label} status=${res.status} in ${elapsedMs}ms`);
     lastStatus = res.status;
 
-    if (res.status === 403) throw new PortalBlockedError(tenant.tenantKey, url.pathname);
+    if (res.status === 403) {
+      // eslint-disable-next-line no-console
+      console.warn(`${CLIENT_LOG} ${label} 403 blocked — circuit-breaking the run`);
+      throw new PortalBlockedError(tenant.tenantKey, url.pathname);
+    }
     if (res.status === 429) {
-      throw new PortalRateLimitedError(tenant.tenantKey, url.pathname, parseRetryAfter(res));
+      const retryAfterSeconds = parseRetryAfter(res);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `${CLIENT_LOG} ${label} 429 rate-limited (retry-after ${retryAfterSeconds ?? 'unset'}) — circuit-breaking the run`
+      );
+      throw new PortalRateLimitedError(tenant.tenantKey, url.pathname, retryAfterSeconds);
     }
     if (res.status >= 500) {
-      if (attempt === MAX_TRANSIENT_RETRIES) break;
+      if (attempt === MAX_TRANSIENT_RETRIES) {
+        // eslint-disable-next-line no-console
+        console.warn(`${CLIENT_LOG} ${label} HTTP ${res.status} — ${attemptsAllowed} attempts exhausted, giving up`);
+        break;
+      }
       const retryAfterMs = (parseRetryAfter(res) ?? 0) * 1000;
       const backoff = Math.max(TRANSIENT_BACKOFF_BASE_MS * 2 ** attempt, retryAfterMs);
-      if (backoff > MAX_IN_RUN_BACKOFF_MS) break; // too long to hold a run open
+      if (backoff > MAX_IN_RUN_BACKOFF_MS) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `${CLIENT_LOG} ${label} HTTP ${res.status} — required backoff ${backoff}ms exceeds the ` +
+            `${MAX_IN_RUN_BACKOFF_MS}ms in-run ceiling, giving up`
+        );
+        break; // too long to hold a run open
+      }
+      // The single most useful line for reading a multi-minute run: how much of it was
+      // this module deliberately sleeping, and why.
+      // eslint-disable-next-line no-console
+      console.warn(`${CLIENT_LOG} ${label} HTTP ${res.status} transient — retrying in ${backoff}ms`);
       await sleep(backoff);
       continue;
     }
@@ -475,6 +555,15 @@ export async function fetchTenant(
   const unrecognised = new Set<string>();
   const calendars: CalendarFetchResult[] = [];
   const centreNames = new Map<number, string>();
+  const runStartedAt = Date.now();
+
+  // H6: the run's own progress line. A per-request log alone still can't answer "how far
+  // through Vancouver's 23 calendars did the 9 minutes get us?" — this can.
+  // eslint-disable-next-line no-console
+  console.log(
+    `${RUN_LOG} ${tenant.tenantKey} run start — ${tenant.dropInCalendarIds.length} calendar(s), ` +
+      `cap ${opts.budget.cap} request(s), window ${window.startDate}..${window.endDate}`
+  );
 
   const listed = await listCalendars(tenant, opts);
   listed.unrecognised.forEach((k) => unrecognised.add(`calendars.${k}`));
@@ -490,7 +579,9 @@ export async function fetchTenant(
 
   const nameById = new Map(listed.calendars.map((c) => [c.calendar_id, c.name]));
 
-  for (const calendarId of tenant.dropInCalendarIds) {
+  const calendarCount = tenant.dropInCalendarIds.length;
+  for (const [index, calendarId] of tenant.dropInCalendarIds.entries()) {
+    const calendarStartedAt = Date.now();
     const result: CalendarFetchResult = {
       calendarId,
       calendarName: nameById.get(calendarId),
@@ -537,6 +628,13 @@ export async function fetchTenant(
       result.warnings.push(err instanceof Error ? err.message : String(err));
       warnings.push(`calendar ${calendarId}: ${result.warnings[result.warnings.length - 1]}`);
     }
+    // eslint-disable-next-line no-console
+    console.log(
+      `${RUN_LOG} ${tenant.tenantKey} calendar ${calendarId} (${index + 1}/${calendarCount}) — ` +
+        `${result.centreIds.length} centre(s), ${result.occurrenceCount} occurrence(s), ` +
+        `${result.warnings.length} warning(s) in ${Date.now() - calendarStartedAt}ms, ` +
+        `req ${opts.budget.spent}/${opts.budget.cap}`
+    );
     calendars.push(result);
   }
 
@@ -558,6 +656,15 @@ export async function fetchTenant(
       warnings.push(`centerdetails: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+
+  const occurrences = calendars.reduce((n, c) => n + c.occurrenceCount, 0);
+  // eslint-disable-next-line no-console
+  console.log(
+    `${RUN_LOG} ${tenant.tenantKey} run complete — ${calendars.length} calendar(s), ` +
+      `${centreIds.length} centre(s), ${occurrences} occurrence(s), ` +
+      `${opts.budget.spent}/${opts.budget.cap} request(s), ${warnings.length} warning(s) ` +
+      `in ${Math.round((Date.now() - runStartedAt) / 1000)}s`
+  );
 
   return {
     tenantKey: tenant.tenantKey,
