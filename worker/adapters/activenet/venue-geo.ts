@@ -459,8 +459,10 @@ export function lookupVenueGeo(
  * showed "licensed under the OGL – Vancouver" for coordinates that never came from
  * the City. `worker/adapters/citycalendar/config.ts` independently carries 5 keys
  * byte-identical to this table's names with DIFFERENT coordinates (up to 802 m
- * apart), and `resolveVenue()` matches on `lower(name)` first-writer-wins, so the
- * venue row a parent sees may have been written by an entirely different adapter.
+ * apart), and `resolveVenue()` matches on `lower(name)` and OVERWRITES geo
+ * (`geo = COALESCE(<incoming>, geo)` — last-writer-wins), so the venue row a parent
+ * sees may have been written by an entirely different adapter, and changes with
+ * ingest order.
  *
  * The root cause was not the missing tenant check. It was that **a venue name is not
  * provenance**, and the UI has no access to the provenance of the coordinate it is

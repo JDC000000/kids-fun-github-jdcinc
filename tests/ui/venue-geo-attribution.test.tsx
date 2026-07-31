@@ -7,10 +7,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 // The first implementation rendered the notice on the activity detail panel, resolved by
 // VENUE NAME. `worker/adapters/citycalendar/config.ts` independently carries 5 venue names
 // byte-identical to the ActiveNet geo table's, with DIFFERENT coordinates (up to ~802 m
-// apart), and `resolveVenue()` matches on `lower(name)` first-writer-wins — so a venue row
-// a parent sees may hold coordinates from a completely different adapter, or (in fixture
-// mode) from a hand-written demo fixture. QA reproduced three live false claims in default
-// fixture mode: trout-lake-public-skate, killarney-skate-lessons, l-opengym-van.
+// apart), and `resolveVenue()` matches on `lower(name)` and OVERWRITES geo
+// (`geo = COALESCE(<incoming>, geo)` — last-writer-wins) — so a venue row a parent sees may
+// hold coordinates from a completely different adapter, or (in fixture mode) from a
+// hand-written demo fixture. QA reproduced three live false claims in default fixture mode:
+// trout-lake-public-skate, killarney-skate-lessons, l-opengym-van.
 //
 // The fix is structural rather than a narrower filter: the notice is SITE-WIDE, so it makes
 // no per-venue claim at all and cannot misfire. Both halves are asserted here — the notice
