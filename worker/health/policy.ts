@@ -242,6 +242,21 @@ function sleep(ms: number): Promise<void> {
  * body is bounded too. Every adapter reads the body on the next line, so a legitimate
  * response is never cut off; the timer is unref'd, so an armed deadline never holds the
  * process open.
+ *
+ * WHY NOT JUST BUFFER THE BODY HERE? The tidy-looking alternative — have politeFetch read
+ * the body to completion inside the deadline and hand back a memory-backed Response — is
+ * rejected on its merits, not as a workaround. It would make a whole-body allocation
+ * MANDATORY for every caller of shared infrastructure, and this project's heaviest response
+ * is not small: ActiveNet's `multicenter/events` returns a tenant's entire calendar period
+ * in a single payload (Vancouver: 10,146 occurrences). Buffering would force that to be
+ * fully materialised on every request, for every adapter, to solve a problem the armed
+ * timer above already solves at zero allocation cost — and it would additionally discard
+ * `Response.url`/redirect metadata by reconstructing the object.
+ *
+ * So this is a deliberate design choice, not deferred cleanup. Please do not "simplify" it
+ * into a buffering implementation. (It would also require rewriting the several existing
+ * test doubles that return plain `{ok,status,text}` objects rather than real `Response`s,
+ * but that is a symptom of the same over-reach, not the reason.)
  */
 async function fetchAttemptWithDeadline(
   doFetch: typeof fetch,
