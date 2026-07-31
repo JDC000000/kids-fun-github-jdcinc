@@ -9,6 +9,7 @@ import {
   resolveLocation,
 } from '../../worker/adapters/library/generic-rss';
 import { stripHtml } from '../../worker/adapters/library/rss-text';
+import { clearPolicyState } from '../../worker/health/policy';
 
 // NVDPL (North Vancouver District Public Library) — the library family's 4th tenant and
 // its only `generic_rss` platform. Decision record D-12, 2026-07-31.
@@ -533,9 +534,13 @@ describe('NVDPL generic_rss — run health', () => {
     });
   });
 
-  it('the adapter passes the runner’s baseline through, and a fixture run stays quiet', async () => {
-    // ingestSource calls assessRun(baseline). A fixture run must not alert even when the
-    // runner hands it a live baseline.
+  it('a FIXTURE run stays quiet even when the runner hands it a live baseline', async () => {
+    // NOTE ON THIS TEST'S SCOPE (QA finding G-1): this asserts the fixture path only. It
+    // CANNOT prove the adapter forwards the baseline — `{code:'ok'}` is the right answer
+    // whether the argument is forwarded or dropped, so this expectation holds identically
+    // under the original bug. It was previously named as though it proved pass-through,
+    // which promised more than it delivered. The forwarding guarantee is proved by
+    // 'a LIVE run below baseline alerts THROUGH the adapter' below.
     const adapter = new LibraryAdapter(nvdpl());
     adapter.extract(await adapter.fetch());
     expect(adapter.assessRun(41)).toMatchObject({ code: 'ok', alert: false });
@@ -551,6 +556,83 @@ describe('NVDPL generic_rss — run health', () => {
     const vpl = new LibraryAdapter(getLibrarySystem('vpl')!);
     vpl.extract(await vpl.fetch());
     expect(vpl.assessRun()).toBeNull();
+  });
+});
+
+describe('NVDPL generic_rss — assessRun forwards the baseline AT THE ADAPTER BOUNDARY (QA G-1)', () => {
+  // WHY THIS TEST EXISTS, and why the 68 tests before it were not enough.
+  //
+  // The `assessRun` baseline fix was correct end-to-end, but reintroducing the exact original
+  // defect — `assessGenericRssRun(system, diagnostics)`, dropping the baseline and liveness
+  // arguments — left the ENTIRE suite green. QA proved that with a revert mutation, and this
+  // stream reproduced it independently before closing the gap: 68/68 still passed.
+  //
+  // The reason is a real testing trap worth naming: every other assessRun call in this file
+  // goes through the FIXTURE path, where `live: false` means the baseline can never change
+  // the verdict — `ok` is correct whether the argument is forwarded or thrown away. The
+  // collapse logic itself was well covered, but only as a PURE FUNCTION invoked directly with
+  // explicit arguments. The defect lived in the adapter's WIRING, and no test crossed it.
+  //
+  // So this test drives the LIVE path through the adapter and asserts an alert that is only
+  // reachable if the baseline actually arrives. Same shape as the F-B gap: the fix was real,
+  // the guard was missing.
+
+  /** A live feed small enough that its yield collapses against a baseline of 41. */
+  const SMALL_LIVE_FEED = feed(
+    item('Babytime', description('Tue, 4 Aug 2026, 10:30am - 11:00am'), '1'),
+    item('Family Storytime', description('Wed, 5 Aug 2026, 10:30am - 11:00am'), '2'),
+    item('Toddlertime', description('Thu, 6 Aug 2026, 10:30am - 11:00am'), '3'),
+    item('Tween Tuesday!', description('Fri, 7 Aug 2026, 3:30pm - 4:30pm'), '4'),
+    item('Drop-In Chess', description('Sat, 8 Aug 2026, 1:00pm - 2:00pm', 'Players of all ages welcome.'), '5')
+  );
+
+  beforeEach(() => {
+    // Reset the shared per-source rate-limit clock. politeFetch enforces a 3s floor per
+    // source, so without this each test in this block waits it out — ~12s of pure CI idle
+    // for four tests. Same reason tests/compliance/no-bypass.test.ts clears it.
+    clearPolicyState();
+    process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'nvdpl';
+    vi.spyOn(globalThis, 'fetch').mockImplementation((async () =>
+      new Response(SMALL_LIVE_FEED, {
+        status: 200,
+        headers: { 'content-type': 'application/rss+xml' },
+      })) as unknown as typeof fetch);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS;
+  });
+
+  it('a LIVE run below baseline alerts THROUGH the adapter — assessRun must forward the baseline', async () => {
+    const adapter = new LibraryAdapter(nvdpl());
+    const records = adapter.extract(await adapter.fetch());
+    expect(records, '5 kid items emitted on the live path').toHaveLength(5);
+    // 5 records against a trailing baseline of 41 is an 88% drop. This is the assertion the
+    // original bug cannot satisfy: drop the baseline and the verdict is a cheerful 'ok'.
+    expect(adapter.assessRun(41)).toMatchObject({ code: 'yield_collapse', alert: true });
+  });
+
+  it('the same LIVE run is healthy against a baseline it does NOT collapse against', async () => {
+    // Guards the other direction: the alert must come from the comparison, not from merely
+    // being a live run with few records.
+    const adapter = new LibraryAdapter(nvdpl());
+    adapter.extract(await adapter.fetch());
+    expect(adapter.assessRun(6)).toMatchObject({ code: 'ok', alert: false });
+  });
+
+  it('a LIVE run with NO baseline (first run) does not alert through the adapter', async () => {
+    const adapter = new LibraryAdapter(nvdpl());
+    adapter.extract(await adapter.fetch());
+    expect(adapter.assessRun(null)).toMatchObject({ code: 'ok', alert: false });
+  });
+
+  it('the adapter reports LIVE-ness, not fixture-ness, after a live fetch', async () => {
+    // The liveness flag is the other half of what the bug dropped: a live run misreported as
+    // a fixture run would also skip the baseline comparison and pass green.
+    const adapter = new LibraryAdapter(nvdpl());
+    adapter.extract(await adapter.fetch());
+    const verdict = adapter.assessRun(41)!;
+    expect(verdict.detail).toContain('trailing baseline 41');
   });
 });
 
