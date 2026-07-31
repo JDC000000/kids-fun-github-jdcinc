@@ -80,7 +80,7 @@ export interface LibraryBranchLocation {
  * intended-for-syndication bar that made the BiblioCommons feeds tractable. That override
  * does NOT reopen the Aquarium exclusion and does NOT make "unreadable robots.txt is fine"
  * a project policy; any other source with this fact pattern needs its own routed decision.
- * Full reasoning: docs/source-register.md §6.5 + decision record D-12.
+ * Full reasoning: docs/source-register.md §6.8 + decision record D-12.
  *
  * The override does not discharge the rest of the compliance work: the feed is fetched
  * with one plain unauthenticated GET through the shared politeFetch seam, no cookie is
@@ -99,8 +99,11 @@ const NVDPL_SYSTEM: LibrarySystemConfig = {
   // KIDS_FUN_LIVE_LIBRARY_SYSTEMS *and* cleared in the DB — see liveCapable's doc comment.
   liveCapable: true,
   rssEventsUrl: 'https://nvdpl.events.mylibrary.digital/rss',
-  // Live-measured 2026-07-31: 97 items in a rolling ~1-month window, of which 47 classify
-  // kid-relevant. 60 leaves real headroom over that without letting an unexpectedly large
+  // Live-measured 2026-07-31: 97 items in a rolling ~1-month window, of which 42 classify
+  // kid-relevant (41 emit; the 42nd is a multi-day range). The earlier 47 here was the
+  // pre-QA-F-A figure that counted 5 adult "Summer Reading Rave" occurrences as kid
+  // programming — see docs/source-register.md §6.8.3.
+  // 60 leaves real headroom over that without letting an unexpectedly large
   // window ingest unbounded; exceeding it raises `truncated_by_limit` rather than passing
   // quietly (see ./generic-rss.ts assessGenericRssRun).
   liveEventsLimit: 60,

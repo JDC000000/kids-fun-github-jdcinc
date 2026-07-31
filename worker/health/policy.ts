@@ -110,6 +110,12 @@ export const REQUESTS_PER_MINUTE_BY_FAMILY: Record<string, number> = {
   // bounding the total. Stated explicitly rather than inherited so the crawl footprint of
   // every high-volume source is visible in one table.
   perfectmind: 20,
+  // Organizer-scoped Eventbrite partner feeds (T10). A documented, authorised vendor
+  // API rather than a portal we are reading around, and the request count per run is
+  // small (one organizer, a short continuation walk bounded by maxRequestsPerRun). The
+  // same 20/min = 3s floor is used anyway rather than a laxer one: an authorised
+  // partner is exactly who should see the politest crawl, not the least polite.
+  eventbrite_organizer: 20,
 };
 
 export function requestsPerMinuteFor(family?: string): number {

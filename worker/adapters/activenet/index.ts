@@ -83,6 +83,11 @@ export interface ActiveNetRunReport {
   parse: ParseResult['stats'];
   unmappedCentreIds: number[];
   recordsWithoutAddress: number;
+  /** Facilities in the feed that worker/adapters/activenet/venue-geo.ts cannot locate,
+   *  BY NAME. Sits beside unmappedCentreIds because it is the same class of fact: a
+   *  coverage gap that must be readable, not a percentage that reads as solved. */
+  venuesWithoutGeo: string[];
+  recordsWithoutGeo: number;
   warnings: string[];
   unrecognisedKeys: string[];
   health: ActiveNetHealthVerdict;
@@ -216,6 +221,8 @@ export class ActiveNetAdapter implements Adapter {
       parse: parsed.stats,
       unmappedCentreIds: applied.unmappedCentreIds,
       recordsWithoutAddress: applied.recordsWithoutAddress,
+      venuesWithoutGeo: applied.venuesWithoutGeo,
+      recordsWithoutGeo: applied.recordsWithoutGeo,
       warnings,
       unrecognisedKeys: payload.unrecognisedKeys,
       health: assessRunHealth({

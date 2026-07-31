@@ -10,7 +10,7 @@ human review; it does not silently decide anything ambiguous (see §7 flags).
 ## 1. Purpose & authority
 
 This is the living register of every data source KIDS FUN ingests, with an explicit
-terms-of-service / robots record and one of four classifications for each:
+terms-of-service / robots record and one classification for each:
 
 | Classification | Meaning |
 |---|---|
@@ -18,6 +18,8 @@ terms-of-service / robots record and one of four classifications for each:
 | **summarise-only** | Automated access permitted *only* via a specific mechanism (e.g. RSS/XML feed); we store facts + a source link, never wholesale editorial copy. |
 | **partner-required** | Would require a partner/API agreement or explicit permission before enabling. |
 | **excluded** | Not permitted / not enabled — do not ingest without a new terms decision. |
+| **derived-once — not a live source** | Licensed data taken once, by hand, and committed as a constant. No `source` row, no cadence, no runtime fetch — but the licence still applies to what we publish, so it is registered. Added 2026-07-31 for §6.6. |
+| **investigated — declined on data grounds** | Probed live and rejected for what it *contains*, not for availability or terms. Carries measured numbers and a **condition-based** re-check trigger so it is never silently re-researched. Added 2026-07-31 for §6.7. |
 
 **Source of truth for what is actually live is the production `source` DB table**, not
 this file and not the seed. A source is live in production only when BOTH of these are
@@ -153,11 +155,18 @@ this round.
 | `activenet` / District of West Vancouver | **excluded — ZERO drop-in data** | Portal live, online-calendar module empty. See §6.3 |
 | `perfectmind` / NVRC (North Vancouver) | **live-capable under D-10/D-11, staged OFF** | Drop-in confirmed: 9 calendars. See §6.4 |
 | `perfectmind` / City of Richmond | **excluded — ZERO drop-in data** | Registration widget only; drop-in published as PDFs. See §6.4 |
-| `library_generic_rss` / **NVDPL (North Vancouver District Public Library)** | **live-capable under D-12, staged OFF** | Public RSS feed, 97 items, **41 emitted / 42 kid-relevant (43%)** — but its **robots.txt is UNREADABLE**. See §6.5 |
+| `library_generic_rss` / **NVDPL (North Vancouver District Public Library)** | **live-capable under D-12, staged OFF** | Public RSS feed, 97 items, **41 emitted / 42 kid-relevant (43%)** — but its **robots.txt is UNREADABLE**. See §6.8 |
 | `venue_html` / Vancouver Aquarium, Science World | pending, fixture-only | Semi-automated venue HTML; separate terms review needed |
 | `seasonal_watcher` / Stanley Park Miniature Railway, Burnaby Central Railway, Cypress Mountain | pending, fixture-only | Status-page watchers |
 | `city_calendar` / (other municipalities) | n/a | Only Vancouver is live |
-| `eventbrite_organizer` / placeholder | pending, `partner` tier | **partner-required** — none configured |
+| `eventbrite_organizer` / placeholder | **adapter BUILT (T10 / G-T10-2), zero organizers authorised** | **partner-required** — none configured. Connector is complete and provably organizer-scoped; it stays off because no organizer has authorised KIDS FUN and Eventbrite has no anonymous read path. See §6.5 |
+
+**Two entries below are NOT adapter scaffolds and have no seed row** — they are here
+because the register is about obligations and about decisions, not only about adapters.
+**§6.6** records licensed data we redistribute from a committed constant
+(`derived-once — not a live source`). **§6.7** records a workstream probed live and
+declined on content (`investigated — declined on data grounds`), with the numbers, so it
+is not researched a third time from the wrong premise.
 
 ### 6.1 Future sources — pre-enablement checklist (informs the held T7/T8 decision)
 
@@ -681,14 +690,407 @@ All are written through `worker/core/checkrun.ts` — the same machinery T7 uses
 
 ---
 
-### 6.5 NVDPL library RSS (`library_generic_rss`) — live-capable under D-12, with the robots.txt problem stated plainly
+### 6.5 Organizer-scoped Eventbrite (T10 / G-T10-2) — built, provably scoped, ZERO organizers authorised
+
+**Status: an honest zero, of the same kind as Richmond (§6.4) and West Vancouver (§6.3).**
+The adapter family `worker/adapters/eventbrite/` is complete, tested and wired into the
+adapter registry. It reads nothing today, and cannot, because nobody has authorised it.
+
+**What was checked, and what was found (2026-07-31).**
+
+1. **Eventbrite has NO anonymous read path.** Every organizer-scoped call requires either
+   an OAuth app plus that organizer's explicit authorisation, or a private token the
+   organizer hands over. There is no public, credential-free endpoint that returns another
+   party's events.
+2. **The anonymous area-wide search endpoint the acceptance criterion forbids no longer
+   exists.** `GET /v3/events/search/` — the one that accepted `location.address`,
+   `location.within`, `location.latitude/longitude` — was removed from public access on
+   **2019-12-12** and began denying all requests on **2020-02-20**. Eventbrite's own
+   migration guidance points callers at `GET /v3/organizations/:organization_id/events/`,
+   which is exactly the organizer-scoped endpoint IR-03 requires. For anyone wanting broad
+   multi-creator coverage, Eventbrite directs them to apply to its **distribution partner
+   programme** — a business relationship, not an API call.
+3. **KIDS FUN holds no Eventbrite credential of any kind.** The project credential store
+   was checked directly (connector list only — no secret values read): there is no
+   Eventbrite connector. This matches what `supabase/seeds/sources.sql` and §6 of this
+   register have said since they were written ("partner-required — none configured").
+
+**Therefore G-T10-2 shipped the code half and correctly did NOT ship a live feed.** No
+organizer feed was invented to demo against, and no real organizer was approached for data
+— that is Jon's call, not an engineering one.
+
+**Two ways to make it live, both business steps:**
+- a named partner organizer authorises KIDS FUN directly and provides a token; or
+- Eventbrite's distribution-partner programme approves the project.
+
+Once either lands, onboarding is a **data** change: one entry in
+`worker/adapters/eventbrite/config.ts`, one `source` row, the token in the env var that
+entry names, and `KIDS_FUN_LIVE_EVENTBRITE=<key>` — plus a `terms_status`/`robots_status`
+decision recorded here. No new code.
+
+**How the organizer-scoping guarantee is made structural, not promised.** IR-03 says the
+connector must only pull configured organizer feeds and that *no anonymous area-query path
+exists* — "exists", not "is used". Four mechanisms, so no single edit undoes it:
+
+| Mechanism | Where | What it guarantees |
+|---|---|---|
+| No URL parameter anywhere | `client.ts` | Callers pass an organizer CONFIG, never a URL. The organizer id is interpolated into a PATH SEGMENT, so the endpoint cannot return another organizer's events |
+| Closed query allow-list | `client.ts` `ALLOWED_QUERY_PARAMS` | The builder iterates the ALLOW-LIST, not the caller's object, so `location.*` / `q` / `within` / `categories` are unreachable rather than merely unused |
+| Runtime tripwire on the final URL | `client.ts` `assertOrganizerScopedUrl()` | Production code (not a test) that throws unless host, path shape, organization id and every parameter check out. Fails closed at runtime, not just red in CI |
+| Compliance suite | `tests/compliance/eventbrite-organizer-scope.test.ts` (71 tests) | Behavioural (spied fetch) + structural (source read from disk, comments stripped, scanned for area-query and bypass fingerprints) + a self-check proving each scanner actually bites |
+
+**Four independent gates keep it off**, any one of which means zero network activity:
+config entry with `enabled: true` · the `KIDS_FUN_LIVE_EVENTBRITE` env allow-list · the
+organizer's token present in its configured env var · the DB terms/robots gate enforced
+inside `politeFetch`. Today gate 1 fails (the list is empty) and gate 3 has nothing to
+satisfy it.
+
+**On the `Authorization` header — a NAMED narrowing, recorded here on purpose.**
+`tests/compliance/no-bypass.test.ts` bans `Authorization` outright for every adapter in its
+`ADAPTER_SOURCES` list, correctly: those adapters read PUBLIC pages, where a credential
+could only mean logging in as somebody to reach content we were not offered. This family is
+the opposite case by definition — an organizer-granted bearer token is the *only* way to
+honour "organizer-owned/authorized feeds only". Rather than quietly omitting the family
+from that file's scan, its own compliance suite **re-runs every prohibition from it**
+(CAPTCHA · password · Cookie · `credentials:'include'` · headless navigation/library ·
+checkout/cart · anti-forgery token · POST · PUT/PATCH/DELETE) and narrows exactly one item:
+the `Authorization` header, permitted only in `client.ts`, only as `Bearer ${token}` read
+from an env var, with the token proven absent from every URL. Coverage is therefore
+complete and the single thing that moved is visible in both files.
+
+**Not yet verified against a live response.** The payload types and the fixture in
+`worker/adapters/eventbrite/__fixtures__/` are transcribed from Eventbrite's published API
+documentation, not captured from a real call — because no real call has ever been possible.
+Re-verify field-by-field the first time an organizer is onboarded.
+### 6.6 Vancouver open data — venue geo, DERIVED ONCE, and NOT a live source
+
+**Classification: `derived-once — not a live source`.** There is no `source` row, no
+adapter, no cadence entry, no terms gate and no `source_check_run` wiring for this,
+deliberately. It is a committed constant —
+`worker/adapters/activenet/venue-geo.ts` — and it makes **zero network calls at
+runtime, ever** (asserted by `tests/adapters/activenet-venue-geo.test.ts`). Listing it
+here is not a formality: a licensed third-party dataset is being redistributed through
+our product, which is a register-worthy fact regardless of the delivery mechanism.
+
+| | |
+|---|---|
+| Dataset | `community-centres` (27 records) + `property-addresses`, City of Vancouver Open Data |
+| Licence | **Open Government Licence – Vancouver**, declared by the dataset's own metadata (`license`, `license_url`) — read live 2026-07-31 |
+| Commercial use | **Permitted.** OGL–Vancouver is a Canadian-municipal OGL variant whose sole condition is attribution |
+| Caching / rate / retention restriction | **NONE.** See the contrast below — this is a real difference, not boilerplate |
+| Attribution string (verbatim, mandated) | `Contains information licensed under the Open Government Licence – Vancouver` |
+| Licence URL | `https://opendata.vancouver.ca/pages/licence/` |
+| Dataset `modified` | `2020-03-16T10:01:39+00:00` — six years stale, and static by nature |
+| Derived | once, by hand, 2026-07-31 |
+
+**The contrast with D-9 is meaningful and is stated plainly rather than flattened.**
+D-9 (the official ACTIVE Activity Search API, §6.2) carries a **caching/data-retention
+restriction that Jon personally accepted** as a condition of use — a live, ongoing
+obligation attached to the data. **OGL–Vancouver carries no such clause.** There is no
+cache-expiry duty, no rate limit, no retention ceiling, and no obligation to re-fetch.
+That is precisely *why* a frozen constant is a legitimate shape here and would not be
+under D-9: this licence permits us to take a copy once and keep it. Do not carry D-9's
+posture across to this entry by analogy.
+
+**One thing I could NOT verify from this infrastructure, recorded rather than glossed.**
+The licence *identity* is verified (the dataset metadata declares it, read live). The
+licence *text* is not readable from here: `opendata.vancouver.ca/pages/licence/` returns
+HTTP 200 but is a JS-rendered SPA shell with no licence prose in the HTML, and the
+canonical `vancouver.ca/your-government/open-government-licence-vancouver.aspx` returns
+**HTTP 403** to this infrastructure (the same 403 §A.1 of the scoping doc measured, and
+the same reason `urllink` was not imported). The clause-level reading above —
+attribution-only, commercial use permitted, no caching restriction — is the 2026-07-31
+scoping pass's, against the published OGL–Vancouver v1.0 terms, not a fresh
+clause-by-clause re-read. The posture is fail-safe either way: **we render the
+attribution unconditionally wherever this data surfaces**, which satisfies the one
+condition under every reading of it. Flagged so a future compliance pass knows which
+line was inherited rather than re-derived.
+
+#### Where attribution renders — and why it is site-wide, not per venue
+
+`app/_components/SiteFooter.tsx`, the global footer mounted once in the root layout, so
+the notice is reachable from every route. It renders the exact mandated string as a link
+to the licence, plus `© OpenStreetMap contributors` (ODbL,
+`https://www.openstreetmap.org/copyright`) for the two coordinates (Lord Byng Pool,
+Sunset Rink) that no City dataset covers. The list is **derived from the constant's own
+per-entry `attribution` field** (`requiredGeoAttributions()`), so an entry added from a
+new source appears in the footer with no UI change.
+
+**This was originally built per-venue, on the activity detail panel, and that was wrong —
+recorded here because the reason generalises.** The first implementation resolved the
+notice by venue NAME and rendered it in the "Source & freshness" panel. QA reproduced
+three live false claims in default fixture mode (`trout-lake-public-skate`,
+`killarney-skate-lessons`, `l-opengym-van`): each venue merely shares a name with this
+table, while its coordinates came from a demo fixture or from
+`worker/adapters/citycalendar/config.ts`'s own independent `venueGeo` map — which carries
+**5 keys byte-identical to this table's names with different coordinates**, up to ~802 m
+apart. `resolveVenue()` matches on `lower(name)` and **overwrites** geo, so the venue row
+a parent sees may have been written by an entirely different adapter. (An earlier draft of
+this section said "first-writer-wins"; QA corrected it by running the statement against a
+live DB rather than reading the SQL — see the write-semantics note below.)
+
+The root cause was **not** a missing tenant check. It is that **a venue name is not
+provenance**, and the UI has no access to the provenance of the coordinate it displays:
+`venue` has no attribution column and the parent-facing `Activity` type carries no
+coordinates at all, only a derived `distanceKm`. Any per-record notice on that surface is
+therefore an inference — the exact thing this constant's own header forbids ("a legal
+notice is never inferred from a free-text string"). Gating on `sourceName` was considered
+and rejected: it is the same mistake one layer down (`sourceName` is just
+`new URL(sourceUrl).hostname`), and it does not even fix the reported cases — two of the
+three reproductions have `sourceName: 'vancouver.ca'`, which is also the City-calendar
+adapter's own host.
+
+A site-wide notice makes no per-venue claim, so it is unconditionally true for as long as
+this table ships, and neither the OGL nor the ODbL requires a per-record badge. **A
+per-record notice should not be reintroduced without a real provenance column on `venue`.**
+Locked by `tests/ui/venue-geo-attribution.test.tsx`, which asserts the notice renders in
+the footer exactly once and renders on **no** detail fixture (verified to fail against the
+old implementation, not merely to pass against the new one).
+
+#### Write semantics — `resolveVenue()` OVERWRITES geo, it does not gap-fill
+
+Recorded because the wrong word was used in the first draft of this section, in
+`venues.ts` and in the commit message, and because this diff is the first time the
+distinction stops being academic.
+
+`worker/core/venue.ts::enrichVenue` runs `geo = COALESCE(<incoming point>, geo)`. The
+INCOMING value is the first COALESCE argument, so a non-null incoming coordinate
+**replaces** whatever the row already held; the stored value survives only when the
+adapter sends nothing. That is **last-writer-wins**, not "enrich"/"gap-fill" — "enrich"
+implies filling what is missing and leaving what is there, which is the opposite of what
+the statement does. (QA established this by executing it against a live database rather
+than reading the SQL, and corrected its own earlier first-writer-wins finding.)
+
+While one adapter owns a venue name this is invisible. It becomes load-bearing here,
+because this is the **first case where two adapters write geo for the same venue names**:
+`worker/adapters/citycalendar/config.ts` carries 5 names byte-identical to
+`venue-geo.ts`'s, so those rows now change with ingest order rather than settling.
+Measured against OpenStreetMap, 4 of the 5 are a net improvement when the ActiveNet value
+wins (Renfrew ~800 m better, Killarney ~600 m, Kitsilano ~113 m, Trout Lake ~34 m) —
+**Britannia was the exception and is now converged** (see below), so no remaining shared
+name regresses. Converging the two tables outright is a tracked follow-up, not done here.
+
+**Britannia is the one venue where the two tables were reconciled rather than left to
+churn**, because it is the highest-volume venue in the table and the City's point was the
+worse of the two. `community-centres` places Britannia at a site-level point ~250 m west
+of the actual building; citycalendar already held a building-level point. Verified
+independently against two OSM POIs at 1661 Napier Street: the City's point is 251 m / 235
+m out, citycalendar's is 79 m / 96 m — **better by 139–172 m**. `venue-geo.ts` now carries
+citycalendar's value *verbatim*, so the two tables agree byte-for-byte and the churn is
+unobservable for that venue. It is consequently the one entry in the table with **no
+`attribution`**: the point is this project's own curation, not City data, and claiming the
+OGL over it would repeat the false-provenance error above. Excluding the entry instead was
+considered and rejected — it would leave Britannia with no coordinates at all whenever the
+env-gated city-calendar source is off, and would make `venuesWithoutGeo` name Britannia on
+every run, degrading the warning it exists to keep meaningful. Britannia Pool and Britannia
+Rink keep the City's site-level point: they are separate buildings on the same campus and
+no better per-building source exists.
+
+#### One display-only override, declared
+
+`Kerrisdale Cyclone Taylor Arena` shows `displayArea: 'Kerrisdale'`. The City's own
+`geo_local_area` for 5670 East Boulevard is **`Shaughnessy`** — both the
+`property-addresses` record and an OSM reverse agree, because the local-area boundary runs
+along the Arbutus corridor immediately west of the arena. That is correct as a statistical
+boundary and misleading as a wayfinding label for a facility named "Kerrisdale …" that
+sits 300 m from Kerrisdale Community Centre. The City's published value is preserved in
+the entry's `derivedFrom`, and **the coordinate is untouched** — the override is the human
+label only. It is the single such override in the table, and a test asserts it stays the
+only one.
+
+#### MEASURED COVERAGE LIMIT — read this before repeating "27 community centres enriched"
+
+> **0% exact-name match; ~74% of measured Vancouver drop-in occurrences occur at
+> pools/rinks with no open-data record; Vancouver publishes no pool/rink/arena dataset.**
+
+Unpacked, because the headline hides the shape:
+
+- **0% exact-name match (0 of 36).** `worker/core/venue.ts::resolveVenue` resolves on
+  `lower(name) = lower($1)`. Open data says `Hastings`; ActiveNet says
+  `Hastings Community Centre`. **Ingesting this dataset as a source would have created 27
+  new venue rows and enriched zero existing ones.** Every alias is therefore resolved at
+  authoring time, in the file, by a human — 21 by suffix normalisation, and **3 genuine
+  aliases no normalisation reaches** (`Kitsilano Community Centre` ⟷ `Kitsilano War
+  Memorial`; `RayCam Co-operative Centre` ⟷ `Ray-Cam Co-Operative Center`, hyphen *and*
+  US spelling; `West Point Grey Community Centre - Aberthau` ⟷ `West Point Grey`).
+- **The dataset does not contain the venues that carry the programming.** Vancouver's two
+  largest drop-in calendars — Public Swimming (~1,125 occurrences/week) and Public
+  Skating & Ice Hockey (~158/week) — run at 7 pools and 4 rinks, and the community-centres
+  dataset has a record for **zero of the eleven**. That is **~1,283 of 1,732 measured
+  occurrences/week (74%)** at venues this dataset cannot locate.
+- **No other Vancouver dataset fills it.** Catalogue searches 2026-07-31: `pool` **0**,
+  `rink` **0**, `arena` **0**, `swimming` **0**. `parks-facilities` counts
+  `Swimming Pools` (9) and `Rinks` (7) but carries no facility name and no geometry —
+  joining it to `parks` yields a park centroid by inference, which is not data.
+- **So the 12 pool/rink/arena coordinates are hand-curated, and they are the part of the
+  file that matters.** 8 take the co-located community centre's OGL point (verified via a
+  shared civic address in `centerdetails`), 2 come from `property-addresses`, 2 from
+  OpenStreetMap. Per-entry `source` / `derivedFrom` on every one.
+- **3 open-data records were deliberately not seeded** — `Carnegie Centre`,
+  `Evelyne Saller Centre`, `Gathering Place Community Centre` — the only 3 of the 27 that
+  appear in no ActiveNet centre roster. Carnegie and Evelyne Saller are Downtown Eastside
+  social-service centres. Surfacing them to parents as community centres with nothing on
+  would be actively bad. *(The scoping doc estimated 6 from 5 sampled calendars; measured
+  against the full 36-centre roster the real number is 3.)*
+- **`urllink` was not imported.** 24 of 27 use the retired
+  `vancouver.ca/parks/cc/<name>/index.htm` scheme and the host 403s us, so none are
+  verifiable from here.
+
+**What this does and does not do.** It makes Vancouver ActiveNet drop-ins
+radius-searchable where a coordinate exists, and it names the gap out loud where one does
+not: `applyVenues()` returns `venuesWithoutGeo` **as a list of facility names** and warns
+on it, in the same style as the existing `unmappedCentreIds` warning — never a percentage,
+because "geo coverage is 67%" reads as nearly-solved and "Britannia Pool, Hillcrest Rink,
+… have no coordinates" does not. **This is not "Vancouver venue geo solved."** As of this
+entry all 36 Vancouver facilities are covered, but that is 36 hand-checked rows, not a
+mechanism: a facility the City adds tomorrow gets a warning, not a coordinate.
+
+**Re-check trigger:** only if Vancouver publishes a pool/rink/arena dataset with
+geometry, or the `community-centres` dataset's `modified` date moves off 2020-03-16.
+**Not on a schedule** — there is nothing to poll.
+
+---
+
+### 6.7 Burnaby + NVRC event calendars — investigated, declined on data grounds (2026-07-31)
+
+**Classification: `investigated — declined on data grounds, 2026-07-31`.** Not
+"unavailable", not "blocked", not "pending". Both were probed live; both are declined on
+what the data *contains*, and one of them has a perfectly good feed.
+
+**Authority:** decisions_register **D-10**, which names pursuit of the Burnaby/NVRC
+event-calendar feeds as unblocked. This entry is the record of that pursuit's outcome.
+
+#### THE CORRECTION — NVRC *does* expose a machine-readable feed. Read this before re-researching.
+
+`kids-fun-d10-scoping-2026-07-30.md` §4.1 states *"neither municipality exposes a usable
+iCal, RSS, or JSON event feed."* **For NVRC that is wrong, and it is superseded here.**
+
+`GET https://www.nvrc.ca/news-stories-events/events-calendar` → **HTTP 200, 3.1 MB**,
+plain unauthenticated request, no cookie, no token, no headless render. Inside
+`<script type="application/json" data-drupal-selector="drupal-settings-json">`, the key
+**`drupalSettings.fullCalendarView[0].calendar_options`** is a JSON string containing a
+fully server-side RRULE-expanded event array — **5,803 event instances / 473 unique
+events**. The 2026-07-30 pass probed only conventional feed paths (`/rss.xml`,
+`/events/feed`, `/calendar/export.ics`, `/jsonapi`, `?_format=json`) and correctly found
+them all 404/406, but never opened the calendar page itself.
+
+**The decline is on CONTENT, not on availability.** This distinction is the entire point
+of this entry: a future re-check must not go hunting for a feed that is already known to
+exist. It exists, it is clean, and its contents are the wrong contents.
+
+#### NVRC — the measured content profile
+
+| Measure | Value |
+|---|---|
+| Event instances embedded | **5,803** |
+| Unique underlying events (`eid`) | **473** |
+| **Unique events with any kid/family signal** | **13 of 473 — 2.7%** |
+| **Instances with any kid/family signal** | **19 of 5,803 — 0.3%** |
+| Top-8 events' share of all instances | 5,080 / 5,803 = **88%** — all art exhibitions, gallery shows, a night market and a walking tour, RRULE-expanded to one all-day instance per day |
+| Future instances that are all-day with no time | **2,972 of 3,199 — 93%** |
+| Instances already in the past | 2,604 (45%) |
+| `LOCATION` field | **absent entirely** |
+| `DESCRIPTION` field | **absent** — the lookalike field `des` is an RRULE string in **100%** of records |
+| Age / cost fields | **none** |
+| Category | a two-value CSS class (`community` 5,786 · `theatre` 17) |
+| `start` encoding | **dual** — 5,348 epoch strings + 455 ISO-local strings |
+| Declared `timeZone` | `America/Los_Angeles` — offset-equivalent but not the correct IANA zone for a BC source |
+
+**And the 13 are not NVRC's programming.** Node pages opened 2026-07-31 show the owners
+are Lynn Valley Services Society, St Andrew's United Church, Capilano Mall and — three of
+them — North Vancouver District Public Library. NVRC's own filter UI confirms the shape
+(`type-event`, `type--events-centennial-theatre`, `type-event-submission`): this is a
+**community-submissions board for the North Shore, not a recreation calendar**.
+
+**Cost of extraction, measured.** Venue / cost / date exist only as rendered free text on
+each node page — **0 JSON-LD blocks**, no microdata, no `.ics` link — so a usable record
+needs a **~250-node HTML crawl per run** to surface 13 kid-relevant items: **≈19 requests
+per useful record.** For calibration, T8's *entire* NVRC drop-in week is a measured **47
+requests** (§6.4). Roughly an order of magnitude worse per unit of value.
+
+#### Burnaby — dead end, independently re-confirmed
+
+| Probe | Result |
+|---|---|
+| `/recreation-and-arts/events` | 200, 117 KB — **12 event links**: Burnaby Blues + Roots Festival, Burnaby Farm Tour, *Michael de Courcy: one in a million*, Art in the Park, *Myfanwy MacLeod: Trophies*, Environmental Stewardship Events, Summer Stages, Sounds Like Summer, Summer Cinema, Community Cleanup Events |
+| iCal / `.ics` / `webcal` markers | **none** |
+| `<link rel="alternate">` feed declarations | **none** |
+| JSON-LD blocks | **0** |
+| `fullCalendarView` in `drupalSettings` | **absent** |
+| `/events` | 200, identical page |
+| `/calendar`, `/whats-on` | **404** |
+| `/services-and-payments/events-in-burnaby` | 200 — an event-organiser permitting/grants page, not a listing |
+| Only structured path | `drupalSettings.views.ajax_path = /views/ajax` → Drupal AJAX envelopes wrapping **rendered HTML**, not data |
+
+~12 civic festivals and art exhibitions; **zero children's drop-in programming**. T7
+already delivers **~643+ drop-in occurrences/week for Burnaby** from the same
+municipality at incomparably higher quality (§6.3).
+
+#### Compliance — checked, not assumed, and NOT softened
+
+`robots.txt` is **200 and permissive on event paths for both** (stock Drupal: `/core/`,
+`/profiles/`, `/admin/`, `/search/`, `/user/*`, `/node/add/`; NVRC adds `/media/oembed`).
+No `Crawl-delay`. The *technical* posture is open. The *reuse* posture is not:
+
+- **NVRC — `nvrc.ca/terms-of-use` → 200, and it restricts.** Quoted verbatim:
+  > "Users are permitted to view, print and download the material for **personal,
+  > non-commercial use only**. … You may not modify, copy, distribute, pre-publish or
+  > download any of the material from the website **for commercial use** without the prior
+  > written consent of NVRC."
+
+  KIDS FUN is commercial. This is a *different clause type* from ActiveNet's — ActiveNet
+  bars the **technique** regardless of purpose, NVRC bars the **purpose** regardless of
+  technique — but it is a genuine restriction. It **must not be recorded as "clean"**.
+  The scoping brief predicted municipal event calendars would be a categorically lower
+  risk class; that prediction **does not hold for NVRC**. D-10 is the covering authority;
+  D-10 does not make the clause go away.
+- **Burnaby — `no terms published`.** `/terms-of-use`, `/terms`, `/legal`, `/disclaimer`,
+  `/copyright` all **404**; the only legal page is `/privacy-statement`, which is FIPPA
+  privacy only (zero occurrences of "commercial", "copyright", "automated", "robot",
+  "scrape", "reproduce"). Recorded as **"no terms published"**, explicitly **not** as
+  "permitted" — absence of a restriction is not a grant of permission.
+
+#### Decision, and what was NOT built
+
+**Do not build.** Three reasons, weighted: (1) the content is not the content — 2.7% of
+events, 0.3% of instances carry any kid signal, on what is functionally an
+art-exhibition calendar; (2) what little is relevant already routes into systems the
+project reaches more cheaply — the NVRC-programmed items register into the **PerfectMind
+tenant T8 already talks to** (one of them carries `Course ID: 00439997`), sitting under
+registered-course categories `worker/adapters/perfectmind/config.ts` deliberately excludes
+via `dropInCategoryNames: ['**Drop-In Schedules']`, so the route to them is **one config
+entry on a proven client, not a new adapter**; (3) ~19 requests per useful record.
+
+The adapter was sized honestly before being declined — `G-EVENTFEED-2..5`, **10 SP** (2 SP
+`drupalSettings` extraction + 3 SP dual-encoding/RRULE-collapse parse + 3 SP per-node
+enrichment crawl + 2 SP fixtures/health/registry), i.e. **larger than T10's entire
+city-calendar adapter**, for 13 kid-relevant events on a source whose ToS bars commercial
+reuse. Recorded so the trade-off is on the record, not to advocate for it.
+
+#### Re-check trigger — a condition, NOT a schedule
+
+Revisit **only** if either of the following becomes true:
+
+1. **NVRC's calendar begins carrying NVRC's own rec programming** — i.e. the
+   `**Drop-In Schedules` content T8 already ingests starts appearing in the
+   `fullCalendarView` payload too; or
+2. **Either city enables a structured feed with location and description populated** —
+   Drupal JSON:API, or a Views iCal export carrying real `LOCATION` and `DESCRIPTION`
+   fields.
+
+**Not on a schedule.** Nothing here degrades with time, and re-measuring an
+art-exhibition calendar on a cadence is the cost this entry exists to avoid.
+
+---
+
+### 6.8 NVDPL library RSS (`library_generic_rss`) — live-capable under D-12, with the robots.txt problem stated plainly
 
 **Source:** `https://nvdpl.events.mylibrary.digital/rss` — HTTP 200, `application/rss+xml`,
 ~117 KB, **97 items**, unauthenticated, no API key, no query parameters.
 **Verified firsthand 2026-07-31** by the implementing stream (one GET, identified bot UA),
 independently of the scoping pass that found it.
 
-#### 6.5.1 robots.txt: UNREADABLE. Stated without softening.
+#### 6.8.1 robots.txt: UNREADABLE. Stated without softening.
 
 **`nvdpl.events.mylibrary.digital/robots.txt` returns HTTP 403 behind a Cloudflare managed
 challenge.** We do not know what it says. We cannot know what it says without solving a bot
@@ -721,9 +1123,9 @@ behaviour distinguishes the feed from the site.
   fixture-only).
 - It does **NOT** establish "an unreadable robots.txt is acceptable" as project policy. Any
   future source with this same fact pattern needs **its own routed human decision**.
-- It authorises **fetching this feed**. It discharges nothing else — see §6.5.2.
+- It authorises **fetching this feed**. It discharges nothing else — see §6.8.2.
 
-#### 6.5.2 What the override does NOT excuse (compliance work done anyway)
+#### 6.8.2 What the override does NOT excuse (compliance work done anyway)
 
 - **No auth, no cookie, no session — proved, not asserted.** One plain GET, no
   `Authorization`, no `Cookie`, no `credentials: 'include'`, no body, identified
@@ -743,15 +1145,15 @@ behaviour distinguishes the feed from the site.
 - **Attribute-and-summarise unchanged.** Every record carries `sourceUrl`; no editorial body
   field exists to fill (§4).
 
-#### 6.5.3 The data — measured on our own pull, correcting the scoping figure upward
+#### 6.8.3 The data — measured on our own pull, correcting the scoping figure upward
 
 | Measure | Value (2026-07-31, our own capture) |
 |---|---|
 | Items in feed | **97** (scoping pass saw 99 hours earlier — rolling ~1-month window, expected drift) |
 | Carry the `Date/Time` field | **97 / 97 (100%)** |
-| Carry it in the SINGLE-DATE shape | **96 / 97** — see §6.5.4 |
+| Carry it in the SINGLE-DATE shape | **96 / 97** — see §6.8.4 |
 | **Classify kid-relevant** | **42 / 97 (43%)** |
-| **Emitted as occurrence records** | **41** (the 42nd is a multi-day range — §6.5.4) |
+| **Emitted as occurrence records** | **41** (the 42nd is a multi-day range — §6.8.4) |
 | Not kid programming | 54 (Tech Cafés, Pins & Needles, Philosophy Gym, Writer's Group, Discussion Lounges, Discover: 3D Printing/Cricut, **and the 5 adult Summer Reading Raves — see the correction below**) |
 | Service notices, not events | 1 (`Library Closure: BC Day`) |
 | Unparseable dates | **0** |
@@ -798,7 +1200,7 @@ Stuffy Sleepover* is a real after-hours event for children).
 `worker/core/adapter-registry.ts`** — the registry iterates `LIBRARY_SYSTEMS`, so the wiring
 was a config entry plus a seed row, which is the family's original design premise holding up.
 
-#### 6.5.4 Payload traps, each one measured (and two the scoping pass missed)
+#### 6.8.4 Payload traps, each one measured (and two the scoping pass missed)
 
 The feed is **materially thinner** than BiblioCommons: every item carries exactly `title`,
 `link`, `guid`, `pubDate`, `description`, `media:content`. **No** branch, age, cost,
@@ -839,7 +1241,7 @@ cancellation or location element. Hence:
    from records and counted** (`multiDayRanges`) rather than published as a 143-hour
    activity or silently dropped.
 
-#### 6.5.5 Gates and current state
+#### 6.8.5 Gates and current state
 
 **Triple-gated, all three currently CLOSED:**
 
@@ -928,7 +1330,30 @@ flag in §7).
   `terms_status ∈ {allowed, summarise_only}` + `robots_status = allowed`** — I could not
   read the production DB from the CI/audit environment.
 
-- **F-4 (MEDIUM, added 2026-07-31 by the NVDPL build) — what `robots_status` should the
+- **F-4 (info, needs ratification not investigation) — G-T10-3's implementation is
+  deliberately STRICTER than the literal text of its own acceptance criterion.** Registered
+  here, at QA's request (T10 finding F5), the same way G-T10-2's `Authorization` narrowing is
+  registered in §6.5 — a deviation that lives only in a code comment is not registered.
+  - **The AC text says:** "editorial/aggregator items enter as `manual_candidate`", and
+    verifies "an editorial item lands as `manual_candidate`, absent from confirmed results."
+  - **What was built:** an editorial-tier record that the BR-13 confidence gate would have
+    made `confirmed` becomes `manual_candidate` — the AC's case exactly. But an editorial
+    record the confidence gate already rejected stays `needs_review`, *not*
+    `manual_candidate`.
+  - **Why.** `needs_review` is `hidden`; `manual_candidate` is `expected`, i.e. user-visible
+    as an unverified lead (`lib/search/filters/status.ts`). Applying the AC's sentence
+    literally would therefore *promote* a record BR-05 had just held back into visibility —
+    inverting the safety gate in the name of satisfying a status label. The editorial gate
+    only ever REPLACES a would-be-`confirmed` verdict; it never overrides a stricter one.
+    Both readings satisfy "never rendered confirmed"; only this one also satisfies BR-05.
+  - **Independently reviewed:** QA derived the full 40-cell (confidence × tier × terms)
+    matrix empirically and concurred, recommending the **AC text** be amended to match the
+    implementation rather than the implementation changed. That amendment is a scope-doc
+    edit and is **not** made here — flagged for whoever owns
+    `kids-fun-scope-to-task-v1.1.md`.
+  - **No investigation needed; this is a ratification item.** Asserted exhaustively in
+    `tests/ingestion/editorial-candidate.test.ts`.
+- **F-5 (MEDIUM, added 2026-07-31 by the NVDPL build) — what `robots_status` should the
   NVDPL row actually carry, given robots.txt cannot be read?** `worker/core/terms-gate.ts`
   requires `robots_status = 'allowed'` to permit a live fetch, and the vocabulary has no
   value meaning *"unreadable, risk accepted by named human decision"*. Setting it to
@@ -944,14 +1369,14 @@ flag in §7).
   one source and a value that says so keeps the next source with this fact pattern from
   inheriting the clearance by copy-paste — which is precisely what D-12's own scope
   paragraph forbids. Flagged to the operator/Jon, not decided by the implementing stream.
-- **F-5 (info, 2026-07-31) — NVDPL branch geo is genuinely absent, by choice.** 30 of 41
+- **F-6 (info, 2026-07-31) — NVDPL branch geo is genuinely absent, by choice.** 30 of 41
   NVDPL records resolve to no specific branch and none of the curated NVDPL locations carry
-  coordinates (§6.5.4 trap 4). This is honest rather than complete: coordinates were not
+  coordinates (§6.8.4 trap 4). This is honest rather than complete: coordinates were not
   invented. Whoever owns the venue-geo constant workstream should treat NVDPL's three
   branches (Lynn Valley, Capilano, Parkgate) plus Viewlynn/Seylynn Park as a small, known
   gap with a verified-dataset fix, not as a bug in this adapter.
 
-- **F-6 (low, 2026-07-31) — `YIELD_COLLAPSE_RATIO` is now declared in three places.**
+- **F-7 (low, 2026-07-31) — `YIELD_COLLAPSE_RATIO` is now declared in three places.**
   `worker/adapters/activenet/health.ts`, `worker/adapters/perfectmind/health.ts` and now
   `worker/adapters/library/generic-rss.ts` each declare `0.5` independently. All three agree
   today, which is exactly when a duplicated constant is cheapest to consolidate and hardest
@@ -966,7 +1391,7 @@ flag in §7).
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source
 has an *unclear* status that I have silently resolved; F-3 is the one item that needs a
-production-DB confirmation I cannot perform from here, and **F-4 is a genuine open
+production-DB confirmation I cannot perform from here, and **F-5 is a genuine open
 question the NVDPL build declined to answer unilaterally.**
 
 ---
@@ -983,7 +1408,7 @@ question the NVDPL build declined to answer unilaterally.**
   `gateway.bibliocommons.com/robots.txt` (404). BiblioCommons RSS-only ToS clause
   cross-checked across 10+ library installations.
 
-### 8.1 NVDPL (§6.5) — evidence added 2026-07-31 by the implementing stream
+### 8.1 NVDPL (§6.8) — evidence added 2026-07-31 by the implementing stream
 
 - **External requests: exactly ONE.** A single GET of
   `https://nvdpl.events.mylibrary.digital/rss` with the identified bot UA. No robots.txt
@@ -993,12 +1418,12 @@ question the NVDPL build declined to answer unilaterally.**
 - **Response, recorded verbatim:** `HTTP/2 200` · `content-type: application/rss+xml;
   charset=utf-8` · `server: cloudflare` · `cf-cache-status: DYNAMIC` ·
   `set-cookie: PHPSESSID=…; path=/; secure; HttpOnly` · 116,729 bytes.
-- **Every figure in §6.5.3 was produced by running the shipped parser over that captured
+- **Every figure in §6.8.3 was produced by running the shipped parser over that captured
   response**, not by hand-counting and not by trusting the scoping document — which is how
-  the two corrections in §6.5.4 (traps 5 and 6) were found.
-- **Re-pulled live a second time (2026-07-31, after QA)** to re-derive §6.5.3 following the
+  the two corrections in §6.8.4 (traps 5 and 6) were found.
+- **Re-pulled live a second time (2026-07-31, after QA)** to re-derive §6.8.3 following the
   F-A correction: HTTP/2 200, 97 items again. The Summer Reading Rave descriptions quoted in
-  §6.5.3 are verbatim from that pull, and the candidate adult markers were tested feed-wide
+  §6.8.3 are verbatim from that pull, and the candidate adult markers were tested feed-wide
   for over-reach before being adopted (`with other adults` hit 4 items, `mocktail` 3, union
   exactly the 5 Raves, nothing else; `after hours`/`after dark` hit only 2 and were rejected
   anyway because a kid event uses that phrasing).
@@ -1018,7 +1443,7 @@ question the NVDPL build declined to answer unilaterally.**
   1274/1274 ✔**.
 - **One deliberate behaviour change to shared code, disclosed rather than buried:** the
   library live gate moved from `platform === 'bibliocommons'` to an explicit per-system
-  `liveCapable` flag (§6.5.5 gate 1). It is strictly fail-closed — VPL and RPL are
+  `liveCapable` flag (§6.8.5 gate 1). It is strictly fail-closed — VPL and RPL are
   unchanged, Coquitlam and any synthetic config now cannot live-fetch even if named in the
   env var. One pre-existing test (`tests/adapters/library.test.ts`, the gateway-only
   parser guard) had to add `liveCapable: true` to its synthetic config as a result; the
