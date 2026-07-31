@@ -34,6 +34,7 @@ import {
   fetchTenant,
   stridesForWindow,
   type CalendarFetchResult,
+  type PerfectMindFetchError,
 } from './client';
 import { parseTenantCalendars, type ParseResult } from './parse';
 import { assessRunHealth, type PerfectMindHealthVerdict } from './health';
@@ -154,6 +155,13 @@ export interface PerfectMindRunReport {
   minStridesWalked: number;
   /** Calendars that produced data and THEN stopped short — raises `coverage_shortfall`. */
   shortfallCalendars: string[];
+  /** Calendars whose own fetch failed while the run continued — raises the failure's own
+   *  code (payload_contract etc.). Before QA F1 these were silent. */
+  failedCalendars: Array<{
+    name: string;
+    kind: PerfectMindFetchError['kind'] | 'unknown';
+    detail: string;
+  }>;
   /** Calendars cut short with data still arriving — raises `coverage_truncated`. Kept
    *  distinct from a shortfall: this one is unambiguously bad. */
   truncatedCalendars: string[];
@@ -285,6 +293,13 @@ export class PerfectMindAdapter implements Adapter {
       ? Math.min(...payload.calendars.map((c) => c.stridesWalked))
       : stridesRequired;
     const shortfallCalendars = shortfallCalendarsFor(payload.calendars, stridesRequired);
+    const failedCalendars = payload.calendars
+      .filter((c) => c.failure)
+      .map((c) => ({
+        name: c.calendarName ?? c.calendarId,
+        kind: c.failure!.kind,
+        detail: c.failure!.detail,
+      }));
 
     this.report = {
       tenantKey: payload.tenantKey,
@@ -295,6 +310,7 @@ export class PerfectMindAdapter implements Adapter {
       calendarsTruncated: truncatedCalendars.length,
       truncatedCalendars,
       shortfallCalendars,
+      failedCalendars,
       stridesRequired,
       minStridesWalked,
       parse: parsed.stats,
@@ -310,6 +326,7 @@ export class PerfectMindAdapter implements Adapter {
         unrecognisedKeys: payload.unrecognisedKeys,
         truncatedCalendars,
         shortfallCalendars,
+        failedCalendars,
         warnings,
       }),
     };
@@ -338,6 +355,7 @@ export class PerfectMindAdapter implements Adapter {
       unrecognisedKeys: this.report.unrecognisedKeys,
       truncatedCalendars: this.report.truncatedCalendars,
       shortfallCalendars: this.report.shortfallCalendars,
+      failedCalendars: this.report.failedCalendars,
       warnings: this.report.warnings,
     });
     this.report = { ...this.report, health: verdict };

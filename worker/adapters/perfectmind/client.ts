@@ -311,6 +311,10 @@ export interface CalendarFetchResult {
   /** True when a stride stopped on MAX_PAGES_PER_STRIDE rather than on the vendor saying
    *  "no more" — i.e. the slice may be incomplete. Reported, not hidden. */
   truncated: boolean;
+  /** Set when THIS calendar's fetch failed while the run continued. Carries the typed
+   *  kind so health.ts can reach the SAME label codeForError would have used, instead of
+   *  the failure vanishing into a warning nothing reads. */
+  failure?: { kind: PerfectMindFetchError['kind'] | 'unknown'; detail: string };
   warnings: string[];
 }
 
@@ -831,6 +835,10 @@ export async function fetchTenant(
         pagesFetched: 0,
         stridesWalked: 0,
         truncated: false,
+        // The typed kind, not just prose. Without this the failure is only a warning
+        // string, and nothing downstream reads warnings — which is exactly how a broken
+        // calendar came to report `code: ok, alert: false` (QA F1).
+        failure: { kind: err instanceof PerfectMindFetchError ? err.kind : 'unknown', detail },
         warnings: [detail],
       };
     }

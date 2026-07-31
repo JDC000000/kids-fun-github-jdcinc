@@ -66,6 +66,9 @@ export interface PerfectMindRunDiagnostics {
   /** Trailing baseline of occurrences from recent successful runs; null when unknown. */
   baselineOccurrences: number | null;
   unrecognisedKeys: string[];
+  /** Calendars whose OWN fetch failed while the run continued. A run-aborting error
+   *  arrives via `error`; these do not, and before QA F1 nothing read them at all. */
+  failedCalendars?: Array<{ name: string; kind: PerfectMindFetchError['kind'] | 'unknown'; detail: string }>;
   /** Calendars whose slice stopped on the per-stride page ceiling with the cursor still
    *  advancing — real, quantified under-coverage. */
   truncatedCalendars?: string[];
@@ -90,16 +93,25 @@ export interface PerfectMindHealthVerdict {
   occurrences: number;
 }
 
+/** THE one kind -> code map. Shared by run-aborting errors and per-calendar failures so
+ *  the same fault reads the same way wherever it surfaced — QA F1 found `payload_contract`
+ *  existed here but was unreachable for per-calendar failures, which is precisely the sort
+ *  of gap a second copy of this map would have created rather than closed. */
+const CODE_FOR_KIND: Record<PerfectMindFetchError['kind'], PerfectMindHealthCode> = {
+  blocked: 'widget_blocked',
+  rate_limited: 'widget_rate_limited',
+  unavailable: 'widget_unavailable',
+  protocol: 'payload_contract',
+  request_cap: 'request_cap',
+};
+
+export function codeForFailureKind(kind: PerfectMindFetchError['kind'] | 'unknown'): PerfectMindHealthCode {
+  return kind === 'unknown' ? 'fetch_failed' : CODE_FOR_KIND[kind];
+}
+
 function codeForError(error: unknown): { code: PerfectMindHealthCode; detail: string } {
   if (error instanceof PerfectMindFetchError) {
-    const map: Record<PerfectMindFetchError['kind'], PerfectMindHealthCode> = {
-      blocked: 'widget_blocked',
-      rate_limited: 'widget_rate_limited',
-      unavailable: 'widget_unavailable',
-      protocol: 'payload_contract',
-      request_cap: 'request_cap',
-    };
-    return { code: map[error.kind], detail: error.message };
+    return { code: CODE_FOR_KIND[error.kind], detail: error.message };
   }
   return { code: 'fetch_failed', detail: error instanceof Error ? error.message : String(error) };
 }
@@ -130,6 +142,41 @@ export function assessRunHealth(diag: PerfectMindRunDiagnostics): PerfectMindHea
       detail:
         `yield collapse for ${diag.tenantKey}: ${diag.occurrencesParsed} occurrences vs trailing ` +
         `baseline ${baseline} (< ${YIELD_COLLAPSE_RATIO * 100}%)`,
+      occurrences: diag.occurrencesParsed,
+    };
+  }
+
+  if (diag.failedCalendars?.length) {
+    // QA F1 — THE GAP THIS CLOSES, and it was one my own previous fix opened.
+    //
+    // Correcting the coverage predicate to `occurrenceCount > 0 && ...` rightly stopped
+    // failed calendars being reported as a COVERAGE problem. But nothing else picked them
+    // up: `diag.error` only covers run-ABORTING errors, and a per-calendar failure leaves
+    // the run alive. So a calendar whose payload violated the contract produced
+    // `code: 'ok', alert: false, "0 occurrences in N requests"` — completely silent.
+    // Measured: a broken calendar alongside a healthy one reported ok/false while the
+    // warning sat in the run report that nothing reads.
+    //
+    // That is strictly worse than the mislabelled-but-VISIBLE alert it replaced, and it
+    // contradicts the entire point of the H6/T7/T8 arc: make failure visible. A single
+    // persistently-broken calendar on a 9-calendar tenant is a 5-25% yield dip that
+    // yield_collapse only catches once severe enough AND a baseline exists.
+    //
+    // Placed ABOVE shape_drift deliberately: a failed calendar is a CONFIRMED, localised
+    // fault carrying a precise label; drift is a heuristic canary. When the vendor moves
+    // the contract both fire, and "this calendar returned non-JSON" is the more
+    // actionable of the two.
+    const kinds = [...new Set(diag.failedCalendars.map((f) => f.kind))];
+    // One distinct kind → name it exactly. Mixed kinds → don't pick a winner and mislabel
+    // the others; fall back to the generic code and let the detail carry the specifics.
+    const code = kinds.length === 1 ? codeForFailureKind(kinds[0]) : 'fetch_failed';
+    return {
+      code,
+      status: diag.occurrencesParsed > 0 ? 'partial' : 'failed',
+      alert: true,
+      detail:
+        `${diag.failedCalendars.length} calendar(s) failed for ${diag.tenantKey}: ` +
+        diag.failedCalendars.map((f) => `${f.name} (${f.kind}: ${f.detail})`).join('; '),
       occurrences: diag.occurrencesParsed,
     };
   }

@@ -69,6 +69,12 @@ function fixture<T>(name: string): T {
 const nvrc = getPerfectMindTenant('nvrc')!;
 const richmond = getPerfectMindTenant('richmond')!;
 
+/** Today's date in the vendor's yyyyMMdd form, so a synthetic record lands inside the
+ *  adapter's real (today-anchored) window rather than being windowed out. */
+function zonedDateStringForTest(): string {
+  return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+}
+
 function classesFixture(name: string): BookMe4Class[] {
   return fixture<{ classes: BookMe4Class[] }>(name).classes;
 }
@@ -1109,10 +1115,76 @@ describe('T8 adapter — triple gate, dry-run default, honest reporting', () => 
     const report = adapter.lastRunReport()!;
     expect(report.minStridesWalked, 'a failed calendar records zero strides walked').toBe(0);
     expect(report.minStridesWalked).toBeLessThan(report.stridesRequired);
-    // ...and precisely BECAUSE it produced nothing, it is NOT a coverage shortfall.
+
+    // NEGATIVE half: precisely BECAUSE it produced nothing, it is not a COVERAGE problem.
     expect(report.shortfallCalendars, 'produced no data — not a coverage problem').toEqual([]);
     expect(report.health.code).not.toBe('coverage_shortfall');
-    expect(report.warnings.join(' '), 'the real failure is still reported').toMatch(/non-JSON|contract/i);
+
+    // POSITIVE half (QA F2). This is the assertion that could not be written until F1
+    // landed, and its absence was itself the bug: the negative half alone was satisfied by
+    // the run being SILENT, which is worse than the mislabel it replaced. A test that only
+    // says "not X" passes just as happily when the answer is "nothing at all".
+    expect(report.failedCalendars.map((f) => f.name)).toEqual(['Broken Calendar']);
+    expect(report.failedCalendars[0].kind, 'the typed kind survives to the report').toBe('protocol');
+    expect(report.health.code, 'labelled by the code that describes it').toBe('payload_contract');
+    expect(report.health.alert, 'a broken calendar is NEVER silent').toBe(true);
+    expect(report.health.status, 'nothing parsed at all — failed, not partial').toBe('failed');
+    expect(report.health.detail).toMatch(/Broken Calendar/);
+    expect(report.warnings.join(' '), 'the prose warning is still there too').toMatch(/non-JSON|contract/i);
+  });
+
+  it('one broken calendar among healthy ones still ALERTS, as partial (QA F1)', async () => {
+    // The realistic shape, and the one QA quantified: a single persistently-failing
+    // calendar on a 9-calendar tenant is a 5-25% yield dip — too small for yield_collapse
+    // to catch, and (before F1) invisible everywhere else. The run must stay useful AND
+    // stay loud: healthy data ingests, the broken calendar is named, status is partial.
+    process.env.KIDS_FUN_LIVE_PERFECTMIND = 'nvrc';
+    const adapter = new PerfectMindAdapter(nvrc);
+    const BROKEN = 'a'.repeat(36);
+    const categories = JSON.stringify([
+      {
+        Name: '**Drop-In Schedules',
+        Calendars: [
+          { Id: BROKEN, Name: 'Broken', BookingLink: '/x', BookingTypeInfo: { BookingType: 2 } },
+          { Id: 'b'.repeat(36), Name: 'Healthy', BookingLink: '/y', BookingTypeInfo: { BookingType: 2 } },
+        ],
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation((async (url: unknown, init?: unknown) => {
+      if (String(url).includes('GetCategoriesDataV2')) return new Response(categories, { status: 200 });
+      const calId = new URLSearchParams(String((init as { body?: string })?.body ?? '')).get('calendarId');
+      if (calId === BROKEN) return new Response('<html>not json</html>', { status: 200 });
+      return new Response(
+        JSON.stringify({
+          classes: [
+            {
+              EventId: 'ok-1',
+              EventName: '$3 Open Gym 8yrs+',
+              OccurrenceDate: zonedDateStringForTest(),
+              EventTimeDescription: '10:00 am - 11:00 am',
+              PriceRange: 'No fee',
+              MinAge: 8,
+            },
+          ],
+          nextKey: END_OF_STRIDE_CURSOR,
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch);
+
+    vi.useFakeTimers();
+    const pending = adapter.fetch();
+    await vi.advanceTimersByTimeAsync(600_000);
+    const raw = await pending;
+    vi.useRealTimers();
+    const records = adapter.extract(raw);
+
+    const report = adapter.lastRunReport()!;
+    expect(records.length, 'the healthy calendar still ingests').toBeGreaterThan(0);
+    expect(report.health.alert, 'and the broken one is still loud').toBe(true);
+    expect(report.health.code).toBe('payload_contract');
+    expect(report.health.status, 'some data parsed — partial, not failed').toBe('partial');
+    expect(report.health.detail).toMatch(/Broken/);
   });
 
   it('the shortfall PREDICATE itself, exercised directly (unreachable via fetch today)', () => {
