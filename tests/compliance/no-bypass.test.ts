@@ -366,6 +366,65 @@ describe('G-T35-2 (A) live adapters issue only credential-free read-only GETs', 
     expect(calls[0].url).not.toMatch(/login|signin|account|checkout|cart/i);
   });
 
+  // ── NVDPL generic_rss (D-12) ────────────────────────────────────────────────
+  // D-12 is Jon's acceptance of ONE specific risk: that NVDPL's robots.txt is unreadable
+  // (HTTP 403, Cloudflare managed challenge) and therefore fail-closed under this
+  // project's own T11 Aquarium precedent. It authorises fetching a public RSS feed. It
+  // does NOT discharge anything below, and it does not extend to any other source.
+  it('NVDPL RSS (generic_rss) — single GET, no login/cookie/body', async () => {
+    process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'nvdpl';
+    const nvdpl = LIBRARY_SYSTEMS.find((s) => s.systemKey === 'nvdpl');
+    expect(nvdpl, 'NVDPL system present in registry').toBeTruthy();
+    const adapter = new LibraryAdapter(nvdpl!);
+    expect(adapter.isLiveFetchEnabled?.()).toBe(true);
+
+    const calls = mockFetchCapture(
+      '<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>',
+      'application/rss+xml'
+    );
+    await adapter.fetch();
+
+    expect(calls.length, 'exactly one GET per fetch — this source is not paginated').toBe(1);
+    expectCredentialFreeGet(calls[0]);
+    // Pin the exact feed URL. NVDPL's other paths (/events, /events/ical, /api/events) are
+    // all Cloudflare-challenged 403/404 — /rss is the ONE surface that answers, and the
+    // only one D-12 was decided about. A repoint onto an HTML path fails here.
+    expect(calls[0].url).toBe('https://nvdpl.events.mylibrary.digital/rss');
+  });
+
+  it('NVDPL is STATELESS — the feed sets a PHPSESSID and we never send one back', async () => {
+    // A real, verified property of this host, not a hypothetical: the live response carries
+    // `set-cookie: PHPSESSID=…; path=/; secure; HttpOnly`. Two fetches must therefore look
+    // IDENTICAL — no cookie jar, no session continuation, no state accumulating across runs.
+    process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'nvdpl';
+    const nvdpl = LIBRARY_SYSTEMS.find((s) => s.systemKey === 'nvdpl')!;
+
+    const calls: Array<{ url: string; init: (RequestInit & { credentials?: string }) | undefined }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown, init?: unknown) => {
+      calls.push({ url: String(input), init: init as RequestInit });
+      return new Response('<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>', {
+        status: 200,
+        headers: {
+          'content-type': 'application/rss+xml',
+          // Exactly what the live host returned on 2026-07-31.
+          'set-cookie': 'PHPSESSID=121094c16335663cc9bb834b92ff4971; path=/; secure; HttpOnly',
+        },
+      });
+    }) as typeof fetch);
+
+    await new LibraryAdapter(nvdpl).fetch();
+    clearPolicyState(); // reset the per-source rate-limit clock, not any cookie state
+    await new LibraryAdapter(nvdpl).fetch();
+
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expectCredentialFreeGet(call);
+      expect(headerLookup(call.init, 'cookie'), 'the Set-Cookie is never echoed back').toBeUndefined();
+    }
+    // The second request carries no trace of the first beyond conditional-cache headers.
+    expect(calls[1].url).toBe(calls[0].url);
+  });
+
   it('city calendar (Vancouver Trumba) — single GET, no login/cookie/body', async () => {
     process.env.KIDS_FUN_LIVE_CITY_CALENDARS = 'vancouver';
     const van = CITY_CALENDARS.find((c) => c.calendarKey === 'vancouver');
@@ -544,6 +603,36 @@ describe('G-T7R-0 (A) sources NOT explicitly enabled make ZERO network calls', (
   });
 });
 
+describe('G-T9/D-12 (A) library systems NOT explicitly enabled make ZERO network calls', () => {
+  it('NVDPL with no env allow-list performs no fetch and reports not-live', async () => {
+    delete process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS;
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const adapter = new LibraryAdapter(LIBRARY_SYSTEMS.find((s) => s.systemKey === 'nvdpl')!);
+    expect(adapter.isLiveFetchEnabled?.(), 'not live without the env allow-list').toBe(false);
+    const raw = await adapter.fetch();
+    expect(Array.isArray(raw)).toBe(true);
+    expect(spy, 'NVDPL fetch() made no network request').not.toHaveBeenCalled();
+  });
+
+  it('a library system NOT named in the allow-list stays fixture-only', async () => {
+    process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'vpl';
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const adapter = new LibraryAdapter(LIBRARY_SYSTEMS.find((s) => s.systemKey === 'nvdpl')!);
+    expect(adapter.isLiveFetchEnabled?.()).toBe(false);
+    await adapter.fetch();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('Coquitlam can never live-fetch — it has no reviewed live path (liveCapable unset)', async () => {
+    process.env.KIDS_FUN_LIVE_LIBRARY_SYSTEMS = 'cpl,vpl,rpl,nvdpl';
+    const spy = vi.spyOn(globalThis, 'fetch');
+    const adapter = new LibraryAdapter(LIBRARY_SYSTEMS.find((s) => s.systemKey === 'cpl')!);
+    expect(adapter.isLiveFetchEnabled?.(), 'naming it in the env var is not sufficient').toBe(false);
+    await adapter.fetch();
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
 describe('G-T8-3 (A) PerfectMind live path — credential-free, token-free reads on allow-listed paths only', () => {
   /** Drive the adapter under fake timers so the 3s politeness floor between requests
    *  costs virtual time, not wall-clock. The rate limiter itself is exercised for real. */
@@ -652,6 +741,12 @@ function stripComments(src: string): string {
 const ADAPTER_SOURCES = [
   'worker/adapters/library/index.ts',
   'worker/adapters/library/config.ts',
+  // NVDPL generic_rss handler + the XML/HTML text helpers it shares with the
+  // BiblioCommons parser (D-12). Held to the identical bar as every other adapter file:
+  // the robots.txt override authorises FETCHING this feed, it does not relax any of the
+  // no-login / no-CAPTCHA / no-headless / no-POST prohibitions.
+  'worker/adapters/library/generic-rss.ts',
+  'worker/adapters/library/rss-text.ts',
   'worker/adapters/citycalendar/index.ts',
   'worker/adapters/citycalendar/config.ts',
   'worker/adapters/activenet/index.ts',
@@ -787,6 +882,7 @@ describe('G-T35-2 (B) adapter source contains no login/paywall/CAPTCHA-bypass co
 
     const liveCapable: Array<[string, Adapter]> = [
       ['library', new LibraryAdapter(LIBRARY_SYSTEMS.find((s) => s.systemKey === 'vpl')!)],
+      ['library/nvdpl', new LibraryAdapter(LIBRARY_SYSTEMS.find((s) => s.systemKey === 'nvdpl')!)],
       ['citycalendar', new CityCalendarAdapter(CITY_CALENDARS[0])],
       ['venue', new VenueAdapter(getVenue('hr-macmillan-space-centre')!)],
       ['activenet', new ActiveNetAdapter(ACTIVENET_TENANTS[0])],
