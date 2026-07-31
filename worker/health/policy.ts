@@ -386,7 +386,10 @@ export async function politeFetch(
   // thing the politeness contract is least allowed to get wrong. An empty value is treated
   // as "no UA supplied", so the identified default still applies.
   const callerUserAgentKeys = Object.keys(callerHeaders).filter((k) => k.toLowerCase() === 'user-agent');
-  const callerHasUserAgent = callerUserAgentKeys.some((k) => (callerHeaders[k] ?? '').trim() !== '');
+  // String() rather than a bare .trim(): the static type says these are strings, but this is
+  // the boundary where an untyped caller (or JSON round-trip) could hand us a number or null,
+  // and a throw here would take down a fetch over a header nicety.
+  const callerHasUserAgent = callerUserAgentKeys.some((k) => String(callerHeaders[k] ?? '').trim() !== '');
   const conditional = buildConditionalHeaders(opts.prevCache);
   // A caller that supplied its own User-Agent (in ANY casing) owns it — drop the seam's
   // default rather than emitting two differently-cased UA keys, which is ambiguous on the
