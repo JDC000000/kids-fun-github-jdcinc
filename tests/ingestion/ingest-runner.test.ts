@@ -110,6 +110,85 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     expect(occ.status_state).toBe('confirmed');
   });
 
+  // G-T10-3 (IR-08) — the SAME well-parsed, terms-approved record, differing ONLY in the
+  // owning source's authority_tier, must land as `manual_candidate` instead of
+  // `confirmed`. This is the acceptance criterion's end-to-end proof: a real editorial
+  // source through the real ingest runner writing a real row.
+  //
+  // Deliberately mirrors the 'confirmed/high' case above field-for-field so the ONE
+  // variable is the tier — otherwise a passing assertion here could be explained by a
+  // confidence difference rather than by the editorial gate.
+  it('an EDITORIAL source lands as manual_candidate and is absent from confirmed results', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      // terms_status='allowed' so the Round 27 cap is NOT what produces the result —
+      // an editorial source that is fully terms-approved still must not be confirmed.
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('editorial_roundup', $1, 'editorial', 'allowed') RETURNING id`,
+      [`Editorial Candidate Source ${crypto.randomUUID()}`]
+    );
+    await query(
+      `INSERT INTO source_check_run (source_id, started_at, status, records_found, duration_ms)
+       VALUES ($1, now() - interval '6 hours', 'success', 5, 100),
+              ($1, now() - interval '2 hours', 'success', 6, 100)`,
+      [source.id]
+    );
+
+    const record: StructuredRecord = {
+      sourceRecordId: `editorial-${crypto.randomUUID()}`,
+      title: 'Family Public Swim',
+      categoryHint: 'public_swim',
+      startDatetimeUtc: '2026-09-24T18:00:00.000Z',
+      costStatus: 'free',
+      ageText: '6 months to 5 years',
+      sourceUrl: 'https://example-roundup.test/best-kids-swims',
+    };
+    const adapter: Adapter = {
+      family: 'editorial_roundup',
+      fetch: async () => [record],
+      extract: (raw) => raw as StructuredRecord[],
+      dedupKeys: () => ({ key: 'editorial' }),
+    };
+
+    const summary = await ingestSource(pool, adapter, source.id);
+    expect(summary.errors).toEqual([]);
+    // The BR-13 gate did NOT hold this record — its confidence is fine. The editorial
+    // gate is what moved it, and the two counters say so separately.
+    expect(summary.lowConfidenceFlagged).toBe(0);
+    expect(summary.editorialCandidates).toBe(1);
+
+    const [occ] = await query<{ status_state: string; confidence_label: string }>(
+      `SELECT o.status_state, o.confidence_label
+       FROM activity_occurrence o
+       JOIN activity_series s ON s.id = o.series_id
+       WHERE s.source_id = $1`,
+      [source.id]
+    );
+    expect(occ.status_state).toBe('manual_candidate');
+    // Confidence is UNCHANGED — 'editorial' authority scores lower than 'official' but
+    // still lands medium+, which is exactly why the status gate (not the score) is what
+    // has to carry this guarantee.
+    expect(['medium', 'high']).toContain(occ.confidence_label);
+
+    // "absent from confirmed results", asserted against the database rather than inferred.
+    const confirmed = await query(
+      `SELECT o.id FROM activity_occurrence o
+       JOIN activity_series s ON s.id = o.series_id
+       WHERE s.source_id = $1 AND o.status_state = 'confirmed'`,
+      [source.id]
+    );
+    expect(confirmed).toEqual([]);
+
+    // It IS in the admin QA queue's review set, which is the official-source verification
+    // step the acceptance criterion requires before it can ever become confirmed.
+    const queued = await query(
+      `SELECT o.id FROM activity_occurrence o
+       JOIN activity_series s ON s.id = o.series_id
+       WHERE s.source_id = $1 AND o.status_state = ANY(ARRAY['needs_review','manual_candidate']::status_state[])`,
+      [source.id]
+    );
+    expect(queued.length).toBe(1);
+  });
+
   // G-T7R-6 — Adapter.assessRun(): an adapter over a brittle, unofficial source gets to
   // fail its OWN run. Without this, a vendor shape change or a yield collapse completes
   // without throwing and the check run reports a cheerful green over empty data.
