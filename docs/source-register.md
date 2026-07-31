@@ -330,23 +330,49 @@ were not in QA's report — they are the additive repoint routes the exact-match
 also has to cover, tested because closing only the case that was demonstrated would have
 left the obvious neighbouring one open.
 
-**⚠️ KNOWN GAP — case-variant User-Agent shadowing (QA finding A2, 2026-07-31, tracked
-follow-up, NOT YET FIXED, non-blocking per QA's own verdict).** `no-bypass.test.ts`'s UA
-check (search this file for the comment `covered by the behavioural UA assertion`) delegates
-UA verification to a separate assertion — and that delegation does not fully hold. Injecting
-a **lowercase** `'user-agent': 'Mozilla/…'` header into the ActiveNet adapter's GET requests
-leaves the compliance suite green (the guard's case-insensitive lookup finds the identified
-`User-Agent` first and stops), even though the spoofed value **is actually transmitted on the
-wire** — `Headers` combines duplicate keys rather than one shadowing the other:
-`user-agent: KidsFunBot/1.0, Mozilla/5.0 (Windows NT 10.0)`. Bounded: this only affects
-checks that assert a *property of a value* (like UA); absence-assertions (Cookie,
-Authorization) are casing-safe regardless, since they trip on the header key existing at
-all, in any case. **No spoof exists in shipped code today — this is a tripwire gap, not a
-live violation.** Verified fix (not yet applied): make `headerLookup` mirror real wire
-semantics via the native `Headers` API (`new Headers(rec).get(name)`) instead of a
-hand-rolled case-insensitive object scan — confirmed both directions, baseline stays 63/63,
-the shadowed spoof goes from green to failing. Do not read the `covered by the behavioural
-UA assertion` comment at that line as settled until this is closed.
+**✅ CLOSED — case-variant User-Agent shadowing (QA finding A2, raised 2026-07-30, closed
+2026-07-31 on the H4 politeFetch-deadline branch). Closed on BOTH sides: the precondition was
+removed as a side effect of H4, and the detector was then hardened deliberately.**
+
+A2 was: `politeFetch` built its headers as `{ ...buildConditionalHeaders(), ...init.headers }`,
+so a caller supplying a **lowercase** `'user-agent'` produced **two** differently-cased UA
+keys. `no-bypass.test.ts`'s `headerLookup` returned the *first* case-insensitive match, so it
+read the identified `KidsFunBot/1.0` and passed — while `Headers` combines duplicates, putting
+`user-agent: KidsFunBot/1.0, Mozilla/5.0 (…)` on the wire.
+
+**1. The precondition is gone (side effect of H4, not a targeted fix).** `politeFetch` now
+detects a caller-supplied UA in *any* casing and drops its own default instead of emitting a
+second key, so exactly one UA key is ever sent. H4 also routed `venue_html` — the last adapter
+still calling global `fetch()` directly — through the seam, so **every** network request in
+`worker/` passes through that de-duplication. That is what makes the closure general rather
+than adapter-specific. Independently verified by QA, 2026-07-31:
+
+| | `b90f1e7` (before) | H4 branch |
+|---|---|---|
+| UA keys for a lowercase caller UA | **2** | **1** |
+| Wire value | `KidsFunBot/1.0, Mozilla/5.0 (…)` | `Mozilla/5.0 (…)` |
+| A2 repro vs the compliance suite | 63/63 **green** (the gap) | **2 failed** (caught) |
+
+**2. The detector is now fixed too (defence in depth).** `headerLookup` normalises through the
+native `Headers` API (`new Headers(rec).get(name)`) instead of a hand-rolled first-match scan,
+so it sees exactly what the transport would send. Applied because the property that closes A2
+in (1) lives in a *different file* and is not obliged to preserve itself: a future adapter that
+bypasses the seam, or a change to `politeFetch`'s header merge, would otherwise re-open the gap
+with nothing to catch it. Baseline stays 63/63 green and the fix independently re-catches the
+A2 repro.
+
+**Generalisable rule this left behind** (apply to any new check in `no-bypass.test.ts`):
+absence-assertions ("no Cookie header") are casing-safe, because they trip on the key existing
+at all. Value-property assertions ("the UA must not match /Mozilla/i") are not — a benign value
+under a different casing can shadow a malicious one. Any *new* value-property check added there
+inherits A2's shape by default.
+
+**Related, fixed at the same time (QA finding H4-B).** The "caller owns the UA" test originally
+keyed on the *presence* of a UA header, so `{'user-agent': ''}` would suppress the seam's
+identified default and send the crawler out unidentified. `politeFetch` now requires a
+non-empty value before yielding ownership; an empty or whitespace-only UA is treated as "none
+supplied". No live caller did this — it was latent — and it is covered by
+`tests/health/policy-timeout.test.ts`.
 
 #### 6.3.3 Crawl posture
 

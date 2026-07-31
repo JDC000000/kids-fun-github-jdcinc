@@ -420,6 +420,29 @@ describe('non-regression: the pre-H4 contract still holds', () => {
     expect(uaKeys).toHaveLength(1);
   });
 
+  it('an EMPTY caller User-Agent does not disable bot identification (QA H4-B)', async () => {
+    // Treating any UA KEY as "the caller owns this" let `{'user-agent': ''}` delete the
+    // seam's default and send the crawler out unidentified — the single thing the
+    // politeness contract is least allowed to get wrong. An empty value now means
+    // "no UA supplied", so the identified default still applies.
+    for (const empty of ['', '   ']) {
+      let sent: Record<string, string> = {};
+      const impl = (async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+        sent = init?.headers ?? {};
+        return new Response('', { status: 200 });
+      }) as unknown as typeof fetch;
+
+      await politeFetch(`empty-ua-${empty.length}`, 'https://example.org', {
+        headers: { 'user-agent': empty },
+      }, { fetchImpl: impl, ...NO_SLEEP });
+
+      const uaKeys = Object.keys(sent).filter((k) => k.toLowerCase() === 'user-agent');
+      expect(uaKeys, 'exactly one UA key on the wire').toHaveLength(1);
+      expect(sent[uaKeys[0]]).toBe(USER_AGENT);
+      expect(sent[uaKeys[0]]).toMatch(/KidsFunBot/i);
+    }
+  });
+
   it('a non-timeout transport error still propagates untouched (unchanged behaviour)', async () => {
     const boom = new TypeError('fetch failed: ECONNREFUSED');
     const impl = vi.fn(async () => {

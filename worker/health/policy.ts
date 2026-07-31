@@ -365,15 +365,25 @@ export async function politeFetch(
   const sleepImpl = opts.sleepImpl ?? sleep;
 
   const callerHeaders = init.headers ?? {};
-  const callerHasUserAgent = Object.keys(callerHeaders).some((k) => k.toLowerCase() === 'user-agent');
+  // A caller "owns" the User-Agent only if it supplied a NON-EMPTY one. Requiring a real
+  // value (QA finding H4-B) closes the case where `{'user-agent': ''}` would otherwise
+  // suppress the seam's default and send the project's crawler out unidentified — the one
+  // thing the politeness contract is least allowed to get wrong. An empty value is treated
+  // as "no UA supplied", so the identified default still applies.
+  const callerUserAgentKeys = Object.keys(callerHeaders).filter((k) => k.toLowerCase() === 'user-agent');
+  const callerHasUserAgent = callerUserAgentKeys.some((k) => (callerHeaders[k] ?? '').trim() !== '');
   const conditional = buildConditionalHeaders(opts.prevCache);
   // A caller that supplied its own User-Agent (in ANY casing) owns it — drop the seam's
   // default rather than emitting two differently-cased UA keys, which is ambiguous on the
   // wire and is exactly how one identified UA silently shadows another.
   if (callerHasUserAgent) delete conditional['User-Agent'];
   const headers: Record<string, string> = { ...conditional, ...callerHeaders };
-  // Guarantee an identified UA even if a caller passed its own headers without one.
-  if (!callerHasUserAgent) headers['User-Agent'] ??= USER_AGENT;
+  if (!callerHasUserAgent) {
+    // Drop any empty caller UA keys first, so the guaranteed default cannot be re-shadowed
+    // by an empty value sitting under a different casing.
+    for (const k of callerUserAgentKeys) delete headers[k];
+    headers['User-Agent'] = USER_AGENT;
+  }
 
   const doFetch = opts.fetchImpl ?? fetch;
   let lastTimeout: FetchTimeoutError | undefined;
