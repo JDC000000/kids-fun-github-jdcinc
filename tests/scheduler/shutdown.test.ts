@@ -58,6 +58,7 @@ vi.mock('../../worker/src/sentry', () => ({ captureWorkerException: vi.fn(async 
 import { startScheduler, type InFlightJob } from '../../worker/src/scheduler';
 import {
   abandonInFlightRuns,
+  buildShutdownDeps,
   runShutdown,
   SHUTDOWN_BUDGET_MS,
   type ShutdownDeps,
@@ -312,6 +313,158 @@ describe('H6 FIX B — the sequence is budgeted, because the grace period is 5 s
   it('is a no-op on the database in health-only mode (no pool)', async () => {
     const outcome = await runShutdown(deps(null, { inFlightJobs: () => [inFlight()] }));
     expect(outcome).toMatchObject({ abandonedJobs: 0, abandonedCheckRuns: 0, poolClosed: false });
+  });
+});
+
+// ── the wiring itself (QA finding A1) ────────────────────────────────────────────────
+
+describe('H6 FIX B — buildShutdownDeps wires the real process objects', () => {
+  // WHY THIS BLOCK EXISTS. src/index.ts is unimportable by a test (it binds a port and
+  // registers signal handlers on import), so its shutdown wiring used to be an object
+  // literal no test could reach. QA demonstrated the cost: deleting the
+  // `server.closeAllConnections?.()` call — which the code's own comment calls
+  // load-bearing — left all 27 tests green. The wiring now lives in a factory, and each
+  // assertion below fails if one of its three load-bearing lines is dropped.
+
+  /**
+   * Stand-in for http.Server. Records call order; by default it invokes close()'s callback
+   * asynchronously the way Node does once connections are gone. `hold: true` withholds it
+   * so a test can inspect the order before the promise settles.
+   */
+  function fakeServer(opts: { hold?: boolean } = {}) {
+    const calls: string[] = [];
+    let pending: (() => void) | null = null;
+    return {
+      calls,
+      /** Fire the withheld close callback. */
+      finishClose: () => pending?.(),
+      closeAllConnections: () => {
+        calls.push('closeAllConnections');
+      },
+      close: (cb?: () => void) => {
+        calls.push('close');
+        if (opts.hold) pending = cb ?? null;
+        else setImmediate(() => cb?.());
+        return undefined;
+      },
+    };
+  }
+
+  const noScheduler = { inFlightJobs: () => [], quiesce: async () => true };
+
+  it('closes the server CONNECTIONS, not just the listener, and before close()', async () => {
+    // Deleting closeAllConnections() from the factory fails here. Without it, close()'s
+    // callback waits on the runtime's own /healthz keep-alive and can simply never fire,
+    // so the shutdown burns its entire budget on a step that should take milliseconds.
+    const server = fakeServer({ hold: true });
+    const d = buildShutdownDeps({
+      server,
+      pool: null,
+      abort: { abort: () => {} },
+      scheduler: noScheduler,
+      closeSentry: async () => true,
+    });
+
+    const closed = d.closeServer();
+    expect(server.calls).toEqual(['closeAllConnections', 'close']);
+    server.finishClose();
+    await expect(closed).resolves.toBeUndefined();
+  });
+
+  it('tolerates a server without closeAllConnections rather than throwing', async () => {
+    // The optional call must stay optional-safe: a runtime older than Node 18.2, or a
+    // test double, must not turn shutdown into an exception.
+    const server = fakeServer({ hold: true });
+    const bare = { close: server.close } as { close: (cb?: () => void) => unknown };
+    const d = buildShutdownDeps({
+      server: bare,
+      pool: null,
+      abort: { abort: () => {} },
+      scheduler: noScheduler,
+      closeSentry: async () => true,
+    });
+    const closed = d.closeServer();
+    server.finishClose();
+    await expect(closed).resolves.toBeUndefined();
+  });
+
+  it('routes inFlightJobs and quiesce to the live scheduler handle', async () => {
+    // Dropping either from the factory means the shutdown path always sees an idle worker
+    // and closes the pool under a running job — the original incident, reintroduced.
+    const seen: number[] = [];
+    const job = inFlight();
+    const d = buildShutdownDeps({
+      server: fakeServer(),
+      pool: null,
+      abort: { abort: () => {} },
+      scheduler: {
+        inFlightJobs: () => [job],
+        quiesce: async (ms: number) => {
+          seen.push(ms);
+          return false;
+        },
+      },
+      closeSentry: async () => true,
+    });
+
+    expect(d.inFlightJobs()).toEqual([job]);
+    expect(await d.quiesce(1234)).toBe(false);
+    expect(seen, 'the timeout must be forwarded, not swallowed').toEqual([1234]);
+  });
+
+  it('degrades safely when no scheduler is running (health-only mode)', async () => {
+    const d = buildShutdownDeps({
+      server: fakeServer(),
+      pool: null,
+      abort: { abort: () => {} },
+      scheduler: null,
+      closeSentry: async () => true,
+    });
+    expect(d.inFlightJobs()).toEqual([]);
+    // No scheduler means nothing can be mid-query, so the pool is safe to close.
+    expect(await d.quiesce(10)).toBe(true);
+  });
+
+  it('forwards abort and the pool to the sequence', async () => {
+    const pool = new FakePool();
+    let aborted = 0;
+    const d = buildShutdownDeps({
+      server: fakeServer(),
+      pool: pool as never,
+      abort: {
+        abort: () => {
+          aborted += 1;
+        },
+      },
+      scheduler: noScheduler,
+      closeSentry: async () => true,
+    });
+    expect(d.pool).toBe(pool);
+    d.abort();
+    expect(aborted).toBe(1);
+  });
+
+  it('end to end through the factory: a busy scheduler still protects the pool', async () => {
+    // The whole point of A1 — exercise the path index.ts actually constructs, not just
+    // runShutdown's internals against a hand-built deps object.
+    const pool = new FakePool();
+    const server = fakeServer();
+    const outcome = await runShutdown(
+      buildShutdownDeps({
+        server,
+        pool: pool as never,
+        abort: { abort: () => {} },
+        scheduler: { inFlightJobs: () => [inFlight()], quiesce: async () => false },
+        closeSentry: async () => true,
+        budgetMs: 400,
+        logger: silentLogger,
+      })
+    );
+
+    expect(server.calls).toContain('closeAllConnections');
+    expect(outcome.abandonedJobs).toBe(1);
+    expect(outcome.abandonedCheckRuns).toBe(1);
+    expect(pool.ended, 'the factory-built deps must protect the pool too').toBe(false);
   });
 });
 

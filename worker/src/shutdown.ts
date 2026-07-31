@@ -49,7 +49,7 @@
 // port, registering process signal handlers, or calling process.exit — which is why this
 // lives here rather than inline in src/index.ts (that module runs side effects on import).
 import type { Pool } from 'pg';
-import type { InFlightJob } from './scheduler';
+import type { InFlightJob, SchedulerHandle } from './scheduler';
 
 export type { InFlightJob };
 
@@ -109,6 +109,58 @@ export interface ShutdownOutcome {
   poolClosed: boolean;
   elapsedMs: number;
   errors: string[];
+}
+
+/** The subset of http.Server this module uses. Structural on purpose: it keeps shutdown.ts
+ *  free of a node:http import and makes the wiring below trivially fakeable in a test. */
+export interface ClosableServer {
+  close(callback?: (err?: Error) => void): unknown;
+  /** Node >= 18.2. Optional because the type is structural, NOT because it is optional in
+   *  practice — see buildShutdownDeps. */
+  closeAllConnections?(): void;
+}
+
+/** What src/index.ts owns and hands to the shutdown path. */
+export interface ShutdownWiring {
+  server: ClosableServer;
+  pool: Pool | null;
+  abort: { abort(): void };
+  /** Null in health-only mode, or if startScheduler threw. */
+  scheduler: Pick<SchedulerHandle, 'inFlightJobs' | 'quiesce'> | null;
+  closeSentry: () => Promise<unknown>;
+  budgetMs?: number;
+  logger?: Pick<Console, 'log' | 'warn' | 'error'>;
+}
+
+/**
+ * Build runShutdown's dependencies from the process's real objects.
+ *
+ * WHY THIS IS A FUNCTION AND NOT AN OBJECT LITERAL IN index.ts (QA finding A1): src/index.ts
+ * runs side effects on import — it binds a port and registers signal handlers — so no test
+ * can import it, and every line of wiring in it was therefore unverifiable. QA proved the
+ * cost: deleting `closeAllConnections()` from that literal left the entire 27-test suite
+ * green. The three lines below are load-bearing and now have somewhere to be tested.
+ *
+ * closeAllConnections() in particular: server.close() alone only invokes its callback once
+ * every keep-alive connection has gone away, and the runtime's own /healthz probe holds one.
+ * Without it this promise can simply never settle, and the shutdown falls back to burning
+ * its whole budget on a step that should take milliseconds.
+ */
+export function buildShutdownDeps(wiring: ShutdownWiring): ShutdownDeps {
+  return {
+    pool: wiring.pool,
+    abort: () => wiring.abort.abort(),
+    closeServer: () =>
+      new Promise<void>((resolve) => {
+        wiring.server.closeAllConnections?.();
+        wiring.server.close(() => resolve());
+      }),
+    closeSentry: wiring.closeSentry,
+    inFlightJobs: () => wiring.scheduler?.inFlightJobs() ?? [],
+    quiesce: (ms) => wiring.scheduler?.quiesce(ms) ?? Promise.resolve(true),
+    budgetMs: wiring.budgetMs,
+    logger: wiring.logger,
+  };
 }
 
 type Settled<T> =

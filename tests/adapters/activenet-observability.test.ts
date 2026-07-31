@@ -233,6 +233,49 @@ describe('H6 FIX A — the logging stays cheap and safe', () => {
     expect(log).not.toMatch(/KidsFunBot/);
   });
 
+  it('reduces a URL embedded in an error message to its path (QA A3)', async () => {
+    // FetchTimeoutError's message embeds the FULL request URL, query string and all, so
+    // logging it raw would be the one line in this module that bypasses the
+    // pathname-only discipline. No credentials ride that query string today; the point is
+    // that a redaction added after one does is added too late.
+    const leaky = (async () => {
+      throw new Error(
+        'fetch timed out after 15000ms on attempt 1 for activenet::vancouver at ' +
+          'https://anc.ca.apm.activecommunities.com/vancouver/rest/onlinecalendar/calendars?locale=en-US&api_key=SHOULD_NOT_APPEAR'
+      );
+    }) as typeof fetch;
+
+    await expect(
+      fetchTenant(ONE_CALENDAR_TENANT, WINDOW, {
+        budget: new RequestBudget('vancouver', 20),
+        fetchImpl: leaky,
+        ...NO_SLEEP,
+      })
+    ).rejects.toThrow(/timed out/);
+
+    const log = lines.join('\n');
+    expect(log, 'query string must not reach the log').not.toContain('SHOULD_NOT_APPEAR');
+    expect(log).not.toContain('locale=en-US');
+    expect(log).not.toContain('https://');
+    // The useful part survives — the path still identifies which endpoint stalled.
+    expect(matching(/threw after \d+ms: Error: fetch timed out/)).toHaveLength(1);
+    expect(log).toContain('/vancouver/rest/onlinecalendar/calendars');
+  });
+
+  it('keeps a URL-free error message intact — redaction must not eat the diagnosis', async () => {
+    const boom = (async () => {
+      throw new Error('ECONNREFUSED 10.0.0.1:443');
+    }) as typeof fetch;
+    await expect(
+      fetchTenant(ONE_CALENDAR_TENANT, WINDOW, {
+        budget: new RequestBudget('vancouver', 20),
+        fetchImpl: boom,
+        ...NO_SLEEP,
+      })
+    ).rejects.toThrow();
+    expect(matching(/threw after \d+ms: Error: ECONNREFUSED 10\.0\.0\.1:443/)).toHaveLength(1);
+  });
+
   it('carries a consistent, greppable prefix on every line it emits', async () => {
     await fetchTenant(ONE_CALENDAR_TENANT, WINDOW, {
       budget: new RequestBudget('vancouver', 20),

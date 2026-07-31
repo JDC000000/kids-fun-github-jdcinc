@@ -4,7 +4,7 @@ import { healthz, type HealthState } from './healthz';
 import { chromiumSmoke } from './chromium-smoke';
 import { createPool } from './db';
 import { startScheduler, type SchedulerHandle } from './scheduler';
-import { runShutdown, SHUTDOWN_BUDGET_MS } from './shutdown';
+import { buildShutdownDeps, runShutdown, SHUTDOWN_BUDGET_MS } from './shutdown';
 import { captureWorkerException, closeWorkerSentry, initWorkerSentry } from './sentry';
 
 // KIDS FUN ingestion-worker entrypoint (G-T1-2 + G-T5-3). Long-running Node process:
@@ -123,22 +123,19 @@ const shutdown = (signalName: string): void => {
   }, HARD_EXIT_MS);
   hardExit.unref();
 
-  void runShutdown({
-    pool,
-    abort: () => abort.abort(),
-    // closeAllConnections() is load-bearing: server.close() alone only calls back once
-    // every keep-alive connection has gone away, and the runtime's own /healthz probe
-    // holds one. That is exactly why the old ordering could stall — and, worse, why what
-    // it stalled on had nothing to do with the work that actually needed protecting.
-    closeServer: () =>
-      new Promise<void>((resolve) => {
-        server.closeAllConnections?.();
-        server.close(() => resolve());
-      }),
-    closeSentry: () => closeWorkerSentry(),
-    inFlightJobs: () => schedulerHandle?.inFlightJobs() ?? [],
-    quiesce: (ms) => schedulerHandle?.quiesce(ms) ?? Promise.resolve(true),
-  })
+  // The wiring itself lives in buildShutdownDeps() so it can be tested: this module runs
+  // side effects on import (binds a port, registers these handlers), so anything written
+  // inline here is unreachable from a test — which is exactly how a dropped
+  // closeAllConnections() could pass the whole suite (QA finding A1).
+  void runShutdown(
+    buildShutdownDeps({
+      server,
+      pool,
+      abort,
+      scheduler: schedulerHandle,
+      closeSentry: () => closeWorkerSentry(),
+    })
+  )
     .catch((err: unknown) => {
       // eslint-disable-next-line no-console
       console.error('[worker] shutdown failed:', err instanceof Error ? err.message : String(err));

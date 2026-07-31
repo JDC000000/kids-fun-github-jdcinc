@@ -155,11 +155,19 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
 
   const baseHandler = makeTermsGatedIngestJobHandler(pool, environment);
 
-  // H6 shutdown-ordering state. `inFlight` is what the shutdown path releases in the DB;
-  // `busyOperations` is the broader "this process has a query outstanding" count, which is
-  // what gates pool.end(). They are separate because they answer different questions: a
-  // tick mid-enqueueDueJobs is busy but holds no job, and a job that is mid-`politeFetch`
-  // holds a job but is not, at that instant, in a query.
+  // H6 shutdown-ordering state.
+  //   `inFlight`       — the jobs whose DB rows the shutdown path has to release.
+  //   `busyOperations` — whether ANY scheduler operation is still in progress. This is what
+  //                      gates pool.end().
+  //
+  // busyOperations deliberately counts the WHOLE operation, not just the instants a query is
+  // on the wire: tracked(processOneJob) spans dequeue + the handler's entire live fetch +
+  // markDone/markFailed. That breadth IS the fix. Narrowing it to "a query is executing right
+  // now" would let pool.end() fire during the fetch — i.e. in the window between the check
+  // run being opened and its result being written — which is precisely the original bug.
+  //
+  // The two are separate because they answer different questions: a tick mid-enqueueDueJobs
+  // is busy but holds no job, so it must delay pool.end() without producing an abandon write.
   const inFlight = new Map<string, InFlightJob>();
   let busyOperations = 0;
 

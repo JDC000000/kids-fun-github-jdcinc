@@ -73,8 +73,26 @@ const MAX_IN_RUN_BACKOFF_MS = 30_000;
 const CLIENT_LOG = '[activenet:client]';
 const RUN_LOG = '[activenet]';
 
-function errLabel(err: unknown): string {
-  return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+/**
+ * Error text for a log line, with any absolute URL reduced to its path.
+ *
+ * QA finding A3: FetchTimeoutError embeds the FULL request URL — query string included —
+ * in its message, so logging that message raw would bypass the `url.pathname`-only
+ * discipline every other line in this module follows. Harmless against today's portal
+ * (unauthenticated, `locale=en-US` the only param), but the project already holds an
+ * ActiveNet API v2 key that could plausibly end up on a query string in this same file
+ * later, and a redaction added only once that happens is a redaction added too late.
+ * The rest of the message is preserved — "socket hang up" is exactly what a reader needs.
+ */
+function safeErrLabel(err: unknown): string {
+  const raw = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  return raw.replace(/https?:\/\/\S+/g, (candidate) => {
+    try {
+      return new URL(candidate).pathname;
+    } catch {
+      return '[url]';
+    }
+  });
 }
 
 // ── typed failures (the circuit breaker's vocabulary) ────────────────────────────────
@@ -357,7 +375,7 @@ async function request<TBody>(
       // exactly how a run that stopped making progress looked identical to one that never
       // started. The elapsed time is the tell — ~32s means the deadline burned.
       // eslint-disable-next-line no-console
-      console.warn(`${CLIENT_LOG} ${label} threw after ${Date.now() - startedAt}ms: ${errLabel(err)}`);
+      console.warn(`${CLIENT_LOG} ${label} threw after ${Date.now() - startedAt}ms: ${safeErrLabel(err)}`);
       throw err;
     }
     const elapsedMs = Date.now() - startedAt;
