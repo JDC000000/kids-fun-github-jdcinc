@@ -805,20 +805,56 @@ attribution unconditionally wherever this data surfaces**, which satisfies the o
 condition under every reading of it. Flagged so a future compliance pass knows which
 line was inherited rather than re-derived.
 
-#### Where attribution renders
+#### Where attribution renders — and why it is site-wide, not per venue
 
-`app/preview/_components/ActivityDetail.tsx`, in the existing **"Source & freshness"**
-panel — the surface that renders venue detail to a parent (venue name is the page H1),
-shared by both `/activity/[id]` and `/preview/[id]`. It renders the exact mandated string
-as a link to the licence, and **only for venues whose coordinates actually came from this
-data** (`venueGeoAttribution()` resolves it from the constant's own per-entry
-`attribution` field). A notice on a venue it does not apply to would be a false statement
-of fact, so it is derived from the data rather than asserted beside it.
+`app/_components/SiteFooter.tsx`, the global footer mounted once in the root layout, so
+the notice is reachable from every route. It renders the exact mandated string as a link
+to the licence, plus `© OpenStreetMap contributors` (ODbL,
+`https://www.openstreetmap.org/copyright`) for the two coordinates (Lord Byng Pool,
+Sunset Rink) that no City dataset covers. The list is **derived from the constant's own
+per-entry `attribution` field** (`requiredGeoAttributions()`), so an entry added from a
+new source appears in the footer with no UI change.
 
-Two coordinates (Lord Byng Pool, Sunset Rink) come from **OpenStreetMap** instead — no
-City dataset covers them — and carry `© OpenStreetMap contributors` (ODbL,
-`https://www.openstreetmap.org/copyright`) on the same surface. Different data, different
-notice; the table is explicit about which is which per entry.
+**This was originally built per-venue, on the activity detail panel, and that was wrong —
+recorded here because the reason generalises.** The first implementation resolved the
+notice by venue NAME and rendered it in the "Source & freshness" panel. QA reproduced
+three live false claims in default fixture mode (`trout-lake-public-skate`,
+`killarney-skate-lessons`, `l-opengym-van`): each venue merely shares a name with this
+table, while its coordinates came from a demo fixture or from
+`worker/adapters/citycalendar/config.ts`'s own independent `venueGeo` map — which carries
+**5 keys byte-identical to this table's names with different coordinates**, up to ~802 m
+apart. `resolveVenue()` matches on `lower(name)` first-writer-wins, so the venue row a
+parent sees may have been written by an entirely different adapter.
+
+The root cause was **not** a missing tenant check. It is that **a venue name is not
+provenance**, and the UI has no access to the provenance of the coordinate it displays:
+`venue` has no attribution column and the parent-facing `Activity` type carries no
+coordinates at all, only a derived `distanceKm`. Any per-record notice on that surface is
+therefore an inference — the exact thing this constant's own header forbids ("a legal
+notice is never inferred from a free-text string"). Gating on `sourceName` was considered
+and rejected: it is the same mistake one layer down (`sourceName` is just
+`new URL(sourceUrl).hostname`), and it does not even fix the reported cases — two of the
+three reproductions have `sourceName: 'vancouver.ca'`, which is also the City-calendar
+adapter's own host.
+
+A site-wide notice makes no per-venue claim, so it is unconditionally true for as long as
+this table ships, and neither the OGL nor the ODbL requires a per-record badge. **A
+per-record notice should not be reintroduced without a real provenance column on `venue`.**
+Locked by `tests/ui/venue-geo-attribution.test.tsx`, which asserts the notice renders in
+the footer exactly once and renders on **no** detail fixture (verified to fail against the
+old implementation, not merely to pass against the new one).
+
+#### One display-only override, declared
+
+`Kerrisdale Cyclone Taylor Arena` shows `displayArea: 'Kerrisdale'`. The City's own
+`geo_local_area` for 5670 East Boulevard is **`Shaughnessy`** — both the
+`property-addresses` record and an OSM reverse agree, because the local-area boundary runs
+along the Arbutus corridor immediately west of the arena. That is correct as a statistical
+boundary and misleading as a wayfinding label for a facility named "Kerrisdale …" that
+sits 300 m from Kerrisdale Community Centre. The City's published value is preserved in
+the entry's `derivedFrom`, and **the coordinate is untouched** — the override is the human
+label only. It is the single such override in the table, and a test asserts it stays the
+only one.
 
 #### MEASURED COVERAGE LIMIT — read this before repeating "27 community centres enriched"
 

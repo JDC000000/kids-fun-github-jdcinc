@@ -37,12 +37,35 @@
   gap: var(--kf-space-4);
 }
 
+/* Data-licence attribution row (G-VENUE-3). Sits under the wordmark/legal row as
+ * small print: it is a standing obligation that must be readable, not a call to
+ * action competing with the Privacy link. */
+.kf-site-footer__attribution {
+  justify-content: flex-start;
+  margin-top: var(--kf-space-3);
+  padding-top: var(--kf-space-3);
+  border-top: 1px solid var(--kf-neutral-200);
+}
+
+.kf-site-footer__credit {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--kf-park-moss-text);
+}
+
 .kf-site-footer__link {
   color: var(--kf-evergreen);
   font-size: 14px;
   font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* Inherit the small-print size inside the credit line rather than the 14px link size. */
+.kf-site-footer__credit .kf-site-footer__link {
+  font-size: inherit;
+  font-weight: 600;
 }
 .kf-site-footer__link:hover {
   color: var(--kf-leaf-hover);

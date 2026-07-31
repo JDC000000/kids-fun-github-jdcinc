@@ -3,11 +3,6 @@ import { CategoryTile } from './CategoryTile';
 import { FreshnessStamp } from './FreshnessStamp';
 import { ReportWrongInfo } from './ReportWrongInfo';
 import type { Activity } from '../_data/types';
-// Licence attribution for venue coordinates that came from a municipal open-data
-// set. Pure lookup over the committed constant — no network, no DB. Imported from
-// the module that OWNS the provenance so the notice can never drift from the data
-// it is attributing (the same reason lib/llm/* imports worker/core/taxonomy).
-import { venueGeoAttribution } from '@/worker/adapters/activenet/venue-geo';
 import {
   ageGuide,
   bookingTag,
@@ -48,7 +43,6 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   const when = formatWhen(activity.startIso, activity.endIso);
   const meta = statusMeta(activity.status, activity.seasonLabel);
   const isBookable = activity.status === 'confirmed' || activity.status === 'bookable_open';
-  const geoAttribution = venueGeoAttribution(activity.venue);
   const isBlocked = activity.status === 'cancelled' || activity.status === 'postponed';
   const bookLabel = bookingTag(activity.booking) || 'View booking page';
   const ages = ageGuide(activity.ageMin, activity.ageMax);
@@ -148,19 +142,12 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
           )}
           <ReportWrongInfo occurrenceId={occurrenceId} />
         </div>
-        {/* Open-data licence attribution. Rendered ONLY when this venue's coordinates
-            actually came from a licensed dataset — the notice is a statement of fact,
-            so it must not appear on venues it does not apply to. This is the OGL –
-            Vancouver licence's one hard condition, met in code. See
-            docs/source-register.md §6.5. */}
-        {geoAttribution && (
-          <p className="kf-section__note" style={{ margin: '10px 0 0' }}>
-            Venue location:{' '}
-            <a className="kf-link" href={geoAttribution.url} target="_blank" rel="noreferrer noopener">
-              {geoAttribution.text}
-            </a>
-          </p>
-        )}
+        {/* NOTE (G-VENUE-3, QA F1): a per-venue open-data licence notice used to render
+            here and was REMOVED — it matched on venue NAME, and a name is not
+            provenance, so it claimed OGL licensing for coordinates that never came
+            from the City. The attribution now lives site-wide in SiteFooter, where it
+            is unconditionally true. Do not reintroduce a per-record version without a
+            provenance column on `venue`. See docs/source-register.md §6.5. */}
       </section>
 
       {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action. */}

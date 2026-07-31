@@ -17,7 +17,7 @@ import {
   lookupVenueGeo,
   hasVenueGeoTable,
   normaliseVenueGeoKey,
-  venueGeoAttribution,
+  requiredGeoAttributions,
 } from '../../worker/adapters/activenet/venue-geo';
 import { buildVenueIndex, applyVenues } from '../../worker/adapters/activenet/venues';
 import { stripCentreSentinel } from '../../worker/adapters/activenet/parse';
@@ -153,6 +153,25 @@ describe('G-VENUE-1 Vancouver facility-geo constant', () => {
     }
   });
 
+  it('records the ONE display-only displayArea override, and only that one', () => {
+    // QA F4: the City's geo_local_area for 5670 East Boulevard is "Shaughnessy" (an
+    // Arbutus-corridor boundary artefact). Shown as "Kerrisdale" because that is the
+    // facility's own name; the City's value is preserved in derivedFrom. The
+    // COORDINATE is untouched — this must never become a licence to move a point.
+    const arena = VANCOUVER_VENUE_GEO['kerrisdale cyclone taylor arena'];
+    expect(arena.displayArea).toBe('Kerrisdale');
+    expect(arena.derivedFrom).toMatch(/DISPLAY-ONLY OVERRIDE/);
+    expect(arena.derivedFrom).toMatch(/Shaughnessy/);
+    expect(arena.lat).toBe(49.2359);
+    expect(arena.lng).toBe(-123.1535);
+    const overrides = Object.entries(VANCOUVER_VENUE_GEO)
+      .filter(([, g]) => /DISPLAY-ONLY OVERRIDE/.test(g.derivedFrom))
+      .map(([k]) => k);
+    expect(overrides, 'a second silent override would be a real regression').toEqual([
+      'kerrisdale cyclone taylor arena',
+    ]);
+  });
+
   it('is frozen, and only Vancouver has a table', () => {
     expect(Object.isFrozen(VANCOUVER_VENUE_GEO)).toBe(true);
     expect(hasVenueGeoTable('vancouver')).toBe(true);
@@ -215,37 +234,63 @@ describe('G-VENUE-2 geo attaches in venues.ts and the gap is NAMED', () => {
   });
 });
 
-describe('G-VENUE-3 licence attribution is derived from the data, not asserted beside it', () => {
-  it('returns the OGL – Vancouver notice verbatim for City-sourced coordinates', () => {
-    const attribution = venueGeoAttribution('Hastings Community Centre');
-    expect(attribution).toEqual({
-      key: 'ogl-vancouver',
-      text: 'Contains information licensed under the Open Government Licence – Vancouver',
-      url: 'https://opendata.vancouver.ca/pages/licence/',
-    });
-    expect(attribution!.text).toBe(OGL_VANCOUVER_ATTRIBUTION);
-    expect(attribution!.url).toBe(OGL_VANCOUVER_LICENCE_URL);
+describe('G-VENUE-3 licence attribution is site-wide and cannot be name-inferred', () => {
+  it('publishes the OGL – Vancouver notice verbatim, plus the ODbL notice for the 2 OSM points', () => {
+    const attributions = requiredGeoAttributions();
+    expect(attributions).toEqual([
+      {
+        key: 'ogl-vancouver',
+        text: 'Contains information licensed under the Open Government Licence – Vancouver',
+        url: 'https://opendata.vancouver.ca/pages/licence/',
+      },
+      {
+        key: 'osm-odbl',
+        text: '© OpenStreetMap contributors',
+        url: 'https://www.openstreetmap.org/copyright',
+      },
+    ]);
+    expect(attributions[0].text).toBe(OGL_VANCOUVER_ATTRIBUTION);
+    expect(attributions[0].url).toBe(OGL_VANCOUVER_LICENCE_URL);
   });
 
-  it('co-located pool/rink entries still carry the OGL notice — the point is the City\'s', () => {
-    expect(venueGeoAttribution('Britannia Pool')!.key).toBe('ogl-vancouver');
-    expect(venueGeoAttribution('Trout Lake Rink')!.key).toBe('ogl-vancouver');
+  it('lists exactly the notices the table actually uses — no more, no fewer', () => {
+    const used = new Set(Object.values(VANCOUVER_VENUE_GEO).map((g) => g.attribution));
+    expect(requiredGeoAttributions().map((a) => a.key).sort()).toEqual([...used].sort());
   });
 
-  it('the two OpenStreetMap coordinates carry the ODbL notice instead, not the OGL one', () => {
-    for (const name of ['Lord Byng Pool', 'Sunset Rink']) {
-      const attribution = venueGeoAttribution(name);
-      expect(attribution!.key, name).toBe('osm-odbl');
-      expect(attribution!.text).toBe('© OpenStreetMap contributors');
-      expect(attribution!.url).toBe('https://www.openstreetmap.org/copyright');
-    }
+  it('is deduplicated and stable — 34 OGL entries yield ONE notice, not 34', () => {
+    const attributions = requiredGeoAttributions();
+    expect(attributions.length).toBe(new Set(attributions.map((a) => a.key)).size);
+    expect(attributions.map((a) => a.key)).toEqual(requiredGeoAttributions().map((a) => a.key));
   });
 
-  it('returns nothing for a venue this table did not contribute to', () => {
-    // A false attribution is a false statement of fact — worse than none.
-    expect(venueGeoAttribution('H.R. MacMillan Space Centre')).toBeUndefined();
-    expect(venueGeoAttribution('Bonsor Recreation Complex')).toBeUndefined();
-    expect(venueGeoAttribution(undefined)).toBeUndefined();
-    expect(venueGeoAttribution('')).toBeUndefined();
+  // ── QA F1 regression. ─────────────────────────────────────────────────────────
+  // The removed `venueGeoAttribution(venueName)` claimed OGL licensing for any venue
+  // whose NAME matched this table, regardless of where its coordinates came from —
+  // and citycalendar/config.ts independently carries 5 byte-identical venue names
+  // with different coordinates, so the claim was demonstrably false in fixture mode.
+  // The fix is structural: attribution takes no venue input at all, so no name (or
+  // hostname, or any other string) can ever be mistaken for provenance.
+  it('exposes NO name-keyed attribution lookup — provenance is never inferred from a string', async () => {
+    const mod: Record<string, unknown> = await import(
+      '../../worker/adapters/activenet/venue-geo'
+    );
+    expect(mod.venueGeoAttribution, 'the name-keyed lookup must stay deleted').toBeUndefined();
+    expect(requiredGeoAttributions).toHaveLength(0); // takes zero arguments, by design
+  });
+
+  it('the 5 venue names citycalendar also carries cannot produce a per-venue claim', () => {
+    // These exist in BOTH tables with different coordinates (up to ~802 m apart).
+    // They must still resolve geo for the ActiveNet adapter…
+    const shared = [
+      'Renfrew Park Community Centre',
+      'Killarney Community Centre',
+      'Kitsilano Community Centre',
+      'Britannia Community Centre',
+      'Trout Lake Community Centre',
+    ];
+    for (const name of shared) expect(lookupVenueGeo('vancouver', name), name).toBeDefined();
+    // …while carrying no venue-level licence claim anywhere for anything to misread.
+    expect(requiredGeoAttributions().every((a) => !('venue' in a))).toBe(true);
   });
 });

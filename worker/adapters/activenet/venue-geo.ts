@@ -335,10 +335,21 @@ export const VANCOUVER_VENUE_GEO: Readonly<Record<string, ActiveNetVenueGeo>> = 
   //    2 have their OWN civic address and a matching OGL `property-addresses` record,
   //    so these two are genuine open data, not judgement.
   'kerrisdale cyclone taylor arena': {
-    lat: 49.2359, lng: -123.1535, displayArea: 'Shaughnessy',
+    // displayArea is a DISPLAY-ONLY override — the one entry in this table where the
+    // City's own value is not used verbatim, called out here rather than done quietly.
+    // The City's geo_local_area for this point is "Shaughnessy" (both the
+    // property-addresses record and an OSM reverse agree), because the local-area
+    // boundary runs along the Arbutus corridor immediately west of the arena. That is
+    // correct as a statistical boundary and wrong as a wayfinding label: the facility
+    // is named "Kerrisdale Cyclone Taylor Arena", sits 300 m from Kerrisdale Community
+    // Centre, and every parent in the city calls it Kerrisdale. This field's job is to
+    // help someone find the place, so it says Kerrisdale; the City's published value is
+    // preserved in derivedFrom, so nothing about the provenance is lost. The COORDINATE
+    // is untouched — only the human-facing label.
+    lat: 49.2359, lng: -123.1535, displayArea: 'Kerrisdale',
     source: 'opendata-vancouver', attribution: 'ogl-vancouver',
     derivedFrom:
-      'property-addresses 5670 EAST BOULEVARD (49.235893, -123.153463); OSM cross-check agrees to ~75 m. displayArea is the City\'s own geo_local_area for the point — it reads "Shaughnessy", not "Kerrisdale", because the local-area boundary runs along the Arbutus corridor just west of the arena. Kept as published rather than overridden.',
+      'property-addresses 5670 EAST BOULEVARD (49.235893, -123.153463); OSM cross-check agrees to ~75 m. displayArea DISPLAY-ONLY OVERRIDE: the City\'s own geo_local_area for this point is "Shaughnessy" (Arbutus-corridor boundary artefact); shown as "Kerrisdale" because that is the facility\'s own name and how it is found. Coordinate unchanged.',
   },
   'templeton park pool': {
     lat: 49.2785, lng: -123.0588, displayArea: 'Grandview-Woodland',
@@ -397,24 +408,47 @@ export function lookupVenueGeo(
 }
 
 /**
- * The licence notice(s) that must be rendered when this venue is published, or `[]`
- * when this table contributed nothing to it. Name-only (no tenant), because the UI
- * has a venue name and not a tenant key — every key in this table is a Vancouver
- * civic facility name, so a cross-tenant false positive would need a different city
- * to operate an identically-named facility.
+ * Every licence notice this project is obliged to publish because it ships these
+ * tables — derived from the entries themselves, deduplicated, in a stable order.
  *
- * This is what makes the OGL condition met IN CODE rather than in a comment: the
- * detail surface calls this, and a venue whose coordinate came from the City's data
- * cannot render without the City's notice.
+ * ── WHY THIS TAKES NO ARGUMENTS. Read before "improving" it back. ────────────────
+ * The first version of this was `venueGeoAttribution(venueName)`: look the name up,
+ * return that entry's notice, render it on the venue's detail panel. It shipped, and
+ * QA proved it renders a FALSE provenance claim today, in default fixture mode, on a
+ * live parent-facing surface — `trout-lake-public-skate` ("Trout Lake Rink"),
+ * `killarney-skate-lessons` and `l-opengym-van` ("Britannia Community Centre") all
+ * showed "licensed under the OGL – Vancouver" for coordinates that never came from
+ * the City. `worker/adapters/citycalendar/config.ts` independently carries 5 keys
+ * byte-identical to this table's names with DIFFERENT coordinates (up to 802 m
+ * apart), and `resolveVenue()` matches on `lower(name)` first-writer-wins, so the
+ * venue row a parent sees may have been written by an entirely different adapter.
+ *
+ * The root cause was not the missing tenant check. It was that **a venue name is not
+ * provenance**, and the UI has no access to the provenance of the coordinate it is
+ * displaying — the `venue` table carries no attribution column and `Activity` carries
+ * no coordinates, only a derived `distanceKm`. Any per-record notice on that surface
+ * is therefore an inference, and this module's own header forbids inferring a legal
+ * notice from a string. Gating on `sourceName` was considered and rejected: it is the
+ * same mistake one layer down (`sourceName` is just `new URL(sourceUrl).hostname`),
+ * and it does not even fix the reported cases — two of QA's three reproductions have
+ * `sourceName: 'vancouver.ca'`, which is also the City-calendar adapter's own host.
+ *
+ * A SITE-WIDE notice has none of that fragility, because it makes no claim about any
+ * individual venue. "This product contains information licensed under the OGL –
+ * Vancouver" is unconditionally TRUE for as long as this table ships, cannot misfire
+ * on a name collision, and is the normal, accepted way to satisfy an OGL (and the
+ * ODbL) — neither licence requires a per-record badge. So the condition is still met
+ * in code and still derived from the data, just at the granularity the data can
+ * actually support. Rendered by `app/_components/SiteFooter.tsx`.
+ *
+ * A future entry using a new source automatically appears here with no UI change.
  */
-export function venueGeoAttribution(
-  venueName: string | undefined | null
-): VenueGeoAttribution | undefined {
-  if (!venueName) return undefined;
-  const key = normaliseVenueGeoKey(venueName);
+export function requiredGeoAttributions(): VenueGeoAttribution[] {
+  const keys = new Set<VenueGeoAttributionKey>();
   for (const table of Object.values(TENANT_VENUE_GEO)) {
-    const entry = table[key];
-    if (entry) return ATTRIBUTIONS[entry.attribution];
+    for (const entry of Object.values(table)) keys.add(entry.attribution);
   }
-  return undefined;
+  return (Object.keys(ATTRIBUTIONS) as VenueGeoAttributionKey[])
+    .filter((k) => keys.has(k))
+    .map((k) => ATTRIBUTIONS[k]);
 }
