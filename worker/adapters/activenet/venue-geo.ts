@@ -60,9 +60,16 @@
 // Vancouver publishes no pool, rink, arena or swimming dataset (catalogue searches
 // 2026-07-31: pool 0 · rink 0 · arena 0 · swimming 0 hits). ~74% of measured Vancouver
 // drop-in occurrences/week happen at those 12 pool/rink/arena facilities — i.e. at
-// venues the licensed open dataset cannot locate. The 12 coordinates below are curated,
+// venues the licensed open dataset cannot locate. Those coordinates are curated,
 // per-entry attributed, and are the reason this file exists at all; the open-data join
-// is a labour-saver for the other 24, not the substance. See docs/source-register.md §6.5.
+// is a labour-saver for the community centres, not the substance.
+// See docs/source-register.md §6.5.
+//
+// COORDINATE SOURCE, as opposed to NAME resolution — the two are counted separately and
+// it matters: 25 entries take their point verbatim from a City dataset, 11 are
+// hand-placed. That is one fewer City point than there are name-matched community
+// centres, because `britannia community centre` deliberately does NOT use the City's
+// point — see the measured reason on that entry.
 //
 // `urllink` WAS DELIBERATELY NOT IMPORTED. 24 of the 27 open-data records point at the
 // retired `http://vancouver.ca/parks/cc/<name>/index.htm` scheme; only 3 use the current
@@ -88,9 +95,12 @@
 //   `attribution` — WHICH licence notice must render when this venue is published. A
 //                   legal notice is never inferred from a free-text string.
 //   `derivedFrom` — the audit trail, in prose.
-// Note `source` and `attribution` are independent: the 8 co-located pool/rink entries
-// are `curated` (a human judged the co-location) but still carry the City's coordinate,
-// so they still require OGL attribution.
+// Note `source` and `attribution` are independent, in BOTH directions: the 8 co-located
+// pool/rink entries are `curated` (a human judged the co-location) but still carry the
+// City's coordinate, so they still require OGL attribution — while `britannia community
+// centre` is `curated` from this project's own prior work and therefore owes NO
+// third-party notice at all, so it omits `attribution` entirely. Omission is a claim,
+// not a default, and the entry that makes it explains itself.
 
 /** Where one coordinate came from. `opendata-vancouver` = lifted verbatim from an
  *  OGL-licensed City of Vancouver dataset record for that exact facility/address.
@@ -106,8 +116,13 @@ export interface ActiveNetVenueGeo {
   /** City of Vancouver `geo_local_area` (neighbourhood), for display + area filtering. */
   displayArea?: string;
   source: VenueGeoSource;
-  /** Licence notice required when this venue is surfaced. Explicit, never inferred. */
-  attribution: VenueGeoAttributionKey;
+  /**
+   * Third-party licence notice this coordinate obliges us to publish. Explicit, never
+   * inferred. ABSENT means no third-party notice is owed — the point is this project's
+   * own curation (see `britannia community centre`). Absent is not a default: it is a
+   * claim in itself, and every entry that omits it says why in `derivedFrom`.
+   */
+  attribution?: VenueGeoAttributionKey;
   /** Exactly how this coordinate was obtained — auditable without re-deriving. */
   derivedFrom: string;
 }
@@ -154,9 +169,9 @@ export const VANCOUVER_VENUE_GEO_PROVENANCE = Object.freeze({
   /** Facilities in the tenant's centerdetails roster at derivation time. */
   activeNetCentresCovered: 36,
   /** Of those, how many took their coordinate straight from a City dataset. */
-  fromOpenData: 26,
+  fromOpenData: 25,
   /** …and how many a human placed. */
-  curated: 10,
+  curated: 11,
 } as const);
 
 /**
@@ -170,9 +185,33 @@ export const VANCOUVER_VENUE_GEO_PROVENANCE = Object.freeze({
 export const VANCOUVER_VENUE_GEO: Readonly<Record<string, ActiveNetVenueGeo>> = Object.freeze({
   // ── Community centres: coordinate lifted verbatim from the `community-centres`
   //    dataset record named in `derivedFrom` (OGL – Vancouver). ──────────────────
+  // The ONE entry that does not take the City's coordinate, and the reason is measured.
+  // The `community-centres` point for Britannia (49.2756, -123.0738) is a site-level
+  // point ~250 m west of the actual community-centre building — the Britannia campus
+  // spans a full block and the buildings sit on its east side. citycalendar/config.ts
+  // already carried a better, building-level point for this exact venue name, verified
+  // here against two independent OpenStreetMap POIs at 1661 Napier Street (Britannia CC
+  // 49.2755396/-123.0703378, VPL Britannia Branch 49.2749646/-123.0707081): the City's
+  // point is 251 m / 235 m away, citycalendar's is 79 m / 96 m — better by 139-172 m.
+  //
+  // Adopting citycalendar's value VERBATIM (not a third, "more correct" point) is
+  // deliberate: `worker/core/venue.ts::resolveVenue` overwrites geo on every ingest
+  // (`geo = COALESCE(<incoming>, geo)` — incoming wins whenever it is non-null), so two
+  // adapters holding different points for the same venue name make the stored coordinate
+  // CHURN with ingest order. Byte-identical values make the churn unobservable for this
+  // venue, which matters more here than the last 79 m: Britannia is the highest-volume
+  // venue in this table. Excluding the entry instead was considered and rejected — it
+  // would leave Britannia with NO coordinates whenever the city-calendar source is not
+  // enabled (it is env-gated), and would make `venuesWithoutGeo` name Britannia on every
+  // run, degrading the exact warning G-VENUE-2 exists to keep meaningful.
+  //
+  // NO `attribution`: this point is the project's own curation, not City data, so
+  // claiming the OGL over it would be the same false-provenance error QA F1 caught.
   'britannia community centre': {
-    lat: 49.2756, lng: -123.0738, displayArea: 'Grandview-Woodland',
-    source: 'opendata-vancouver', attribution: 'ogl-vancouver', derivedFrom: 'community-centres "Britannia"',
+    lat: 49.2757, lng: -123.0714, displayArea: 'Grandview-Woodland',
+    source: 'curated',
+    derivedFrom:
+      'citycalendar/config.ts venueGeo "britannia community centre" (this project\'s own prior hand-curation), adopted verbatim to converge the two tables. Measured 2026-07-31 as 139-172 m closer to the community-centre building than community-centres "Britannia" (49.2756, -123.0738), against two OSM POIs at 1661 Napier Street. The City\'s site-level point is retained for Britannia Pool and Britannia Rink, which are separate buildings on the same campus with no better per-building source.',
   },
   'champlain heights community centre': {
     lat: 49.2144, lng: -123.0321, displayArea: 'Killarney',
@@ -287,13 +326,13 @@ export const VANCOUVER_VENUE_GEO: Readonly<Record<string, ActiveNetVenueGeo>> = 
     lat: 49.2756, lng: -123.0738, displayArea: 'Grandview-Woodland',
     source: 'curated', attribution: 'ogl-vancouver',
     derivedFrom:
-      'co-located: shares civic address 1661 Napier Street with Britannia Community Centre (ActiveNet centerdetails); point from community-centres "Britannia"',
+      'co-located: shares civic address 1661 Napier Street with Britannia Community Centre (ActiveNet centerdetails); point from community-centres "Britannia" — the City\'s SITE-level point, deliberately kept here even though the community-centre entry itself now uses a building-level point, because no per-building source exists for the pool or the rink',
   },
   'britannia rink': {
     lat: 49.2756, lng: -123.0738, displayArea: 'Grandview-Woodland',
     source: 'curated', attribution: 'ogl-vancouver',
     derivedFrom:
-      'co-located: shares civic address 1661 Napier Street with Britannia Community Centre (ActiveNet centerdetails); point from community-centres "Britannia"',
+      'co-located: shares civic address 1661 Napier Street with Britannia Community Centre (ActiveNet centerdetails); point from community-centres "Britannia" — the City\'s SITE-level point, deliberately kept here even though the community-centre entry itself now uses a building-level point, because no per-building source exists for the pool or the rink',
   },
   'hillcrest aquatic centre': {
     lat: 49.2438, lng: -123.1079, displayArea: 'Riley Park',
@@ -446,7 +485,9 @@ export function lookupVenueGeo(
 export function requiredGeoAttributions(): VenueGeoAttribution[] {
   const keys = new Set<VenueGeoAttributionKey>();
   for (const table of Object.values(TENANT_VENUE_GEO)) {
-    for (const entry of Object.values(table)) keys.add(entry.attribution);
+    for (const entry of Object.values(table)) {
+      if (entry.attribution) keys.add(entry.attribution);
+    }
   }
   return (Object.keys(ATTRIBUTIONS) as VenueGeoAttributionKey[])
     .filter((k) => keys.has(k))

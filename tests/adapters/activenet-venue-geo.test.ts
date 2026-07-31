@@ -22,6 +22,7 @@ import {
 import { buildVenueIndex, applyVenues } from '../../worker/adapters/activenet/venues';
 import { stripCentreSentinel } from '../../worker/adapters/activenet/parse';
 import { getTenantConfig } from '../../worker/adapters/activenet/config';
+import { CITY_CALENDARS } from '../../worker/adapters/citycalendar/config';
 import type { ActiveNetCentreDetail } from '../../worker/adapters/activenet/client';
 
 const FIXTURES = join(process.cwd(), 'worker/adapters/activenet/__fixtures__');
@@ -86,7 +87,13 @@ describe('G-VENUE-1 Vancouver facility-geo constant', () => {
   it('carries per-entry provenance and a per-entry licence notice, on every entry', () => {
     for (const [key, geo] of Object.entries(VANCOUVER_VENUE_GEO)) {
       expect(['opendata-vancouver', 'curated'], key).toContain(geo.source);
-      expect(['ogl-vancouver', 'osm-odbl'], key).toContain(geo.attribution);
+      // `attribution` is OPTIONAL, and omitting it is a claim ("no third-party notice
+      // owed"), not a default — so an omission is only legal from a `curated` point.
+      if (geo.attribution === undefined) {
+        expect(geo.source, `${key} omits attribution but claims open data`).toBe('curated');
+      } else {
+        expect(['ogl-vancouver', 'osm-odbl'], key).toContain(geo.attribution);
+      }
       expect(geo.derivedFrom.length, key).toBeGreaterThan(10);
       expect(geo.displayArea, key).toBeTruthy();
     }
@@ -151,6 +158,66 @@ describe('G-VENUE-1 Vancouver facility-geo constant', () => {
     for (const name of curatedFacilities) {
       expect(lookupVenueGeo('vancouver', name), name).toBeDefined();
     }
+  });
+
+  it('Britannia is converged with citycalendar verbatim, and owes no third-party notice', () => {
+    // QA F3/F5: resolveVenue OVERWRITES geo (geo = COALESCE(incoming, geo)), so two
+    // tables holding different points for one venue name make the stored value churn
+    // with ingest order. Britannia is the highest-volume venue and the City's point was
+    // the worse of the two (measured 139-172 m further from the building than
+    // citycalendar's, against two OSM POIs at 1661 Napier Street). The values are now
+    // byte-identical, which is what makes the churn unobservable — so this test pins the
+    // exact numbers, not a tolerance.
+    const britannia = VANCOUVER_VENUE_GEO['britannia community centre'];
+    expect(britannia.lat).toBe(49.2757);
+    expect(britannia.lng).toBe(-123.0714);
+    expect(britannia.source).toBe('curated');
+    expect(
+      britannia.attribution,
+      'the point is our own curation — claiming the OGL over it would be false provenance'
+    ).toBeUndefined();
+    expect(britannia.derivedFrom).toMatch(/citycalendar/);
+
+    // The pool and the rink are separate buildings on the same campus with no better
+    // per-building source, so they deliberately keep the City's site-level point.
+    for (const name of ['britannia pool', 'britannia rink']) {
+      expect(VANCOUVER_VENUE_GEO[name].lat, name).toBe(49.2756);
+      expect(VANCOUVER_VENUE_GEO[name].lng, name).toBe(-123.0738);
+      expect(VANCOUVER_VENUE_GEO[name].attribution, name).toBe('ogl-vancouver');
+    }
+  });
+
+  it('the Britannia convergence is pinned to citycalendar\'s ACTUAL value, not a copy of it', () => {
+    // Guards the convergence from BOTH sides: if either table's Britannia point is
+    // edited, they stop agreeing, the stored coordinate starts churning with ingest
+    // order again, and this fails. A hardcoded literal here would only guard one side.
+    const cityGeo = CITY_CALENDARS.find((c) => c.calendarKey === 'vancouver')?.venueGeo;
+    const theirs = cityGeo?.['britannia community centre'];
+    const ours = VANCOUVER_VENUE_GEO['britannia community centre'];
+    expect(theirs, 'citycalendar must still carry this venue for the convergence to mean anything').toBeDefined();
+    expect({ lat: ours.lat, lng: ours.lng }).toEqual({ lat: theirs!.lat, lng: theirs!.lng });
+  });
+
+  it('names the shared venues that still diverge, so the follow-up stays visible', () => {
+    // The other 4 shared names are deliberately NOT converged (measured as a net
+    // improvement when the ActiveNet value wins). They still churn with ingest order,
+    // which is a tracked follow-up — this test exists so that fact stays discoverable
+    // rather than living only in a doc, and so a silent 6th collision cannot appear.
+    const cityGeo = CITY_CALENDARS.find((c) => c.calendarKey === 'vancouver')?.venueGeo ?? {};
+    const diverging = Object.keys(cityGeo)
+      .filter((k) => VANCOUVER_VENUE_GEO[k])
+      .filter((k) => {
+        const a = VANCOUVER_VENUE_GEO[k];
+        const b = cityGeo[k];
+        return a.lat !== b.lat || a.lng !== b.lng;
+      })
+      .sort();
+    expect(diverging).toEqual([
+      'killarney community centre',
+      'kitsilano community centre',
+      'renfrew park community centre',
+      'trout lake community centre',
+    ]);
   });
 
   it('records the ONE display-only displayArea override, and only that one', () => {
@@ -254,8 +321,15 @@ describe('G-VENUE-3 licence attribution is site-wide and cannot be name-inferred
   });
 
   it('lists exactly the notices the table actually uses — no more, no fewer', () => {
-    const used = new Set(Object.values(VANCOUVER_VENUE_GEO).map((g) => g.attribution));
+    // Entries that owe no third-party notice (attribution omitted) must contribute
+    // nothing here — an `undefined` leaking into the footer would render an empty link.
+    const used = new Set(
+      Object.values(VANCOUVER_VENUE_GEO)
+        .map((g) => g.attribution)
+        .filter((a): a is NonNullable<typeof a> => a !== undefined)
+    );
     expect(requiredGeoAttributions().map((a) => a.key).sort()).toEqual([...used].sort());
+    expect(requiredGeoAttributions().every((a) => Boolean(a.text && a.url))).toBe(true);
   });
 
   it('is deduplicated and stable — 34 OGL entries yield ONE notice, not 34', () => {

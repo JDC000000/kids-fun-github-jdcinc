@@ -134,8 +134,17 @@ export function applyVenues(
       venueName: venue.venueName,
       venueAddress: venue.venueAddress,
       venueMunicipalityName: venue.venueMunicipalityName,
-      // resolveVenue() COALESCE-enriches an existing venue row, so attaching geo here
-      // is the whole of the write path — no core or DB change is needed.
+      // Attaching geo here is the whole of the write path — no core or DB change needed.
+      //
+      // WORDING MATTERS HERE, and an earlier version of this comment got it wrong.
+      // resolveVenue() does NOT gap-fill: it runs `geo = COALESCE(<incoming>, geo)`, so a
+      // non-null incoming coordinate OVERWRITES whatever the venue row already held, and
+      // the existing value survives only when we send nothing. That is LAST-WRITER-WINS.
+      // It is invisible while one adapter owns a venue name, and load-bearing the moment
+      // two do — `worker/adapters/citycalendar/config.ts` carries its own venueGeo map
+      // with 5 names byte-identical to venue-geo.ts's, so those rows change with ingest
+      // order. Converging both tables is a tracked follow-up; the one venue where the
+      // divergence measurably hurt (Britannia) is already converged in venue-geo.ts.
       venueLat: venue.geo?.lat,
       venueLng: venue.geo?.lng,
       venueDisplayArea: venue.geo?.displayArea ?? record.venueDisplayArea,

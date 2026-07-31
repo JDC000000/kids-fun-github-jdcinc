@@ -823,8 +823,10 @@ three live false claims in default fixture mode (`trout-lake-public-skate`,
 table, while its coordinates came from a demo fixture or from
 `worker/adapters/citycalendar/config.ts`'s own independent `venueGeo` map — which carries
 **5 keys byte-identical to this table's names with different coordinates**, up to ~802 m
-apart. `resolveVenue()` matches on `lower(name)` first-writer-wins, so the venue row a
-parent sees may have been written by an entirely different adapter.
+apart. `resolveVenue()` matches on `lower(name)` and **overwrites** geo, so the venue row
+a parent sees may have been written by an entirely different adapter. (An earlier draft of
+this section said "first-writer-wins"; QA corrected it by running the statement against a
+live DB rather than reading the SQL — see the write-semantics note below.)
 
 The root cause was **not** a missing tenant check. It is that **a venue name is not
 provenance**, and the UI has no access to the provenance of the coordinate it displays:
@@ -843,6 +845,45 @@ per-record notice should not be reintroduced without a real provenance column on
 Locked by `tests/ui/venue-geo-attribution.test.tsx`, which asserts the notice renders in
 the footer exactly once and renders on **no** detail fixture (verified to fail against the
 old implementation, not merely to pass against the new one).
+
+#### Write semantics — `resolveVenue()` OVERWRITES geo, it does not gap-fill
+
+Recorded because the wrong word was used in the first draft of this section, in
+`venues.ts` and in the commit message, and because this diff is the first time the
+distinction stops being academic.
+
+`worker/core/venue.ts::enrichVenue` runs `geo = COALESCE(<incoming point>, geo)`. The
+INCOMING value is the first COALESCE argument, so a non-null incoming coordinate
+**replaces** whatever the row already held; the stored value survives only when the
+adapter sends nothing. That is **last-writer-wins**, not "enrich"/"gap-fill" — "enrich"
+implies filling what is missing and leaving what is there, which is the opposite of what
+the statement does. (QA established this by executing it against a live database rather
+than reading the SQL, and corrected its own earlier first-writer-wins finding.)
+
+While one adapter owns a venue name this is invisible. It becomes load-bearing here,
+because this is the **first case where two adapters write geo for the same venue names**:
+`worker/adapters/citycalendar/config.ts` carries 5 names byte-identical to
+`venue-geo.ts`'s, so those rows now change with ingest order rather than settling.
+Measured against OpenStreetMap, 4 of the 5 are a net improvement when the ActiveNet value
+wins (Renfrew ~800 m better, Killarney ~600 m, Kitsilano ~113 m, Trout Lake ~34 m) —
+**Britannia was the exception and is now converged** (see below), so no remaining shared
+name regresses. Converging the two tables outright is a tracked follow-up, not done here.
+
+**Britannia is the one venue where the two tables were reconciled rather than left to
+churn**, because it is the highest-volume venue in the table and the City's point was the
+worse of the two. `community-centres` places Britannia at a site-level point ~250 m west
+of the actual building; citycalendar already held a building-level point. Verified
+independently against two OSM POIs at 1661 Napier Street: the City's point is 251 m / 235
+m out, citycalendar's is 79 m / 96 m — **better by 139–172 m**. `venue-geo.ts` now carries
+citycalendar's value *verbatim*, so the two tables agree byte-for-byte and the churn is
+unobservable for that venue. It is consequently the one entry in the table with **no
+`attribution`**: the point is this project's own curation, not City data, and claiming the
+OGL over it would repeat the false-provenance error above. Excluding the entry instead was
+considered and rejected — it would leave Britannia with no coordinates at all whenever the
+env-gated city-calendar source is off, and would make `venuesWithoutGeo` name Britannia on
+every run, degrading the warning it exists to keep meaningful. Britannia Pool and Britannia
+Rink keep the City's site-level point: they are separate buildings on the same campus and
+no better per-building source exists.
 
 #### One display-only override, declared
 
