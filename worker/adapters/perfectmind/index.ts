@@ -60,11 +60,46 @@ export interface FetchWindow {
   endDate: string;
 }
 
-/** Inclusive local-date window [today, today + DEFAULT_WINDOW_DAYS] in the tenant's zone. */
+/**
+ * Inclusive local-date window spanning EXACTLY `DEFAULT_WINDOW_DAYS` days in the tenant's
+ * zone: `[today, today + (DEFAULT_WINDOW_DAYS - 1)]`.
+ *
+ * THE `- 1` IS THE FIX FOR QA C1, and it is the constant finally meaning what it says.
+ * The previous form (`today + DEFAULT_WINDOW_DAYS`) declared an INCLUSIVE 29-day window
+ * while `stridesForWindow(28)` fetched 2 strides = 28 days — so the final declared day
+ * was never fetched at all. QA measured 41 real occurrences lost on that one day. It
+ * rolls forward daily rather than accumulating, which is exactly why it was invisible.
+ *
+ * Fixed by shrinking the window to match the name rather than by buying a third stride:
+ * covering the 29th day would have cost a whole extra stride (~36 requests, ~2 minutes of
+ * run time) to gain one day at the far edge of a horizon that exists to be approximate.
+ *
+ * NOTE for whoever touches worker/adapters/activenet/index.ts: it has the SAME
+ * off-by-one (its `defaultWindow` also declares 29 inclusive days for a 28-day constant).
+ * Harmless there — ActiveNet fetches its whole calendar period in one request and windows
+ * client-side, so the extra day is simply kept rather than lost — but it is the same
+ * imprecision and worth knowing about. Deliberately NOT changed here: different adapter,
+ * different stream, no bug to fix.
+ */
 export function defaultWindow(tenant: PerfectMindTenantConfig, now: Date = new Date()): FetchWindow {
   const startDate = zonedDateString(now, tenant.timezone);
-  const end = new Date(now.getTime() + DEFAULT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const end = new Date(now.getTime() + (DEFAULT_WINDOW_DAYS - 1) * 24 * 60 * 60 * 1000);
   return { startDate, endDate: zonedDateString(end, tenant.timezone) };
+}
+
+/**
+ * Inclusive day count a window actually spans, computed from the window's OWN dates.
+ *
+ * Exists so crawl depth derives from the window that will really be applied, not from the
+ * constant the window was built from (QA C2). Those are the same thing today and were the
+ * same thing when B1 was fixed — but "the same thing today" is precisely the assumption
+ * that produced B1, and re-deriving from the real value costs nothing.
+ */
+export function windowDays(window: FetchWindow): number {
+  const start = Date.parse(`${window.startDate}T00:00:00Z`);
+  const end = Date.parse(`${window.endDate}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return DEFAULT_WINDOW_DAYS;
+  return Math.round((end - start) / 86_400_000) + 1;
 }
 
 /** What one fetch() produced — the single element fetch() returns, consumed by extract(). */
@@ -86,10 +121,14 @@ export interface PerfectMindRunReport {
   requestsUsed: number;
   calendarsFetched: number;
   calendarsTruncated: number;
-  /** Strides the window required, and the fewest any calendar actually walked. If the
-   *  second is below the first, the run covered less than it declared. */
+  /** Strides the window required, and the fewest any calendar actually walked.
+   *  DIAGNOSTIC, not an alarm: a genuinely short calendar legitimately walks fewer
+   *  strides (two empty strides in a row ends it). The alarm is `truncatedCalendars`. */
   stridesRequired: number;
   minStridesWalked: number;
+  /** Names of calendars whose slice was cut short with data still available. This is the
+   *  coverage signal that actually alerts (health code `coverage_truncated`). */
+  truncatedCalendars: string[];
   parse: ParseResult['stats'];
   warnings: string[];
   unrecognisedKeys: string[];
@@ -108,7 +147,7 @@ function fixtureCalendars(tenant: PerfectMindTenantConfig): CalendarFetchResult[
       categoryName: '**Drop-In Schedules',
       occurrenceCount: 1,
       pagesFetched: 0,
-      stridesWalked: stridesForWindow(DEFAULT_WINDOW_DAYS),
+      stridesWalked: stridesForWindow(DEFAULT_WINDOW_DAYS), // synthetic: a dry run walks nothing
       truncated: false,
       warnings: [],
       classes: [
@@ -180,9 +219,14 @@ export class PerfectMindAdapter implements Adapter {
     }
 
     const budget = new RequestBudget(this.tenant.tenantKey, this.tenant.maxRequestsPerRun);
-    // Crawl depth is DERIVED from the declared window, never hard-coded. The two drifting
-    // apart is exactly how this adapter once ingested 14 days while claiming 28.
-    const result = await fetchTenant(this.tenant, { budget }, stridesForWindow(DEFAULT_WINDOW_DAYS));
+    // Crawl depth is DERIVED from the window THIS RUN will actually apply — not from the
+    // constant, and never hard-coded. Depth and window drifting apart is exactly how this
+    // adapter once ingested 14 days while claiming 28 (B1), and then how it declared 29
+    // days while fetching 28 (C1). Deriving from the real value is what makes a third
+    // instance of that class structurally impossible rather than merely fixed twice.
+    // Pinned behaviourally by the adapter-level full-window test — hard-coding a stride
+    // count here fails it.
+    const result = await fetchTenant(this.tenant, { budget }, stridesForWindow(windowDays(window)));
     return [
       {
         tenantKey: result.tenantKey,
@@ -205,6 +249,9 @@ export class PerfectMindAdapter implements Adapter {
 
     const parsed = parseTenantCalendars(this.tenant, payload.calendars, { window: payload.window });
     const warnings = [...payload.warnings, ...parsed.warnings];
+    const truncatedCalendars = payload.calendars
+      .filter((c) => c.truncated)
+      .map((c) => c.calendarName ?? c.calendarId);
 
     this.report = {
       tenantKey: payload.tenantKey,
@@ -212,8 +259,9 @@ export class PerfectMindAdapter implements Adapter {
       window: payload.window,
       requestsUsed: payload.requestsUsed,
       calendarsFetched: payload.calendars.length,
-      calendarsTruncated: payload.calendars.filter((c) => c.truncated).length,
-      stridesRequired: stridesForWindow(DEFAULT_WINDOW_DAYS),
+      calendarsTruncated: truncatedCalendars.length,
+      truncatedCalendars,
+      stridesRequired: stridesForWindow(windowDays(payload.window)),
       minStridesWalked: payload.calendars.length
         ? Math.min(...payload.calendars.map((c) => c.stridesWalked))
         : 0,
@@ -228,6 +276,7 @@ export class PerfectMindAdapter implements Adapter {
         // never reached the DB simply reports no baseline (a first run is not a collapse).
         baselineOccurrences: null,
         unrecognisedKeys: payload.unrecognisedKeys,
+        truncatedCalendars,
         warnings,
       }),
     };
@@ -254,6 +303,7 @@ export class PerfectMindAdapter implements Adapter {
       requestsUsed: this.report.requestsUsed,
       baselineOccurrences: baselineRecordsFound,
       unrecognisedKeys: this.report.unrecognisedKeys,
+      truncatedCalendars: this.report.truncatedCalendars,
       warnings: this.report.warnings,
     });
     this.report = { ...this.report, health: verdict };

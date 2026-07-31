@@ -91,6 +91,14 @@ export interface PerfectMindTenantConfig {
    * where strides = ceil(windowDays / 14). A cap set for a single stride will make a
    * multi-stride run die on RequestCapExceededError partway through — a loud failure
    * rather than the silent half-window this adapter shipped with once, but still wrong.
+   *
+   * RUN LENGTH AT THIS CAP IS ~7 MINUTES of wall clock at the 3s politeness floor, and
+   * that is CONFIRMED SAFE rather than assumed (orchestrator check, 2026-07-31): there is
+   * no per-job wall-clock watchdog anywhere in the scheduler — only H4's per-REQUEST
+   * deadline in worker/health/policy.ts — production cadence is daily, and T7's
+   * comparable ~14-minute Vancouver run completed normally with no forced termination.
+   * The absence of scheduling jitter is a pre-existing project-wide scaling note, not
+   * something this adapter introduces. See shared memory `dffcf5f0`.
    */
   maxRequestsPerRun: number;
   /** What was measured for this tenant, in one line. Evidence, not aspiration. */

@@ -12,7 +12,19 @@
 //   2. YIELD COLLAPSE — this run's occurrence count against the trailing baseline of
 //      recent successful runs.
 //   3. SHAPE DRIFT — an unrecognised payload key from client.ts's canary.
-//   4. ASSET-BUILD-STAMP DRIFT — the BookMe4 static-asset stamp (`?07231003`) moving.
+//   4. COVERAGE TRUNCATION — a calendar whose stride stopped on the page ceiling with the
+//      vendor's cursor still advancing, i.e. the run fetched less than the window asked
+//      for. Added for QA C2, which observed that the run report carried coverage numbers
+//      that NOTHING alerted on — "under-coverage is visible" was only half true.
+//
+//      Deliberately keyed on TRUNCATION rather than on `stridesWalked < stridesRequired`,
+//      which is the reading a literal fix would have taken. Walking fewer strides than the
+//      window needs is NORMAL and common: a genuinely short calendar hits two consecutive
+//      empty strides and stops early, exactly as intended. Alerting on that would fire a
+//      false positive on every quiet calendar and train the health board to be ignored —
+//      worse than not alerting at all. Truncation is the signal that actually means
+//      "there was more data and we stopped asking".
+//   5. ASSET-BUILD-STAMP DRIFT — the BookMe4 static-asset stamp (`?07231003`) moving.
 //      This one is specific to this vendor: the whole schedule surface is rendered by a
 //      versioned JS bundle, so the stamp changing is the earliest available warning that
 //      the JSON contract underneath it may have moved too.
@@ -39,6 +51,7 @@ export type PerfectMindHealthCode =
   | 'yield_collapse'
   | 'shape_drift'
   | 'asset_build_drift'
+  | 'coverage_truncated'
   | 'fetch_failed';
 
 export interface PerfectMindRunDiagnostics {
@@ -48,6 +61,9 @@ export interface PerfectMindRunDiagnostics {
   /** Trailing baseline of occurrences from recent successful runs; null when unknown. */
   baselineOccurrences: number | null;
   unrecognisedKeys: string[];
+  /** Calendars whose slice stopped on the per-stride page ceiling with the cursor still
+   *  advancing — real, quantified under-coverage. */
+  truncatedCalendars?: string[];
   /** Set when the live BookMe4 asset build stamp differs from the pinned one. */
   observedAssetBuildStamp?: string | null;
   expectedAssetBuildStamp?: string;
@@ -115,6 +131,18 @@ export function assessRunHealth(diag: PerfectMindRunDiagnostics): PerfectMindHea
       status: 'partial',
       alert: true,
       detail: `unrecognised payload keys for ${diag.tenantKey}: ${diag.unrecognisedKeys.join(', ')}`,
+      occurrences: diag.occurrencesParsed,
+    };
+  }
+
+  if (diag.truncatedCalendars?.length) {
+    return {
+      code: 'coverage_truncated',
+      status: 'partial',
+      alert: true,
+      detail:
+        `incomplete coverage for ${diag.tenantKey}: ${diag.truncatedCalendars.length} calendar(s) ` +
+        `stopped on the page ceiling with data still available — ${diag.truncatedCalendars.join(', ')}`,
       occurrences: diag.occurrencesParsed,
     };
   }

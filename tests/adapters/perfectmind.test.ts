@@ -14,6 +14,9 @@ import {
   BOOKME4_ASSET_BUILD_STAMP,
   getPerfectMindTenant,
   ingestableTenants,
+  defaultWindow,
+  windowDays,
+  DEFAULT_WINDOW_DAYS,
 } from '../../worker/adapters/perfectmind';
 import {
   buildFormBody,
@@ -82,6 +85,69 @@ function asCalendar(classes: BookMe4Class[], name = 'Open Gym Schedules'): Calen
   };
 }
 
+/**
+ * A faithful stand-in for the real portal, built from the measured walk in client.ts's
+ * header: `page` selects a 14-day stride, `after` walks a cursor inside it, and the
+ * "0001-01-01" sentinel means END OF STRIDE, not end of data.
+ */
+function fakePortal(opts: { days: number; perDay: number; pageSize: number; startDate: string }) {
+  const bodies: string[] = [];
+  const start = Date.parse(`${opts.startDate}T00:00:00Z`);
+  const dayOf = (i: number) => new Date(start + i * 86_400_000).toISOString().slice(0, 10);
+  // Faithful enough to survive parse.ts, not just the client: a record with no
+  // EventTimeDescription is (correctly) dropped by the parser, so a fake without one
+  // cannot be used to assert anything end-to-end.
+  const all = Array.from({ length: opts.days }, (_, d) =>
+    Array.from({ length: opts.perDay }, (_, n) => ({
+      EventId: `e${d}-${n}`,
+      EventName: `$3 Open Gym 8yrs+ slot ${n}`,
+      OccurrenceDate: dayOf(d).replace(/-/g, ''),
+      EventTimeDescription: `${String(9 + n).padStart(2, '0')}:00 am - ${String(10 + n).padStart(2, '0')}:00 am`,
+      PriceRange: 'No fee',
+      MinAge: 8,
+      NoAgeRestriction: false,
+      Facility: 'Gymnasium',
+      Location: 'Fixture Recreation Centre',
+      date: dayOf(d),
+    }))
+  ).flat();
+
+  const fetchImpl = (async (_u: unknown, init?: unknown) => {
+    const body = String((init as { body?: string })?.body ?? '');
+    bodies.push(body);
+    const params = new URLSearchParams(body);
+    const stride = Number(params.get('page') ?? '0');
+    const after = params.get('after') || '';
+
+    const strideStart = dayOf(stride * STRIDE_DAYS);
+    const strideEnd = dayOf((stride + 1) * STRIDE_DAYS - 1);
+    const inStride = all.filter((r) => r.date >= strideStart && r.date <= strideEnd);
+    const remaining = after ? inStride.filter((r) => r.date > after) : inStride;
+
+    if (remaining.length === 0) {
+      return new Response(
+        JSON.stringify({ classes: [], classesMaxEndDateString: null, nextKey: '0001-01-01' }),
+        { status: 200 }
+      );
+    }
+    // The portal returns whole days up to roughly pageSize records.
+    const batch: typeof remaining = [];
+    for (const r of remaining) {
+      if (batch.length >= opts.pageSize && r.date !== batch[batch.length - 1].date) break;
+      batch.push(r);
+    }
+    // `date` is this fake's own bookkeeping, NOT part of the vendor contract — strip it
+    // before it goes on the wire. (Leaving it in trips the unrecognised-key canary, which
+    // is the canary working correctly: it caught a foreign field in a test fixture.)
+    const wire = batch.map(({ date: _date, ...rest }) => rest);
+    return new Response(JSON.stringify({ classes: wire, nextKey: batch[batch.length - 1].date }), {
+      status: 200,
+    });
+  }) as typeof fetch;
+
+  return { fetchImpl, bodies, all };
+}
+
 // ── G-T8-2: config ──────────────────────────────────────────────────────────────────
 
 describe('G-T8-2 PerfectMind tenant config', () => {
@@ -114,6 +180,28 @@ describe('G-T8-2 PerfectMind tenant config', () => {
     for (const t of PERFECTMIND_TENANTS) {
       expect(seeds, `${t.tenantKey} has a seeded source row`).toContain(`'${t.sourceName}'`);
     }
+  });
+
+  it('the declared window spans EXACTLY DEFAULT_WINDOW_DAYS days (QA C1)', () => {
+    // The off-by-one QA measured: the window used to be [today, today + 28] INCLUSIVE =
+    // 29 days, while 2 strides only cover 28 — so the last declared day was never
+    // fetched (41 real occurrences on that day, live). Asserting the SPAN rather than the
+    // end date is what makes this catch a regression regardless of how the date is built.
+    const window = defaultWindow(nvrc, new Date('2026-07-31T12:00:00Z'));
+    expect(window.startDate).toBe('2026-07-31');
+    expect(windowDays(window), 'declared span equals the constant').toBe(DEFAULT_WINDOW_DAYS);
+    // And the depth bought is exactly the depth declared — no lost tail, no wasted stride.
+    expect(stridesForWindow(windowDays(window)) * STRIDE_DAYS).toBe(DEFAULT_WINDOW_DAYS);
+    expect(window.endDate, 'day 27, not day 28').toBe('2026-08-27');
+  });
+
+  it('windowDays counts inclusively and degrades safely on nonsense', () => {
+    expect(windowDays({ startDate: '2026-07-31', endDate: '2026-07-31' })).toBe(1);
+    expect(windowDays({ startDate: '2026-07-31', endDate: '2026-08-27' })).toBe(28);
+    // An inverted or unparseable window falls back to the constant rather than yielding
+    // 0 strides (which would fetch nothing at all while looking successful).
+    expect(windowDays({ startDate: '2026-08-27', endDate: '2026-07-31' })).toBe(DEFAULT_WINDOW_DAYS);
+    expect(windowDays({ startDate: 'nonsense', endDate: 'nonsense' })).toBe(DEFAULT_WINDOW_DAYS);
   });
 
   it('pins the BookMe4 asset build stamp as a breakage canary', () => {
@@ -179,55 +267,6 @@ describe('G-T8-3 fetch client — form bodies, cursor pagination, circuit breake
     expect(stridesForWindow(15), 'a partial stride still has to be walked').toBe(2);
     expect(stridesForWindow(0), 'never zero — always fetch something').toBe(1);
   });
-
-  /**
-   * A faithful stand-in for the real portal, built from the measured walk in client.ts's
-   * header: `page` selects a 14-day stride, `after` walks a cursor inside it, and the
-   * "0001-01-01" sentinel means END OF STRIDE, not end of data.
-   */
-  function fakePortal(opts: { days: number; perDay: number; pageSize: number; startDate: string }) {
-    const bodies: string[] = [];
-    const start = Date.parse(`${opts.startDate}T00:00:00Z`);
-    const dayOf = (i: number) => new Date(start + i * 86_400_000).toISOString().slice(0, 10);
-    const all = Array.from({ length: opts.days }, (_, d) =>
-      Array.from({ length: opts.perDay }, (_, n) => ({
-        EventId: `e${d}-${n}`,
-        OccurrenceDate: dayOf(d).replace(/-/g, ''),
-        date: dayOf(d),
-      }))
-    ).flat();
-
-    const fetchImpl = (async (_u: unknown, init?: unknown) => {
-      const body = String((init as { body?: string })?.body ?? '');
-      bodies.push(body);
-      const params = new URLSearchParams(body);
-      const stride = Number(params.get('page') ?? '0');
-      const after = params.get('after') || '';
-
-      const strideStart = dayOf(stride * STRIDE_DAYS);
-      const strideEnd = dayOf((stride + 1) * STRIDE_DAYS - 1);
-      const inStride = all.filter((r) => r.date >= strideStart && r.date <= strideEnd);
-      const remaining = after ? inStride.filter((r) => r.date > after) : inStride;
-
-      if (remaining.length === 0) {
-        return new Response(
-          JSON.stringify({ classes: [], classesMaxEndDateString: null, nextKey: '0001-01-01' }),
-          { status: 200 }
-        );
-      }
-      // The portal returns whole days up to roughly pageSize records.
-      const batch: typeof remaining = [];
-      for (const r of remaining) {
-        if (batch.length >= opts.pageSize && r.date !== batch[batch.length - 1].date) break;
-        batch.push(r);
-      }
-      return new Response(JSON.stringify({ classes: batch, nextKey: batch[batch.length - 1].date }), {
-        status: 200,
-      });
-    }) as typeof fetch;
-
-    return { fetchImpl, bodies, all };
-  }
 
   it('ACCEPTANCE (QA B1): a real walk covers the FULL declared window, not one stride', async () => {
     // THE BUG THIS EXISTS TO CATCH. The first build pinned `page: 0`, so it could never
@@ -841,6 +880,116 @@ describe('T8 adapter — triple gate, dry-run default, honest reporting', () => 
     expect(adapter.family).toBe('perfectmind');
   });
 
+  it('SEAM PIN (QA C2): a LIVE adapter run covers the full declared window', async () => {
+    // WHAT THIS CLOSES. B1's acceptance test drove fetchCalendar() directly with an
+    // explicitly-passed stride count, so it proved the WALK but not the WIRING. QA showed
+    // that hard-coding `strides = 1` at this call site left the entire suite green —
+    // silently reinstating the exact bug B1 fixed, one layer up.
+    //
+    // So this drives the real PerfectMindAdapter.fetch() end to end, env-enabled, against
+    // a portal fake spanning the whole window, and asserts on the RECORDS: they must
+    // reach the last day the window declares. Any hard-coded stride count fails it, and
+    // so does a window/depth mismatch — it is behavioural, so it cannot be satisfied by
+    // wiring that merely looks right.
+    process.env.KIDS_FUN_LIVE_PERFECTMIND = 'nvrc';
+    const adapter = new PerfectMindAdapter(nvrc);
+    expect(adapter.isLiveFetchEnabled()).toBe(true);
+
+    const window = defaultWindow(nvrc);
+    const portal = fakePortal({
+      days: DEFAULT_WINDOW_DAYS + 7, // the portal holds MORE than we ask for
+      perDay: 6,
+      pageSize: 50,
+      startDate: window.startDate,
+    });
+    // One drop-in calendar in the tree, then the classes walk.
+    const categories = JSON.stringify([
+      {
+        Name: '**Drop-In Schedules',
+        Calendars: [
+          {
+            Id: '11111111-2222-3333-4444-555555555555',
+            Name: 'Open Gym Schedules',
+            BookingLink: '/x',
+            BookingTypeInfo: { BookingType: 2 },
+          },
+        ],
+      },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockImplementation((async (url: unknown, init?: unknown) => {
+      if (String(url).includes('GetCategoriesDataV2')) {
+        return new Response(categories, { status: 200 });
+      }
+      return portal.fetchImpl(url as string, init as RequestInit);
+    }) as typeof fetch);
+
+    vi.useFakeTimers();
+    const pending = adapter.fetch();
+    await vi.advanceTimersByTimeAsync(1_200_000);
+    const raw = await pending;
+    vi.useRealTimers();
+
+    const records = adapter.extract(raw);
+    const dates = [...new Set(records.map((r) => r.startDatetimeUtc!.slice(0, 10)))].sort();
+    expect(dates[0], 'covers the first declared day').toBe(window.startDate);
+    expect(dates[dates.length - 1], 'covers the LAST declared day — C1 + C2 together').toBe(
+      window.endDate
+    );
+    expect(dates.length, 'every day of the declared window is present').toBe(DEFAULT_WINDOW_DAYS);
+
+    // The window is still enforced: the portal held 7 extra days and none leaked in.
+    expect(records.every((r) => r.startDatetimeUtc!.slice(0, 10) <= window.endDate)).toBe(true);
+
+    const report = adapter.lastRunReport()!;
+    expect(report.minStridesWalked).toBe(report.stridesRequired);
+    expect(report.truncatedCalendars).toEqual([]);
+    expect(report.health.alert, 'full coverage is not an alert').toBe(false);
+  });
+
+  it('SEAM PIN, structural: depth derives from the WINDOW, never from the constant', () => {
+    // Behavioural tests cannot catch this one, and saying so is more useful than
+    // pretending otherwise. `stridesForWindow(windowDays(window))` and
+    // `stridesForWindow(DEFAULT_WINDOW_DAYS)` are indistinguishable TODAY, because
+    // defaultWindow() is built from that same constant — a mutation swapping one for the
+    // other leaves every behavioural test green (verified by hand).
+    //
+    // They stop being equivalent the moment the window becomes per-tenant, configurable,
+    // or seasonal — at which point depth would silently follow the constant while the
+    // window moved, which is C1 all over again. So the derivation is pinned at the SOURCE
+    // level, the same technique tests/compliance/no-bypass.test.ts uses to pin endpoint
+    // path literals.
+    const src = readFileSync(resolve(process.cwd(), 'worker/adapters/perfectmind/index.ts'), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const call = /fetchTenant\([^)]*\{\s*budget\s*\}\s*,\s*([^)]+)\)/.exec(code);
+    expect(call, 'fetchTenant is called with an explicit stride depth').not.toBeNull();
+    expect(call![1], 'depth is derived from the run window, not a constant or a literal').toContain(
+      'windowDays('
+    );
+    expect(call![1], 'a bare constant here would silently decouple depth from the window')
+      .not.toMatch(/DEFAULT_WINDOW_DAYS|^\s*\d+\s*$/);
+  });
+
+  it('a TRUNCATED calendar ALERTS on the health board (QA C2)', () => {
+    // The other half of C2: the run report carried coverage numbers that nothing acted
+    // on. Truncation — not a low stride count — is the signal that genuinely means "there
+    // was more data and we stopped asking", so that is what alerts.
+    const base = {
+      tenantKey: 'nvrc',
+      occurrencesParsed: 500,
+      requestsUsed: 40,
+      baselineOccurrences: null,
+      unrecognisedKeys: [] as string[],
+      warnings: [] as string[],
+    };
+    expect(assessRunHealth(base).alert).toBe(false);
+    const verdict = assessRunHealth({ ...base, truncatedCalendars: ['Open Gym Schedules'] });
+    expect(verdict).toMatchObject({ code: 'coverage_truncated', alert: true, status: 'partial' });
+    expect(verdict.detail).toMatch(/Open Gym Schedules/);
+    // A genuinely SHORT calendar walks fewer strides and must NOT alert — alerting on
+    // stride count would fire on every quiet calendar and train the board to be ignored.
+    expect(assessRunHealth({ ...base, truncatedCalendars: [] }).alert).toBe(false);
+  });
+
   it('env alone cannot enable a tenant config says has nothing (Richmond)', () => {
     process.env.KIDS_FUN_LIVE_PERFECTMIND = 'richmond,nvrc';
     expect(new PerfectMindAdapter(richmond).isLiveFetchEnabled()).toBe(false);
@@ -854,11 +1003,12 @@ describe('T8 adapter — triple gate, dry-run default, honest reporting', () => 
     const report = adapter.lastRunReport()!;
     expect(report.calendarsFetched).toBe(1);
     expect(report.calendarsTruncated).toBe(0);
+    expect(report.truncatedCalendars).toEqual([]);
     expect(report.parse.costStatusCounts.free, 'the fixture is honestly not free').toBe(0);
-    // Coverage depth is REPORTED, not assumed. A run that walked fewer strides than the
-    // window needs covered less than it declared — the exact failure that shipped once,
-    // silently. Surfacing both numbers is what makes it visible next time.
-    expect(report.stridesRequired).toBe(2);
-    expect(report.minStridesWalked).toBe(report.stridesRequired);
+    // QA C2: the previous version of this compared two copies of the SAME expression, so
+    // it could not fail. Both sides are now independent LITERALS derived by hand from the
+    // measured contract: a 28-day window at a 14-day stride is 2 strides, full stop.
+    expect(report.stridesRequired, '28-day window / 14-day stride').toBe(2);
+    expect(report.minStridesWalked).toBe(2);
   });
 });

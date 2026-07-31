@@ -562,7 +562,18 @@ noticing the returned span was exactly half the declared window; estimated loss 
 occurrences per run across NVRC's calendars.
 
 Neither loop alone is sufficient: cursor-only stops at day 13, stride-only drops
-everything past each stride's first ~55 records. The fix walks the cursor within a stride
+everything past each stride's first ~55 records.
+
+**A second, smaller coverage bug rode in behind the first (QA C1).** With the walk fixed,
+the *window* was still off by one: `defaultWindow` declared an inclusive
+`[today, today + 28]` — 29 days — while two strides cover 28, so the final declared day
+was never fetched. QA measured 41 real occurrences lost on that one day. It rolls forward
+daily rather than accumulating, which is exactly why nothing noticed. Fixed by making the
+window span exactly `DEFAULT_WINDOW_DAYS` rather than buying a third stride (~36 extra
+requests to gain one day at the far edge of a deliberately approximate horizon). Note that
+`worker/adapters/activenet/index.ts` carries the same off-by-one; it is harmless there,
+because ActiveNet fetches its whole calendar period in one request and windows
+client-side, so the extra day is simply kept rather than lost. The fix walks the cursor within a stride
 and the stride within a ceiling, resetting the cursor at each boundary, stopping after two
 consecutive empty strides. Crawl depth is **derived** from the ingest window
 (`stridesForWindow(28) = 2`) so the two can never drift apart again, and the run report
@@ -628,6 +639,14 @@ Triple-gated, same pattern as T7, **all three currently closed**:
 2. **env** — `KIDS_FUN_LIVE_PERFECTMIND=<tenantKey,...>`, **unset everywhere**.
 3. **DB** — `source.terms_status` / `robots_status` via `worker/core/terms-gate.ts`, still
    `pending` for both PerfectMind rows.
+
+**Run length.** ~140 requests at the 3s politeness floor is roughly 7 minutes per NVRC
+run — the longest-running source on the project. Confirmed safe 2026-07-31 rather than
+assumed: there is no per-job wall-clock watchdog anywhere in the scheduler (only H4's
+per-request deadline), production cadence is daily, and a comparable ~14-minute ActiveNet
+run completed normally the same night. The absence of scheduling jitter is a pre-existing,
+project-wide scaling note that would only bite at a source count this project is not near
+— not a T8 issue.
 
 **Live fetch was NOT enabled by this task, in staging or anywhere else.** The dev stream
 deliberately built to opt-in/dry-run-by-default and left enablement to the orchestrator,
