@@ -35,18 +35,47 @@ export interface SourceBackoffState {
 
 const backoffState = new Map<string, SourceBackoffState>();
 
+/** The shared growing-backoff curve: 2^n minutes, capped at an hour. One curve for
+ *  every "the source is not answering us properly" signal, so an explicit 429 and a
+ *  silent hang are punished on the same schedule rather than by two rival policies. */
+function penalise(state: SourceBackoffState): void {
+  state.consecutiveFailures += 1;
+  const backoffMinutes = Math.min(60, 2 ** state.consecutiveFailures);
+  state.disabledUntil = new Date(Date.now() + backoffMinutes * 60_000);
+}
+
+function stateFor(sourceId: string): SourceBackoffState {
+  return backoffState.get(sourceId) ?? { disabledUntil: null, consecutiveFailures: 0 };
+}
+
 /** Call after every fetch attempt. 403/429 trip a growing backoff + disable;
  *  a 2xx response clears it. */
 export function recordResponse(sourceId: string, statusCode: number): SourceBackoffState {
-  const state = backoffState.get(sourceId) ?? { disabledUntil: null, consecutiveFailures: 0 };
+  const state = stateFor(sourceId);
   if (statusCode === 403 || statusCode === 429) {
-    state.consecutiveFailures += 1;
-    const backoffMinutes = Math.min(60, 2 ** state.consecutiveFailures);
-    state.disabledUntil = new Date(Date.now() + backoffMinutes * 60_000);
+    penalise(state);
   } else if (statusCode >= 200 && statusCode < 300) {
     state.consecutiveFailures = 0;
     state.disabledUntil = null;
   }
+  backoffState.set(sourceId, state);
+  return state;
+}
+
+/**
+ * Call when a request failed at the TRANSPORT level — it timed out and no HTTP
+ * response ever arrived, so recordResponse() has no status code to judge.
+ *
+ * Why this exists: the 403/429 breaker above can only react to a response. A source
+ * that accepts the TCP connection and then never answers produces no status at all,
+ * so before this the breaker stayed blind and a permanently-hanging source would be
+ * re-dialled on every single cadence tick forever. A hang is at least as strong a
+ * "back off from this host" signal as a 429, so it shares the same curve and is
+ * cleared by the same thing: the next 2xx.
+ */
+export function recordTransportFailure(sourceId: string): SourceBackoffState {
+  const state = stateFor(sourceId);
+  penalise(state);
   backoffState.set(sourceId, state);
   return state;
 }
