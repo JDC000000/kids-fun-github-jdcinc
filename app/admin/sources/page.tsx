@@ -122,6 +122,18 @@ export default async function AdminSourcesPage({
                     <span className={`badge ${s.robotsStatus === 'allowed' ? 'ok' : s.robotsStatus === 'pending' ? 'warn' : 'muted'}`}>
                       {s.robotsStatus}
                     </span>
+                    {/* F-5: without this, a source cleared by an unreadable-robots.txt override
+                        renders as a muted `unknown` — visually identical to a source nobody has
+                        ever checked, while the scheduler is actively fetching it. The badge is
+                        what makes 'unknown' + a named decision readable as what it is. */}
+                    {s.robotsOverrideDecision && (
+                      <>
+                        {' '}
+                        <span className="badge warn" title={s.robotsOverrideNote ?? undefined}>
+                          override: {s.robotsOverrideDecision}
+                        </span>
+                      </>
+                    )}
                   </td>
                   <td className="mono">
                     {s.baselineCadence}

@@ -10,7 +10,12 @@
 // has a liveStatusUrl, AND is opted in via KIDS_FUN_LIVE_SEASONAL. The DB
 // terms/robots gate is enforced separately by runSeasonalWatch (see below).
 import type { Pool } from 'pg';
-import { evaluateLiveFetchGate, evaluateTermsGate, type Environment } from '../../core/terms-gate';
+import {
+  evaluateLiveFetchGate,
+  evaluateTermsGate,
+  SOURCE_GATE_COLUMNS,
+  type Environment,
+} from '../../core/terms-gate';
 import { politeFetch } from '../../health/policy';
 import {
   SEASONAL_SOURCES,
@@ -206,8 +211,12 @@ export async function runSeasonalWatch(
     id: string;
     terms_status: string;
     robots_status: string;
+    robots_override_decision: string | null;
   }>(
-    `SELECT id, terms_status, robots_status
+    // Same shared column list as source-runner.ts: no seasonal source carries an F-5
+    // override today, and this is here so that granting one later doesn't produce a
+    // source that reads "authorised" and never watches (see terms-gate.ts).
+    `SELECT id, ${SOURCE_GATE_COLUMNS}
        FROM source
       WHERE family = $1 AND name = $2
       LIMIT 1`,
@@ -218,7 +227,12 @@ export async function runSeasonalWatch(
     return { ok: false, gate: { allowed: false, reason: 'source not found' }, error: `source not found: ${config.sourceFamily} / ${config.sourceName}` };
   }
 
-  const source = { id: row.id, termsStatus: row.terms_status, robotsStatus: row.robots_status };
+  const source = {
+    id: row.id,
+    termsStatus: row.terms_status,
+    robotsStatus: row.robots_status,
+    robotsOverrideDecision: row.robots_override_decision,
+  };
   const baseGate = evaluateTermsGate(source, environment);
   if (!baseGate.allowed) {
     return { ok: false, gate: baseGate, error: baseGate.reason };
