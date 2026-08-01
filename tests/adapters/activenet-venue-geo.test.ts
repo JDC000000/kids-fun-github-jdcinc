@@ -110,6 +110,46 @@ describe('G-VENUE-1 Vancouver facility-geo constant', () => {
     );
   });
 
+  it('the 12-facility breakdown is pinned against the table too, not just the source split', () => {
+    // QA flagged this as the one set of numbers in the file that nothing checked: fromOpenData,
+    // curated and activeNetCentresCovered were pinned against a live reduction, the 12/7/2/3
+    // breakdown in the header was prose. A drifting count in THIS file is a lie in the place a
+    // reader goes specifically to check whether the data can be trusted.
+    //
+    // The classification is DISJOINT and ORDER-SENSITIVE, and that is the reason it needs to be
+    // code: two co-located entries (killarney pool, renfrew park pool) also name
+    // `property-addresses` in their derivedFrom, so counting each marker independently yields
+    // 7/4/3 = 14 and silently contradicts the header. Priority: OSM by attribution, then
+    // co-located, then property-addresses.
+    const entries = Object.entries(VANCOUVER_VENUE_GEO);
+    const fromOpenStreetMap = entries.filter(([, g]) => g.attribution === 'osm-odbl');
+    const coLocated = entries.filter(
+      ([, g]) => g.attribution !== 'osm-odbl' && /co-located/i.test(g.derivedFrom)
+    );
+    const fromPropertyAddresses = entries.filter(
+      ([, g]) =>
+        g.attribution !== 'osm-odbl' &&
+        !/co-located/i.test(g.derivedFrom) &&
+        /property-addresses/i.test(g.derivedFrom)
+    );
+
+    const p = VANCOUVER_VENUE_GEO_PROVENANCE;
+    expect(coLocated.length, 'co-located').toBe(p.coLocated);
+    expect(fromPropertyAddresses.length, 'property-addresses').toBe(p.fromPropertyAddresses);
+    expect(fromOpenStreetMap.length, 'OpenStreetMap').toBe(p.fromOpenStreetMap);
+    // The three groups must be disjoint AND must sum to the stated total — either half alone
+    // would let a miscount hide.
+    const named = new Set(
+      [...coLocated, ...fromPropertyAddresses, ...fromOpenStreetMap].map(([k]) => k)
+    );
+    expect(named.size, 'the three groups must not overlap').toBe(
+      coLocated.length + fromPropertyAddresses.length + fromOpenStreetMap.length
+    );
+    expect(named.size, 'and must account for every no-community-centres facility').toBe(
+      p.noCommunityCentreRecord
+    );
+  });
+
   it('is keyed on the ACTIVENET name — 0 keys are bare open-data names', () => {
     // The measured finding this file exists to work around: open data says
     // "Hastings", the feed says "Hastings Community Centre". If a key ever becomes a

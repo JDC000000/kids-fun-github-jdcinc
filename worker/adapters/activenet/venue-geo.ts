@@ -175,6 +175,30 @@ export const VANCOUVER_VENUE_GEO_PROVENANCE = Object.freeze({
   fromOpenData: 25,
   /** …and how many a human placed. */
   curated: 11,
+  /**
+   * The 12 pools, rinks and the arena that have NO `community-centres` record at all, split by
+   * where their coordinate actually came from. The header states this breakdown in prose; these
+   * fields are what make that prose checkable.
+   *
+   * ADDED 2026-08-01 after QA noticed that `fromOpenData` / `curated` /
+   * `activeNetCentresCovered` were test-pinned against the real table and this breakdown was
+   * NOT — so it was the one set of numbers in the file free to drift. That is the same defect
+   * class this stream had just spent a commit fixing elsewhere, in the file whose entire value
+   * is that its numbers can be trusted, so it is closed rather than noted.
+   *
+   * THE CLASSIFICATION IS DISJOINT AND ORDER-SENSITIVE, which is exactly why it is worth
+   * pinning in code rather than restating in prose: two of the co-located entries ALSO mention
+   * `property-addresses` in their `derivedFrom`, so a naive per-marker count returns 7/4/3 = 14
+   * and quietly contradicts the header. Measured before writing this: OSM first (by
+   * attribution), then co-located, then whatever resolves against `property-addresses`.
+   */
+  noCommunityCentreRecord: 12,
+  /** …of which: co-located on a centre's shared civic address. */
+  coLocated: 7,
+  /** …resolved against the OGL `property-addresses` dataset. */
+  fromPropertyAddresses: 2,
+  /** …and sourced from OpenStreetMap (© OpenStreetMap contributors, ODbL). */
+  fromOpenStreetMap: 3,
 } as const);
 
 /**
