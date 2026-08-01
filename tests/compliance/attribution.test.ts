@@ -249,7 +249,7 @@ describe('G-T35-3 crawl-politeness controls are real', () => {
     expect(scheduler).not.toMatch(/robots_status\s*=\s*'/);
     const robotsClause = robotsClearedForLiveFetchSql('s');
     expect(robotsClause).toMatch(/s\.robots_status\s*=\s*'allowed'/i);
-    // The one exception, and both halves of it: the honest status AND a non-blank
+    // The one exception, and both halves of it: the honest status AND a well-formed
     // decision reference. Neither alone may clear a source.
     expect(robotsClause).toMatch(/s\.robots_status\s*=\s*'unknown'/i);
     // The reference test must be the SAME anchored shape pattern the TypeScript gate applies,

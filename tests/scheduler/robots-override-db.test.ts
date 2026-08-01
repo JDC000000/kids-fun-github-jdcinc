@@ -105,20 +105,40 @@ const PARITY_VALUES: Array<{ label: string; robotsStatus: string; decision: stri
   { label: 'a reference on a pending row', robotsStatus: 'pending', decision: 'D-12' },
 ];
 
+/** The row name a case is inserted under. Built in one place so the INSERT and the
+ *  RETURNING lookup below cannot drift. */
+const rowName = (c: Case, i: number): string => `${TAG} #${i} ${c.label}`;
+
 describe.skipIf(!hasDb)('F-5 unreadable-robots override: the two enforcement points agree (DB)', () => {
   const ids = new Map<string, string>();
 
   beforeEach(async () => {
+    // ONE multi-row INSERT, not twelve. This beforeEach runs before every test in the block,
+    // in the db lane that runs one file at a time and gates every CI run — a round trip per
+    // case is pure latency for no coverage. Behaviour is identical: same twelve rows, same
+    // values, same order in `ids`.
+    //
+    // Ids are matched back BY NAME, not by the order rows come out of RETURNING: SQL does not
+    // promise RETURNING follows the VALUES order, and a silent mis-pairing here would attach
+    // every assertion below to the wrong case while still going green.
+    const tuples = CASES.map(
+      (_, i) =>
+        `('noop', $${i * 4 + 1}, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4}, 'auto', '1 day', now() - interval '1 minute')`
+    ).join(', ');
+    const rows = await query<{ id: string; name: string }>(
+      `INSERT INTO source
+         (family, name, terms_status, robots_status, robots_override_decision,
+          ingestion_method, baseline_cadence, next_check_at)
+       VALUES ${tuples}
+       RETURNING id, name`,
+      CASES.flatMap((c, i) => [rowName(c, i), c.termsStatus, c.robotsStatus, c.override])
+    );
+
+    const idByName = new Map(rows.map((r) => [r.name, r.id]));
     for (const [i, c] of CASES.entries()) {
-      const [row] = await query<{ id: string }>(
-        `INSERT INTO source
-           (family, name, terms_status, robots_status, robots_override_decision,
-            ingestion_method, baseline_cadence, next_check_at)
-         VALUES ('noop', $1, $2, $3, $4, 'auto', '1 day', now() - interval '1 minute')
-         RETURNING id`,
-        [`${TAG} #${i} ${c.label}`, c.termsStatus, c.robotsStatus, c.override]
-      );
-      ids.set(c.label, row.id);
+      const id = idByName.get(rowName(c, i));
+      if (!id) throw new Error(`fixture insert returned no row for: ${c.label}`);
+      ids.set(c.label, id);
     }
   });
 
