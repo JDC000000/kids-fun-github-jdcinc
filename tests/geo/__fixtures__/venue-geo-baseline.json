@@ -1,0 +1,217 @@
+{
+  "britannia community centre": {
+    "lat": 49.2757,
+    "lng": -123.0714,
+    "geoHex": "0101000020E6100000CD3B4ED191C45EC0ECC039234AA34840"
+  },
+  "britannia pool": {
+    "lat": 49.2756,
+    "lng": -123.0738,
+    "geoHex": "0101000020E6100000789CA223B9C45EC088635DDC46A34840"
+  },
+  "britannia rink": {
+    "lat": 49.2756,
+    "lng": -123.0738,
+    "geoHex": "0101000020E6100000789CA223B9C45EC088635DDC46A34840"
+  },
+  "champlain heights community centre": {
+    "lat": 49.2144,
+    "lng": -123.0321,
+    "geoHex": "0101000020E6100000E78C28ED0DC25EC096218E75719B4840"
+  },
+  "coal harbour community centre": {
+    "lat": 49.2902,
+    "lng": -123.1259,
+    "geoHex": "0101000020E610000040A4DFBE0EC85EC04CA60A4625A54840"
+  },
+  "connaught park": {
+    "lat": 49.2637,
+    "lng": -123.1636,
+    "geoHex": "0101000020E61000000A68226C78CA5EC044FAEDEBC0A14840"
+  },
+  "creekside community recreation centre": {
+    "lat": 49.2718,
+    "lng": -123.1056,
+    "geoHex": "0101000020E6100000499D8026C2C65EC0C286A757CAA24840"
+  },
+  "douglas park community centre": {
+    "lat": 49.2529,
+    "lng": -123.1213,
+    "geoHex": "0101000020E61000004F401361C3C75EC04694F6065FA04840"
+  },
+  "dunbar community centre": {
+    "lat": 49.2428,
+    "lng": -123.1883,
+    "geoHex": "0101000020E61000008E75711B0DCC5EC002BC0512149F4840"
+  },
+  "false creek community centre": {
+    "lat": 49.2694,
+    "lng": -123.134,
+    "geoHex": "0101000020E61000007F6ABC7493C85EC06DC5FEB27BA24840"
+  },
+  "h.r. macmillan space centre": {
+    "lat": 49.2762,
+    "lng": -123.1448,
+    "geoHex": "0101000020E61000007E1D386744C95EC0DE9387855AA34840"
+  },
+  "hastings community centre": {
+    "lat": 49.2809,
+    "lng": -123.0393,
+    "geoHex": "0101000020E6100000E6AE25E483C25EC024B9FC87F4A34840"
+  },
+  "hastings park": {
+    "lat": 49.2819,
+    "lng": -123.0387,
+    "geoHex": "0101000020E6100000BC96900F7AC25EC0075F984C15A44840"
+  },
+  "hillcrest aquatic centre": {
+    "lat": 49.2438,
+    "lng": -123.1079,
+    "geoHex": "0101000020E610000042CF66D5E7C65EC0E561A1D6349F4840"
+  },
+  "hillcrest centre": {
+    "lat": 49.2456,
+    "lng": -123.1078,
+    "geoHex": "0101000020E610000090A0F831E6C65EC0E5F21FD26F9F4840"
+  },
+  "hillcrest community centre": {
+    "lat": 49.2438,
+    "lng": -123.1079,
+    "geoHex": "0101000020E610000042CF66D5E7C65EC0E561A1D6349F4840"
+  },
+  "hillcrest rink": {
+    "lat": 49.2438,
+    "lng": -123.1079,
+    "geoHex": "0101000020E610000042CF66D5E7C65EC0E561A1D6349F4840"
+  },
+  "kensington community centre": {
+    "lat": 49.2385,
+    "lng": -123.0755,
+    "geoHex": "0101000020E610000046B6F3FDD4C45EC04A0C022B879E4840"
+  },
+  "kensington pool": {
+    "lat": 49.2385,
+    "lng": -123.0755,
+    "geoHex": "0101000020E610000046B6F3FDD4C45EC04A0C022B879E4840"
+  },
+  "kerrisdale community centre": {
+    "lat": 49.2332,
+    "lng": -123.1571,
+    "geoHex": "0101000020E6100000E78C28ED0DCA5EC0AEB6627FD99D4840"
+  },
+  "kerrisdale cyclone taylor arena": {
+    "lat": 49.2359,
+    "lng": -123.1535,
+    "geoHex": "0101000020E6100000E7FBA9F1D2C95EC02E90A0F8319E4840"
+  },
+  "killarney community centre": {
+    "lat": 49.2274,
+    "lng": -123.0444,
+    "geoHex": "0101000020E610000050FC1873D7C25EC0228E75711B9D4840"
+  },
+  "killarney pool": {
+    "lat": 49.2274,
+    "lng": -123.0444,
+    "geoHex": "0101000020E610000050FC1873D7C25EC0228E75711B9D4840"
+  },
+  "kitsilano community centre": {
+    "lat": 49.2621,
+    "lng": -123.1601,
+    "geoHex": "0101000020E6100000BC0512143FCA5EC00B24287E8CA14840"
+  },
+  "lord byng pool": {
+    "lat": 49.2595,
+    "lng": -123.1928,
+    "geoHex": "0101000020E6100000CEAACFD556CC5EC0F0A7C64B37A14840"
+  },
+  "marpole-oakridge community centre": {
+    "lat": 49.2145,
+    "lng": -123.1275,
+    "geoHex": "0101000020E61000005C8FC2F528C85EC0FA7E6ABC749B4840"
+  },
+  "mount pleasant community centre": {
+    "lat": 49.2643,
+    "lng": -123.1002,
+    "geoHex": "0101000020E6100000CAC342AD69C65EC0992A1895D4A14840"
+  },
+  "raycam co-operative centre": {
+    "lat": 49.2807,
+    "lng": -123.0841,
+    "geoHex": "0101000020E6100000FE65F7E461C55EC05DFE43FAEDA34840"
+  },
+  "renfrew park community centre": {
+    "lat": 49.2524,
+    "lng": -123.043,
+    "geoHex": "0101000020E6100000986E1283C0C25EC055C1A8A44EA04840"
+  },
+  "renfrew park pool": {
+    "lat": 49.2524,
+    "lng": -123.043,
+    "geoHex": "0101000020E6100000986E1283C0C25EC055C1A8A44EA04840"
+  },
+  "renfrew pool": {
+    "lat": 49.2506,
+    "lng": -123.0432,
+    "geoHex": "0101000020E6100000FBCBEEC9C3C25EC055302AA913A04840"
+  },
+  "roundhouse community arts and recreation centre": {
+    "lat": 49.2733,
+    "lng": -123.1217,
+    "geoHex": "0101000020E610000016FBCBEEC9C75EC097FF907EFBA24840"
+  },
+  "steveston library (easthope hub)": {
+    "lat": 49.12546,
+    "lng": -123.1783832,
+    "geoHex": "0101000020E6100000F9895EA16ACB5EC0637AC2120F904840"
+  },
+  "strathcona community centre": {
+    "lat": 49.2798,
+    "lng": -123.0915,
+    "geoHex": "0101000020E610000060E5D022DBC55EC0DDB5847CD0A34840"
+  },
+  "sunset community centre": {
+    "lat": 49.2229,
+    "lng": -123.1006,
+    "geoHex": "0101000020E6100000917EFB3A70C65EC0A323B9FC879C4840"
+  },
+  "sunset rink": {
+    "lat": 49.2232,
+    "lng": -123.0982,
+    "geoHex": "0101000020E6100000E71DA7E848C65EC0CD3B4ED1919C4840"
+  },
+  "templeton park pool": {
+    "lat": 49.2785,
+    "lng": -123.0588,
+    "geoHex": "0101000020E61000004F401361C3C35EC0CFF753E3A5A34840"
+  },
+  "thunderbird community centre": {
+    "lat": 49.2636,
+    "lng": -123.0321,
+    "geoHex": "0101000020E6100000E78C28ED0DC25EC0E09C11A5BDA14840"
+  },
+  "trout lake community centre": {
+    "lat": 49.2553,
+    "lng": -123.0655,
+    "geoHex": "0101000020E6100000D578E92631C45EC09B559FABADA04840"
+  },
+  "trout lake rink": {
+    "lat": 49.2553,
+    "lng": -123.0655,
+    "geoHex": "0101000020E6100000D578E92631C45EC09B559FABADA04840"
+  },
+  "vancouver aquarium": {
+    "lat": 49.3006,
+    "lng": -123.131,
+    "geoHex": "0101000020E6100000AAF1D24D62C85EC0BC96900F7AA64840"
+  },
+  "west end community centre": {
+    "lat": 49.2899,
+    "lng": -123.1361,
+    "geoHex": "0101000020E6100000143FC6DCB5C85EC0228E75711BA54840"
+  },
+  "west point grey community centre - aberthau": {
+    "lat": 49.2718,
+    "lng": -123.2045,
+    "geoHex": "0101000020E61000000C022B8716CD5EC0C286A757CAA24840"
+  }
+}

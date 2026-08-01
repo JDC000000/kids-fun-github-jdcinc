@@ -93,6 +93,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/email/account_deletion_cascade.test.ts',
   'tests/email/weekly_send.test.ts',
   'tests/geo/radius-postgres.test.ts',
+  'tests/geo/venue-geo-golden.test.ts',
   'tests/health/policy.test.ts',
   'tests/health/season.test.ts',
   'tests/health/sla.test.ts',
