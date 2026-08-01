@@ -212,3 +212,61 @@
   color: var(--rainy-fog);
   margin: 0;
 }
+
+/* ── Desktop / tablet layer ───────────────────────────────────────────────────
+ * Breakpoint scale and --kf-gutter are defined once in preview.css; this file
+ * only keys off them. The home grid was authored two-up for a 440px phone
+ * shell, so on a wide shell two 500px tiles and a single column of trust cards
+ * just stretch. These rules let the content use the width instead. */
+
+@media (min-width: 768px) {
+  .kf-home__hero,
+  .kf-home__main {
+    padding-left: var(--kf-gutter);
+    padding-right: var(--kf-gutter);
+  }
+  /* auto-fit lets the category tiles reflow 2 -> 3 -> 5 on their own rather
+     than hard-coding a column count per breakpoint (and without coupling the
+     CSS to how many categories there happen to be). 160px is chosen so all
+     five current tiles clear one row at lg and up instead of leaving a single
+     orphan on a second row. */
+  .kf-home__tiles {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .kf-home__search-input {
+    max-width: 480px;
+  }
+  .kf-home__today {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-items: start;
+  }
+  .kf-home__today .kf-card {
+    margin-bottom: 0;
+    height: 100%;
+  }
+}
+
+@media (min-width: 1024px) {
+  /* The three trust points are peers — reading them as a row makes that legible
+     and stops the page running long for no reason. */
+  .kf-home__trust {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .kf-home__trust-item {
+    height: 100%;
+  }
+}
+
+@media (min-width: 1280px) {
+  .kf-home__today {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .kf-home__footer {
+    padding: 24px var(--kf-gutter) 30px;
+  }
+}

@@ -3,6 +3,11 @@
 .input {
   width: 100%;
   min-width: 0;
+  /* `width: 100%` with the default content-box makes the 14px side padding and
+     1px border ADD to the 100%, so the field overflows its container by 30px
+     wherever it is width-constrained rather than free to grow. There is no
+     global box-sizing reset in this app, so the primitive owns it. */
+  box-sizing: border-box;
   min-height: 48px; /* WCAG 2.5.8; comfortable one-handed target */
   padding: 10px 14px;
   font-family: var(--kf-font-ui);
