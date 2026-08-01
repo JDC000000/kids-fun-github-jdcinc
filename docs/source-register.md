@@ -492,7 +492,7 @@ are `class_program`. The taxonomy is not tuned for this source's vocabulary.
    `terms_status`/`robots_status` promotion described in §1 before anything ingests. That
    promotion is an operator action, deliberately not performed here.
 
-#### 6.3.6 Venue phone numbers — captured 2026-08-01, stored, and deliberately not surfaced
+#### 6.3.6 Venue phone numbers — captured 2026-08-01, stored, and (after a same-day reversal) shown to parents
 
 `/onlinecalendar/centerdetails` returns a public phone number for each facility alongside
 the address this adapter was already reading. From T7 REBUILD until 2026-08-01 that number
@@ -511,9 +511,12 @@ sources (the facilities' own sites and the City of Burnaby listing, since `vanco
 
 **Stored verbatim, never reformatted.** 35 of the 36 Vancouver values render `(604) NNN-NNNN`
 and one renders `+1 (604) NNN-NNNN`. Choosing a canonical rendering is a *display* decision
-and no display layer consumes this column yet; normalising at ingest would destroy the
-source's own rendering irreversibly for a consumer that has not been designed. Same rule
-`address` already follows.
+and normalising at ingest would destroy the source's own rendering irreversibly. Same rule
+`address` already follows. *The display layer now exists (see the reversal below) and it
+kept that rule rather than overturning it: `ActivityDetail` prints the stored string
+byte-for-byte and normalises ONLY the `tel:` href — `telHref()` in
+`app/preview/_data/format.ts` — so the `+1` value and the 35 parenthesised ones each render
+as their source wrote them, and the dial target is derived per-render rather than stored.*
 
 **No CHECK constraint, and the honest reason.** A phone number has no canonical shape worth
 asserting in SQL — this source alone publishes parenthesised, `+1`-prefixed and
@@ -564,19 +567,50 @@ the trade-off cannot be reversed by accident. Allowing a bounded trailing label 
 the prose hole (there is no principled line between `, press 2` and `, Sat 10:00-14:00`), and
 the last two hold *two* numbers, which a scalar column cannot honestly represent at all.
 
-**NOT SURFACED TO PARENTS — a deliberate sequencing call, not an omission.** The number is
-captured and stored; nothing parent-facing reads it. Three reasons, recorded in
-`app/preview/_components/ActivityDetail.tsx`: (1) one source family of seven populates it, so
-rec-centre listings would carry a number and every library/museum/Eventbrite listing would
-not — a parent cannot see that the gap tracks which back-end a municipality bought, it reads
-as missing data; (2) 13 of the 36 Vancouver facilities share a line in 6 groups, 7 of them
-satellites answering on a parent centre's main number (Hillcrest contributes two — its Rink
-and its Aquatic Centre), so printed beside one drop-in session it implies "call about this
-session," which the data does not support; (3) it is not reachable from that component
-without changing `lib/search/postgres-repository.ts`'s listing SELECT and `GROUP BY`,
-`ListingRecord`, the fixture mappers and the `Activity` type — the search lane, a separate
-review. **Revisit when** a second family populates `venue.phone` AND the parent-facing
-wording is settled with Jon.
+**SURFACED TO PARENTS — the hold-back was REVERSED by Jon the same day it was recorded.**
+This section originally documented a decision NOT to render the number, with a REVISIT-WHEN
+condition. That decision no longer holds and the condition is void; the paragraph below
+replaces it rather than sitting beside it, so the register never describes a rule the
+product has stopped following.
+
+Jon's instruction, 2026-08-01, relayed verbatim: *"Yes, show parents the telephone number
+for all venues. The key user experience is finding information — discoverability and
+details. If they want to convert to a phone call off-platform, that's great, good for them.
+Make those phone numbers prominent and easily available."* Off-platform conversion is an
+explicitly ACCEPTED outcome here, not leakage to be minimised — that is what settles the
+question, and it is the part most likely to be re-litigated by someone reading only the
+engineering reasons.
+
+What happened to each of the three original reasons:
+
+| original reason | disposition |
+|---|---|
+| **(1) one source family of seven populates it** — the gap tracks which back-end a municipality bought, which a parent cannot perceive | **Overruled, and shown anyway.** Handled the way `locationUrl` already is: rendered only when present. A listing with no phone renders *nothing* — no empty field, no placeholder, no "not available" implying one is missing. Pinned by test, across every phone-less fixture rather than one sample. |
+| **(2) the number is a front desk, not a booking line** — 13 of the 36 Vancouver facilities share a line in 6 groups, 7 of them satellites on a parent centre's main number (the groups, recomputed from the captured fixtures by independent QA rather than carried forward: Hillcrest CC/Rink/Aquatic `(604) 257-8680` — **two** satellites; Britannia CC/Rink `(604) 718-5800`; Sunset CC/Rink `(604) 718-6505`; Trout Lake CC/Rink `(604) 257-6955`; Killarney CC/Pool `(604) 718-8200`; Kensington CC/Pool `(604) 718-6200`. Britannia **Pool** has its own distinct line and is NOT in the Britannia group — an earlier partial enumeration of this list named only 5 of the 7 satellites, omitting Trout Lake Rink and Sunset Rink) | **Answered by COPY, not by hiding** — QA's own recommendation (priority 6), which argued this reason was the load-bearing one and was resolvable today without a vendor. The CTA reads **"Call the venue"** and never interpolates the facility name (`Call {venue}` would be false for exactly those 7 satellites); the note reads *"The venue's front desk — not a line for this specific session. At sites with more than one facility it may ring the main centre."* Every clause is true of all 43 captured values, shared-line or not. The copy is asserted as a contract in `tests/ui/venue-phone.test.tsx`, including negative assertions against the claims the data cannot support ("call about this session", "book by phone"). |
+| **(3) not reachable from that component** | **Was true; fixed rather than cited.** `v.phone` added to the listing SELECT **and its GROUP BY** (`lib/search/postgres-repository.ts` — the query is aggregated, so the GROUP BY is not optional) → `ListingRecord.venuePhone` → `mapListingRecordToActivity` → `Activity.venuePhone` → hero of `ActivityDetail`. Proven against real Postgres on both read paths (list and detail-by-id) in `tests/search/postgres-repository.test.ts`. |
+
+**Placement, and why the search card is not it.** The number sits in the detail-page hero,
+directly under the venue name and above the stat row — the "prominent and easily available"
+half of the instruction, and the ordering is asserted in test rather than left to drift.
+It is deliberately NOT on the search result card or the map popup: both are ONE anchor
+wrapping their entire body, and a `tel:` link nested inside another anchor is invalid HTML
+that terminates the outer link early, breaking the card's own primary action. That is a
+structural constraint rather than an editorial preference — but **not an impossibility, and
+this section should not be read as claiming one.** Independent QA named the escape hatch:
+the *stretched-link* pattern (plain `<div>`, an invisible `::after` full-cover anchor for
+"See details", and a normal higher-stacking anchor for the phone) would carry both links
+without nesting. That is a redesign of the scan unit, declined for scope here, and it is the
+route to take if surfacing the number from the list view ever becomes a goal. Recorded in
+`app/preview/_components/ActivityCard.tsx` so it is not re-litigated as a copy question.
+
+**Consequence for F-8 (§7).** F-8 — a value rejected by `normaliseVenuePhone()` is silent —
+was rated `low` *explicitly conditional on this section's hold-back*, and its own entry says
+the rating expires the moment the column renders. It now renders, so F-8 is re-rated there
+and is a live follow-up, not backlog: a wholesale vendor format change would now remove
+phone numbers from parent-facing listings on a green run with nothing reporting it. It is
+NOT bundled into this display change — it is an ingest-path signature change
+(`buildVenueIndex`) in a different lane, which is exactly the unreviewed scope expansion the
+original entry declined to make.
 
 **Known gap, tracked not closed:** a value rejected by the guard is **silent**. If the vendor
 switched wholesale to `Tel: …`, coverage would fall 36/36 → 0/36 with nothing in the run
@@ -1583,40 +1617,64 @@ implemented**, not open.
   prevent, over one numeric literal. Verified collision-safe (no in-flight branch touches
   those three files) and mechanical, so it is a clean small follow-up for whoever wants it.
 
-- **F-8 (low, 2026-08-01) — a phone value rejected by `normaliseVenuePhone()` is SILENT.**
+- **F-8 (RE-RATED `low` → `medium`, 2026-08-01, when F-9 resolved to SHOW) — a phone value
+  rejected by `normaliseVenuePhone()` is SILENT.**
   The guard (§6.3.6) correctly refuses anything that is not plausibly a dial string, but it
   refuses it *quietly*: nothing in the run output distinguishes "this vendor published no
-  phone" from "this vendor published something we refused." Today that is invisible — 43/43
-  real values pass — but it means a wholesale vendor format change (e.g. every value becoming
-  `Tel: (604) …`) would drop coverage from 36/36 to 0/36 with a clean green run, which is the
-  same silent-discard shape that made the original `venuePhone` bug survive two days. The fix
-  is a rejection count surfaced alongside the existing `venuesWithoutGeo` warning, which
-  requires `buildVenueIndex` to return more than a `Map` — a signature change plus a new
-  `VenueApplyResult` field. **Deliberately NOT bundled** into the capture task's
-  documentation/pin commits, where it would have been an unreviewed scope expansion on the
-  ingest path; flagged here so it is a tracked decision rather than a comment nobody reads.
-  **Its `low` severity is conditional on F-9 being unresolved, and expires with it.** While
-  nothing renders the column, a silent drop to zero coverage costs nothing a parent can see.
-  The moment F-9 resolves to *show*, the same silence becomes a user-visible failure — phone
-  numbers disappearing from listings with a green run and no warning — so this stops being a
-  backlog item and becomes a precondition of that work. Re-rate it then; do not carry the
-  `low` forward on the strength of this entry's own label.
+  phone" from "this vendor published something we refused." A wholesale vendor format change
+  (e.g. every value becoming `Tel: (604) …`) would drop coverage from 36/36 to 0/36 with a
+  clean green run — the same silent-discard shape that made the original `venuePhone` bug
+  survive two days. The fix is a rejection count surfaced alongside the existing
+  `venuesWithoutGeo` warning, which requires `buildVenueIndex` to return more than a `Map` —
+  a signature change plus a new `VenueApplyResult` field.
+  **The `low` was conditional on F-9 being unresolved, and that condition has now expired —
+  as this entry itself instructed.** When it was written, nothing rendered the column, so a
+  silent drop to zero coverage cost nothing a parent could see. F-9 resolved to SHOW the same
+  day and `venue.phone` now renders in the detail-page hero (§6.3.6), which converts the same
+  silence into a user-visible failure: phone numbers vanishing from listings, green run, no
+  warning. Re-rated **`medium`**; a live follow-up, not backlog.
+  **Deliberately still not bundled** — the reason has held across both changes. The capture
+  task would have expanded into the ingest path from a documentation commit; the display
+  change is confined to the search/UI lane, and this is an ingest-path signature change
+  touching `buildVenueIndex`, `VenueApplyResult` and ~15 test call sites. Folding it into a
+  parent-facing copy review is the cross-lane scope expansion the convention exists to
+  prevent. It should be its own small change, **next** — not left open indefinitely on the
+  strength of "the display already shipped."
+  **DISPATCHED 2026-08-01** as its own stream (registry round 73, session `39c1c2b9`) rather
+  than parked, on the explicit call that it does not block the display merge: the phone data
+  is correct and independently verified *right now*, and F-8 protects against future drift,
+  not present error.
 
-- **F-9 (info, needs a product decision not investigation, 2026-08-01) — whether venue phone
-  numbers are shown to parents at all.** `venue.phone` is populated and stored; nothing
-  parent-facing reads it. The engineering is not the blocker — the two open questions are
-  (a) whether a field only one source family populates should render at all before a second
-  one does, given that the gap tracks which back-end a municipality bought rather than
-  anything a parent can perceive, and (b) what the number should be *called*, since for 7 of
-  the 36 Vancouver facilities it is a parent centre's main desk rather than a line about that
-  session. Full reasoning in §6.3.6 and in `ActivityDetail.tsx`. **Routed rather than decided
-  unilaterally**, on the same basis as F-5: the capture was Jon's explicit approval, the
-  surfacing and its wording were not.
-  **If this resolves to SHOW, F-8 becomes a precondition of the display work, not a parallel
-  backlog item** — shipping a rendered phone number on top of a silent rejection path means a
-  vendor format change removes phone numbers from listings with nothing reporting it. Resolve
-  F-8 first, or in the same change; do not let its `low` rating (which assumes this flag stays
-  open) carry it past the point where it stops being true.
+- **F-9 (RESOLVED 2026-08-01 by Jon — SHOW) — whether venue phone numbers are shown to
+  parents at all.** Routed rather than decided unilaterally, on the same basis as F-5: the
+  *capture* was Jon's explicit approval; the *surfacing* and its wording were not, so the
+  build stopped and asked. Both open questions were answered the same day.
+  (a) *Should a field only one source family populates render at all before a second one
+  does?* — **Yes.** Discoverability is the product; a field that renders only when present is
+  a solved UI problem, and QA's second opinion had already flagged that this reason alone
+  would not have justified holding back. (b) *What should the number be called, given that
+  for 7 of the 36 Vancouver facilities it is a parent centre's main desk?* — it is called
+  **the venue's front desk**, never this session's line and never `Call {facility name}`,
+  which is the one framing true of all 43 captured values. Jon's own framing of the trade-off
+  is worth keeping, because it is the part an engineer would not have assumed: *"If they want
+  to convert to a phone call off-platform, that's great, good for them."*
+  Built and shipped in the same decision — see §6.3.6 for the wire, the placement and the
+  copy contract. **F-8 is now a live `medium` follow-up rather than a parallel backlog item**,
+  exactly as this flag's original text said it would become.
+
+- **F-10 (info, from independent QA of the phone-display change, 2026-08-01) — the caveat
+  copy is universal because the data model cannot tell a satellite from a parent centre.**
+  "At sites with more than one facility it **may** ring the main centre" is a single static
+  string shown on every phone-bearing listing. QA verified it is the *correct* universal
+  wording given the available signal — it stays true across all 43 values, for the 7 where it
+  definitely does ring the main centre and the 36 where it does not — and explicitly rated it
+  "not hedging-into-uselessness." But the hedge exists only because nothing on `venue` marks
+  a facility as a satellite of another. A per-venue flag (derivable today: the 6 groups are
+  exactly the venues sharing a phone value) would let the copy say **"answers on the main
+  centre's line"** definitively for those 7 and drop the caveat entirely for the other 36 —
+  strictly more honest in both directions. **Not built**: it is a data-model change in the
+  ingest lane, the same lane as F-8, and the current wording is accurate rather than merely
+  defensible. Worth doing when someone is next in `venue` schema, not on its own.
 
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source

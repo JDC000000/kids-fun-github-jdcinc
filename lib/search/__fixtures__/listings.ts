@@ -45,6 +45,10 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanEast,
     neighbourhood: 'Grandview-Woodland',
+    // Fixture phones use the NANP 555-01xx block reserved for fiction — the demo shell is a
+    // real, reachable surface and must never dial a real front desk. Live numbers come from
+    // `venue.phone` in database mode only.
+    venuePhone: '(604) 555-0142',
     bookingUrl: 'https://example.org/book/open-gym',
   }),
   makeListing({
@@ -166,6 +170,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     geo: P.westSide,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanWestSide,
+    // The one ActiveNet rendering shape that carries a country code; kept verbatim on purpose.
+    venuePhone: '+1 (604) 555-0177',
   }),
   makeListing({
     id: 'l-swim-nvan-evening',

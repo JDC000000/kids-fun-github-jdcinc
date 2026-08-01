@@ -16,8 +16,12 @@
 // further — StructuredRecord had no field and `venue` had no column, so it was fetched
 // and dropped every run. It now lands in `venue.phone` (migration 0024) through
 // StructuredRecord.venuePhone and resolveVenue()'s existing COALESCE enrichment. Stored
-// verbatim, guarded by normaliseVenuePhone() below, and read by NOTHING parent-facing
-// yet — that is a deliberate sequencing call, recorded in ActivityDetail.tsx.
+// verbatim, guarded by normaliseVenuePhone() below, and — since the 2026-08-01 reversal
+// of the original hold-back — READ BY THE PARENT-FACING DETAIL PAGE. What this file emits
+// is now what a parent taps to call, so a value that reaches `venue.phone` is a live
+// user-visible fact, not an admin/ops column. Display keeps the verbatim rule: only the
+// `tel:` href is normalised, at render time (app/preview/_data/format.ts). See
+// docs/source-register.md §6.3.6 and app/preview/_components/ActivityDetail.tsx.
 //
 // Unmapped centres are a WARNING, never a silent null: a centre that appears in the
 // feed but not in centerdetails means the batch missed something, and that must be
@@ -100,12 +104,11 @@ const MIN_PHONE_DIGITS = 7;
  * fail-closed posture as the rest of this function: we lose a nicety, we do not store
  * something no caller can dial.
  *
- * KNOWN GAP, NOT CLOSED HERE (follow-up, deliberately not smuggled into a text-fix
- * commit): a rejected value is currently SILENT. If the vendor ever switched wholesale to
- * one of the forms above, phone coverage would fall from 36/36 to 0/36 with nothing in
- * the run output saying so — the same silent-discard shape as the bug 0024 exists to fix,
- * one layer up. Reporting it needs `buildVenueIndex` to return rejection counts alongside
- * the index, which changes its signature and deserves its own review.
+ * KNOWN GAP, NOT CLOSED HERE (register flag F-8): a rejected value is SILENT. A wholesale
+ * vendor format change would drop coverage 36/36 → 0/36 on a green run with nothing saying
+ * so — and since the detail page now RENDERS this column, that failure is user-visible:
+ * phone numbers disappear from listings and no run output reports it. Fixing it changes
+ * `buildVenueIndex`'s signature, so it is its own review. See docs/source-register.md F-8.
  *
  * WHY NOT A DB CHECK CONSTRAINT instead: a phone number has no canonical shape worth
  * asserting in SQL, and this function already means the column never sees garbage. See
@@ -115,7 +118,9 @@ const MIN_PHONE_DIGITS = 7;
  *
  * WHAT THIS DELIBERATELY DOES NOT DO: reformat. `(604) 718-8222` and
  * `+1 (604) 257-8195` are both stored exactly as published. Picking a canonical
- * rendering is a display decision and nothing parent-facing reads this yet.
+ * rendering is a display decision, and the display layer that now exists made it the
+ * other way: `ActivityDetail` prints this string byte-for-byte and derives the `tel:`
+ * target per render (`telHref`), so the value stored here is the value a parent reads.
  */
 export function normaliseVenuePhone(raw: string | undefined): string | undefined {
   const value = (raw ?? '').trim();

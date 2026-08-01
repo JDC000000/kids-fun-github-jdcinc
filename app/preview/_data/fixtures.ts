@@ -27,6 +27,11 @@ export const ACTIVITIES: Activity[] = [
     sourceName: 'vancouver.ca',
     sourceUrl: 'https://vancouver.ca/parks-recreation-culture/trout-lake-community-centre.aspx',
     locationUrl: 'https://maps.google.com/?q=Trout+Lake+Community+Centre+Vancouver',
+    // Fixture phones use the NANP 555-01xx block reserved for fiction — /preview is a real,
+    // reachable surface and must never dial a real front desk. Live numbers come from
+    // `venue.phone` in database mode only. Most fixtures deliberately carry NO phone, which
+    // is the majority live case too.
+    venuePhone: '(604) 555-0119',
     lastCheckedIso: '2026-07-13T07:30:00-07:00',
     indoor: true,
     rainyDay: true,
@@ -211,6 +216,7 @@ export const ACTIVITIES: Activity[] = [
     id: 'killarney-skate-lessons',
     activityName: 'Learn-to-skate lessons',
     venue: 'Killarney Community Centre',
+    venuePhone: '(604) 555-0163',
     area: 'Killarney',
     driveMinutes: 20,
     distanceKm: 9.1,

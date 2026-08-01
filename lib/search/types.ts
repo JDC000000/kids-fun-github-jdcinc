@@ -92,6 +92,14 @@ export interface ListingRecord {
   neighbourhood: string | null;
   displayArea: string | null;
 
+  /**
+   * The venue's own published phone number (`venue.phone`), verbatim as the source renders
+   * it — surfaced by UX, never indexed or matched on. Null for every source family that
+   * publishes no facility number (today: everything except ActiveNet), so consumers MUST
+   * treat absence as normal. See docs/source-register.md §6.3.6.
+   */
+  venuePhone: string | null;
+
   // Links (surfaced by UX, not indexed).
   sourceUrl: string | null;
   bookingUrl: string | null;

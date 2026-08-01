@@ -595,6 +595,43 @@
   font-size: 14px;
   color: var(--ink-secondary);
 }
+
+/* Venue phone — in the hero rather than tucked into the provenance panel, because the
+ * product decision (2026-08-01) is that the number must be EASY TO FIND, not merely
+ * present. Only renders when the source published one. */
+.kf-detail__contact {
+  margin-top: 10px;
+}
+.kf-phone {
+  min-height: 44px; /* thumb target, same floor as .kf-link */
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--neutral-300);
+  border-radius: 12px;
+  /* Explicit --surface (not the hero's --canvas) so --info-text composites onto the same
+   * background .kf-link's 7.68:1 / 8.33:1 contrast was measured against. */
+  background: var(--surface);
+  color: var(--info-text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.kf-phone__label {
+  font-weight: 700;
+}
+.kf-phone__number {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.kf-phone__note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
 .kf-statrow {
   display: grid;
   grid-template-columns: 1fr 1fr;

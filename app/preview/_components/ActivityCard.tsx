@@ -1,6 +1,15 @@
 // The activity card — the atomic unit. Answers the six parent questions on the
 // face (what / who / when / where / cost / bookable) plus the freshness stamp,
 // so a parent can judge it without opening the source. Capped for one-glance scan.
+//
+// NO PHONE NUMBER HERE. This card and the map popup (ResultsMap.tsx) are each ONE anchor
+// wrapping their ENTIRE body, and a `tel:` link nested inside another anchor is invalid
+// HTML — the parser closes the outer anchor at the inner one, so the tail of the card
+// stops being clickable and the primary "See details" action breaks. NOT impossible,
+// though: the stretched-link pattern (plain <div>, invisible ::after full-cover anchor for
+// details, normal higher-stacking anchor for the phone) would work. That is a redesign of
+// the scan unit, declined for scope — see docs/source-register.md §6.3.6. The number lives
+// on the detail page, one tap away behind this card's own CTA.
 
 import Link from 'next/link';
 import { Badge } from '@/components/ui';
