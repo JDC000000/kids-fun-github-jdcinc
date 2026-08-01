@@ -178,13 +178,33 @@ describe('G-VENUE-1 Vancouver facility-geo constant', () => {
     ).toBeUndefined();
     expect(britannia.derivedFrom).toMatch(/citycalendar/);
 
-    // The pool and the rink are separate buildings on the same campus with no better
-    // per-building source, so they deliberately keep the City's site-level point.
-    for (const name of ['britannia pool', 'britannia rink']) {
-      expect(VANCOUVER_VENUE_GEO[name].lat, name).toBe(49.2756);
-      expect(VANCOUVER_VENUE_GEO[name].lng, name).toBe(-123.0738);
-      expect(VANCOUVER_VENUE_GEO[name].attribution, name).toBe('ogl-vancouver');
-    }
+    // The POOL keeps the City's site-level point: it is a separate building on the same
+    // campus and no better per-building source exists for it. Re-measured 2026-08-01
+    // rather than inherited — an Overpass sweep of the campus returns no named pool
+    // feature at all. This is now a one-entry assertion; it used to cover the rink too.
+    const pool = VANCOUVER_VENUE_GEO['britannia pool'];
+    expect(pool.lat).toBe(49.2756);
+    expect(pool.lng).toBe(-123.0738);
+    expect(pool.attribution).toBe('ogl-vancouver');
+  });
+
+  it('Britannia Rink is on its OWN building footprint, not the campus site-point', () => {
+    // Corrected 2026-08-01 (registry round 56). The old value was faithful to its stated
+    // source and still 236 m from the building — which is exactly why this file records a
+    // per-entry `derivedFrom` instead of a per-file one. Pinned separately from the pool
+    // so the two can never silently re-converge onto one point, and asserted on the
+    // ATTRIBUTION as well as the coordinate: a point sourced from OSM rendering the City's
+    // OGL notice would be a false licence claim of the exact kind source-register §6.6
+    // records (the per-venue notice that shipped and had to be pulled).
+    const rink = VANCOUVER_VENUE_GEO['britannia rink'];
+    expect(rink.lat).toBe(49.276);
+    expect(rink.lng).toBe(-123.0706);
+    expect(rink.source).toBe('curated');
+    expect(rink.attribution).toBe('osm-odbl');
+    expect(rink.derivedFrom).toMatch(/way 32896473/);
+    // It must NOT have quietly kept the campus site-point it was moved off.
+    const pool = VANCOUVER_VENUE_GEO['britannia pool'];
+    expect({ lat: rink.lat, lng: rink.lng }).not.toEqual({ lat: pool.lat, lng: pool.lng });
   });
 
   it('the Britannia convergence is pinned to citycalendar\'s ACTUAL value, not a copy of it', () => {

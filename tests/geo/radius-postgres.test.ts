@@ -18,11 +18,15 @@ describe.skipIf(!hasDb)('venuesWithinRadius (G-T18-1)', () => {
 
   it('a 10km radius returns an in-radius venue with a computed distance, excludes a far one', async () => {
     const [near] = await query<{ id: string }>(
-      `INSERT INTO venue (name, geo) VALUES ('Near Venue', ST_SetSRID(ST_MakePoint($1,$2),4326)::geography) RETURNING id`,
+      // geo_authority is not optional decoration on a hand-written fixture: migration 0025's
+      // venue_geo_authority_paired CHECK refuses a coordinate whose authority is unknown,
+      // because such a row is UNCOMPARABLE to the write rule. 0 = legacy/unattributed, which
+      // is the honest tier for a synthetic point.
+      `INSERT INTO venue (name, geo, geo_authority) VALUES ('Near Venue', ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, 0) RETURNING id`,
       [EAST_VAN.long, EAST_VAN.lat]
     );
     await query(
-      `INSERT INTO venue (name, geo) VALUES ('Far Venue', ST_SetSRID(ST_MakePoint($1,$2),4326)::geography)`,
+      `INSERT INTO venue (name, geo, geo_authority) VALUES ('Far Venue', ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, 0)`,
       [WHISTLER.long, WHISTLER.lat]
     );
 

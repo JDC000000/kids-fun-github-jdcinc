@@ -15,6 +15,7 @@
 // env allow-list KIDS_FUN_LIVE_CITY_CALENDARS=<calendarKey>.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
 import { politeFetch } from '../../health/policy';
+import { VENUE_GEO_AUTHORITY } from '../../core/venue-geo-authority';
 import { CITY_CALENDARS, getCityCalendar, type CityCalendarConfig, type CityCalendarVenueGeo } from './config';
 
 const DEFAULT_LIMIT = 40;
@@ -269,6 +270,13 @@ export class CityCalendarAdapter implements Adapter {
           venueAddress: geo?.address ?? loc.venueAddress,
           venueLat: geo?.lat,
           venueLng: geo?.lng,
+          // Curated by a human, but with no per-entry provenance and no recorded
+          // measurement to audit it against — so it ranks below both of activenet's tiers.
+          // That is what settles the four venues the two families share (Killarney,
+          // Kitsilano, Renfrew Park, Trout Lake, up to ~802 m apart) permanently onto
+          // venue-geo.ts's measured-better values instead of onto whichever cron ran last.
+          venueGeoAuthority: geo ? VENUE_GEO_AUTHORITY.ADAPTER_CONFIG_LITERAL : undefined,
+          venueGeoSource: geo ? `citycalendar:${this.config.calendarKey}:config` : undefined,
           venueMunicipalityName: loc.venueName ? this.config.municipality : undefined,
           // Curated geo-map display area wins; otherwise fall back to the feed's
           // structured neighbourhood so unmapped venues still get a searchable area.

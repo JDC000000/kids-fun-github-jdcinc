@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { getPool, query, closePool } from '../../lib/db/client';
 import { resolveVenue } from '../../worker/core/venue';
+import { VENUE_GEO_AUTHORITY } from '../../worker/core/venue-geo-authority';
 import { ingestSource } from '../../worker/core/ingest';
 import type { Adapter, StructuredRecord } from '../../worker/core/adapter';
 
@@ -20,6 +21,7 @@ describe.skipIf(!hasDb)('venue resolver', () => {
       address: '4320 Moncton St, Richmond, BC V7E 6T4',
       lat: 49.12546,
       lng: -123.1783832,
+      geoAuthority: VENUE_GEO_AUTHORITY.ADAPTER_CONFIG_LITERAL,
       municipalityName: 'Richmond',
       displayArea: 'Steveston',
       officialUrl: 'https://www.google.com/maps/search/?api=1&query=4320%20Moncton%20St%20Richmond%20BC%20V7E%206T4',
@@ -73,7 +75,13 @@ describe.skipIf(!hasDb)('venue resolver', () => {
     });
     // A second family (citycalendar's real behaviour) writes the same venue name with
     // geo but no phone. COALESCE must PRESERVE, not blank.
-    await resolveVenue(pool, { name, lat: 49.2757, lng: -123.0714, municipalityName: 'Vancouver' });
+    await resolveVenue(pool, {
+      name,
+      lat: 49.2757,
+      lng: -123.0714,
+      geoAuthority: VENUE_GEO_AUTHORITY.ADAPTER_CONFIG_LITERAL,
+      municipalityName: 'Vancouver',
+    });
 
     const [venue] = await query<{ phone: string | null; lat: string | null }>(
       `SELECT phone, ST_Y(geo::geometry)::text AS lat FROM venue WHERE lower(name) = lower($1)`,

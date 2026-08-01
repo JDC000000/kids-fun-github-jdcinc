@@ -8,6 +8,8 @@
 import type { PoolClient } from 'pg';
 import { query } from '@/lib/db/client';
 import { writeAdminAudit, withAdminTransaction, ADMIN_AUDIT_ACTIONS } from '@/lib/admin/audit';
+import { resolveVenue } from '@/worker/core/venue';
+import { VENUE_GEO_AUTHORITY } from '@/worker/core/venue-geo-authority';
 import type { ManualListingInput } from './vocab';
 
 /** Raised for user-fixable problems (e.g. a chosen source id that no longer exists). */
@@ -63,28 +65,40 @@ async function getOrCreateManualSource(client: PoolClient): Promise<string> {
   return existing.rows[0].id;
 }
 
-/** Resolve-or-create a venue (mirrors worker/core/venue.ts, on the tx client). */
-async function resolveVenue(client: PoolClient, input: ManualListingInput): Promise<string> {
-  const name = (input.venueName ?? '').trim();
-  const existing = await client.query<{ id: string }>(
-    `SELECT id FROM venue WHERE lower(name) = lower($1) LIMIT 1`,
-    [name]
-  );
-  if (existing.rows[0]) return existing.rows[0].id;
-
-  const inserted = await client.query<{ id: string }>(
-    `INSERT INTO venue (name, address, display_area, geo)
-     VALUES (
-       $1, $2, $3,
-       CASE WHEN $4::double precision IS NULL OR $5::double precision IS NULL
-         THEN NULL
-         ELSE ST_SetSRID(ST_MakePoint($5::double precision, $4::double precision), 4326)::geography
-       END
-     )
-     RETURNING id`,
-    [name, input.venueAddress, input.displayArea, input.venueLat, input.venueLng]
-  );
-  return inserted.rows[0].id;
+/**
+ * Resolve-or-create a venue on the transaction client, through the SAME function the worker
+ * uses — not a copy of it. This replaced a private reimplementation whose "mirrors
+ * worker/core/venue.ts" comment had been false for some time; see that file's header for the
+ * full story and for why there is now one implementation and two callers.
+ *
+ * BEHAVIOUR CHANGE WORTH NAMING: a manual listing at an EXISTING venue now updates that
+ * venue's address / display_area / coordinates instead of discarding them — which is what
+ * the form has always appeared to do.
+ *
+ * Authority 50, the strongest claim in the system: a human looked at THIS venue on purpose,
+ * in-product, and `parseManualListingInput` (./vocab.ts) range-validates the coordinate.
+ *
+ * `geoIsHumanOverride` IS THE LOAD-BEARING PART OF THAT SENTENCE, and it was missing in the
+ * first version of this function (QA finding F1, ship-blocking). Every admin write declares
+ * the SAME tier, and the write rule leaves the incumbent at equal authority — so without the
+ * flag the first admin coordinate stuck and every later correction was silently swallowed:
+ * address and display_area updated, the pin did not, and nothing reported it. This is the ONE
+ * caller in the repo permitted to set it; see `VenueInput.geoIsHumanOverride` for why a
+ * deliberate human correction is a different kind of event from a repeated adapter run.
+ */
+async function resolveManualVenue(client: PoolClient, input: ManualListingInput): Promise<string> {
+  const hasCoordinate = input.venueLat != null && input.venueLng != null;
+  const { venueId } = await resolveVenue(client, {
+    name: (input.venueName ?? '').trim(),
+    address: input.venueAddress,
+    displayArea: input.displayArea,
+    lat: input.venueLat,
+    lng: input.venueLng,
+    geoAuthority: hasCoordinate ? VENUE_GEO_AUTHORITY.ADMIN_MANUAL : undefined,
+    geoSource: hasCoordinate ? 'admin:manual-listing' : undefined,
+    geoIsHumanOverride: hasCoordinate,
+  });
+  return venueId;
 }
 
 /** Resolve-or-create the series (mirrors worker/core/series.ts, on the tx client). */
@@ -126,7 +140,7 @@ export async function createManualListing(
     }
 
     // 2. venue (optional — needed only for a distance/geo).
-    const venueId = input.venueName ? await resolveVenue(client, input) : null;
+    const venueId = input.venueName ? await resolveManualVenue(client, input) : null;
 
     // 3. series (get-or-create on source_id + canonical_title).
     const canonicalTitle = input.venueName ? `${input.title} — ${input.venueName}` : input.title;

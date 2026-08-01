@@ -17,10 +17,13 @@
 // (equivalently: node_modules/.bin/vite-node scripts/backfill-venue-geo.ts -- --dry-run)
 import { query, closePool } from '../lib/db/client';
 import { geocode } from '../lib/geo/geocode';
+import { VENUE_GEO_AUTHORITY } from '../worker/core/venue-geo-authority';
 import {
   enrichVenueGeo,
   type EnrichVenueGeoDeps,
   type VenueGeoRow,
+  LIST_MISSING_GEO_SQL,
+  SET_GEO_SQL,
 } from '../lib/geo/venue-geo-enrichment';
 
 function argValue(argv: string[], name: string): string | undefined {
@@ -31,28 +34,19 @@ function hasFlag(argv: string[], name: string): boolean {
   return argv.includes(name);
 }
 
-const LIST_MISSING_SQL = `
-  SELECT id, name, address
-  FROM venue
-  WHERE geo IS NULL AND address IS NOT NULL AND btrim(address) <> ''
-  ORDER BY name
-  LIMIT $1`;
-
-// Idempotent: fills a NULL geo only; never overwrites an existing (feed/deterministic) point.
-const SET_GEO_SQL = `
-  UPDATE venue
-  SET geo = ST_SetSRID(ST_MakePoint($2::double precision, $3::double precision), 4326)::geography
-  WHERE id = $1 AND geo IS NULL`;
+// The two statements live in lib/geo/venue-geo-enrichment.ts, alongside the behaviour they
+// implement. They were HERE, which made the clobber-guard untestable by anything but a text
+// regex — this file runs main() on load and its own comment says it is never imported (QA F4).
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const dryRun = hasFlag(argv, '--dry-run');
   const limit = Number(argValue(argv, '--limit') ?? 100);
 
   const deps: EnrichVenueGeoDeps = {
-    listMissing: (lim) => query<VenueGeoRow>(LIST_MISSING_SQL, [lim]),
+    listMissing: (lim) => query<VenueGeoRow>(LIST_MISSING_GEO_SQL, [lim]),
     async setGeo(id, lat, lng) {
       // pg params: $2 = lng (x), $3 = lat (y) → ST_MakePoint(lng, lat).
-      await query(SET_GEO_SQL, [id, lng, lat]);
+      await query(SET_GEO_SQL, [id, lng, lat, VENUE_GEO_AUTHORITY.GEOCODER_BACKFILL]);
     },
     geocode: (address) => geocode(address, { region: 'CA' }),
   };

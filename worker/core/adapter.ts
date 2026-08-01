@@ -5,6 +5,7 @@
 // same shape — normalizeHook is where the deterministic-first / LLM-fallback
 // boundary from §5.2 plugs in; adapters whose source is fully structured can
 // omit it entirely.
+import type { VenueGeoAuthority } from './venue-geo-authority';
 
 export interface StructuredRecord {
   /** Raw source-native id/slug used to build dedup keys — not the DB row id. */
@@ -21,6 +22,22 @@ export interface StructuredRecord {
   venuePhone?: string;
   venueLat?: number;
   venueLng?: number;
+  /**
+   * Where this record's coordinate ranks against the other seven producers that can write
+   * the same `venue.geo` column. MANDATORY whenever venueLat/venueLng are set — ingest
+   * throws, naming the venue, rather than defaulting, and
+   * tests/compliance/venue-geo-authority-declared.test.ts fails the build if an adapter
+   * emits a coordinate without one. Declared PER RECORD, not per adapter, because two
+   * producers genuinely vary within themselves: activenet's table mixes licensed open-data
+   * points with hand-placed ones, and library's BiblioCommons path takes the feed's own
+   * `bc:latitude` when it has one and falls back to the curated branch table when it does
+   * not. See worker/core/venue-geo-authority.ts.
+   */
+  venueGeoAuthority?: VenueGeoAuthority;
+  /** Stable identifier for where the coordinate came from, e.g. 'activenet:opendata-vancouver'. */
+  venueGeoSource?: string;
+  /** Licence-notice key the coordinate obliges us to publish ('ogl-vancouver', 'osm-odbl'). */
+  venueGeoAttribution?: string;
   venueMunicipalityName?: string;
   venueDisplayArea?: string;
   startDatetimeUtc?: string; // ISO 8601; absent for open-hours records

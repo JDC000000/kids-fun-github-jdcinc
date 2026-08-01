@@ -34,6 +34,7 @@
 //     likewise. Occurrence identity is EventId + OccurrenceDate + start time + facility.
 import type { StructuredRecord } from '../../core/adapter';
 import { zonedLocalToUtcIso } from '../../core/time';
+import { VENUE_GEO_AUTHORITY, type VenueGeoAuthority } from '../../core/venue-geo-authority';
 import type { BookMe4Class, CalendarFetchResult } from './client';
 import { calendarPageUrl, type PerfectMindTenantConfig } from './config';
 
@@ -356,6 +357,8 @@ export interface VenueFields {
   venueAddress?: string;
   venueLat?: number;
   venueLng?: number;
+  venueGeoAuthority?: VenueGeoAuthority;
+  venueGeoSource?: string;
 }
 
 /** Venue comes straight off the record — this platform ships an address WITH
@@ -376,6 +379,13 @@ export function extractVenue(record: BookMe4Class): VenueFields {
     // (0,0) is the vendor's "unset", not the Gulf of Guinea.
     venueLat: lat && lng ? lat : undefined,
     venueLng: lat && lng ? lng : undefined,
+    // LIVE VENDOR PAYLOAD — the lowest declared tier. This coordinate is read out of the
+    // feed's own `Address` block on every single run: there is no committed value to diff
+    // it against, no review, and no alarm if the vendor moves the point. A silently-moving
+    // coordinate is a strictly worse failure mode than a stale one, which is why it ranks
+    // below every curated source rather than above them for being "fresher".
+    venueGeoAuthority: lat && lng ? VENUE_GEO_AUTHORITY.LIVE_VENDOR_PAYLOAD : undefined,
+    venueGeoSource: lat && lng ? 'perfectmind:feed-address' : undefined,
   };
 }
 
@@ -511,6 +521,8 @@ function parseCalendar(
       venueAddress: venue.venueAddress,
       venueLat: venue.venueLat,
       venueLng: venue.venueLng,
+      venueGeoAuthority: venue.venueGeoAuthority,
+      venueGeoSource: venue.venueGeoSource,
       venueMunicipalityName: venue.venueName ? tenant.municipality : undefined,
       startDatetimeUtc: instants.startDatetimeUtc,
       endDatetimeUtc: instants.endDatetimeUtc,
