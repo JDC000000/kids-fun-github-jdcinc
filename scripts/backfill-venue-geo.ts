@@ -17,6 +17,7 @@
 // (equivalently: node_modules/.bin/vite-node scripts/backfill-venue-geo.ts -- --dry-run)
 import { query, closePool } from '../lib/db/client';
 import { geocode } from '../lib/geo/geocode';
+import { VENUE_GEO_AUTHORITY } from '../worker/core/venue-geo-authority';
 import {
   enrichVenueGeo,
   type EnrichVenueGeoDeps,
@@ -39,9 +40,21 @@ const LIST_MISSING_SQL = `
   LIMIT $1`;
 
 // Idempotent: fills a NULL geo only; never overwrites an existing (feed/deterministic) point.
+//
+// `AND geo IS NULL` IS RETAINED ON PURPOSE AND IS STRICTER THAN THE AUTHORITY RULE. Migration
+// 0025 stamps every pre-existing coordinate `geo_authority = 0`, and this writer declares
+// tier 5 — so under the authority rule ALONE (5 > 0) this script would newly be permitted to
+// overwrite every legacy hand-placed coordinate in the database with an address-derived
+// Mapbox guess. That would be a regression introduced by a change whose entire purpose is to
+// protect coordinates. The ordinal is a CEILING on what a writer may do, not a licence; this
+// path is deliberately stricter than its ceiling, and it stays the only writer in the system
+// that structurally cannot clobber.
 const SET_GEO_SQL = `
   UPDATE venue
-  SET geo = ST_SetSRID(ST_MakePoint($2::double precision, $3::double precision), 4326)::geography
+  SET geo = ST_SetSRID(ST_MakePoint($2::double precision, $3::double precision), 4326)::geography,
+      geo_authority = $4::smallint,
+      geo_source = 'geocoder:mapbox-backfill',
+      geo_set_at = now()
   WHERE id = $1 AND geo IS NULL`;
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
@@ -52,7 +65,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     listMissing: (lim) => query<VenueGeoRow>(LIST_MISSING_SQL, [lim]),
     async setGeo(id, lat, lng) {
       // pg params: $2 = lng (x), $3 = lat (y) → ST_MakePoint(lng, lat).
-      await query(SET_GEO_SQL, [id, lng, lat]);
+      await query(SET_GEO_SQL, [id, lng, lat, VENUE_GEO_AUTHORITY.GEOCODER_BACKFILL]);
     },
     geocode: (address) => geocode(address, { region: 'CA' }),
   };

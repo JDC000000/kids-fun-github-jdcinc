@@ -23,6 +23,7 @@
 // and additionally pinning open-hours "admission" to a venue category
 // (attraction / museum_venue), never a rec-programme category such as public_swim.
 import type { StructuredRecord } from '../../core/adapter';
+import { VENUE_GEO_AUTHORITY } from '../../core/venue-geo-authority';
 
 type CostStatus = NonNullable<StructuredRecord['costStatus']>;
 
@@ -90,6 +91,16 @@ function venueFields(venue: VenueIdentity): Partial<StructuredRecord> {
     venueAddress: venue.address,
     venueLat: venue.lat,
     venueLng: venue.lng,
+    // Hand-entered site coordinates in worker/adapters/venue/config.ts, no geocoder and no
+    // per-entry provenance — the same class of claim as citycalendar's venueGeo, so the same
+    // tier. These two venues are contested by nobody today; the declaration exists so that
+    // stays a fact about the data rather than an assumption about it.
+    venueGeoAuthority:
+      venue.lat !== undefined && venue.lng !== undefined
+        ? VENUE_GEO_AUTHORITY.ADAPTER_CONFIG_LITERAL
+        : undefined,
+    venueGeoSource:
+      venue.lat !== undefined && venue.lng !== undefined ? `venue:${venue.venueKey}:config` : undefined,
     venueMunicipalityName: venue.municipality,
     venueDisplayArea: venue.displayArea,
     locationUrl: venue.officialUrl,

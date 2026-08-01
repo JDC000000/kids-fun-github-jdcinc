@@ -62,6 +62,19 @@ export interface LibraryBranchLocation {
    */
   lat?: number;
   lng?: number;
+  /**
+   * Where lat/lng came from, for coordinate-authority purposes (worker/core/
+   * venue-geo-authority.ts). ABSENT means CURATED — every entry hand-written in this file
+   * is curated by definition, so the config tables say nothing and mean tier 20. The RSS
+   * parser sets it explicitly to 'feed' when it took the coordinate from the vendor's own
+   * `bc:latitude`/`bc:longitude` (tier 10, unreviewed and able to move silently between
+   * runs) and to 'curated' when it fell back to the entry below.
+   *
+   * This is the one producer whose authority genuinely varies PER RECORD rather than per
+   * adapter, which is why the discriminator lives on the location object and not on the
+   * system config.
+   */
+  coordsFrom?: 'curated' | 'feed';
   municipalityName: string;
   displayArea: string;
   locationUrl: string;

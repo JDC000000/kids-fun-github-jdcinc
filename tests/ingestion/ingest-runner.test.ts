@@ -1,5 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { NoopAdapter, type Adapter, type StructuredRecord } from '../../worker/core/adapter';
+import { VENUE_GEO_AUTHORITY } from '../../worker/core/venue-geo-authority';
 import { ingestSource } from '../../worker/core/ingest';
 import { getPool, query, closePool } from '../../lib/db/client';
 
@@ -288,6 +289,10 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
       venueAddress: '4320 Moncton St, Richmond, BC V7E 6T4',
       venueLat: 49.12546,
       venueLng: -123.1783832,
+      // A coordinate now travels with the tier it claims — this record stands in for the
+      // library family's curated branchLocations table (G-VGEO-A3).
+      venueGeoAuthority: VENUE_GEO_AUTHORITY.ADAPTER_CONFIG_LITERAL,
+      venueGeoSource: 'library:rpl:branch-locations',
       venueMunicipalityName: 'Richmond',
       venueDisplayArea: 'Steveston',
       startDatetimeUtc: '2026-09-24T18:00:00.000Z',

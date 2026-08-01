@@ -13,6 +13,7 @@
 // one paginated request, no login, no headless browser, no CAPTCHA bypass.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
 import { politeFetch } from '../../health/policy';
+import { VENUE_GEO_AUTHORITY } from '../../core/venue-geo-authority';
 // Shared, DST-correct local-wall-clock -> UTC conversion. BiblioCommons publishes
 // offset-less local timestamps, and so does ActiveNet — one implementation, in
 // worker/core/time.ts, rather than a second copy of a DST rule that can rot.
@@ -209,6 +210,29 @@ function normalizeBranchKey(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+/**
+ * Coordinate-authority declaration for a resolved library location. Returns an empty object
+ * when there is no coordinate, so it spreads harmlessly into a StructuredRecord that has
+ * none.
+ *
+ * `coordsFrom` is absent on a raw config entry (curated by definition) and set explicitly by
+ * rssLocation() — so "absent means curated" is the same rule the config type documents, in
+ * one place, rather than repeated at both call sites.
+ */
+function venueGeoDeclaration(
+  location: LibraryBranchLocation | undefined,
+  systemId: string
+): Pick<StructuredRecord, 'venueGeoAuthority' | 'venueGeoSource'> {
+  if (location?.lat === undefined || location?.lng === undefined) return {};
+  const fromFeed = location.coordsFrom === 'feed';
+  return {
+    venueGeoAuthority: fromFeed
+      ? VENUE_GEO_AUTHORITY.LIVE_VENDOR_PAYLOAD
+      : VENUE_GEO_AUTHORITY.ADAPTER_CONFIG_LITERAL,
+    venueGeoSource: fromFeed ? `${systemId}:feed-bc-location` : `${systemId}:branch-locations`,
+  };
+}
+
 function rssLocation(system: LibrarySystemConfig, itemXml: string): LibraryBranchLocation | undefined {
   const [locBlock] = tagBlocks(itemXml, 'bc:location');
   if (!locBlock) return undefined;
@@ -241,9 +265,15 @@ function rssLocation(system: LibrarySystemConfig, itemXml: string): LibraryBranc
         )?.[1]
       : undefined;
 
+  // Recorded rather than recomputed downstream: once `lat` has been reassigned there is no
+  // way left to tell a feed coordinate from a curated one, and they are two different
+  // authority tiers (10 vs 20).
+  let coordsFrom: 'curated' | 'feed' | undefined =
+    lat !== undefined && lng !== undefined ? 'feed' : undefined;
   if ((lat === undefined || lng === undefined) && fallback?.lat !== undefined && fallback?.lng !== undefined) {
     lat = fallback.lat;
     lng = fallback.lng;
+    coordsFrom = 'curated';
   }
 
   const address = feedAddress || fallback?.address || (name ?? '');
@@ -259,6 +289,7 @@ function rssLocation(system: LibrarySystemConfig, itemXml: string): LibraryBranc
     address,
     lat,
     lng,
+    coordsFrom,
     municipalityName,
     displayArea,
     locationUrl: address
@@ -461,6 +492,13 @@ export class LibraryAdapter implements Adapter {
         venueAddress: e.location?.address || undefined,
         venueLat: e.location?.lat,
         venueLng: e.location?.lng,
+        // NVDPL's generic RSS publishes an address but never a lat/lng, and this adapter
+        // does not geocode — so a coordinate here can ONLY have come from the curated
+        // branchLocations table (worker/adapters/library/generic-rss.ts::resolveLocation).
+        // Declared through the shared helper anyway rather than hardcoded, so the day the
+        // feed does start carrying coordinates this drops to tier 10 automatically instead
+        // of silently claiming curation it does not have.
+        ...venueGeoDeclaration(e.location, 'library:nvdpl'),
         venueMunicipalityName: e.location?.municipalityName || undefined,
         venueDisplayArea: e.location?.displayArea || undefined,
         // Parsed from the free-text Date/Time inside `description`, NEVER from pubDate.
@@ -485,6 +523,12 @@ export class LibraryAdapter implements Adapter {
         venueAddress: e.location?.address,
         venueLat: e.location?.lat,
         venueLng: e.location?.lng,
+        // Per RECORD, not per adapter: a BiblioCommons item that carries its own
+        // bc:latitude is a live vendor payload (tier 10); one that fell back to the curated
+        // branch table is an adapter config literal (tier 20). Same feed, same run, two
+        // different claims — collapsing them to one number would have mislabelled whichever
+        // half lost.
+        ...venueGeoDeclaration(e.location, `library:${this.system.systemKey}`),
         venueMunicipalityName: e.location?.municipalityName,
         venueDisplayArea: e.location?.displayArea,
         startDatetimeUtc: e.startsAt,

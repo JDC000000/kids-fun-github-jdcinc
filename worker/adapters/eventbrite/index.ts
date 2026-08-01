@@ -22,6 +22,7 @@
 // See config.ts's "HONEST ZERO" block — that is the measured outcome, not a stub.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
 import { extractAgeWording } from '../../core/age';
+import { VENUE_GEO_AUTHORITY } from '../../core/venue-geo-authority';
 import {
   EVENTBRITE_ORGANIZERS,
   getEventbriteOrganizer,
@@ -155,6 +156,17 @@ export class EventbriteAdapter implements Adapter {
           venueAddress: venueName ? address : undefined,
           venueLat: coord(venue?.latitude),
           venueLng: coord(venue?.longitude),
+          // LIVE VENDOR PAYLOAD — same tier and same reasoning as perfectmind: Eventbrite's
+          // API returns these as strings on every run, unreviewed, with nothing committed to
+          // compare them against. Weakest claim in the system after the geocoder.
+          venueGeoAuthority:
+            coord(venue?.latitude) !== undefined && coord(venue?.longitude) !== undefined
+              ? VENUE_GEO_AUTHORITY.LIVE_VENDOR_PAYLOAD
+              : undefined,
+          venueGeoSource:
+            coord(venue?.latitude) !== undefined && coord(venue?.longitude) !== undefined
+              ? 'eventbrite:api-venue'
+              : undefined,
           venueMunicipalityName: venueName
             ? (venue?.address?.city?.trim() || this.config.municipality)
             : undefined,

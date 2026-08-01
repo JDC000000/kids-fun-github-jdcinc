@@ -29,6 +29,7 @@ import type { ActiveNetCentreDetail } from './client';
 import { stripCentreSentinel } from './parse';
 import type { ActiveNetTenantConfig } from './config';
 import { lookupVenueGeo, hasVenueGeoTable, type ActiveNetVenueGeo } from './venue-geo';
+import { VENUE_GEO_AUTHORITY } from '../../core/venue-geo-authority';
 
 export interface ResolvedVenue {
   centreId: number;
@@ -264,6 +265,22 @@ export function applyVenues(
       //     worth doing; deliberately not smuggled into this task's diff.
       venueLat: venue.geo?.lat,
       venueLng: venue.geo?.lng,
+      // Coordinate authority is declared PER ENTRY, not per adapter, because this table is
+      // genuinely mixed and flattening it would throw away the only real provenance in the
+      // system: a point taken verbatim from the City's licensed `community-centres` dataset
+      // and a point a human hand-placed against OSM are not the same claim. 25 entries are
+      // City points; 11 are hand-placed, and they are the pool/rink/arena facilities that
+      // carry ~74% of measured Vancouver drop-in occurrences per week — i.e. the curated
+      // ones are the load-bearing half, which is why they outrank the licensed ones.
+      venueGeoAuthority: venue.geo
+        ? venue.geo.source === 'opendata-vancouver'
+          ? VENUE_GEO_AUTHORITY.COMMITTED_OPEN_DATA
+          : VENUE_GEO_AUTHORITY.CURATED_PROVENANCED
+        : undefined,
+      venueGeoSource: venue.geo ? `activenet:${venue.geo.source}` : undefined,
+      // Carried through verbatim from the entry, never derived from the venue name — the
+      // inference that got the per-venue notice pulled (docs/source-register.md §6.6).
+      venueGeoAttribution: venue.geo?.attribution,
       venueDisplayArea: venue.geo?.displayArea ?? record.venueDisplayArea,
     } satisfies StructuredRecord;
   });
