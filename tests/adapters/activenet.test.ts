@@ -575,10 +575,22 @@ describe('venue phone capture from centerdetails', () => {
         '(604) 718-8222',
         '+1 (604) 257-8195',
         '604-987-4471 ext. 8175',
+        '604-987-4471 x8175',
+        '718-5800', // bare local, no area code — the 7-digit floor must not reject it
         '  (604) 718-5800  ', // trimmed, not otherwise touched
       ]) {
         expect(normaliseVenuePhone(good)).toBe(good.trim());
       }
+    });
+
+    it('keeps 43/43 of the real values across both tenants', () => {
+      const phones = ['vancouver.centerdetails.json', 'burnaby.centerdetails.json'].flatMap((f) =>
+        fixture<{ body: { center_details: Array<{ phone?: string }> } }>(f)
+          .body.center_details.map((d) => d.phone)
+          .filter((p): p is string => Boolean(p && p.trim()))
+      );
+      expect(phones.length).toBe(43);
+      expect(phones.filter((p) => normaliseVenuePhone(p)).length).toBe(43);
     });
 
     it('drops prose, sentinels and short junk rather than storing a callable-looking lie', () => {
@@ -593,6 +605,30 @@ describe('venue phone capture from centerdetails', () => {
         'Please contact the front desk during business hours to enquire about drop-in times',
       ]) {
         expect(normaliseVenuePhone(bad), `should drop: ${String(bad)}`).toBeUndefined();
+      }
+    });
+
+    // QA F2: the digit-count guard alone kept all of these — every one is digit-BEARING
+    // prose, which is exactly the class a count cannot distinguish from a number.
+    it('drops digit-bearing prose, which a digit count alone cannot catch', () => {
+      for (const bad of [
+        'Mon-Fri 9:00-17:00, Sat 10:00-14:00',
+        'Closed 2026-08-01 to 2026-09-01',
+        'Ages 0-5, 6-12, 13-18, 19-64, 65+',
+        'TTY 711 / Interpretation 1-800-555-0199',
+        'See www.vancouver.ca/2026/08/01/2026',
+        '1234567890123456789012345678901234567', // 37 digits, no upper bound before
+      ]) {
+        expect(normaliseVenuePhone(bad), `should drop: ${bad}`).toBeUndefined();
+      }
+    });
+
+    // The mirror of the above, and the reason BOTH checks exist: every one of these
+    // satisfies the shape pattern's 7–24 character bound while containing no digits at
+    // all, so the pattern alone would keep them. The digit floor is what refuses them.
+    it('drops digit-free punctuation, which the shape pattern alone would keep', () => {
+      for (const bad of ['(((((((', '..........', '- - - - - - -', '(  )  .-  ()', '()()()()()()']) {
+        expect(normaliseVenuePhone(bad), `should drop: ${bad}`).toBeUndefined();
       }
     });
 

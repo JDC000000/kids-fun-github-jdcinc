@@ -49,30 +49,46 @@ export interface ResolvedVenue {
 }
 
 /**
- * Minimum digits before a string is plausibly a dialable number. Seven is the shortest
- * real NANP subscriber number (local, no area code); every value this source has ever
- * returned carries ten or eleven.
+ * Dial-string shape: an optional `+`, then only digits and the punctuation a phone
+ * number is actually written with, then an optional extension. The 7–24 bound is what
+ * separates a number from a sentence of digits; the 24 ceiling is load-bearing, since
+ * an unbounded run of digits is not a phone number.
+ */
+const PHONE_SHAPE = /^\+?[\d\s().-]{7,24}(\s*(?:ext|x|extension)\.?\s*\d{1,6})?$/i;
+/**
+ * Minimum DIGITS (not characters). Seven is the shortest real NANP subscriber number
+ * (local, no area code); every value this source has ever returned carries ten or
+ * eleven. Checked separately from PHONE_SHAPE — see below for why both are needed.
  */
 const MIN_PHONE_DIGITS = 7;
-/** Longest value still plausibly a phone number rather than a sentence. */
-const MAX_PHONE_LENGTH = 40;
 
 /**
  * The source's own phone string, trimmed — or nothing.
  *
  * WHY A GUARD AT ALL, when 43/43 measured values are clean. `phone` is a free-text
  * field on an undocumented, unversioned vendor payload. The failure that matters is not
- * a malformed number, it is PROSE: the day someone types "call the centre" or "see
- * website" into that field, an unguarded wire writes it into a column named `phone`,
- * and every downstream reader is entitled to treat it as callable. Dropping a value we
- * cannot stand behind is cheaper and more honest than storing a lie, and it costs the
- * record nothing else — address, geo and occurrences all still land.
+ * a malformed number, it is PROSE: the day someone types "call the centre" or an
+ * opening-hours line into that field, an unguarded wire writes it into a column named
+ * `phone`, and every downstream reader is entitled to treat it as callable. Dropping a
+ * value we cannot stand behind is cheaper and more honest than storing a lie, and it
+ * costs the record nothing else — address, geo and occurrences all still land.
  *
- * WHY NOT A DB CHECK CONSTRAINT instead (the shape 0022/0023 chose for the robots
- * override): that field is a human authorisation where refusing the write is the safe
- * outcome. This one is third-party data inside a bulk ingest — a CHECK would turn one
- * bad vendor string into a failed transaction for an entire municipality's run. Fail
- * soft on the field, never hard on the run. See 0024_venue_phone.sql.
+ * TWO CHECKS, NOT ONE, and this is deliberate (QA F2, 2026-08-01). The original guard
+ * was a digit COUNT alone, which correctly dropped digit-free prose but happily kept
+ * digit-BEARING prose — QA demonstrated `Mon-Fri 9:00-17:00, Sat 10:00-14:00`,
+ * `Ages 0-5, 6-12, 13-18, 19-64, 65+` and 37 unbroken digits all landing in a column
+ * named `phone`. PHONE_SHAPE closes exactly that class. But the reverse is also true and
+ * was measured before adopting it: PHONE_SHAPE's `{7,24}` counts CHARACTERS from a class
+ * containing non-digits, so `(((((((`, `..........` and `()()()()()()` all satisfy it on
+ * their own. Neither check subsumes the other, so both run. Verified over 43 real values
+ * (36 distinct) plus the `ext.`/`x`/bare-local forms — 100% kept — against 16 prose and
+ * degenerate cases — 100% dropped.
+ *
+ * WHY NOT A DB CHECK CONSTRAINT instead: a phone number has no canonical shape worth
+ * asserting in SQL, and this function already means the column never sees garbage. See
+ * 0024_venue_phone.sql, which also records the measured cost of the CHECK alternative
+ * (every record at ONE venue, not the run — an earlier claim that it would fail a whole
+ * municipality's run was wrong and is corrected there).
  *
  * WHAT THIS DELIBERATELY DOES NOT DO: reformat. `(604) 718-8222` and
  * `+1 (604) 257-8195` are both stored exactly as published. Picking a canonical
@@ -81,9 +97,8 @@ const MAX_PHONE_LENGTH = 40;
 export function normaliseVenuePhone(raw: string | undefined): string | undefined {
   const value = (raw ?? '').trim();
   if (!value) return undefined;
-  if (value.length > MAX_PHONE_LENGTH) return undefined;
-  const digits = value.replace(/\D/g, '').length;
-  if (digits < MIN_PHONE_DIGITS) return undefined;
+  if (!PHONE_SHAPE.test(value)) return undefined;
+  if (value.replace(/\D/g, '').length < MIN_PHONE_DIGITS) return undefined;
   return value;
 }
 

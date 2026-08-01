@@ -16,17 +16,38 @@
 -- `worker/adapters/activenet/venues.ts` for the survey of the other six and why each
 -- one is a deliberate decline rather than an oversight.
 --
--- NULLABLE, AND NO CHECK CONSTRAINT — a deliberate contrast with 0022/0023.
--- Those constrain `source.robots_override_decision`, a value a HUMAN authors to
--- authorise a fetch; there, "looks almost right" must fail closed and refusing the
--- write is the correct, safe outcome. This value is the opposite: THIRD-PARTY data,
--- arriving inside a bulk ingest, on a field nothing gates on. A CHECK here would
--- convert one malformed vendor string into a failed transaction for a whole
--- municipality's run — a hard failure over an optional nicety. The shape guard
--- therefore lives at the adapter boundary (`normaliseVenuePhone` in
--- worker/adapters/activenet/venues.ts), where a value that is not plausibly a phone
--- number is DROPPED and the rest of the record still lands. Fail soft on the field,
--- never hard on the run. Most venues will be NULL on day one and that is honest.
+-- NULLABLE, AND NO CHECK CONSTRAINT. The reason is that a phone number has NO
+-- CANONICAL SHAPE worth asserting in SQL, and the adapter boundary already guarantees
+-- the column never sees garbage.
+--
+-- Free-text contact strings vary by source, vendor and country. This source alone
+-- publishes `(604) 718-8222`, `+1 (604) 257-8195` and the extension form
+-- `604-987-4471 ext. 8175`. Any pattern strict enough to be worth writing would reject
+-- legitimate values of a kind we have already observed; any pattern loose enough to be
+-- safe asserts almost nothing. Meanwhile `normaliseVenuePhone()` (worker/adapters/
+-- activenet/venues.ts) already refuses to emit a value it cannot stand behind, so a
+-- CHECK would re-assert one layer down a property established one layer up — and would
+-- fire, in practice, only on legitimate-but-unusual renderings.
+--
+-- CORRECTED 2026-08-01 (QA F1). An earlier version of this comment justified the same
+-- decision by claiming a CHECK "would convert one malformed vendor string into a failed
+-- transaction for a whole municipality's run." That was FALSE and is worth recording
+-- rather than quietly deleting, because it was the load-bearing sentence. MEASURED, by
+-- installing exactly such a CHECK and ingesting 5 records (3 at a venue with a bad
+-- phone, 2 at a clean venue): recordsFound=5, occurrencesUpserted=2, errors=3, check run
+-- 'partial', and the clean venue's phone landed normally. `ingestSource` has NO
+-- run-level transaction — every statement is `pool.query` auto-commit inside a
+-- PER-RECORD try/catch — so the real blast radius is every record at ONE venue, not the
+-- run. That is a genuine cost (a venue's listings silently disappear), but it is an
+-- ordinary argument about trade-offs, not the catastrophe originally claimed.
+--
+-- The contrast with 0022/0023 still holds, on its own terms: those constrain
+-- `source.robots_override_decision`, a value a HUMAN authors to authorise a fetch
+-- against a third party's terms. Refusing that write costs one operator a retry and is
+-- the safe outcome. Nobody authors a vendor phone string, nothing gates on it, and
+-- refusing it costs listings. Different failure economics, different mechanism.
+--
+-- Most venues will be NULL on day one and that is honest.
 --
 -- STORED VERBATIM (trimmed only), NOT reformatted. 35 of the 36 Vancouver values
 -- render as `(604) 718-8222` and one as `+1 (604) 257-8195`; both are what the

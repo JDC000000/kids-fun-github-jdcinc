@@ -162,12 +162,14 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
                "this site has half the information." Selectively showing a fact without
                room to explain the selection is the same failure the OGL notice above
                was removed for.
-            2. THE NUMBER IS A FRONT DESK, NOT A BOOKING LINE. Six of the 36 Vancouver
-               facilities share their parent centre's main line (Britannia Rink answers
-               on Britannia Community Centre's number; Killarney and Kensington pools on
-               their centres'). Printed beside one drop-in session it implies "call this
-               about this session," which the data does not support. Honest copy needs
-               to say what the number actually is, and that wording is Jon's call.
+            2. THE NUMBER IS A FRONT DESK, NOT A BOOKING LINE. 13 of the 36 Vancouver
+               facilities share a line with another facility, in 6 groups — 7 of them
+               satellites answering on a parent centre's main number (Britannia Rink on
+               Britannia Community Centre's; Killarney and Kensington pools on their
+               centres'; Hillcrest contributes two, its Rink AND its Aquatic Centre).
+               Printed beside one drop-in session it implies "call this about this
+               session," which the data does not support. Honest copy needs to say what
+               the number actually is, and that wording is Jon's call.
             3. IT IS NOT A ONE-LINER HERE ANYWAY. This component renders `Activity`
                (app/preview/_data/types.ts), fed by mapListingRecordToActivity ←
                loadPostgresListingById ← the listing SELECT in
