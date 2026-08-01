@@ -148,6 +148,37 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             from the City. The attribution now lives site-wide in SiteFooter, where it
             is unconditionally true. Do not reintroduce a per-record version without a
             provenance column on `venue`. See docs/source-register.md §6.6. */}
+
+        {/* DECISION, 2026-08-01 — venue phone numbers are CAPTURED but deliberately NOT
+            SHOWN HERE YET. Jon approved capturing them; `venue.phone` (migration 0024)
+            now stores what ActiveNet publishes. Rendering them to parents is a separate
+            call, and it is a NO for now, for three reasons worth stating rather than
+            re-deriving:
+
+            1. ONE SOURCE OF SEVEN populates it. Vancouver and Burnaby rec-centre
+               listings would carry a number; every library, museum, Eventbrite and
+               city-calendar listing would not. A parent cannot see that the gap tracks
+               which back-end system a municipality happens to use — it just reads as
+               "this site has half the information." Selectively showing a fact without
+               room to explain the selection is the same failure the OGL notice above
+               was removed for.
+            2. THE NUMBER IS A FRONT DESK, NOT A BOOKING LINE. Six of the 36 Vancouver
+               facilities share their parent centre's main line (Britannia Rink answers
+               on Britannia Community Centre's number; Killarney and Kensington pools on
+               their centres'). Printed beside one drop-in session it implies "call this
+               about this session," which the data does not support. Honest copy needs
+               to say what the number actually is, and that wording is Jon's call.
+            3. IT IS NOT A ONE-LINER HERE ANYWAY. This component renders `Activity`
+               (app/preview/_data/types.ts), fed by mapListingRecordToActivity ←
+               loadPostgresListingById ← the listing SELECT in
+               lib/search/postgres-repository.ts. Surfacing phone means changing that
+               query, its GROUP BY, ListingRecord, the fixture mappers and the fixture
+               listings — the search lane, a different review than this one.
+
+            REVISIT WHEN: a second source family populates `venue.phone` (so coverage is
+            no longer one vendor's footprint), AND the copy question above is answered.
+            Until then the data accumulates in the DB where it is queryable by admin/ops,
+            which is strictly better than being discarded at ingest as it was before. */}
       </section>
 
       {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action. */}

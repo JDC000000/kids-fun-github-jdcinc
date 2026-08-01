@@ -11,6 +11,14 @@
 // Vancouver's OGL-licensed open data plus curated pool/rink coordinates. Zero network
 // calls; exact (normalised) name match only, never a fuzzy join.
 //
+// PHONE. The same centerdetails response carries each facility's public phone number,
+// and until 2026-08-01 this file read it into ResolvedVenue and nothing carried it any
+// further — StructuredRecord had no field and `venue` had no column, so it was fetched
+// and dropped every run. It now lands in `venue.phone` (migration 0024) through
+// StructuredRecord.venuePhone and resolveVenue()'s existing COALESCE enrichment. Stored
+// verbatim, guarded by normaliseVenuePhone() below, and read by NOTHING parent-facing
+// yet — that is a deliberate sequencing call, recorded in ActivityDetail.tsx.
+//
 // Unmapped centres are a WARNING, never a silent null: a centre that appears in the
 // feed but not in centerdetails means the batch missed something, and that must be
 // visible in the run output. The same rule now applies to geo — a facility with no
@@ -40,6 +48,45 @@ export interface ResolvedVenue {
   geoTableAvailable: boolean;
 }
 
+/**
+ * Minimum digits before a string is plausibly a dialable number. Seven is the shortest
+ * real NANP subscriber number (local, no area code); every value this source has ever
+ * returned carries ten or eleven.
+ */
+const MIN_PHONE_DIGITS = 7;
+/** Longest value still plausibly a phone number rather than a sentence. */
+const MAX_PHONE_LENGTH = 40;
+
+/**
+ * The source's own phone string, trimmed — or nothing.
+ *
+ * WHY A GUARD AT ALL, when 43/43 measured values are clean. `phone` is a free-text
+ * field on an undocumented, unversioned vendor payload. The failure that matters is not
+ * a malformed number, it is PROSE: the day someone types "call the centre" or "see
+ * website" into that field, an unguarded wire writes it into a column named `phone`,
+ * and every downstream reader is entitled to treat it as callable. Dropping a value we
+ * cannot stand behind is cheaper and more honest than storing a lie, and it costs the
+ * record nothing else — address, geo and occurrences all still land.
+ *
+ * WHY NOT A DB CHECK CONSTRAINT instead (the shape 0022/0023 chose for the robots
+ * override): that field is a human authorisation where refusing the write is the safe
+ * outcome. This one is third-party data inside a bulk ingest — a CHECK would turn one
+ * bad vendor string into a failed transaction for an entire municipality's run. Fail
+ * soft on the field, never hard on the run. See 0024_venue_phone.sql.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO: reformat. `(604) 718-8222` and
+ * `+1 (604) 257-8195` are both stored exactly as published. Picking a canonical
+ * rendering is a display decision and nothing parent-facing reads this yet.
+ */
+export function normaliseVenuePhone(raw: string | undefined): string | undefined {
+  const value = (raw ?? '').trim();
+  if (!value) return undefined;
+  if (value.length > MAX_PHONE_LENGTH) return undefined;
+  const digits = value.replace(/\D/g, '').length;
+  if (digits < MIN_PHONE_DIGITS) return undefined;
+  return value;
+}
+
 /** Join the address fields into one line, skipping blanks (address2 is usually empty). */
 function formatAddress(detail: ActiveNetCentreDetail): string | undefined {
   const street = [detail.address1, detail.address2].map((s) => (s ?? '').trim()).filter(Boolean).join(', ');
@@ -64,7 +111,7 @@ export function buildVenueIndex(
       centreId: detail.id,
       venueName: name,
       venueAddress: formatAddress(detail),
-      venuePhone: (detail.phone ?? '').trim() || undefined,
+      venuePhone: normaliseVenuePhone(detail.phone),
       venueMunicipalityName: tenant.municipality,
       // Committed constant, exact normalised name match. No network, no geocoder,
       // no fuzzy fallback — a miss is reported by applyVenues, never guessed at.
@@ -105,9 +152,9 @@ function centreIdOf(record: StructuredRecord): number | undefined {
 }
 
 /**
- * Attach venue name/address/municipality/geo to each record. Records keep the venue name
- * parse.ts already derived when centerdetails has nothing better; only the address, the
- * canonical name and the coordinates come from the index.
+ * Attach venue name/address/phone/municipality/geo to each record. Records keep the venue
+ * name parse.ts already derived when centerdetails has nothing better; only the address,
+ * the phone, the canonical name and the coordinates come from the index.
  */
 export function applyVenues(
   records: StructuredRecord[],
@@ -133,6 +180,7 @@ export function applyVenues(
       ...record,
       venueName: venue.venueName,
       venueAddress: venue.venueAddress,
+      venuePhone: venue.venuePhone,
       venueMunicipalityName: venue.venueMunicipalityName,
       // Attaching geo here is the whole of the write path — no core or DB change needed.
       //
@@ -145,6 +193,37 @@ export function applyVenues(
       // with 5 names byte-identical to venue-geo.ts's, so those rows change with ingest
       // order. Converging both tables is a tracked follow-up; the one venue where the
       // divergence measurably hurt (Britannia) is already converged in venue-geo.ts.
+      //
+      // PHONE RIDES THE SAME WIRE, and is NOT a special case. resolveVenue() enriches it
+      // with the identical `phone = COALESCE(<incoming>, phone)` it already uses for
+      // address/display_area/official_url/geo, so the last-writer-wins reading above
+      // applies verbatim. It is invisible today only because ActiveNet is the sole
+      // family that populates phone — the five venue rows citycalendar also writes
+      // (Britannia, Killarney, Kitsilano, Renfrew Park, Trout Lake community centres)
+      // churn on `geo` because both families send coordinates, and cannot churn on
+      // `phone` because citycalendar sends none. That is a property of the CURRENT
+      // coverage, not of the field: a second populating family turns it into the same
+      // churn geo already has, with the same converge-the-tables fix.
+      //
+      // NO OTHER FAMILY POPULATES IT, and each decline is a decision, not an oversight
+      // (surveyed 2026-08-01 against live payloads, not just against the code):
+      //   • citycalendar (Trumba) — HAS an "Organizer phone" custom field, populated on
+      //     2 of 39 live events. Declined on MEANING, not coverage: it is the phone of
+      //     whoever runs the EVENT, frequently a community volunteer, and writing it to
+      //     the shared `venue` row would republish one organiser's number as the
+      //     facility's own on every other event at that venue. That is the same class of
+      //     false claim G-VENUE-3's QA F1 closed (attribution inferred from a venue
+      //     NAME), plus a real personal-data exposure the venue column cannot justify.
+      //   • library / generic-rss (NVDPL) — phone numbers exist ONLY inside free-text
+      //     HTML descriptions ("Register by phone (604-987-4471 ext. 8175)"), never as a
+      //     structured field. Harvesting them means regexing prose for a number whose
+      //     referent is unknown; this adapter family does not do fuzzy inference.
+      //   • perfectmind, eventbrite — no phone anywhere in the payload (checked the full
+      //     key set of the captured fixtures; PerfectMind exposes `Email`, not a phone).
+      //   • venue (aquarium/space centre), seasonal — hand-curated config with no
+      //     upstream feed. A phone here would be a NEW hand-authored fact, which this
+      //     project requires per-entry attribution for (venue-geo.ts's shape). Cheap and
+      //     worth doing; deliberately not smuggled into this task's diff.
       venueLat: venue.geo?.lat,
       venueLng: venue.geo?.lng,
       venueDisplayArea: venue.geo?.displayArea ?? record.venueDisplayArea,

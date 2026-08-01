@@ -42,7 +42,11 @@ import {
   stripCentreSentinel,
   occurrenceRecordId,
 } from '../../worker/adapters/activenet/parse';
-import { buildVenueIndex, applyVenues } from '../../worker/adapters/activenet/venues';
+import {
+  buildVenueIndex,
+  applyVenues,
+  normaliseVenuePhone,
+} from '../../worker/adapters/activenet/venues';
 import { assessRunHealth, loadYieldBaseline, YIELD_COLLAPSE_RATIO } from '../../worker/adapters/activenet/health';
 import { zonedLocalToUtcIso } from '../../worker/core/time';
 import { clearPolicyState } from '../../worker/health/policy';
@@ -495,6 +499,121 @@ describe('G-T7R-4 venue resolution from centerdetails (no geocoder)', () => {
     const index = buildVenueIndex(BURNABY, details);
     expect(index.size).toBe(7);
     expect([...index.values()].every((v) => v.venueMunicipalityName === 'Burnaby')).toBe(true);
+  });
+});
+
+// ── venue phone (0024): the number was already fetched, and used to be discarded ─────
+//
+// The regression this pins is not "phone parses" — it always parsed. It is that the
+// parsed value REACHES StructuredRecord, which is the exact boundary it silently fell
+// off before migration 0024 wired the field through.
+describe('venue phone capture from centerdetails', () => {
+  function vancouverDetails() {
+    return fixture<{ body: { center_details: Array<{ id: number; phone?: string }> } }>(
+      'vancouver.centerdetails.json'
+    ).body.center_details;
+  }
+
+  it('every Vancouver centre in the captured roster carries a phone number', () => {
+    const index = buildVenueIndex(VANCOUVER, vancouverDetails());
+    const withPhone = [...index.values()].filter((v) => v.venuePhone);
+    expect(index.size).toBe(36);
+    expect(withPhone.length, '36/36 measured live 2026-08-01, identical to the fixture').toBe(36);
+  });
+
+  it('the phone reaches the record — the boundary it used to fall off', () => {
+    const index = buildVenueIndex(VANCOUVER, vancouverDetails());
+    const { records } = parseTenantCalendars(
+      VANCOUVER,
+      [asCalendar('vancouver.events.calendar-5.json', 5, '*Open Gym Times')],
+      { window: CAPTURE_WINDOW }
+    );
+    const applied = applyVenues(records, index);
+
+    expect(applied.records.length).toBeGreaterThan(0);
+    for (const r of applied.records) {
+      expect(r.venuePhone, 'calendar 5 runs entirely at centres that publish a phone').toBeTruthy();
+    }
+    // Hastings Community Centre (centre 44) — the value this file already pins address
+    // and name against, so the three assertions cannot drift apart.
+    expect(index.get(44)!.venuePhone).toBe('(604) 718-6222');
+  });
+
+  it('stores the source rendering verbatim, including the one non-conforming value', () => {
+    const index = buildVenueIndex(VANCOUVER, vancouverDetails());
+    // 35 of 36 render as "(604) NNN-NNNN"; False Creek (43) publishes a +1 prefix. Both
+    // are stored exactly as published — canonicalising is a display decision, and there
+    // is no display layer for this yet. See supabase/migrations/0024_venue_phone.sql.
+    expect(index.get(43)!.venuePhone).toBe('+1 (604) 257-8195');
+    const shapes = new Set(
+      [...index.values()].map((v) => (v.venuePhone ?? '').replace(/\d/g, 'N'))
+    );
+    expect(shapes).toEqual(new Set(['(NNN) NNN-NNNN', '+N (NNN) NNN-NNNN']));
+  });
+
+  it('Burnaby carries phone numbers on the same wire', () => {
+    const details = fixture<{ body: { center_details: Array<{ id: number }> } }>(
+      'burnaby.centerdetails.json'
+    ).body.center_details;
+    const index = buildVenueIndex(BURNABY, details);
+    expect([...index.values()].filter((v) => v.venuePhone).length).toBe(7);
+    expect(index.get(63)!.venuePhone, 'Bonsor Recreation Complex').toBe('(604) 297-4597');
+  });
+
+  it('a centre that publishes no phone yields undefined, never an empty string', () => {
+    const index = buildVenueIndex(VANCOUVER, [
+      { id: 999, name: '*Phoneless Centre', address1: '1 Nowhere St', city: 'Vancouver' },
+      { id: 998, name: '*Blank Phone Centre', phone: '   ', city: 'Vancouver' },
+    ]);
+    expect(index.get(999)!.venuePhone).toBeUndefined();
+    expect(index.get(998)!.venuePhone).toBeUndefined();
+  });
+
+  describe('normaliseVenuePhone drops what it cannot stand behind', () => {
+    it('keeps every real shape the source has ever published', () => {
+      for (const good of [
+        '(604) 718-8222',
+        '+1 (604) 257-8195',
+        '604-987-4471 ext. 8175',
+        '  (604) 718-5800  ', // trimmed, not otherwise touched
+      ]) {
+        expect(normaliseVenuePhone(good)).toBe(good.trim());
+      }
+    });
+
+    it('drops prose, sentinels and short junk rather than storing a callable-looking lie', () => {
+      for (const bad of [
+        undefined,
+        '',
+        '   ',
+        'call the centre',
+        'see website',
+        'n/a',
+        '123456', // six digits — below the shortest real NANP subscriber number
+        'Please contact the front desk during business hours to enquire about drop-in times',
+      ]) {
+        expect(normaliseVenuePhone(bad), `should drop: ${String(bad)}`).toBeUndefined();
+      }
+    });
+
+    it('a dropped phone costs the record nothing else — fail soft on the field, not the run', () => {
+      const index = buildVenueIndex(VANCOUVER, [
+        {
+          id: 44,
+          name: '*Hastings Community Centre',
+          address1: '3096 Hastings Street East',
+          city: 'Vancouver',
+          state: 'BC',
+          zip_code: 'V5K 2A5',
+          phone: 'call the centre',
+        },
+      ]);
+      const venue = index.get(44)!;
+      expect(venue.venuePhone).toBeUndefined();
+      expect(venue.venueName).toBe('Hastings Community Centre');
+      expect(venue.venueAddress).toMatch(/Vancouver, BC/);
+      expect(venue.geo, 'geo is unaffected by a rejected phone').toBeDefined();
+    });
   });
 });
 

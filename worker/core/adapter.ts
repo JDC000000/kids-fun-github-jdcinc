@@ -12,6 +12,13 @@ export interface StructuredRecord {
   title: string;
   venueName?: string;
   venueAddress?: string;
+  /**
+   * Public contact number for the venue, exactly as the source published it (trimmed,
+   * never reformatted — see supabase/migrations/0024_venue_phone.sql for why the
+   * canonicalisation decision is deferred to a display layer that does not exist yet).
+   * Sparse by design: only the `activenet` family populates it today.
+   */
+  venuePhone?: string;
   venueLat?: number;
   venueLng?: number;
   venueMunicipalityName?: string;
