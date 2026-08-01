@@ -30,11 +30,12 @@ VALUES
   ('library_communico',    'Coquitlam Public Library Communico',   'official','auto','1 day', NULL),
   -- NVDPL (North Vancouver District Public Library) — the library family's 4th tenant and
   -- its only `generic_rss` platform, added under decision record D-12 (2026-07-31).
-  -- terms_status/robots_status stay 'pending' here like every other row: D-12 is Jon's
-  -- acceptance of the UNREADABLE-robots.txt risk (HTTP 403, Cloudflare managed challenge)
-  -- for THIS SOURCE BY NAME, which unblocks building the adapter — it is not a promotion
-  -- of this row, and it does not generalise to any other source. Enabling live ingestion
-  -- is still an explicit out-of-band ops action. See docs/source-register.md §6.8.
+  -- terms_status stays 'pending' here like every other row: D-12 is Jon's acceptance of the
+  -- UNREADABLE-robots.txt risk (HTTP 403, Cloudflare managed challenge) for THIS SOURCE BY
+  -- NAME, which unblocks building the adapter — it is not a promotion of this row, and it
+  -- does not generalise to any other source. Enabling live ingestion is still an explicit
+  -- out-of-band ops action. Its robots_status + override are recorded AFTER this insert
+  -- (see the block below the ON CONFLICT). See docs/source-register.md §6.8.
   ('library_generic_rss',  'North Vancouver District Public Library Events RSS', 'official','auto','1 day', NULL),
   -- Adapter D — Venue (family 4-5, P0). Round 22 / Task LL terms review (see
   -- docs/source-register.md §2/§6 + worker/adapters/venue/config.ts):
@@ -67,3 +68,35 @@ VALUES
   ('city_calendar',      'City of Vancouver events calendar', 'official', 'auto',    '1 day', NULL),
   ('eventbrite_organizer','Organizer-scoped Eventbrite (placeholder — none configured yet)', 'partner', 'partner', '1 day', NULL)
 ON CONFLICT (family, name) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- NVDPL robots.txt: the honest record (F-5, migration 0022_source_robots_override.sql).
+--
+-- `nvdpl.events.mylibrary.digital/robots.txt` answers HTTP 403 behind a Cloudflare managed
+-- challenge. So the FACT is 'unknown' — we looked and could not determine — not 'pending'
+-- (nobody has looked yet) and emphatically not 'allowed' (a human read it and it permits
+-- us), which is what every other 'allowed' row on this project means. The AUTHORISATION to
+-- proceed anyway is recorded separately, as the decision record that granted it.
+--
+-- THIS DOES NOT ENABLE NVDPL. terms_status is still 'pending', so both the per-run gate
+-- (worker/core/terms-gate.ts) and the scheduler's SQL predicate (worker/scheduler/tiered.ts)
+-- still refuse this row — on terms, before robots is even reached. Promoting terms_status to
+-- 'summarise_only' remains the same deliberate out-of-band ops action it is for VPL, RPL and
+-- the city calendar; this seed has never production-enabled a source and still doesn't.
+--
+-- Written as a GUARDED UPDATE rather than folded into the INSERT above, for two reasons:
+--   • the INSERT is ON CONFLICT DO NOTHING, so on every database where the row already
+--     exists (i.e. all of them, after the first seed run) an INSERT would set nothing; and
+--   • the WHERE clause makes re-running non-destructive. If someone later reads a real
+--     robots.txt for this host and sets 'allowed'/'disallowed', or records a DIFFERENT
+--     decision, the next seed run leaves that alone instead of silently reverting a human's
+--     finding back to "unreadable". Converging an untouched row is the job; overwriting a
+--     deliberate correction is not.
+UPDATE source
+   SET robots_status            = 'unknown',
+       robots_override_decision = 'D-12',
+       robots_override_note     = 'robots.txt unreadable (HTTP 403, Cloudflare managed challenge). Risk accepted for THIS SOURCE ONLY by decision D-12; reasoning and scope live in docs/source-register.md §6.8 and §7 F-5. Does not generalise to any other source.'
+ WHERE family = 'library_generic_rss'
+   AND name   = 'North Vancouver District Public Library Events RSS'
+   AND robots_status IN ('pending', 'unknown')
+   AND (robots_override_decision IS NULL OR robots_override_decision = 'D-12');

@@ -10,6 +10,7 @@
 // or the worker's own setInterval — whichever mechanism a given environment has.
 import type { Pool } from 'pg';
 import { resolveCadenceTier, nextCheckIntervalSeconds, type CadenceTier } from './cadence';
+import { robotsClearedForLiveFetchSql } from '../core/terms-gate';
 
 export interface DueSource {
   id: string;
@@ -37,6 +38,13 @@ interface DueCandidateRow {
 export async function enqueueDueJobs(pool: Pool): Promise<DueSource[]> {
   // Candidate = terms+robots approved, past its cadence gate (next_check_at), no active job,
   // and not operator-fed. The near-occurrence flag drives the sub-daily near_date tier.
+  //
+  // The robots clause is NOT written here: it comes from worker/core/terms-gate.ts, the same
+  // module worker/core/source-runner.ts's per-run gate reads. This scheduler predicate and
+  // that gate are independent enforcement points, and a source that passes one but not the
+  // other is silently broken in the worst way — "enabled" everywhere a human looks, and
+  // never actually enqueued. Sharing the authoring makes them unable to drift;
+  // tests/scheduler/robots-override-db.test.ts proves they haven't.
   const { rows } = await pool.query<DueCandidateRow>(
     `SELECT
        s.id,
@@ -56,7 +64,7 @@ export async function enqueueDueJobs(pool: Pool): Promise<DueSource[]> {
        ) AS has_near_occurrence
      FROM source s
      WHERE s.terms_status IN ('allowed', 'summarise_only')
-       AND s.robots_status = 'allowed'
+       AND ${robotsClearedForLiveFetchSql('s')}
        AND s.ingestion_method <> 'manual'
        AND (s.next_check_at IS NULL OR s.next_check_at <= now())
        AND NOT EXISTS (

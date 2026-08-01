@@ -18,6 +18,15 @@ export interface SourceRow {
   authorityTier: string;
   termsStatus: string;
   robotsStatus: string;
+  /**
+   * F-5: decision-record reference authorising live fetch despite an UNREADABLE robots.txt.
+   * READ-ONLY here, deliberately — see the note on RETURNING_COLS. NULL for every ordinary
+   * source; when set, the console must show it, because a row reading `robots: unknown`
+   * while the scheduler is happily fetching it is the same dishonesty this flag exists to
+   * remove, just pointed the other way.
+   */
+  robotsOverrideDecision: string | null;
+  robotsOverrideNote: string | null;
   platform: string | null;
   ingestionMethod: string;
   seasonState: string;
@@ -46,6 +55,8 @@ interface SourceDbRow {
   authority_tier: string;
   terms_status: string;
   robots_status: string;
+  robots_override_decision: string | null;
+  robots_override_note: string | null;
   platform: string | null;
   ingestion_method: string;
   season_state: string;
@@ -62,8 +73,15 @@ interface SourceDbRow {
 
 // The column projection, reused verbatim by SELECT list and INSERT/UPDATE RETURNING so
 // every read of a source row (list, edit-load, post-write snapshot) has identical shape.
+//
+// robots_override_* are READ here and are deliberately absent from the INSERT/UPDATE column
+// lists below — the no-code console must never be able to grant an unreadable-robots.txt
+// override from a dropdown. Granting one is a routed human decision that lands as a seed/
+// migration change alongside its written reasoning (F-5, D-12); the console's job is to make
+// an existing override VISIBLE, not to mint new ones.
 const RETURNING_COLS = `
-    id, family, name, authority_tier, terms_status, robots_status, platform,
+    id, family, name, authority_tier, terms_status, robots_status,
+    robots_override_decision, robots_override_note, platform,
     ingestion_method::text AS ingestion_method, season_state::text AS season_state, health_state,
     baseline_cadence::text AS baseline_cadence_text,
     EXTRACT(EPOCH FROM baseline_cadence)::bigint AS baseline_cadence_secs,
@@ -93,6 +111,8 @@ function toRow(r: SourceDbRow): SourceRow {
     authorityTier: r.authority_tier,
     termsStatus: r.terms_status,
     robotsStatus: r.robots_status,
+    robotsOverrideDecision: r.robots_override_decision,
+    robotsOverrideNote: r.robots_override_note,
     platform: r.platform,
     ingestionMethod: r.ingestion_method,
     seasonState: r.season_state,

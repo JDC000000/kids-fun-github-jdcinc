@@ -376,7 +376,13 @@ export class LibraryAdapter implements Adapter {
    * TRIPLE GATE. All three must hold before a single byte leaves the process:
    *   1. config  — `liveCapable: true` on this system (a reviewed live path exists);
    *   2. env     — this systemKey named in KIDS_FUN_LIVE_LIBRARY_SYSTEMS;
-   *   3. DB      — terms_status ∈ {allowed, summarise_only} AND robots_status = 'allowed',
+   *   3. DB      — terms_status ∈ {allowed, summarise_only} AND robots cleared
+   *                (robots_status = 'allowed', or NVDPL's F-5 case: robots_status =
+   *                'unknown' plus a robots_override_decision matching the anchored
+   *                decision-reference shape pattern — NOT merely non-blank; F-QA-1
+   *                replaced that test, so a padded or whitespace-only reference is
+   *                rejected. This is the D-12 unreadable-robots.txt override,
+   *                docs/source-register.md §7),
    *                enforced independently of 1 and 2, in TWO places (QA finding F-C
    *                corrected this pointer — it is NOT politeFetch):
    *                  • worker/core/source-runner.ts — evaluateLiveFetchGate() per run;

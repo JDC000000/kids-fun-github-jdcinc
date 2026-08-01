@@ -42,6 +42,7 @@ import {
   USER_AGENT,
 } from '../../worker/core/politeness';
 import { recordProvenance } from '../../worker/core/provenance';
+import { DECISION_REFERENCE_SQL_PATTERN, robotsClearedForLiveFetchSql } from '../../worker/core/terms-gate';
 import { LibraryAdapter, LIBRARY_SYSTEMS } from '../../worker/adapters/library';
 import { CityCalendarAdapter, CITY_CALENDARS } from '../../worker/adapters/citycalendar';
 import { VenueAdapter, getVenue } from '../../worker/adapters/venue';
@@ -235,8 +236,27 @@ describe('G-T35-3 crawl-politeness controls are real', () => {
   it('the scheduler only enqueues terms+robots-approved sources, at cadence', () => {
     const scheduler = readFileSync(resolve(process.cwd(), 'worker/scheduler/tiered.ts'), 'utf8');
     expect(scheduler).toMatch(/terms_status\s+IN\s*\(\s*'allowed',\s*'summarise_only'\s*\)/i);
-    expect(scheduler).toMatch(/robots_status\s*=\s*'allowed'/i);
     expect(scheduler).toMatch(/next_check_at/i); // cadence gate — nothing re-fetched before it's due
+
+    // The robots clause is no longer a literal in this file: it is composed from
+    // worker/core/terms-gate.ts so the scheduler's SQL and the per-run TypeScript gate
+    // cannot be updated independently (F-5 — see tests/scheduler/robots-override-db.test.ts
+    // for the behavioural proof that they agree). Assert the composed predicate, which is
+    // what actually reaches the database.
+    // Asserted on the WHERE clause, not merely on the file: an unused import would satisfy
+    // a bare "the file mentions the helper" check while the query itself had been re-inlined.
+    expect(scheduler).toMatch(/WHERE[\s\S]*\$\{robotsClearedForLiveFetchSql\('s'\)\}/);
+    expect(scheduler).not.toMatch(/robots_status\s*=\s*'/);
+    const robotsClause = robotsClearedForLiveFetchSql('s');
+    expect(robotsClause).toMatch(/s\.robots_status\s*=\s*'allowed'/i);
+    // The one exception, and both halves of it: the honest status AND a well-formed
+    // decision reference. Neither alone may clear a source.
+    expect(robotsClause).toMatch(/s\.robots_status\s*=\s*'unknown'/i);
+    // The reference test must be the SAME anchored shape pattern the TypeScript gate applies,
+    // not a second opinion about what counts as blank — the two engines do not agree about
+    // whitespace, and that disagreement WAS a live gate/scheduler drift (F-QA-1).
+    expect(robotsClause).toContain(DECISION_REFERENCE_SQL_PATTERN);
+    expect(robotsClause).not.toMatch(/btrim|trim\(/i);
   });
 
   it('the three live sources are declared with a crawl cadence in the registry', () => {

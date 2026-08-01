@@ -4,7 +4,12 @@
 // job queue/source registry and the runtime entrypoints; live network fetching
 // remains blocked in adapters until each source clears D-6/live-wiring tasks.
 import type { Pool } from 'pg';
-import { evaluateLiveFetchGate, evaluateTermsGate, type Environment } from './terms-gate';
+import {
+  evaluateLiveFetchGate,
+  evaluateTermsGate,
+  SOURCE_GATE_COLUMNS,
+  type Environment,
+} from './terms-gate';
 import { resolveAdapterForSourceRow } from './adapter-registry';
 import { ingestSource, type IngestSummary } from './ingest';
 
@@ -18,6 +23,8 @@ export interface SourceForIngest {
   name: string;
   termsStatus: string;
   robotsStatus: string;
+  /** F-5 override reference; null for every source but a deliberately-marked one. */
+  robotsOverrideDecision: string | null;
 }
 
 export interface TermsGatedIngestResult {
@@ -50,8 +57,12 @@ export async function loadSourceForIngest(
     name: string;
     terms_status: string;
     robots_status: string;
+    robots_override_decision: string | null;
   }>(
-    `SELECT id, family, name, terms_status, robots_status
+    // SOURCE_GATE_COLUMNS, not a hand-written list: a gate fed a row that omits
+    // robots_override_decision fails closed on a source a human deliberately authorised,
+    // and nothing surfaces the omission (F-5).
+    `SELECT id, family, name, ${SOURCE_GATE_COLUMNS}
      FROM source
      WHERE ${where.sql}
      LIMIT 1`,
@@ -67,6 +78,7 @@ export async function loadSourceForIngest(
     name: rows[0].name,
     termsStatus: rows[0].terms_status,
     robotsStatus: rows[0].robots_status,
+    robotsOverrideDecision: rows[0].robots_override_decision,
   };
 }
 
