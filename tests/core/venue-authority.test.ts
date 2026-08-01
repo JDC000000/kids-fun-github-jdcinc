@@ -199,6 +199,109 @@ describe.skipIf(!hasDb)('G-VGEO-A2 — authority-ranked venue geo write', () => 
     expect(after.geo_attribution).toBe(before.geo_attribution);
   });
 
+  // ── the human-override escape (QA F1 — this was ship-blocking and had NO test) ─────
+
+  it('a SECOND admin correction to the same venue actually moves the pin', async () => {
+    // QA F1, ship-blocking, and the failure mode is the one this whole stream exists to
+    // remove: it was SILENT. Every admin write declares the same tier and equal authority
+    // leaves the incumbent, so the first admin coordinate stuck and every later correction
+    // was swallowed — address and display_area updated, the pin did not, no error anywhere.
+    // An admin who noticed a wrong pin, fixed it, and saw the listing save successfully had
+    // simply not changed it.
+    const pool = getPool();
+    const name = venueName('admin-correction');
+    const admin = (lat: number, lng: number) =>
+      resolveVenue(pool, {
+        name,
+        lat,
+        lng,
+        geoAuthority: VENUE_GEO_AUTHORITY.ADMIN_MANUAL,
+        geoSource: 'admin:manual-listing',
+        geoIsHumanOverride: true,
+      });
+
+    await admin(49.1, -123.1);
+    expect((await storedGeo(name)).lat).toBeCloseTo(49.1, 6);
+    await admin(49.2, -123.2);
+    expect((await storedGeo(name)).lat, 'the second correction must land').toBeCloseTo(49.2, 6);
+    await admin(49.3, -123.3);
+    expect((await storedGeo(name)).lat, 'and the third').toBeCloseTo(49.3, 6);
+  });
+
+  it('the override is NARROWLY scoped — an adapter at equal authority still cannot overwrite', async () => {
+    // The guarantee the override must not damage. Order-independence is about INTERCHANGEABLE
+    // automated runs; two human edits are not interchangeable, two cron runs are. If this ever
+    // goes green with the roles reversed, the override has leaked into the adapter path and
+    // every venue in the product is order-dependent again.
+    const pool = getPool();
+    const name = venueName('adapter-equal-tier');
+    const adapter = (lat: number, lng: number, source: string) =>
+      resolveVenue(pool, {
+        name,
+        lat,
+        lng,
+        geoAuthority: VENUE_GEO_AUTHORITY.ADAPTER_CONFIG_LITERAL,
+        geoSource: source,
+      });
+
+    await adapter(49.5, -123.5, 'first');
+    await adapter(49.6, -123.6, 'second');
+    const row = await storedGeo(name);
+    expect(row.lat, 'equal-authority ADAPTER writes must still leave the incumbent').toBeCloseTo(49.5, 6);
+    expect(row.geo_source).toBe('first');
+  });
+
+  it('a human override does NOT let a lower tier beat a higher one', async () => {
+    // `>=`, never "always wins". Today ADMIN_MANUAL is the top tier so this can only tie, but
+    // the moment a higher tier is added an override must not silently outrank it — asserted
+    // now, while it is cheap, rather than discovered then.
+    const pool = getPool();
+    const name = venueName('override-not-supreme');
+    await resolveVenue(pool, {
+      name,
+      ...ACTIVENET_KILLARNEY,
+      geoAuthority: VENUE_GEO_AUTHORITY.ADMIN_MANUAL,
+      geoSource: 'admin:manual-listing',
+      geoIsHumanOverride: true,
+    });
+    // a LOWER tier, even flagged as a human override, must lose
+    await resolveVenue(pool, {
+      name,
+      ...CITYCALENDAR_KILLARNEY,
+      geoAuthority: VENUE_GEO_AUTHORITY.LIVE_VENDOR_PAYLOAD,
+      geoSource: 'eventbrite:api-venue',
+      geoIsHumanOverride: true,
+    });
+    expect((await storedGeo(name)).lat).toBeCloseTo(ACTIVENET_KILLARNEY.lat, 6);
+  });
+
+  it('the override moves the PROVENANCE columns with the coordinate, not just the point', async () => {
+    const pool = getPool();
+    const name = venueName('override-provenance');
+    await resolveVenue(pool, {
+      name,
+      lat: 49.1,
+      lng: -123.1,
+      geoAuthority: VENUE_GEO_AUTHORITY.ADMIN_MANUAL,
+      geoSource: 'admin:manual-listing',
+      geoAttribution: 'ogl-vancouver',
+      geoIsHumanOverride: true,
+    });
+    await resolveVenue(pool, {
+      name,
+      lat: 49.2,
+      lng: -123.2,
+      geoAuthority: VENUE_GEO_AUTHORITY.ADMIN_MANUAL,
+      geoSource: 'admin:manual-listing-v2',
+      geoIsHumanOverride: true,
+    });
+    const row = await storedGeo(name);
+    expect(row.lat).toBeCloseTo(49.2, 6);
+    expect(row.geo_source).toBe('admin:manual-listing-v2');
+    // the old notice must not survive onto the new coordinate — that is a false licence claim
+    expect(row.geo_attribution).toBeNull();
+  });
+
   // ── the legacy settling event ─────────────────────────────────────────────────────
 
   it('a legacy (authority 0) incumbent is outranked exactly once, then holds', async () => {

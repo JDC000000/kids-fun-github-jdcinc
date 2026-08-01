@@ -16,6 +16,41 @@
 
 import type { LatLong } from './geocode';
 
+/**
+ * The two statements the backfill runs, HERE rather than in the CLI wrapper.
+ *
+ * They used to live in `scripts/backfill-venue-geo.ts`, which runs `main()` on load and says
+ * so in its own comment ("never imported by app or test code"). That made the clobber-guard
+ * untestable by anything except a text regex — which proves somebody typed the words, not that
+ * the statement behaves that way (QA finding F4). SQL belongs with the module that owns the
+ * behaviour, not with the CLI entry point that happens to invoke it.
+ */
+export const LIST_MISSING_GEO_SQL = `
+  SELECT id, name, address
+  FROM venue
+  WHERE geo IS NULL AND address IS NOT NULL AND btrim(address) <> ''
+  ORDER BY name
+  LIMIT $1`;
+
+/**
+ * `AND geo IS NULL` IS STRICTER THAN THE AUTHORITY RULE, ON PURPOSE. This writer's tier
+ * outranks the legacy tier migration 0025 stamps onto every pre-existing coordinate, so the
+ * ordinal ALONE would newly let the weakest source in the system overwrite every hand-placed
+ * point in the database with an address-derived guess. Deleting this predicate is a silent,
+ * global, one-line regression. Full reasoning: `GEOCODER_BACKFILL` in
+ * worker/core/venue-geo-authority.ts. Behaviourally pinned by
+ * tests/geo/backfill-clobber-guard.test.ts.
+ *
+ * pg params: $1 = venue id, $2 = lng (x), $3 = lat (y), $4 = geo_authority.
+ */
+export const SET_GEO_SQL = `
+  UPDATE venue
+  SET geo = ST_SetSRID(ST_MakePoint($2::double precision, $3::double precision), 4326)::geography,
+      geo_authority = $4::smallint,
+      geo_source = 'geocoder:mapbox-backfill',
+      geo_set_at = now()
+  WHERE id = $1 AND geo IS NULL`;
+
 export interface VenueGeoRow {
   id: string;
   name: string;

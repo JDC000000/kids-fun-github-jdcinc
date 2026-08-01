@@ -48,6 +48,58 @@ function stripComments(src: string): string {
 }
 
 /**
+ * Blank out comment and string-literal CONTENT, preserving length and delimiters, so byte
+ * offsets stay valid. Two masks, because the two scans want different things:
+ *
+ *   • comment-masked — used to LOCATE emission keys. String content survives, so a quoted or
+ *     computed key (`'venueLat':`, `["venueLat"]:`) is still visible.
+ *   • string-masked  — used to WALK BRACES. A `{` or `}` inside a string literal is no longer
+ *     a brace, so an unbalanced one cannot drag unrelated code into the enclosing literal.
+ *
+ * BOTH OF THESE ARE QA FINDING F2, reproduced end-to-end before being fixed. A single stray
+ * `{` inside a string field swept a whole neighbouring declaration into the "declared" window,
+ * and a computed key bypassed detection entirely. Both were bounded by the runtime throw — the
+ * system fails loud, never silently wrong — but each defeated the CI-time guarantee, which is
+ * the half that is supposed to stop the code being written at all.
+ */
+function maskRegions(src: string, opts: { strings: boolean }): string {
+  const out = src.split('');
+  const blank = (from: number, to: number) => {
+    for (let i = from; i < to && i < out.length; i += 1) if (out[i] !== '\n') out[i] = ' ';
+  };
+  let i = 0;
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (two === '//') {
+      const end = src.indexOf('\n', i);
+      blank(i, end === -1 ? src.length : end);
+      i = end === -1 ? src.length : end;
+      continue;
+    }
+    if (two === '/*') {
+      const end = src.indexOf('*/', i + 2);
+      blank(i, end === -1 ? src.length : end + 2);
+      i = end === -1 ? src.length : end + 2;
+      continue;
+    }
+    const q = src[i];
+    if (q === "'" || q === '"' || q === '`') {
+      let j = i + 1;
+      while (j < src.length) {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src[j] === q) break;
+        j += 1;
+      }
+      if (opts.strings) blank(i + 1, j);
+      i = j + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return out.join('');
+}
+
+/**
  * The declaration a `venueLat:` emission site must carry. The spread form is named
  * explicitly rather than matched loosely: library's authority genuinely varies per record
  * (feed coordinate vs curated fallback), so it declares through one shared helper instead of
@@ -79,15 +131,21 @@ function walkTs(dir: string): string[] {
  * emits two records, one declared and one not, must fail.
  */
 function venueLatEmissionSites(src: string): string[] {
+  const forKeys = maskRegions(src, { strings: false });
+  const forBraces = maskRegions(src, { strings: true });
   const sites: string[] = [];
-  const re = /venueLat\s*:/g;
-  for (let m = re.exec(src); m; m = re.exec(src)) {
+  // Bare, quoted and computed key forms. `["venueLat"]:` is a real emission and used to be
+  // invisible to a bare-identifier regex (QA F2b).
+  const re = /(?:\[\s*)?['"`]?venueLat['"`]?(?:\s*\])?\s*:/g;
+  for (let m = re.exec(forKeys); m; m = re.exec(forKeys)) {
     // `venueLat?:` is an interface field, not an emission.
-    if (src.slice(Math.max(0, m.index - 1), m.index + 'venueLat'.length + 2).includes('?')) continue;
+    if (forKeys.slice(Math.max(0, m.index - 1), m.index + m[0].length).includes('?')) continue;
 
+    // Braces are walked over the STRING-MASKED copy, so a `{` inside a string cannot move the
+    // window; offsets are shared because masking preserves length.
     let start = m.index;
     for (let depth = 0; start > 0; start -= 1) {
-      const c = src[start];
+      const c = forBraces[start];
       if (c === '}') depth += 1;
       else if (c === '{') {
         if (depth === 0) break;
@@ -95,15 +153,19 @@ function venueLatEmissionSites(src: string): string[] {
       }
     }
     let end = m.index;
-    for (let depth = 0; end < src.length; end += 1) {
-      const c = src[end];
+    for (let depth = 0; end < forBraces.length; end += 1) {
+      const c = forBraces[end];
       if (c === '{') depth += 1;
       else if (c === '}') {
         if (depth === 0) break;
         depth -= 1;
       }
     }
-    sites.push(src.slice(start, end + 1));
+    // The DECLARATION is looked for in the FULLY masked text — comments AND strings blanked —
+    // so neither a comment nor a string literal can satisfy it. (Writing this test is what
+    // caught the string case: the first version of the F2 fix checked the comment-masked copy,
+    // where `label: 'venueGeoAuthority'` counted as a declaration. Same defeat as F2a, mirrored.)
+    sites.push(forBraces.slice(start, end + 1));
   }
   return sites;
 }
@@ -123,7 +185,7 @@ function writesVenueGeoSql(src: string): boolean {
  * because it is deliberately STRICTER than the shared writer (it keeps `AND geo IS NULL`, so
  * the geocoder still structurally cannot clobber), not because it is exempt from the rule.
  */
-const SANCTIONED_VENUE_GEO_WRITERS = ['worker/core/venue.ts', 'scripts/backfill-venue-geo.ts'];
+const SANCTIONED_VENUE_GEO_WRITERS = ['worker/core/venue.ts', 'lib/geo/venue-geo-enrichment.ts'];
 
 /** Source roots scanned. Tests are excluded — a fixture writing a row is not a producer. */
 const SOURCE_ROOTS = ['worker', 'app', 'lib', 'scripts'];
@@ -218,11 +280,19 @@ describe('(A) every coordinate emission declares an authority', () => {
 
   it('the geocoder backfill declares its tier AND keeps its stricter NULL-only predicate', () => {
     // Deleting this predicate would be an invisible, catastrophic, one-line regression in a
-    // file nobody reads — which is why it is pinned mechanically rather than left to review.
-    // Why it is load-bearing: `GEOCODER_BACKFILL` in worker/core/venue-geo-authority.ts.
-    const src = stripComments(readFileSync(resolve(ROOT, 'scripts/backfill-venue-geo.ts'), 'utf8'));
-    expect(src).toMatch(/VENUE_GEO_AUTHORITY\.GEOCODER_BACKFILL/);
+    // file nobody reads. Why it is load-bearing: `GEOCODER_BACKFILL` in
+    // worker/core/venue-geo-authority.ts.
+    //
+    // THIS IS THE WEAKER OF THE TWO PINS AND IS DELIBERATELY KEPT ANYWAY (QA F4). Matching the
+    // text proves somebody typed the words, not that the statement behaves that way — so
+    // tests/geo/backfill-clobber-guard.test.ts now executes this exact SQL against a real row
+    // that already has a coordinate and asserts it does not move. A structural pin still earns
+    // its place: it fails on a source edit even in a lane with no database.
+    const src = stripComments(readFileSync(resolve(ROOT, 'lib/geo/venue-geo-enrichment.ts'), 'utf8'));
     expect(src).toMatch(/WHERE id = \$1 AND geo IS NULL/);
+    expect(
+      stripComments(readFileSync(resolve(ROOT, 'scripts/backfill-venue-geo.ts'), 'utf8'))
+    ).toMatch(/VENUE_GEO_AUTHORITY\.GEOCODER_BACKFILL/);
   });
 });
 
@@ -345,6 +415,55 @@ describe('(D) tripwire self-check — the scanners actually catch what they clai
     const sites = venueLatEmissionSites(`${DECLARED}\n${UNDECLARED}`);
     expect(sites.length).toBe(2);
     expect(sites.filter((s) => !AUTHORITY_DECLARATION.test(s)).length).toBe(1);
+  });
+
+  // ── QA finding F2, both halves, pinned so neither can silently come back ──────────
+
+  it('F2a — an unbalanced brace inside a STRING cannot drag neighbouring code into the window', () => {
+    // The reproduced defeat: a stray `{` in a string field made the backward brace-walk run
+    // past the literal's real start, so an UNRELATED declared emission above it satisfied the
+    // check for an undeclared one below.
+    const src = `
+      const decoy = {
+        venueLat: 1, venueLng: 2,
+        venueGeoAuthority: VENUE_GEO_AUTHORITY.ADAPTER_CONFIG_LITERAL,
+      };
+      const sneaky = {
+        displayName: 'Community Centre {',
+        venueLat: geo.lat,
+        venueLng: geo.lng,
+      };`;
+    const sites = venueLatEmissionSites(src);
+    expect(sites.length, 'both emissions must still be found').toBe(2);
+    expect(
+      sites.filter((site) => !AUTHORITY_DECLARATION.test(site)).length,
+      'the undeclared emission must NOT be rescued by the declared one above it'
+    ).toBe(1);
+  });
+
+  it('F2b — a computed / quoted property key is still an emission', () => {
+    // `["venueLat"]:` bypassed a bare-identifier regex entirely, so the emission was invisible
+    // and the file passed with no declaration at all.
+    for (const key of ['["venueLat"]', "['venueLat']", '"venueLat"', "'venueLat'"]) {
+      const src = `const r = { ${key}: geo.lat, venueLng: geo.lng };`;
+      const sites = venueLatEmissionSites(src);
+      expect(sites.length, `${key} must be detected as an emission`).toBe(1);
+      expect(AUTHORITY_DECLARATION.test(sites[0]), `${key} must be reported undeclared`).toBe(false);
+    }
+  });
+
+  it('F2b — and a computed key WITH a declaration still passes', () => {
+    const src = `const r = { ["venueLat"]: geo.lat, venueGeoAuthority: T.ADAPTER_CONFIG_LITERAL };`;
+    expect(venueLatEmissionSites(src).every((s) => AUTHORITY_DECLARATION.test(s))).toBe(true);
+  });
+
+  it('a declaration hidden in a STRING does not satisfy the check either', () => {
+    // The mirror of the comment case: masking must not accidentally make string content
+    // count as code.
+    const src = `const r = { venueLat: 1, label: 'venueGeoAuthority' };`;
+    const sites = venueLatEmissionSites(src);
+    expect(sites.length).toBe(1);
+    expect(AUTHORITY_DECLARATION.test(sites[0])).toBe(false);
   });
 
   it('catches raw SQL that writes venue.geo, in both the INSERT and UPDATE shapes', () => {

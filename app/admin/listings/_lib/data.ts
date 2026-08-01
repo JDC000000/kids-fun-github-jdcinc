@@ -77,6 +77,14 @@ async function getOrCreateManualSource(client: PoolClient): Promise<string> {
  *
  * Authority 50, the strongest claim in the system: a human looked at THIS venue on purpose,
  * in-product, and `parseManualListingInput` (./vocab.ts) range-validates the coordinate.
+ *
+ * `geoIsHumanOverride` IS THE LOAD-BEARING PART OF THAT SENTENCE, and it was missing in the
+ * first version of this function (QA finding F1, ship-blocking). Every admin write declares
+ * the SAME tier, and the write rule leaves the incumbent at equal authority — so without the
+ * flag the first admin coordinate stuck and every later correction was silently swallowed:
+ * address and display_area updated, the pin did not, and nothing reported it. This is the ONE
+ * caller in the repo permitted to set it; see `VenueInput.geoIsHumanOverride` for why a
+ * deliberate human correction is a different kind of event from a repeated adapter run.
  */
 async function resolveManualVenue(client: PoolClient, input: ManualListingInput): Promise<string> {
   const hasCoordinate = input.venueLat != null && input.venueLng != null;
@@ -88,6 +96,7 @@ async function resolveManualVenue(client: PoolClient, input: ManualListingInput)
     lng: input.venueLng,
     geoAuthority: hasCoordinate ? VENUE_GEO_AUTHORITY.ADMIN_MANUAL : undefined,
     geoSource: hasCoordinate ? 'admin:manual-listing' : undefined,
+    geoIsHumanOverride: hasCoordinate,
   });
   return venueId;
 }

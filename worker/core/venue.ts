@@ -90,6 +90,28 @@ export interface VenueInput {
    * got the per-venue attribution surface pulled (docs/source-register.md §6.6).
    */
   geoAttribution?: string | null;
+  /**
+   * This write is a DELIBERATE HUMAN CORRECTION, so it wins at EQUAL authority as well as
+   * higher. **Adapters must never set this.** Only `app/admin/listings/` does.
+   *
+   * WHY THIS DOES NOT WEAKEN THE ORDER-INDEPENDENCE GUARANTEE, which is the whole point of
+   * this module and the reason the flag is scoped this tightly. The guarantee is about
+   * INTERCHANGEABLE AUTOMATED RUNS: two cron runs of the same adapter are the same event
+   * happening twice, so "which ran last" must not decide anything. Two human edits are NOT
+   * interchangeable — the later one IS the intent, by definition. Order-dependence among
+   * deliberate human corrections is the CORRECT behaviour, not a leak in the rule.
+   *
+   * WHAT IT COST TO LEARN THAT (QA finding F1, and it was ship-blocking): every admin write
+   * declares the same tier, and equal authority leaves the incumbent — so the FIRST admin
+   * coordinate stuck and every later correction was silently swallowed. Address and
+   * display_area updated, the pin did not, and nothing said so. The commit that introduced
+   * the shared resolver claimed admin edits "now update coordinates instead of discarding
+   * them"; that claim was TRUE for the first write and FALSE for every one after it.
+   *
+   * It stays `>=`, never "always wins": at the top tier that only ever ties with another
+   * human, and if a higher tier is ever added, a human override must not silently outrank it.
+   */
+  geoIsHumanOverride?: boolean;
   municipalityName?: string | null;
   displayArea?: string | null;
   officialUrl?: string | null;
@@ -110,12 +132,20 @@ interface GeoWrite {
   authority: number | null;
   source: string | null;
   attribution: string | null;
+  isHumanOverride: boolean;
 }
 
 /** Coordinate + its declared provenance, or all-NULL when the caller sent no usable point. */
 function geoWrite(input: VenueInput, name: string): GeoWrite {
   if (!hasFiniteGeo(input)) {
-    return { lat: null, lng: null, authority: null, source: null, attribution: null };
+    return {
+      lat: null,
+      lng: null,
+      authority: null,
+      source: null,
+      attribution: null,
+      isHumanOverride: false,
+    };
   }
   if (input.geoAuthority === undefined || input.geoAuthority === null) {
     throw new Error(
@@ -130,6 +160,7 @@ function geoWrite(input: VenueInput, name: string): GeoWrite {
     authority: input.geoAuthority,
     source: input.geoSource ?? null,
     attribution: input.geoAttribution ?? null,
+    isHumanOverride: input.geoIsHumanOverride === true,
   };
 }
 
@@ -139,15 +170,27 @@ function geoWrite(input: VenueInput, name: string): GeoWrite {
  * no value is ever interpolated into it — so it carries no injection surface, and writing it
  * once is what stops the five assignments drifting apart.
  *
- * `$9 IS NOT NULL` is redundant with geoWrite()'s throw and is kept anyway: this predicate
- * is the last line of defence for the column, and "the caller already checked" is how the
- * original defect survived eight producers.
+ * `$12` is the human-override escape: `>=` instead of `>`, for deliberate human corrections
+ * ONLY (see `VenueInput.geoIsHumanOverride`). No adapter sets it, so the order-independence
+ * guarantee over automated producers is untouched.
+ *
+ * AN EARLIER VERSION ALSO CARRIED `AND $9::smallint IS NOT NULL`, REMOVED DELIBERATELY (QA
+ * finding F3). It was unreachable — `geoWrite()` throws before any caller can get here with a
+ * coordinate and no authority — so it was untested code defending nothing, and a mutation
+ * deleting it survived the whole suite, which is exactly what untested code looks like. Its
+ * removal is also a small improvement: on the impossible path it converted a LOUD CHECK
+ * violation (`venue_geo_authority_paired`, migration 0025) into a SILENT no-op, and loud is
+ * the posture this change exists to establish. If `geoWrite()`'s throw is ever removed, the
+ * database refuses the row rather than storing an unrankable coordinate.
  */
 const GEO_INCOMING_WINS = `(
        $6::double precision IS NOT NULL
    AND $7::double precision IS NOT NULL
-   AND $9::smallint IS NOT NULL
-   AND (geo IS NULL OR $9::smallint > geo_authority)
+   AND (
+         geo IS NULL
+      OR $9::smallint > geo_authority
+      OR ($12::boolean AND $9::smallint >= geo_authority)
+   )
  )`;
 
 const INCOMING_POINT =
@@ -257,6 +300,7 @@ async function writeVenueFacts(
       geo.authority,
       geo.source,
       geo.attribution,
+      geo.isHumanOverride,
     ]
   );
 }
