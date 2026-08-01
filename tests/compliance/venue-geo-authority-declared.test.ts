@@ -141,6 +141,19 @@ function venueLatEmissionSites(src: string): string[] {
     // `venueLat?:` is an interface field, not an emission.
     if (forKeys.slice(Math.max(0, m.index - 1), m.index + m[0].length).includes('?')) continue;
 
+    // THE COLON MUST BE REAL CODE, not text inside a string (QA re-verify, false positive).
+    // Keys are located in the comment-masked copy so that a QUOTED or COMPUTED key stays
+    // visible — but that also left prose visible: `throw new Error("missing venueLat: ...")`
+    // was reported as an undeclared emission. The discriminator is the COLON, and it separates
+    // the two cases exactly: for a quoted key the colon sits OUTSIDE the string literal
+    // (`'venueLat':`), while for prose the colon is INSIDE it. In the string-masked copy the
+    // second case is blanked and the first survives, so one lookup settles it.
+    //
+    // Fails-safe either way — a false positive breaks CI rather than letting a coordinate
+    // through — but a tripwire that fires on an innocent file is a tripwire people start
+    // disabling, which costs more than the case it was guarding.
+    if (forBraces[m.index + m[0].length - 1] !== ':') continue;
+
     // Braces are walked over the STRING-MASKED copy, so a `{` inside a string cannot move the
     // window; offsets are shared because masking preserves length.
     let start = m.index;
@@ -464,6 +477,38 @@ describe('(D) tripwire self-check — the scanners actually catch what they clai
     const sites = venueLatEmissionSites(src);
     expect(sites.length).toBe(1);
     expect(AUTHORITY_DECLARATION.test(sites[0])).toBe(false);
+  });
+
+  it('does NOT fire on prose that merely MENTIONS venueLat: inside a string', () => {
+    // QA re-verify finding: an error message or doc string containing "venueLat:" was reported
+    // as an undeclared emission. Fails safe (breaks CI rather than letting a coordinate
+    // through), but a tripwire that fires on an innocent file is one people start disabling.
+    for (const prose of [
+      'const HELP = "pass venueLat: 49.1 to the form";',
+      'throw new Error("missing venueLat: check the payload");',
+      'const m = `set venueLat: ${x} first`;',
+    ]) {
+      expect(venueLatEmissionSites(prose), prose).toEqual([]);
+    }
+  });
+
+  it('still fires on every REAL key form, so the prose fix did not blunt it', () => {
+    // The other half of the same edit: the discriminator is the COLON's position relative to
+    // the string delimiters, so a quoted key (colon OUTSIDE the literal) must survive while
+    // prose (colon INSIDE) does not. Asserted together, because fixing a false positive by
+    // creating a false negative would be strictly worse than the finding.
+    for (const real of [
+      'const r = { venueLat: geo.lat };',
+      'const r = { "venueLat": geo.lat };',
+      "const r = { 'venueLat': geo.lat };",
+      'const r = { ["venueLat"]: geo.lat };',
+    ]) {
+      expect(venueLatEmissionSites(real).length, real).toBe(1);
+    }
+    // and prose sitting next to a real emission must not mask it
+    expect(
+      venueLatEmissionSites('const H = "venueLat: doc"; const r = { venueLat: geo.lat };').length
+    ).toBe(1);
   });
 
   it('catches raw SQL that writes venue.geo, in both the INSERT and UPDATE shapes', () => {
