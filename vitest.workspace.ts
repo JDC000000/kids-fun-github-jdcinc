@@ -72,6 +72,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/admin/corrections-resolve-db.test.ts',
   'tests/admin/dashboard-data.test.ts',
   'tests/admin/data-health-db.test.ts',
+  'tests/admin/f1-e2e-adminpath.test.ts',
   'tests/admin/gate-db.test.ts',
   'tests/admin/manual-listing-db.test.ts',
   'tests/admin/operating-db.test.ts',
