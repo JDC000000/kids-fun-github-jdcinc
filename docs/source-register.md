@@ -1392,17 +1392,36 @@ implemented**, not open.
 
   ```
   robots cleared  ⇔  robots_status = 'allowed'
-                  OR (robots_status = 'unknown' AND robots_override_decision is non-blank)
+                  OR (robots_status = 'unknown'
+                      AND robots_override_decision ~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$)
   ```
 
   `isRobotsClearedForLiveFetch()` (TypeScript) and `robotsClearedForLiveFetchSql(alias)`
   (the SQL twin) both come from that module. Both halves of the override branch are
   load-bearing: the status alone is not enough (a never-checked source is also `unknown`),
   and the reference alone is not enough (it speaks only for an *unreadable* robots.txt, never
-  for one that was read and refused). Whitespace-only references are treated as absent —
-  `''` is non-NULL, and a gate written as `!= null` would hand an empty string full
-  clearance. **The terms gate is checked first and is not overridable**: the override answers
-  one question and discharges nothing else, exactly as D-12's own scope paragraph says.
+  for one that was read and refused). **The terms gate is checked first and is not
+  overridable**: the override answers one question and discharges nothing else, exactly as
+  D-12's own scope paragraph says.
+
+  **Why the reference test is a SHAPE test and not "is it blank?" — QA finding F-QA-1,
+  2026-08-01.** The first implementation asked each side whether the value was blank after
+  trimming, and **the two runtimes do not agree on what whitespace is.** PostgreSQL's bare
+  `btrim()` strips spaces only; JavaScript's `String.trim()` strips all whitespace. So a
+  tab-only reference read as *present* in SQL and *absent* in TypeScript: the scheduler
+  enqueued a row the gate then blocked — genuine drift between the two enforcement points,
+  i.e. the exact failure this whole entry exists to prevent, reached through the one door
+  nobody had checked. Naming the ASCII whitespace characters explicitly
+  (`btrim(x, E' \t\n\r\f\v')`) closes tab and newline and **does not close the finding** —
+  measured, not assumed: `U+00A0` and `U+2003` still read as non-blank in Postgres while
+  `.trim()` calls them blank. So the *question* was changed rather than the answer. Both
+  sides now test one anchored ASCII allowlist, which two engines evaluate identically by
+  construction — no locale, encoding or Unicode-version dependency anywhere in it, because
+  whitespace simply is not in the allowlist. A padded `'  D-12  '` is **rejected, not
+  silently repaired**: on a field authorising a fetch we cannot verify, "looks almost right"
+  must fail closed. Migration `0023_robots_override_decision_shape.sql` enforces the same
+  pattern at write time, and a test reads that constraint back out of the catalog to assert
+  the SQL and TypeScript copies still match.
 
   **Both enforcement points, updated together — this was the trap.** The rule is enforced by
   two machines that never call each other: `worker/core/source-runner.ts`
@@ -1419,9 +1438,10 @@ implemented**, not open.
   `SOURCE_GATE_COLUMNS` is the shared projection used by `source-runner.ts` and the seasonal
   watcher alike.
 
-  **Three write-time invariants** (0022, same "structural not procedural" reasoning as 0021 —
-  a constraint holds for raw SQL, a future admin action and a DB-backed test, none of which
-  route through the gate): a blank decision reference is rejected; a note cannot exist
+  **Three write-time invariants** (0022, tightened by 0023 — same "structural not procedural"
+  reasoning as 0021: a constraint holds for raw SQL, a future admin action and a DB-backed
+  test, none of which route through the gate): the decision reference must match the shape
+  above (0023; 0022's weaker "non-blank" form is what F-QA-1 defeated); a note cannot exist
   without the decision it explains; and an override may **never** sit on a row whose
   robots_status is `disallowed`. The last blocks no reachable bypass today — it exists so
   that loosening the predicate later cannot silently turn an explicit Disallow into a

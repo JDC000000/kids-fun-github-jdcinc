@@ -53,7 +53,45 @@ const ROBOTS_VERIFIED_ALLOWED = 'allowed';
 const ROBOTS_UNREADABLE = 'unknown';
 
 /**
- * True only when this source carries a real, non-blank decision-record reference AND its
+ * What a decision-record reference must LOOK like — a positive allowlist, not a blank check.
+ *
+ * WHY A SHAPE TEST RATHER THAN "IS IT BLANK?" (QA finding F-QA-1, 2026-08-01). The first
+ * version of this asked each side whether the value was blank after trimming, and the two
+ * runtimes do not agree on what whitespace IS. Postgres's bare `btrim()` strips spaces only,
+ * so a tab-only reference read as PRESENT in SQL and ABSENT in JavaScript — the scheduler
+ * enqueued a row the gate then blocked. Genuine drift between the two enforcement points:
+ * precisely the failure this module exists to make impossible, reached through the one door
+ * nobody had checked.
+ *
+ * Naming the whitespace characters explicitly (`btrim(x, E' \t\n\r\f\v')`) closes tab and
+ * newline and does NOT close the finding — MEASURED, not assumed: `U+00A0` (no-break space)
+ * and `U+2003` (em space) still read as non-blank in Postgres while `String.trim()` treats
+ * both as blank. Chasing full parity means tracking every character the Unicode standard
+ * calls whitespace across two engines that revise that set on their own schedules, forever.
+ *
+ * So the question is changed instead of the answer. Both sides now ask "does this match the
+ * shape of a decision-record reference?" — one anchored regex over an explicit ASCII
+ * allowlist, evaluated by two engines that agree on every input by construction, with no
+ * locale, encoding or Unicode-version dependency anywhere in it. Whitespace of any kind
+ * simply is not in the allowlist, so there is nothing left for the two to disagree about.
+ * A padded value like '  D-12  ' is REJECTED rather than silently repaired: on a field this
+ * load-bearing, "looks almost right" must fail closed, and 0023's CHECK stops such a value
+ * being stored at all. tests/scheduler/robots-override-db.test.ts asserts the DB constraint
+ * and this constant still carry the same pattern.
+ */
+const DECISION_REFERENCE_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$';
+const DECISION_REFERENCE_RE = new RegExp(DECISION_REFERENCE_PATTERN);
+
+/** The pattern a `robots_override_decision` must match, for the migration + its drift test. */
+export const DECISION_REFERENCE_SQL_PATTERN = DECISION_REFERENCE_PATTERN;
+
+/** True when `value` is a well-formed decision-record reference (e.g. 'D-12', 'G-T10-2'). */
+export function isDecisionReference(value: unknown): boolean {
+  return typeof value === 'string' && DECISION_REFERENCE_RE.test(value);
+}
+
+/**
+ * True only when this source carries a well-formed decision-record reference AND its
  * robots_status is the one that reference is allowed to speak for.
  *
  * Both halves are load-bearing:
@@ -61,15 +99,9 @@ const ROBOTS_UNREADABLE = 'unknown';
  *     and must keep failing closed;
  *   • the reference alone is not enough — it authorises an *unreadable* robots.txt, and
  *     says nothing about a robots.txt that was read and refused.
- * A whitespace-only reference is treated as absent: '' is non-NULL, and a gate keyed on
- * `!= null` would otherwise hand full clearance to an empty string.
  */
 export function hasRobotsUnverifiableOverride(source: SourceTermsInfo): boolean {
-  return (
-    source.robotsStatus === ROBOTS_UNREADABLE &&
-    typeof source.robotsOverrideDecision === 'string' &&
-    source.robotsOverrideDecision.trim() !== ''
-  );
+  return source.robotsStatus === ROBOTS_UNREADABLE && isDecisionReference(source.robotsOverrideDecision);
 }
 
 /** Canonical "may this source's robots posture permit a live fetch?" — TS side. */
@@ -84,12 +116,17 @@ export function isRobotsClearedForLiveFetch(source: SourceTermsInfo): boolean {
  * so it is a code-supplied identifier only — never a value from a request, a row or a
  * config file. Kept a parameter rather than hard-coding `s.` so the coupling is visible in
  * the signature instead of living in a comment nobody reads.
+ *
+ * The reference test is the SAME anchored pattern isDecisionReference() applies, so the two
+ * engines cannot disagree about any input (see DECISION_REFERENCE_PATTERN for the drift this
+ * replaced). A NULL reference makes `~` evaluate to NULL, which a WHERE clause treats as
+ * not-true — i.e. absent fails closed, with no explicit IS NOT NULL needed.
  */
 export function robotsClearedForLiveFetchSql(alias = 's'): string {
   return `(
          ${alias}.robots_status = '${ROBOTS_VERIFIED_ALLOWED}'
       OR (${alias}.robots_status = '${ROBOTS_UNREADABLE}'
-          AND btrim(coalesce(${alias}.robots_override_decision, '')) <> '')
+          AND ${alias}.robots_override_decision ~ '${DECISION_REFERENCE_PATTERN}')
        )`;
 }
 

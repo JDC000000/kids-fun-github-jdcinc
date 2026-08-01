@@ -17,7 +17,13 @@
 // third enforcement point later and the matrix is already here to point it at.
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { enqueueDueJobs } from '../../worker/scheduler/tiered';
-import { evaluateLiveFetchGate, isRobotsClearedForLiveFetch } from '../../worker/core/terms-gate';
+import {
+  DECISION_REFERENCE_SQL_PATTERN,
+  evaluateLiveFetchGate,
+  isDecisionReference,
+  isRobotsClearedForLiveFetch,
+  robotsClearedForLiveFetchSql,
+} from '../../worker/core/terms-gate';
 import { loadSourceForIngest } from '../../worker/core/source-runner';
 import { getPool, query, closePool } from '../../lib/db/client';
 
@@ -52,6 +58,51 @@ const CASES: Case[] = [
   { label: 'pending robots + a decision reference (override does not apply)', termsStatus: 'summarise_only', robotsStatus: 'pending', override: 'D-12', expectRunnable: false },
   { label: 'terms pending, robots allowed', termsStatus: 'pending', robotsStatus: 'allowed', override: null, expectRunnable: false },
   { label: 'terms blocked, robots allowed', termsStatus: 'blocked', robotsStatus: 'allowed', override: null, expectRunnable: false },
+];
+
+/**
+ * QA finding F-QA-1 (2026-08-01): the values the first matrix had NO case for.
+ *
+ * These are the inputs on which PostgreSQL's `btrim()` and JavaScript's `.trim()` disagreed
+ * — a tab-only reference read as PRESENT in SQL and ABSENT in TypeScript, so the scheduler
+ * enqueued a row the gate then blocked. Real drift between the two enforcement points,
+ * through a door the original twelve cases never opened.
+ *
+ * They are checked against the PREDICATES DIRECTLY rather than by inserting rows, because
+ * 0023's CHECK constraint now makes most of them unstorable — which is the fix working, and
+ * would otherwise mean this regression could only be tested by first disabling the thing
+ * that prevents it. The predicate layer is also strictly the stronger place to check: it is
+ * where the bug actually lived, and it keeps holding on a database whose constraint has been
+ * dropped.
+ *
+ * U+00A0 and U+2003 are here for a specific reason: the obvious fix (naming the ASCII
+ * whitespace characters inside `btrim`) closes tab and newline while leaving those two
+ * producing the identical disagreement.
+ */
+const PARITY_VALUES: Array<{ label: string; robotsStatus: string; decision: string | null }> = [
+  { label: 'a single TAB', robotsStatus: 'unknown', decision: '\t' },
+  { label: 'a single NEWLINE', robotsStatus: 'unknown', decision: '\n' },
+  { label: 'a carriage return', robotsStatus: 'unknown', decision: '\r' },
+  { label: 'a vertical tab', robotsStatus: 'unknown', decision: '\v' },
+  { label: 'a form feed', robotsStatus: 'unknown', decision: '\f' },
+  { label: 'spaces only', robotsStatus: 'unknown', decision: '   ' },
+  { label: 'the empty string', robotsStatus: 'unknown', decision: '' },
+  { label: 'U+00A0 no-break space (survives the obvious btrim fix)', robotsStatus: 'unknown', decision: '\u00a0' },
+  { label: 'U+2003 em space (survives the obvious btrim fix)', robotsStatus: 'unknown', decision: '\u2003' },
+  { label: 'U+FEFF zero-width no-break space', robotsStatus: 'unknown', decision: '\ufeff' },
+  { label: 'a padded real reference — must NOT be silently repaired', robotsStatus: 'unknown', decision: '  D-12  ' },
+  { label: 'a reference with an inner tab', robotsStatus: 'unknown', decision: 'D-\t12' },
+  { label: 'a reference with an inner space', robotsStatus: 'unknown', decision: 'D 12' },
+  { label: 'prose in the reference field (that is what the note column is for)', robotsStatus: 'unknown', decision: 'risk accepted, see the docs' },
+  { label: 'over the 64-character bound', robotsStatus: 'unknown', decision: 'D'.repeat(65) },
+  { label: 'exactly at the 64-character bound', robotsStatus: 'unknown', decision: 'D'.repeat(64) },
+  { label: 'a leading punctuation character', robotsStatus: 'unknown', decision: '-D-12' },
+  { label: "the real thing, 'D-12'", robotsStatus: 'unknown', decision: 'D-12' },
+  { label: "another real shape, 'G-T10-2'", robotsStatus: 'unknown', decision: 'G-T10-2' },
+  { label: 'NULL', robotsStatus: 'unknown', decision: null },
+  { label: 'a reference on an already-allowed row', robotsStatus: 'allowed', decision: 'D-12' },
+  { label: 'a whitespace reference on an already-allowed row', robotsStatus: 'allowed', decision: '\t' },
+  { label: 'a reference on a pending row', robotsStatus: 'pending', decision: 'D-12' },
 ];
 
 describe.skipIf(!hasDb)('F-5 unreadable-robots override: the two enforcement points agree (DB)', () => {
@@ -133,6 +184,82 @@ describe.skipIf(!hasDb)('F-5 unreadable-robots override: the two enforcement poi
   });
 });
 
+describe.skipIf(!hasDb)('F-QA-1: SQL and TS agree on EVERY reference value, storable or not (DB)', () => {
+  afterAll(async () => {
+    await closePool();
+  });
+
+  // The regression test for the finding itself. The SQL predicate is evaluated by Postgres
+  // over a VALUES list rather than over inserted rows, so it covers values 0023's constraint
+  // now forbids — the drift has to stay closed at the predicate layer too, not only behind
+  // the constraint, or a database that skipped 0023 quietly gets the old bug back.
+  it('the two engines return the same verdict for every value, including the ones that broke it', async () => {
+    const placeholders = PARITY_VALUES.map((_, i) => `($${i * 2 + 1}::text, $${i * 2 + 2}::text)`).join(', ');
+    // coalesce(..., false) replicates a WHERE clause exactly: `NULL ~ pattern` is NULL, and
+    // WHERE treats not-true as excluded. Making that explicit here rather than relying on
+    // the reader knowing it.
+    const rows = await query<{ i: number; sql_cleared: boolean }>(
+      `SELECT v.i, coalesce(${robotsClearedForLiveFetchSql('v')}, false) AS sql_cleared
+         FROM (SELECT row_number() OVER () - 1 AS i, *
+                 FROM (VALUES ${placeholders}) AS t(robots_status, robots_override_decision)) AS v`,
+      PARITY_VALUES.flatMap((v) => [v.robotsStatus, v.decision])
+    );
+
+    const disagreements: string[] = [];
+    for (const row of rows) {
+      const v = PARITY_VALUES[Number(row.i)];
+      const tsCleared = isRobotsClearedForLiveFetch({
+        id: 'parity',
+        termsStatus: 'summarise_only',
+        robotsStatus: v.robotsStatus,
+        robotsOverrideDecision: v.decision,
+      });
+      if (tsCleared !== row.sql_cleared) {
+        disagreements.push(`${v.label} (robots_status=${v.robotsStatus}): TypeScript says ${tsCleared}, Postgres says ${row.sql_cleared}`);
+      }
+    }
+
+    expect(disagreements).toEqual([]);
+    expect(rows).toHaveLength(PARITY_VALUES.length);
+  });
+
+  it('only the well-formed references clear, and they are the ones we expect', async () => {
+    // Guards the other direction: a predicate that returned false for EVERYTHING would pass
+    // the agreement test above perfectly.
+    const cleared = PARITY_VALUES.filter((v) =>
+      isRobotsClearedForLiveFetch({ id: 'p', termsStatus: 'summarise_only', robotsStatus: v.robotsStatus, robotsOverrideDecision: v.decision })
+    ).map((v) => v.label);
+
+    expect(cleared.sort()).toEqual(
+      [
+        'a reference on an already-allowed row',
+        'a whitespace reference on an already-allowed row', // cleared by robots_status, not by the reference
+        'exactly at the 64-character bound',
+        "another real shape, 'G-T10-2'",
+        "the real thing, 'D-12'",
+      ].sort()
+    );
+  });
+
+  it('the DB constraint and the TypeScript pattern are literally the same pattern', async () => {
+    // The last place these two could drift: the migration hard-codes the pattern (migrations
+    // are static SQL and cannot import it), so this reads it back out of the catalog and
+    // compares. Edit one copy and forget the other, and this names it.
+    const [row] = await query<{ def: string }>(
+      `SELECT pg_get_constraintdef(c.oid) AS def
+         FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+        WHERE t.relname = 'source' AND c.conname = 'source_robots_override_decision_shape'`
+    );
+    expect(row, 'migration 0023 has not been applied to this database').toBeDefined();
+    expect(row.def).toContain(DECISION_REFERENCE_SQL_PATTERN);
+
+    // …and the pattern is actually the one that rejects whitespace, not just any string.
+    expect(isDecisionReference('D-12')).toBe(true);
+    expect(isDecisionReference('\t')).toBe(false);
+    expect(isDecisionReference(' ')).toBe(false);
+  });
+});
+
 describe.skipIf(!hasDb)('F-5: no source without an override changed behaviour (DB, whole table)', () => {
   afterAll(async () => {
     await closePool();
@@ -194,9 +321,23 @@ describe.skipIf(!hasDb)('F-5: the DB refuses states the predicate must never hav
 
   // Belt and braces with the TS/SQL predicates, on purpose: a constraint holds for raw SQL,
   // a future admin action and a DB-backed test, none of which route through the gate.
-  it('a BLANK decision reference is rejected at write time', async () => {
-    await expect(insert('unknown', '', null)).rejects.toThrow(/source_robots_override_decision_nonblank/);
-    await expect(insert('unknown', '   ', null)).rejects.toThrow(/source_robots_override_decision_nonblank/);
+  // F-QA-1: the constraint no longer asks "is it blank?" — a question Postgres and JavaScript
+  // answered differently — but "is it shaped like a decision reference?", which they answer
+  // identically. Every value below is one the old btrim()-based constraint ACCEPTED while the
+  // TypeScript gate rejected it, i.e. every one of them was a live gate/scheduler drift.
+  it.each([
+    ['the empty string', ''],
+    ['spaces only', '   '],
+    ['a single TAB', '\t'],
+    ['a single NEWLINE', '\n'],
+    ['U+00A0 no-break space', ' '],
+    ['U+2003 em space', ' '],
+    ['a padded real reference', '  D-12  '],
+    ['a reference with an inner space', 'D 12'],
+    ['prose instead of a reference', 'risk accepted, see the docs'],
+    ['over the 64-character bound', 'D'.repeat(65)],
+  ])('a malformed decision reference (%s) is rejected at write time', async (_label, value) => {
+    await expect(insert('unknown', value, null)).rejects.toThrow(/source_robots_override_decision_shape/);
   });
 
   it('a note without a decision is rejected — it would read like an authorisation while granting nothing', async () => {

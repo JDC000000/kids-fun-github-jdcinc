@@ -42,7 +42,7 @@ import {
   USER_AGENT,
 } from '../../worker/core/politeness';
 import { recordProvenance } from '../../worker/core/provenance';
-import { robotsClearedForLiveFetchSql } from '../../worker/core/terms-gate';
+import { DECISION_REFERENCE_SQL_PATTERN, robotsClearedForLiveFetchSql } from '../../worker/core/terms-gate';
 import { LibraryAdapter, LIBRARY_SYSTEMS } from '../../worker/adapters/library';
 import { CityCalendarAdapter, CITY_CALENDARS } from '../../worker/adapters/citycalendar';
 import { VenueAdapter, getVenue } from '../../worker/adapters/venue';
@@ -252,7 +252,11 @@ describe('G-T35-3 crawl-politeness controls are real', () => {
     // The one exception, and both halves of it: the honest status AND a non-blank
     // decision reference. Neither alone may clear a source.
     expect(robotsClause).toMatch(/s\.robots_status\s*=\s*'unknown'/i);
-    expect(robotsClause).toMatch(/btrim\(coalesce\(s\.robots_override_decision, ''\)\)\s*<>\s*''/i);
+    // The reference test must be the SAME anchored shape pattern the TypeScript gate applies,
+    // not a second opinion about what counts as blank — the two engines do not agree about
+    // whitespace, and that disagreement WAS a live gate/scheduler drift (F-QA-1).
+    expect(robotsClause).toContain(DECISION_REFERENCE_SQL_PATTERN);
+    expect(robotsClause).not.toMatch(/btrim|trim\(/i);
   });
 
   it('the three live sources are declared with a crawl cadence in the registry', () => {

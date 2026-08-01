@@ -14,9 +14,11 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  DECISION_REFERENCE_SQL_PATTERN,
   evaluateLiveFetchGate,
   evaluateTermsGate,
   hasRobotsUnverifiableOverride,
+  isDecisionReference,
   isRobotsClearedForLiveFetch,
   robotsClearedForLiveFetchSql,
   SOURCE_GATE_COLUMNS,
@@ -49,6 +51,16 @@ describe('F-5 robots override — what must STILL fail closed', () => {
     ['empty string', ''],
     ['whitespace only', '   '],
     ['a tab', '\t'],
+    ['a newline', '\n'],
+    // F-QA-1: the two below are the ones the obvious fix misses. `btrim(x, E' \t\n\r\f\v')`
+    // closes tab and newline and still calls these non-blank, while JS .trim() calls them
+    // blank — so a whitespace definition, however carefully enumerated, was never going to
+    // hold. The predicate now tests SHAPE, which both engines agree on by construction.
+    ['U+00A0 no-break space', ' '],
+    ['U+2003 em space', ' '],
+    ['a padded real reference', '  D-12  '],
+    ['prose rather than a reference', 'risk accepted, see the docs'],
+    ['over the 64-character bound', 'D'.repeat(65)],
   ])('robots_status=unknown with a %s decision reference is blocked', (_label, decision) => {
     // '' and '   ' are the ones with teeth: both are non-NULL, so a gate written as
     // `robotsOverrideDecision != null` — the obvious first draft — would hand a blank
@@ -101,10 +113,63 @@ describe('F-5 robots override — the one case that passes', () => {
     expect(reason).toMatch(/UNREADABLE/i);
   });
 
-  it('a padded reference is honoured but still reported (trim is for detection, not silent repair)', () => {
+  it('a padded reference FAILS CLOSED rather than being silently repaired (F-QA-1)', () => {
+    // This assertion is inverted from the first revision of this file, deliberately. Trimming
+    // before comparing is what let PostgreSQL and JavaScript disagree — they do not share a
+    // definition of whitespace — so the predicate no longer trims anything. On a field that
+    // authorises fetching a site whose robots.txt we cannot read, "looks almost right" must
+    // fail closed, and 0023's CHECK stops a padded value being stored in the first place.
     const padded = src({ robotsStatus: 'unknown', robotsOverrideDecision: '  D-12  ' });
-    expect(hasRobotsUnverifiableOverride(padded)).toBe(true);
-    expect(evaluateLiveFetchGate(padded, 'production').allowed).toBe(true);
+    expect(hasRobotsUnverifiableOverride(padded)).toBe(false);
+    expect(evaluateLiveFetchGate(padded, 'production').allowed).toBe(false);
+  });
+});
+
+describe('F-QA-1 — the reference test is a shape test, identical in both engines', () => {
+  it.each([
+    ['D-12', true],
+    ['D-9', true],
+    ['G-T10-2', true],
+    ['2026-08-01', true],
+    ['a/b.c_d', true], // the allowlist is . _ / - alongside alphanumerics
+    ['D'.repeat(64), true],
+    ['D'.repeat(65), false],
+    ['', false],
+    [' ', false],
+    ['\t', false],
+    ['\n', false],
+    [' ', false],
+    [' ', false],
+    ['﻿', false],
+    ['  D-12  ', false],
+    ['D 12', false],
+    ['-D-12', false], // must START with an alphanumeric
+    ['.D-12', false],
+    ['risk accepted, see the docs', false],
+  ])('isDecisionReference(%j) === %s', (value, expected) => {
+    expect(isDecisionReference(value)).toBe(expected);
+  });
+
+  it('rejects non-strings without throwing', () => {
+    for (const v of [null, undefined, 12, {}, [], true]) {
+      expect(isDecisionReference(v)).toBe(false);
+    }
+  });
+
+  it('the exported SQL pattern is the one the TS predicate uses, anchored at both ends', () => {
+    // The migration hard-codes this string (migrations are static SQL and cannot import it);
+    // the DB half of this suite reads the constraint back out of the catalog and compares.
+    expect(DECISION_REFERENCE_SQL_PATTERN.startsWith('^')).toBe(true);
+    expect(DECISION_REFERENCE_SQL_PATTERN.endsWith('$')).toBe(true);
+    expect(new RegExp(DECISION_REFERENCE_SQL_PATTERN).test('D-12')).toBe(true);
+    expect(new RegExp(DECISION_REFERENCE_SQL_PATTERN).test('\t')).toBe(false);
+  });
+
+  it('the SQL predicate applies that same pattern rather than any kind of trim', () => {
+    const sql = robotsClearedForLiveFetchSql('s');
+    expect(sql).toContain(DECISION_REFERENCE_SQL_PATTERN);
+    // btrim() is what the two engines disagreed about. It must not come back.
+    expect(sql).not.toMatch(/btrim|trim\(/i);
   });
 });
 
@@ -166,21 +231,46 @@ describe('F-5 robots override — the rule is authored once', () => {
     expect(sql).toMatch(/s\.robots_status\s*=\s*'allowed'/);
     expect(sql).toMatch(/s\.robots_status\s*=\s*'unknown'/);
     expect(sql).toContain('robots_override_decision');
-    // Blank-rejection must exist on the SQL side too, not only in TypeScript — the
-    // scheduler never runs the TS predicate.
-    expect(sql).toMatch(/btrim\(coalesce\(s\.robots_override_decision, ''\)\)\s*<>\s*''/);
+    // Reference-rejection must exist on the SQL side too, not only in TypeScript — the
+    // scheduler never runs the TS predicate — and it must be the SAME shape test, not a
+    // second opinion about what "blank" means (F-QA-1).
+    expect(sql).toContain(DECISION_REFERENCE_SQL_PATTERN);
     expect(robotsClearedForLiveFetchSql('src')).toContain('src.robots_status');
   });
 
   it('every SELECT that feeds a live-fetch gate reads the override column', () => {
     // A gate handed a row without robots_override_decision fails closed on an authorised
     // source, and nothing reports the omission — the same "silently never runs" shape,
-    // moved from the predicate into the query. These are the three call sites of
-    // evaluateLiveFetchGate that build their source from SQL.
+    // moved from the predicate into the query.
+    //
+    // QA finding F-QA-3 (2026-08-01): the first version of this asserted only
+    // `toContain('SOURCE_GATE_COLUMNS')`, and QA proved it toothless by regressing the
+    // seasonal watcher's SELECT back to a hand-written column list — the whole 1883-test
+    // suite stayed green, because the now-unused IMPORT still satisfied the substring check.
+    // Exactly the weakness already caught and fixed for tiered.ts in this same file; the
+    // seasonal/source-runner guard had simply not been given the same treatment. Now checked
+    // where it matters: inside the projection of every `SELECT … FROM source` in each file.
     expect(SOURCE_GATE_COLUMNS).toContain('robots_override_decision');
+
     for (const file of ['worker/core/source-runner.ts', 'worker/adapters/seasonal/index.ts']) {
       const text = read(file);
-      expect(text, `${file} must project the shared gate column list`).toContain('SOURCE_GATE_COLUMNS');
+      // Anchored on the opening backtick and case-SENSITIVE: a case-insensitive bare
+      // /SELECT.*FROM source/ matches the English word "Selects" in this very file's header
+      // comment and then runs on into the real query, which is how the first draft of this
+      // stricter guard failed against correct code. SQL keywords are uppercase throughout
+      // this repo; prose is not.
+      const projections = [...text.matchAll(/`\s*SELECT([\s\S]*?)\bFROM\s+source\b/g)].map((m) => m[1]);
+      expect(projections.length, `${file} should contain at least one SELECT … FROM source`).toBeGreaterThan(0);
+
+      for (const projection of projections) {
+        expect(projection, `${file} must interpolate SOURCE_GATE_COLUMNS into its projection, not restate it`)
+          .toContain('${SOURCE_GATE_COLUMNS}');
+        // …and must not hand-write any of the gate columns alongside it, which is how the
+        // shared list quietly stops being the thing that is actually selected.
+        for (const column of SOURCE_GATE_COLUMNS.split(',').map((c) => c.trim())) {
+          expect(projection, `${file} hand-writes ${column} in a gate-feeding projection`).not.toContain(column);
+        }
+      }
       expect(text, `${file} must map the column onto the gate input`).toContain('robotsOverrideDecision');
     }
   });
