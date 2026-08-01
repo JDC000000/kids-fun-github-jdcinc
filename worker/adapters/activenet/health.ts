@@ -27,6 +27,28 @@ import { ActiveNetFetchError } from './client';
 /** A run yielding less than this share of its trailing baseline has collapsed. */
 export const YIELD_COLLAPSE_RATIO = 0.5;
 
+/**
+ * F-8 — phone-rejection spike. Of the centres that publish a phone at all, this share
+ * being REFUSED by normaliseVenuePhone() is a vendor-format event, not editorial drift.
+ *
+ * WHY 20% AND NOT THE 50% NEXT DOOR. YIELD_COLLAPSE_RATIO compares a run to its own
+ * trailing baseline, so it can afford a wide band. There is no baseline for phone
+ * acceptance — no DB column, no history — so this is an ABSOLUTE floor, and it gets to be
+ * strict because the measured acceptance rate on every roster we have is 100% (36/36
+ * Vancouver, 7/7 Burnaby). One or two centres appending `(front desk)` is 3–6% of
+ * Vancouver, comfortably under; a fifth of a roster changing shape at once is not
+ * something 36 independent facility administrators do in the same week.
+ */
+export const PHONE_REJECTION_ALERT_RATIO = 0.2;
+/**
+ * …but never on a single value. One centre publishing `(604) 718-8222, press 2` is a real
+ * rejection and belongs in the run warnings; it is not a contract change, and firing on it
+ * would train an operator to ignore this code — the one failure mode an alarm cannot
+ * survive. Also what keeps Burnaby's 7-centre roster from alerting at 1/7 = 14%… which
+ * is under the ratio anyway; the floor is what stops a future 4-centre tenant at 1/4.
+ */
+export const PHONE_REJECTION_MIN_REJECTED = 2;
+
 export type ActiveNetHealthCode =
   | 'ok'
   | 'portal_blocked'
@@ -36,6 +58,7 @@ export type ActiveNetHealthCode =
   | 'request_cap'
   | 'yield_collapse'
   | 'shape_drift'
+  | 'phone_rejection_spike'
   | 'fetch_failed';
 
 export interface ActiveNetRunDiagnostics {
@@ -45,6 +68,13 @@ export interface ActiveNetRunDiagnostics {
   /** Trailing baseline of occurrences from recent successful runs; null when unknown. */
   baselineOccurrences: number | null;
   unrecognisedKeys: string[];
+  /** Centres whose centerdetails entry carried a non-empty phone (the denominator). */
+  phonesOffered?: number;
+  /** Of those, how many normaliseVenuePhone() refused (see venues.ts). */
+  phonesRejected?: number;
+  /** The facilities behind that count, by name — carried so the alert detail can NAME
+   *  them rather than quote a percentage nobody can act on. */
+  venuesWithRejectedPhone?: string[];
   warnings: string[];
   /** The error that aborted the run, if any. */
   error?: unknown;
@@ -109,6 +139,41 @@ export function assessRunHealth(diag: ActiveNetRunDiagnostics): ActiveNetHealthV
       status: 'partial',
       alert: true,
       detail: `unrecognised payload keys for ${diag.tenantKey}: ${diag.unrecognisedKeys.join(', ')}`,
+      occurrences: diag.occurrencesParsed,
+    };
+  }
+
+  // F-8 — the vendor still returns a phone for every centre, and we can no longer dial any
+  // of them. Occurrences are fine, the payload shape is fine, nothing above fires, and the
+  // parent-facing detail page quietly stops showing a number it showed yesterday. This is
+  // the "cheerfully green" failure this module exists for, one field down.
+  //
+  // BELOW shape_drift, deliberately. Both fire when the vendor reshapes the payload, and
+  // "unrecognised keys" is then the larger, more actionable statement — phones are one
+  // field, drift may be everything. Above `ok` and nothing else, because on its own this
+  // is a narrow, confirmed, precisely-quantified loss.
+  //
+  // STATUS `partial`, NOT `failed`. The run's occurrences are good and must land; degrading
+  // it further would trade real activity data for a missing convenience field. `partial` +
+  // alert is exactly the shape_drift posture directly above, for the same reason.
+  const offered = diag.phonesOffered ?? 0;
+  const rejected = diag.phonesRejected ?? 0;
+  if (
+    rejected >= PHONE_REJECTION_MIN_REJECTED &&
+    offered > 0 &&
+    rejected / offered >= PHONE_REJECTION_ALERT_RATIO
+  ) {
+    const named = diag.venuesWithRejectedPhone ?? [];
+    const shown = named.slice(0, 5);
+    const suffix = named.length > shown.length ? `, +${named.length - shown.length} more` : '';
+    return {
+      code: 'phone_rejection_spike',
+      status: 'partial',
+      alert: true,
+      detail:
+        `phone coverage dropped for ${diag.tenantKey}: ${rejected} of ${offered} published phone ` +
+        `number(s) were unusable (>= ${PHONE_REJECTION_ALERT_RATIO * 100}%) — re-check the ` +
+        `centerdetails phone format${shown.length ? `; affected: ${shown.join(', ')}${suffix}` : ''}`,
       occurrences: diag.occurrencesParsed,
     };
   }

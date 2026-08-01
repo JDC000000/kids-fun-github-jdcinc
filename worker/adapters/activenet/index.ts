@@ -88,6 +88,13 @@ export interface ActiveNetRunReport {
    *  coverage gap that must be readable, not a percentage that reads as solved. */
   venuesWithoutGeo: string[];
   recordsWithoutGeo: number;
+  /** F-8 phone-coverage accounting: how many centres published a number, how many of
+   *  those this run refused, and which. Stored on the report (not just handed to the
+   *  first assessRunHealth call) because assessRun() re-classifies from the report and
+   *  has no venue index to recompute them from. */
+  phonesOffered: number;
+  phonesRejected: number;
+  venuesWithRejectedPhone: string[];
   warnings: string[];
   unrecognisedKeys: string[];
   health: ActiveNetHealthVerdict;
@@ -223,6 +230,9 @@ export class ActiveNetAdapter implements Adapter {
       recordsWithoutAddress: applied.recordsWithoutAddress,
       venuesWithoutGeo: applied.venuesWithoutGeo,
       recordsWithoutGeo: applied.recordsWithoutGeo,
+      phonesOffered: applied.phonesOffered,
+      phonesRejected: applied.phonesRejected,
+      venuesWithRejectedPhone: applied.venuesWithRejectedPhone,
       warnings,
       unrecognisedKeys: payload.unrecognisedKeys,
       health: assessRunHealth({
@@ -234,6 +244,9 @@ export class ActiveNetAdapter implements Adapter {
         // a collapse).
         baselineOccurrences: null,
         unrecognisedKeys: payload.unrecognisedKeys,
+        phonesOffered: applied.phonesOffered,
+        phonesRejected: applied.phonesRejected,
+        venuesWithRejectedPhone: applied.venuesWithRejectedPhone,
         warnings,
       }),
     };
@@ -262,6 +275,13 @@ export class ActiveNetAdapter implements Adapter {
       requestsUsed: this.report.requestsUsed,
       baselineOccurrences: baselineRecordsFound,
       unrecognisedKeys: this.report.unrecognisedKeys,
+      // Re-fed from the stored report, not recomputed: this pass has no index. Omitting
+      // them here would have made the phone verdict a purely cosmetic one — extract()
+      // would raise it and THIS call, the only one ingestSource ever sees, would
+      // immediately overwrite it with a phone-blind `ok`.
+      phonesOffered: this.report.phonesOffered,
+      phonesRejected: this.report.phonesRejected,
+      venuesWithRejectedPhone: this.report.venuesWithRejectedPhone,
       warnings: this.report.warnings,
     });
     this.report = { ...this.report, health: verdict };

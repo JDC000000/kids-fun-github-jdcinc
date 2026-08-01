@@ -603,20 +603,18 @@ without nesting. That is a redesign of the scan unit, declined for scope here, a
 route to take if surfacing the number from the list view ever becomes a goal. Recorded in
 `app/preview/_components/ActivityCard.tsx` so it is not re-litigated as a copy question.
 
-**Consequence for F-8 (§7).** F-8 — a value rejected by `normaliseVenuePhone()` is silent —
-was rated `low` *explicitly conditional on this section's hold-back*, and its own entry says
-the rating expires the moment the column renders. It now renders, so F-8 is re-rated there
-and is a live follow-up, not backlog: a wholesale vendor format change would now remove
-phone numbers from parent-facing listings on a green run with nothing reporting it. It is
-NOT bundled into this display change — it is an ingest-path signature change
-(`buildVenueIndex`) in a different lane, which is exactly the unreviewed scope expansion the
-original entry declined to make.
+**Consequence for F-8 (§7), now discharged.** F-8 — a value rejected by
+`normaliseVenuePhone()` is silent — was rated `low` *explicitly conditional on this section's
+hold-back*, and its own entry said the rating expires the moment the column renders. It
+renders, so F-8 was re-rated `medium`, correctly kept OUT of this display change (different
+lane), and then built as its own stream the same day. **Closed** — see F-8 in §7.
 
-**Known gap, tracked not closed:** a value rejected by the guard is **silent**. If the vendor
-switched wholesale to `Tel: …`, coverage would fall 36/36 → 0/36 with nothing in the run
-output saying so — the same silent-discard shape this section exists to record, one layer up.
-Closing it needs `buildVenueIndex` to return rejection counts alongside the index (a
-signature change plus a new `VenueApplyResult` field), so it is deliberately its own review.
+**That gap is now closed.** A value rejected by the guard used to be **silent**: a wholesale
+switch to `Tel: …` would drop coverage 36/36 → 0/36 with nothing in the run output saying so
+— the same silent-discard shape this section exists to record, one layer up. The rejection is
+now recorded on the index entry, counted and named by `applyVenues`, and alerted by
+`assessRunHealth` as `phone_rejection_spike`. It needed no signature change on
+`buildVenueIndex` after all; F-8 in §7 records why the heavier estimate was wrong.
 
 ---
 
@@ -1617,8 +1615,8 @@ implemented**, not open.
   prevent, over one numeric literal. Verified collision-safe (no in-flight branch touches
   those three files) and mechanical, so it is a clean small follow-up for whoever wants it.
 
-- **F-8 (RE-RATED `low` → `medium`, 2026-08-01, when F-9 resolved to SHOW) — a phone value
-  rejected by `normaliseVenuePhone()` is SILENT.**
+- **F-8 (RESOLVED 2026-08-01, registry round 73 — was `low` → `medium` when F-9 resolved to
+  SHOW) — a phone value rejected by `normaliseVenuePhone()` is SILENT.**
   The guard (§6.3.6) correctly refuses anything that is not plausibly a dial string, but it
   refuses it *quietly*: nothing in the run output distinguishes "this vendor published no
   phone" from "this vendor published something we refused." A wholesale vendor format change
@@ -1644,6 +1642,32 @@ implemented**, not open.
   than parked, on the explicit call that it does not block the display merge: the phone data
   is correct and independently verified *right now*, and F-8 protects against future drift,
   not present error.
+  **BUILT AND RESOLVED, same day.** A rejection is now recorded on the index entry
+  (`ResolvedVenue.venuePhoneRejected`, holding the refused *value* so an operator can see
+  what the vendor moved to), counted and NAMED by `applyVenues`
+  (`phonesOffered` / `phonesRejected` / `venuesWithRejectedPhone` + a run warning), and
+  ALERTED by `assessRunHealth` as `phone_rejection_spike` — `status: 'partial'`, `alert: true`,
+  ranked below `shape_drift` and above `ok`. Threshold: ≥ 20% of the *published* numbers
+  refused, and never on fewer than two (one centre appending `, press 2` is editorial, not a
+  contract change; measured acceptance is 100% on both rosters, 36/36 Vancouver and 7/7
+  Burnaby, so 20% sits far above the noise floor while staying reachable for the 7-centre
+  tenant). Denominator is centres that published *something*, so a vendor that simply stops
+  publishing phones is never miscounted as us rejecting them.
+  **Two predictions in the text above turned out wrong, and are left standing rather than
+  quietly edited.** (1) *"requires `buildVenueIndex` to return more than a `Map` — a
+  signature change … and ~15 test call sites."* It did not: carrying the rejection on the
+  entry reuses the mechanism `venuesWithoutGeo` already uses (derive from
+  `[...index.values()]`), so the index stayed a plain `Map` and no existing call site
+  changed. The scoped-heavier estimate was the reason this sat as a follow-up at all.
+  (2) *"the fix is a rejection count surfaced alongside the existing `venuesWithoutGeo`
+  warning."* A warning alone would have re-created F-8 one layer up — `ActiveNetRunReport
+  .warnings` is read by tests and by nothing else, and the only channel from a completed run
+  to an operator is the health verdict (`assessRun` → `ingestSource`'s `errors.push` →
+  `source_check_run` → the T15 board). The warning is the audit trail; the verdict is the
+  alarm. Verified by mutation, not by inspection: removing the health rule, removing the
+  rejection record, and removing the re-feed of the counts into `assessRun()` each fail a
+  distinct test — the last one being the subtle hole, since `assessRun()` re-classifies from
+  the stored report and would otherwise have overwritten the verdict with a phone-blind `ok`.
 
 - **F-9 (RESOLVED 2026-08-01 by Jon — SHOW) — whether venue phone numbers are shown to
   parents at all.** Routed rather than decided unilaterally, on the same basis as F-5: the
