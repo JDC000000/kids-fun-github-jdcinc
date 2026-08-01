@@ -632,6 +632,32 @@ describe('venue phone capture from centerdetails', () => {
       }
     });
 
+    // PINS A DELIBERATE COST, NOT A BUG. These five carry a genuinely callable number and
+    // are still refused, because the pattern is fully anchored. None occurs in ActiveNet's
+    // data today (QA pre-validated all five against live payloads, 2026-08-01). They are
+    // pinned so the trade-off cannot be silently reversed: "fixing" this by allowing a
+    // bounded trailing label reopens the digit-bearing-prose hole directly above — there
+    // is no principled line between `, press 2` and `, Sat 10:00-14:00`. The last two hold
+    // TWO numbers, which a scalar column cannot honestly represent at all.
+    //
+    // If a future change intends to accept these, it must ALSO keep the prose test above
+    // green. Deleting this test to make a change pass is the wrong move; see
+    // normaliseVenuePhone's docstring for the full reasoning.
+    it('drops label-bearing and multi-number strings — a deliberate cost of anchoring', () => {
+      for (const dropped of [
+        'Tel: (604) 718-8222',
+        '(604) 718-8222 (front desk)',
+        '(604) 718-8222, press 2',
+        '(604) 718-8222 / TTY 711',
+        '604-718-8222 or 604-718-8223',
+      ]) {
+        expect(
+          normaliseVenuePhone(dropped),
+          `deliberately dropped (see docstring): ${dropped}`
+        ).toBeUndefined();
+      }
+    });
+
     it('a dropped phone costs the record nothing else — fail soft on the field, not the run', () => {
       const index = buildVenueIndex(VANCOUVER, [
         {

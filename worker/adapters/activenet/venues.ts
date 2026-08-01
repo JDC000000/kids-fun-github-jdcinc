@@ -84,6 +84,29 @@ const MIN_PHONE_DIGITS = 7;
  * (36 distinct) plus the `ext.`/`x`/bare-local forms — 100% kept — against 16 prose and
  * degenerate cases — 100% dropped.
  *
+ * WHAT THIS COSTS, STATED PLAINLY BECAUSE THE PATTERN IS FULLY ANCHORED. It also drops
+ * strings that carry a genuinely callable number alongside anything else. None appear in
+ * ActiveNet's data today; all five were pre-validated against live payloads by QA and are
+ * pinned as tests below so the choice cannot be reversed by accident:
+ *     `Tel: (604) 718-8222`            `(604) 718-8222 (front desk)`
+ *     `(604) 718-8222, press 2`        `(604) 718-8222 / TTY 711`
+ *     `604-718-8222 or 604-718-8223`
+ * This is a DELIBERATE choice, not an oversight, and the docstring says so because the
+ * alternative — a bounded trailing label — reopens the exact prose hole above. The first
+ * three are "a number plus a label", and there is no principled line a regex can draw
+ * between `, press 2` and `, Sat 10:00-14:00`; both are adjacent free text. The last two
+ * are TWO numbers, which a scalar column cannot honestly hold — any `tel:` link built
+ * from them is broken whichever number the reader assumes. Dropping is the same
+ * fail-closed posture as the rest of this function: we lose a nicety, we do not store
+ * something no caller can dial.
+ *
+ * KNOWN GAP, NOT CLOSED HERE (follow-up, deliberately not smuggled into a text-fix
+ * commit): a rejected value is currently SILENT. If the vendor ever switched wholesale to
+ * one of the forms above, phone coverage would fall from 36/36 to 0/36 with nothing in
+ * the run output saying so — the same silent-discard shape as the bug 0024 exists to fix,
+ * one layer up. Reporting it needs `buildVenueIndex` to return rejection counts alongside
+ * the index, which changes its signature and deserves its own review.
+ *
  * WHY NOT A DB CHECK CONSTRAINT instead: a phone number has no canonical shape worth
  * asserting in SQL, and this function already means the column never sees garbage. See
  * 0024_venue_phone.sql, which also records the measured cost of the CHECK alternative
