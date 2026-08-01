@@ -1595,6 +1595,12 @@ implemented**, not open.
   `VenueApplyResult` field. **Deliberately NOT bundled** into the capture task's
   documentation/pin commits, where it would have been an unreviewed scope expansion on the
   ingest path; flagged here so it is a tracked decision rather than a comment nobody reads.
+  **Its `low` severity is conditional on F-9 being unresolved, and expires with it.** While
+  nothing renders the column, a silent drop to zero coverage costs nothing a parent can see.
+  The moment F-9 resolves to *show*, the same silence becomes a user-visible failure — phone
+  numbers disappearing from listings with a green run and no warning — so this stops being a
+  backlog item and becomes a precondition of that work. Re-rate it then; do not carry the
+  `low` forward on the strength of this entry's own label.
 
 - **F-9 (info, needs a product decision not investigation, 2026-08-01) — whether venue phone
   numbers are shown to parents at all.** `venue.phone` is populated and stored; nothing
@@ -1606,6 +1612,11 @@ implemented**, not open.
   session. Full reasoning in §6.3.6 and in `ActivityDetail.tsx`. **Routed rather than decided
   unilaterally**, on the same basis as F-5: the capture was Jon's explicit approval, the
   surfacing and its wording were not.
+  **If this resolves to SHOW, F-8 becomes a precondition of the display work, not a parallel
+  backlog item** — shipping a rendered phone number on top of a silent rejection path means a
+  vendor format change removes phone numbers from listings with nothing reporting it. Resolve
+  F-8 first, or in the same change; do not let its `low` rating (which assumes this flag stays
+  open) carry it past the point where it stops being true.
 
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source
