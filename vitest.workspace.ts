@@ -88,6 +88,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/analytics/retention-route.test.ts',
   'tests/analytics/retention.test.ts',
   'tests/analytics/trends.test.ts',
+  'tests/core/venue-authority.test.ts',
   'tests/corrections/retention-route.test.ts',
   'tests/corrections/retention.test.ts',
   'tests/email/account_deletion_cascade.test.ts',

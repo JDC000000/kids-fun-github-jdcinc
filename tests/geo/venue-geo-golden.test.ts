@@ -69,6 +69,7 @@ import { resolve } from 'node:path';
 import type { Pool } from 'pg';
 import { getPool, query, closePool } from '../../lib/db/client';
 import { resolveVenue } from '../../worker/core/venue';
+import type { VenueGeoAuthority } from '../../worker/core/venue-geo-authority';
 import { VANCOUVER_VENUE_GEO } from '../../worker/adapters/activenet/venue-geo';
 import { CITY_CALENDARS } from '../../worker/adapters/citycalendar/config';
 import { LAUNCH_VENUES } from '../../worker/adapters/venue/config';
@@ -139,12 +140,14 @@ function cityCalendarProducers(): GeoProducer[] {
 function venueConfigProducer(): GeoProducer {
   return {
     id: 'venue:launch',
-    emissions: LAUNCH_VENUES.filter((v) => v.geo).map((v) => ({
-      venueName: v.venueName,
-      lat: v.geo!.lat,
-      lng: v.geo!.lng,
-      authority: TIER_ADAPTER_CONFIG_LITERAL,
-    })),
+    emissions: LAUNCH_VENUES.filter((v) => v.geo?.lat !== undefined && v.geo?.lng !== undefined).map(
+      (v) => ({
+        venueName: v.venueName,
+        lat: v.geo!.lat!,
+        lng: v.geo!.lng!,
+        authority: TIER_ADAPTER_CONFIG_LITERAL,
+      })
+    ),
   };
 }
 
@@ -212,6 +215,11 @@ async function ingestAll(
         name: `${token} ${e.venueName}`,
         lat: e.lat,
         lng: e.lng,
+        // Declared from the TEST's own tier table (above), never from the producer's — see
+        // the comment on TIER_*: a tripwire that reads its expectations out of the code it
+        // polices can be defeated by editing that code alone.
+        geoAuthority: e.authority as VenueGeoAuthority,
+        geoSource: producer.id,
       });
     }
   }
@@ -258,9 +266,13 @@ describe.skipIf(!hasDb)('G-VGEO-0 — golden venue-geo resolution harness', () =
   });
 
   afterAll(async () => {
+    // ~43 venues per ingest run and one run per permutation, so this suite is the one that
+    // would actually silt up a shared database. Detach rather than cascade — see the same
+    // note in tests/core/venue-authority.test.ts.
     for (const t of tokens) {
       await query(
-        `DELETE FROM activity_series WHERE venue_id IN (SELECT id FROM venue WHERE name LIKE $1 || ' %')`,
+        `UPDATE activity_series SET venue_id = NULL
+         WHERE venue_id IN (SELECT id FROM venue WHERE name LIKE $1 || ' %')`,
         [t]
       );
       await query(`DELETE FROM venue WHERE name LIKE $1 || ' %'`, [t]);

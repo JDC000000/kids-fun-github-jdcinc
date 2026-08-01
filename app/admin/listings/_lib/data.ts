@@ -8,6 +8,8 @@
 import type { PoolClient } from 'pg';
 import { query } from '@/lib/db/client';
 import { writeAdminAudit, withAdminTransaction, ADMIN_AUDIT_ACTIONS } from '@/lib/admin/audit';
+import { resolveVenue } from '@/worker/core/venue';
+import { VENUE_GEO_AUTHORITY } from '@/worker/core/venue-geo-authority';
 import type { ManualListingInput } from './vocab';
 
 /** Raised for user-fixable problems (e.g. a chosen source id that no longer exists). */
@@ -63,28 +65,39 @@ async function getOrCreateManualSource(client: PoolClient): Promise<string> {
   return existing.rows[0].id;
 }
 
-/** Resolve-or-create a venue (mirrors worker/core/venue.ts, on the tx client). */
-async function resolveVenue(client: PoolClient, input: ManualListingInput): Promise<string> {
-  const name = (input.venueName ?? '').trim();
-  const existing = await client.query<{ id: string }>(
-    `SELECT id FROM venue WHERE lower(name) = lower($1) LIMIT 1`,
-    [name]
-  );
-  if (existing.rows[0]) return existing.rows[0].id;
-
-  const inserted = await client.query<{ id: string }>(
-    `INSERT INTO venue (name, address, display_area, geo)
-     VALUES (
-       $1, $2, $3,
-       CASE WHEN $4::double precision IS NULL OR $5::double precision IS NULL
-         THEN NULL
-         ELSE ST_SetSRID(ST_MakePoint($5::double precision, $4::double precision), 4326)::geography
-       END
-     )
-     RETURNING id`,
-    [name, input.venueAddress, input.displayArea, input.venueLat, input.venueLng]
-  );
-  return inserted.rows[0].id;
+/**
+ * Resolve-or-create a venue on the transaction client, through the SAME function the worker
+ * uses. Not a copy of it.
+ *
+ * WHAT THIS REPLACED, AND WHY IT MATTERS MORE THAN IT LOOKS. This was a private
+ * reimplementation under a comment claiming it "mirrors worker/core/venue.ts". It did not,
+ * and had not for some time: the worker OVERWROTE a venue's geo on every ingest, while this
+ * copy returned early on a name hit and never updated geo — or address, or display_area —
+ * at all. So an admin who corrected a venue's coordinates in the form saw the listing save
+ * successfully and the coordinate silently not change. Two write paths, two merge rules, and
+ * a comment asserting they were the same.
+ *
+ * Deleting the copy is the actual fix; keeping two in step by hand is what failed. The
+ * behaviour change worth naming explicitly is that a manual listing at an EXISTING venue now
+ * updates that venue's address / display_area / coordinates instead of discarding them —
+ * which is what the form has always appeared to do.
+ *
+ * Authority 50: a human looked at THIS venue on purpose, in-product, and the form
+ * range-validates the coordinate (`./vocab.ts:113-124`). That is the strongest claim in the
+ * system and it outranks every adapter.
+ */
+async function resolveManualVenue(client: PoolClient, input: ManualListingInput): Promise<string> {
+  const hasCoordinate = input.venueLat != null && input.venueLng != null;
+  const { venueId } = await resolveVenue(client, {
+    name: (input.venueName ?? '').trim(),
+    address: input.venueAddress,
+    displayArea: input.displayArea,
+    lat: input.venueLat,
+    lng: input.venueLng,
+    geoAuthority: hasCoordinate ? VENUE_GEO_AUTHORITY.ADMIN_MANUAL : undefined,
+    geoSource: hasCoordinate ? 'admin:manual-listing' : undefined,
+  });
+  return venueId;
 }
 
 /** Resolve-or-create the series (mirrors worker/core/series.ts, on the tx client). */
@@ -126,7 +139,7 @@ export async function createManualListing(
     }
 
     // 2. venue (optional — needed only for a distance/geo).
-    const venueId = input.venueName ? await resolveVenue(client, input) : null;
+    const venueId = input.venueName ? await resolveManualVenue(client, input) : null;
 
     // 3. series (get-or-create on source_id + canonical_title).
     const canonicalTitle = input.venueName ? `${input.title} — ${input.venueName}` : input.title;

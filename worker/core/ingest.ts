@@ -133,6 +133,13 @@ export async function ingestSource(
               phone: record.venuePhone,
               lat: record.venueLat,
               lng: record.venueLng,
+              // The coordinate and its declared authority travel TOGETHER through this hop.
+              // Dropping the authority here would not lose provenance quietly — resolveVenue
+              // throws on a coordinate with no authority — which is the point: the middle hop
+              // is exactly where venuePhone was silently lost for two days before 0024.
+              geoAuthority: record.venueGeoAuthority,
+              geoSource: record.venueGeoSource,
+              geoAttribution: record.venueGeoAttribution,
               municipalityName: record.venueMunicipalityName,
               displayArea: record.venueDisplayArea,
               officialUrl: record.locationUrl,
