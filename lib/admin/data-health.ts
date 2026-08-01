@@ -50,12 +50,20 @@ import {
 export const SLA_CADENCE_TARGET_PCT = 95;
 /**
  * Cadence-adherence grace: a source "meets its cadence" (SLA-adherent) when its last
- * successful check is within grace × its configured cadence. 1 = strict on-time (a
- * successful refresh within one full cadence interval). This is deliberately STRICTER
- * than the dashboard's staleness rule (STALE_CADENCE_GRACE = 2, "a real problem"),
- * giving a three-step gradient: adherent (≤1×) → lagging (1–2×) → stale (>2×).
+ * successful check is within grace × its configured cadence. Still STRICTER than the
+ * dashboard's staleness rule (STALE_CADENCE_GRACE = 2, "a real problem"), giving a
+ * three-step gradient: adherent (≤1.5×) → lagging (1.5–2×) → stale (>2×).
+ *
+ * This was 1 ("strict on-time"). That is unsatisfiable in steady state: the scheduler
+ * fires a source one cadence after the last fire, so the gap between consecutive
+ * successes is `cadence + jitter` with jitter structurally ≥ 0 — demanding gap ≤ 1×
+ * cadence demands jitter ≤ 0. Measured 2026-08-01, every production run since launch
+ * came in at 1440.4–1441.0 min against a 1440 min cadence, i.e. the SLA board was
+ * reporting 0% adherence for sources that were running exactly on time.
+ * See worker/health/sla.ts SLA_CADENCE_GRACE for the full write-up — the two constants
+ * are pinned equal by tests/health/sla-consistency.test.ts.
  */
-export const SLA_CADENCE_GRACE = 1;
+export const SLA_CADENCE_GRACE = 1.5;
 
 /** Launch region (column) definitions — mirrors regions.sql municipalities + REGION_CHIPS. */
 export interface RegionDef {

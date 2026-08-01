@@ -17,9 +17,28 @@ import type { Pool } from 'pg';
 /** §12.5 / T15 target: ≥95% of P0 sources checked within their cadence. */
 export const HEALTH_SLA_TARGET_PCT = 95;
 
-/** Cadence-adherence grace (× cadence). 1 = strict on-time — identical to
- *  lib/admin/data-health.ts SLA_CADENCE_GRACE (the guard test pins this). */
-export const SLA_CADENCE_GRACE = 1;
+/**
+ * Cadence-adherence grace (× cadence). Identical to lib/admin/data-health.ts
+ * SLA_CADENCE_GRACE (the guard test pins this).
+ *
+ * This was 1 ("strict on-time"), which is UNSATISFIABLE IN STEADY STATE and was measured
+ * doing real damage. The scheduler fires a source one cadence after the last fire, so the
+ * observed gap between consecutive successes is `cadence + jitter` where jitter is
+ * structurally ≥ 0 (tick alignment, queueing, the run's own duration). Demanding
+ * gap ≤ 1× cadence is therefore demanding jitter ≤ 0. Measured on 2026-08-01:
+ *   • production, every source, every run since launch: gap 1440.4–1441.0 min against a
+ *     1440 min cadence → adherent=false 100% of the time, invisibly;
+ *   • staging hourly sources: gaps 58.97–63.75 min against 60 min → adherent flickered
+ *     run-to-run on ~30 SECONDS of jitter.
+ * Adherence is worth 0.30 of computeSourceHealth, and worker/core/confidence.ts multiplies
+ * that health in, so a coin-flip boolean was moving the confirmed/needs_review threshold by
+ * ~46% and reclassifying thousands of user-visible occurrences every run.
+ *
+ * 1.5 absorbs scheduler drift (a source running exactly on cadence IS on cadence) while
+ * still failing a source that has genuinely skipped a whole cycle (gap ≈ 2× cadence).
+ * The documented gradient becomes: adherent (≤1.5×) → lagging (1.5–2×) → stale (>2×).
+ */
+export const SLA_CADENCE_GRACE = 1.5;
 
 /** Fallback cadence when a source has none configured. Mirrors lib/admin DEFAULT_CADENCE_SECONDS. */
 export const DEFAULT_CADENCE_SECONDS = 24 * 60 * 60;

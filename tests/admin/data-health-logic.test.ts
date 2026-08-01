@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   LAUNCH_REGIONS,
   P0_FAMILIES,
+  SLA_CADENCE_GRACE,
   SLA_CADENCE_TARGET_PCT,
   adherencePct,
   buildCoverageMatrix,
@@ -26,13 +27,27 @@ describe('isCadenceAdherent', () => {
     expect(isCadenceAdherent({ lastSuccessAtMs: agoMs(6 * 3600), cadenceSeconds: DAY }, NOW)).toBe(true);
   });
 
-  it('is inclusive exactly at 1× cadence (boundary)', () => {
-    // grace defaults to 1 → threshold == cadence; equal is still adherent (<=).
-    expect(isCadenceAdherent({ lastSuccessAtMs: agoMs(DAY), cadenceSeconds: DAY }, NOW)).toBe(true);
+  it('is inclusive exactly at grace × cadence (boundary)', () => {
+    // threshold == grace × cadence; equal is still adherent (<=).
+    expect(
+      isCadenceAdherent({ lastSuccessAtMs: agoMs(SLA_CADENCE_GRACE * DAY), cadenceSeconds: DAY }, NOW)
+    ).toBe(true);
   });
 
-  it('a source lagging past its cadence is NOT adherent', () => {
-    expect(isCadenceAdherent({ lastSuccessAtMs: agoMs(1.5 * DAY), cadenceSeconds: DAY }, NOW)).toBe(false);
+  // REGRESSION (2026-08-01): grace was 1, so a source running exactly on its cadence
+  // scored NOT adherent — the gap between scheduled runs is `cadence + jitter` and the
+  // jitter is always positive. Production reported 0% adherence for on-time sources.
+  it('tolerates the scheduler drift a source running exactly on cadence always has', () => {
+    for (const driftSeconds of [1, 30, 60, 240]) {
+      expect(
+        isCadenceAdherent({ lastSuccessAtMs: agoMs(DAY + driftSeconds), cadenceSeconds: DAY }, NOW),
+        `drift=+${driftSeconds}s must still be adherent`
+      ).toBe(true);
+    }
+  });
+
+  it('a source that has skipped a whole cycle is NOT adherent', () => {
+    expect(isCadenceAdherent({ lastSuccessAtMs: agoMs(2 * DAY), cadenceSeconds: DAY }, NOW)).toBe(false);
   });
 
   it('a source that never succeeded is NOT adherent', () => {
@@ -49,7 +64,7 @@ describe('isCadenceAdherent', () => {
   it('scales with a longer (weekly) cadence', () => {
     const week = 7 * DAY;
     expect(isCadenceAdherent({ lastSuccessAtMs: agoMs(5 * DAY), cadenceSeconds: week }, NOW)).toBe(true);
-    expect(isCadenceAdherent({ lastSuccessAtMs: agoMs(8 * DAY), cadenceSeconds: week }, NOW)).toBe(false);
+    expect(isCadenceAdherent({ lastSuccessAtMs: agoMs(14 * DAY), cadenceSeconds: week }, NOW)).toBe(false);
   });
 });
 

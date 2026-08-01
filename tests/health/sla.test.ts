@@ -14,6 +14,7 @@ import {
   computeHealthSla,
   applyHealthStates,
   HEALTH_SLA_TARGET_PCT,
+  SLA_CADENCE_GRACE,
 } from '../../worker/health/sla';
 import { getPool, query, closePool } from '../../lib/db/client';
 
@@ -25,9 +26,41 @@ const agoMs = (s: number): number => NOW - s * 1000;
 describe('SLA dimensions (pure)', () => {
   it('cadenceAdherent mirrors the grace × cadence rule', () => {
     expect(cadenceAdherent({ lastSuccessAtMs: agoMs(6 * 3600), cadenceSeconds: DAY }, NOW)).toBe(true);
-    expect(cadenceAdherent({ lastSuccessAtMs: agoMs(DAY), cadenceSeconds: DAY }, NOW)).toBe(true); // inclusive at 1×
-    expect(cadenceAdherent({ lastSuccessAtMs: agoMs(1.5 * DAY), cadenceSeconds: DAY }, NOW)).toBe(false);
+    expect(cadenceAdherent({ lastSuccessAtMs: agoMs(DAY), cadenceSeconds: DAY }, NOW)).toBe(true);
+    expect(cadenceAdherent({ lastSuccessAtMs: agoMs(SLA_CADENCE_GRACE * DAY), cadenceSeconds: DAY }, NOW)).toBe(
+      true
+    ); // inclusive exactly at grace×
+    expect(cadenceAdherent({ lastSuccessAtMs: agoMs(2 * DAY), cadenceSeconds: DAY }, NOW)).toBe(false);
     expect(cadenceAdherent({ lastSuccessAtMs: null, cadenceSeconds: DAY }, NOW)).toBe(false);
+  });
+
+  // ── REGRESSION (2026-08-01) ───────────────────────────────────────────────────
+  // The grace was 1, which is unsatisfiable in steady state: the scheduler fires a
+  // source one cadence after the last fire, so the observed gap is `cadence + jitter`
+  // with jitter structurally ≥ 0. Every production run since launch measured
+  // 1440.4–1441.0 min against a 1440 min cadence and scored NOT adherent — costing
+  // 0.30 of computeSourceHealth, which worker/core/confidence.ts multiplies in, which
+  // moved the confirmed/needs_review threshold ~46% and mass-reclassified thousands of
+  // user-visible occurrences. These cases pin the fix: a source running exactly on its
+  // cadence is adherent; one that has skipped a whole cycle still is not.
+  it('a source running exactly on cadence stays adherent despite scheduler drift', () => {
+    for (const cadence of [3600, 2 * 3600, DAY]) {
+      for (const driftSeconds of [0, 1, 30, 60, 240]) {
+        expect(
+          cadenceAdherent({ lastSuccessAtMs: agoMs(cadence + driftSeconds), cadenceSeconds: cadence }, NOW),
+          `cadence=${cadence}s drift=+${driftSeconds}s must still be adherent`
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('a source that has skipped an entire cycle is NOT adherent', () => {
+    for (const cadence of [3600, 2 * 3600, DAY]) {
+      expect(
+        cadenceAdherent({ lastSuccessAtMs: agoMs(2 * cadence), cadenceSeconds: cadence }, NOW),
+        `cadence=${cadence}s, a full missed cycle must not be adherent`
+      ).toBe(false);
+    }
   });
 
   it('checkSuccessRate = succeeded ÷ attempted (null when none attempted)', () => {

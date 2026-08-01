@@ -155,6 +155,47 @@ describe('BR-13 confidence — whole formula', () => {
     expect(statusForConfidence(result.label)).toBe('needs_review');
   });
 
+  // ── REGRESSION (2026-08-01) — the cadence-adherence cliff ────────────────────
+  // `volatility` is computeSourceHealth's score, of which cadence adherence is a hard
+  // 0/1 term worth 0.30. Because confidence MULTIPLIES, that single bit moved every
+  // record of a source across the confirm line at once. With SLA_CADENCE_GRACE = 1 an
+  // on-time source scored non-adherent on essentially every run (the gap between
+  // scheduled runs is `cadence + jitter`, jitter always > 0), so a perfectly healthy
+  // official source ran permanently at health 0.70 — and staging's hourly sources
+  // flickered between 0.63 and 0.95 run-to-run, reclassifying thousands of occurrences
+  // each way. These pin the two ends of that swing so the cliff stays visible.
+  it('a healthy on-cadence official source keeps a well-parsed record confirmed', () => {
+    const adherentHealth = 0.5 * 1.0 + 0.3 * 1 + 0.2 * 1.0; // 1.0 — success, adherent, yielding
+    const result = computeConfidence({
+      authorityTier: 'official',
+      parseQuality: BEST_PARSE,
+      lastCheckAtMs: null,
+      cadenceSeconds: 3600,
+      healthScore: adherentHealth,
+      nowMs: NOW,
+    });
+    expect(result.label).toBe('high');
+    expect(statusForConfidence(result.label)).toBe('confirmed');
+  });
+
+  it('losing ONLY the adherence bit is enough to demote a mid-quality record', () => {
+    const shared = {
+      authorityTier: 'official' as const,
+      parseQuality: NOOP_PARSE, // parse quality is identical in both runs
+      lastCheckAtMs: null,
+      cadenceSeconds: 3600,
+      nowMs: NOW,
+    };
+    // Same source, same records, same success rate and parse yield — only `adherent` differs.
+    const adherent = computeConfidence({ ...shared, healthScore: 0.5 * 0.9 + 0.3 + 0.2 }); // 0.95
+    const notAdherent = computeConfidence({ ...shared, healthScore: 0.5 * 0.9 + 0.0 + 0.2 }); // 0.65
+
+    // A 0.30 swing in one factor is a 32% swing in the product — two threshold widths.
+    expect(adherent.score - notAdherent.score).toBeGreaterThan(0.13);
+    expect(adherent.factors.volatility).toBe(0.95);
+    expect(notAdherent.factors.volatility).toBe(0.65);
+  });
+
   it('a low-authority source drags an otherwise-good record below the confirm line', () => {
     const result = computeConfidence({
       authorityTier: 'manual', // 0.4
