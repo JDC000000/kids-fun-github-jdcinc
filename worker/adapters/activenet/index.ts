@@ -88,6 +88,13 @@ export interface ActiveNetRunReport {
    *  coverage gap that must be readable, not a percentage that reads as solved. */
   venuesWithoutGeo: string[];
   recordsWithoutGeo: number;
+  /** F-8 phone-coverage accounting: how many centres published a number, how many of
+   *  those this run refused, and which. Stored on the report (not just handed to the
+   *  first assessRunHealth call) because assessRun() re-classifies from the report and
+   *  has no venue index to recompute them from. */
+  phonesOffered: number;
+  phonesRejected: number;
+  venuesWithRejectedPhone: string[];
   warnings: string[];
   unrecognisedKeys: string[];
   health: ActiveNetHealthVerdict;
@@ -223,6 +230,9 @@ export class ActiveNetAdapter implements Adapter {
       recordsWithoutAddress: applied.recordsWithoutAddress,
       venuesWithoutGeo: applied.venuesWithoutGeo,
       recordsWithoutGeo: applied.recordsWithoutGeo,
+      phonesOffered: applied.phonesOffered,
+      phonesRejected: applied.phonesRejected,
+      venuesWithRejectedPhone: applied.venuesWithRejectedPhone,
       warnings,
       unrecognisedKeys: payload.unrecognisedKeys,
       health: assessRunHealth({
@@ -234,6 +244,9 @@ export class ActiveNetAdapter implements Adapter {
         // a collapse).
         baselineOccurrences: null,
         unrecognisedKeys: payload.unrecognisedKeys,
+        phonesOffered: applied.phonesOffered,
+        phonesRejected: applied.phonesRejected,
+        venuesWithRejectedPhone: applied.venuesWithRejectedPhone,
         warnings,
       }),
     };
@@ -262,6 +275,12 @@ export class ActiveNetAdapter implements Adapter {
       requestsUsed: this.report.requestsUsed,
       baselineOccurrences: baselineRecordsFound,
       unrecognisedKeys: this.report.unrecognisedKeys,
+      // Omitting these would make the phone verdict cosmetic: extract() raises it, but
+      // THIS call is the only one ingestSource sees — it would overwrite the alert with a
+      // phone-blind `ok` (see phonesOffered's docstring above for why there's no index here).
+      phonesOffered: this.report.phonesOffered,
+      phonesRejected: this.report.phonesRejected,
+      venuesWithRejectedPhone: this.report.venuesWithRejectedPhone,
       warnings: this.report.warnings,
     });
     this.report = { ...this.report, health: verdict };

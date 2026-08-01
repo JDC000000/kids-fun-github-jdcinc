@@ -603,20 +603,12 @@ without nesting. That is a redesign of the scan unit, declined for scope here, a
 route to take if surfacing the number from the list view ever becomes a goal. Recorded in
 `app/preview/_components/ActivityCard.tsx` so it is not re-litigated as a copy question.
 
-**Consequence for F-8 (§7).** F-8 — a value rejected by `normaliseVenuePhone()` is silent —
-was rated `low` *explicitly conditional on this section's hold-back*, and its own entry says
-the rating expires the moment the column renders. It now renders, so F-8 is re-rated there
-and is a live follow-up, not backlog: a wholesale vendor format change would now remove
-phone numbers from parent-facing listings on a green run with nothing reporting it. It is
-NOT bundled into this display change — it is an ingest-path signature change
-(`buildVenueIndex`) in a different lane, which is exactly the unreviewed scope expansion the
-original entry declined to make.
-
-**Known gap, tracked not closed:** a value rejected by the guard is **silent**. If the vendor
-switched wholesale to `Tel: …`, coverage would fall 36/36 → 0/36 with nothing in the run
-output saying so — the same silent-discard shape this section exists to record, one layer up.
-Closing it needs `buildVenueIndex` to return rejection counts alongside the index (a
-signature change plus a new `VenueApplyResult` field), so it is deliberately its own review.
+**Consequence for F-8 (§7): resolved.** F-8 — a value rejected by `normaliseVenuePhone()`
+is silent — was rated `low` *explicitly conditional on this section's hold-back*, and its own
+entry said the rating expires the moment the column renders. It renders, so F-8 was re-rated
+`medium`, correctly kept OUT of this display change (different lane), then built and closed
+as its own stream the same day. Full mechanism and the record of two predictions that turned
+out wrong: see F-8 in §7.
 
 ---
 
@@ -1617,8 +1609,13 @@ implemented**, not open.
   prevent, over one numeric literal. Verified collision-safe (no in-flight branch touches
   those three files) and mechanical, so it is a clean small follow-up for whoever wants it.
 
-- **F-8 (RE-RATED `low` → `medium`, 2026-08-01, when F-9 resolved to SHOW) — a phone value
-  rejected by `normaliseVenuePhone()` is SILENT.**
+- **F-8 (DETECTION BUILT 2026-08-01, registry round 73, on branch
+  `f8/phone-rejection-observability` — NOT yet merged; was `low` → `medium` when F-9 resolved
+  to SHOW) — a phone value rejected by `normaliseVenuePhone()` is SILENT.**
+  *Status is deliberately not "RESOLVED". The detection half is built and independently
+  QA'd; the signal it raises does not reach an operator, for reasons that are not this
+  change's fault and are tracked as **F-11**. Closing F-8 outright would assert an
+  end-to-end property that does not hold.*
   The guard (§6.3.6) correctly refuses anything that is not plausibly a dial string, but it
   refuses it *quietly*: nothing in the run output distinguishes "this vendor published no
   phone" from "this vendor published something we refused." A wholesale vendor format change
@@ -1644,6 +1641,55 @@ implemented**, not open.
   than parked, on the explicit call that it does not block the display merge: the phone data
   is correct and independently verified *right now*, and F-8 protects against future drift,
   not present error.
+  **BUILT, same day.** A rejection is now recorded on the index entry
+  (`ResolvedVenue.venuePhoneRejected`, holding the refused *value* so an operator can see
+  what the vendor moved to), counted and NAMED by `applyVenues`
+  (`phonesOffered` / `phonesRejected` / `venuesWithRejectedPhone` + a run warning), and
+  ALERTED by `assessRunHealth` as `phone_rejection_spike` — `status: 'partial'`, `alert: true`,
+  ranked below `shape_drift` and above `ok`. Threshold ≥ 20% of published numbers refused,
+  never below two — see `PHONE_REJECTION_ALERT_RATIO` / `PHONE_REJECTION_MIN_REJECTED` in
+  health.ts for the full numeric rationale (100% measured acceptance on both rosters, the
+  Burnaby-floor reasoning); not re-derived here. Denominator is centres that published
+  *something*, so a vendor that simply stops publishing phones is never miscounted as us
+  rejecting them.
+  **THREE predictions in the text above turned out wrong, and are left standing rather than
+  quietly edited.** The third was found by this change's own independent QA, *after* the
+  first two had been written up as a tidy pair — which is the useful lesson: the count of
+  known-wrong predictions went up during review, not down.
+  (1) *"requires `buildVenueIndex` to return more than a `Map` — a signature change plus a
+  new `VenueApplyResult` field."* HALF wrong, and the half that was RIGHT matters. The
+  `VenueApplyResult` field was real and was added. The signature change was not: carrying
+  the rejection on the entry reuses the mechanism `venuesWithoutGeo` already uses (derive
+  from `[...index.values()]`), so the index stayed a plain `Map` and no existing call site
+  changed. The call-site count was also overstated — 12 exist, not "~15", and none needed
+  touching. That over-estimate is the reason this sat as a follow-up at all.
+  (2) *"the fix is a rejection count surfaced alongside the existing `venuesWithoutGeo`
+  warning."* Wrong — a warning alone would have re-created F-8 one layer up; see the "WHY A
+  WARNING IS NOT THE WHOLE FIX" comment on `applyVenues` in venues.ts. QA independently
+  re-verified the underlying claim (run warnings are read by tests and nothing else;
+  `recordActiveNetCheckRun` has zero production callers). Note the earlier phrasing
+  "warning = audit trail" was itself too generous: warnings are never persisted anywhere,
+  so they are a developer breadcrumb, not a trail anyone can audit after the fact.
+  (3) *"phone numbers vanishing from listings"* — **wrong, and it drove the design.**
+  `resolveVenue()` enriches with `phone = COALESCE($8, phone)` (worker/core/venue.ts), which
+  this register documents ITSELF elsewhere, so a rejected value sends NULL and the stored
+  number SURVIVES. Nothing vanishes. The real failure is FREEZING: the column stops tracking
+  the vendor and keeps serving a last-known-good number as a live `tel:` link indefinitely,
+  with no staleness marker — a parent taps a number the facility may have changed months
+  ago. Quieter than vanishing and harder to detect, so the check is more justified, not
+  less; but every prior description of the harm in this register, in the commit message and
+  in the code comments was inaccurate and has been corrected.
+  **Verified by mutation, not by inspection**, and the mutation set grew under QA. Nine
+  distinct mutations each fail at least one test: removing the health rule; removing the
+  rejection record; removing the re-feed of counts into `assessRun()`; recording accepted
+  values as rejected; removing the *names* re-feed (QA's own find — it left the whole suite
+  green while stripping every facility name from the only text an operator sees, because
+  nothing asserted a verdict's `detail`); blanking the detail string; inverting numerator
+  and denominator; relaxing `>=` to `>` at the threshold; and dropping the two-rejection
+  floor. The last three were survivable until QA pointed at the class: every assertion used
+  symmetric counts (36 of 36) or off-boundary ratios, so transposition and off-by-one were
+  invisible. The tests now use deliberately asymmetric counts and one exactly-on-the-line
+  case (2/10, which is 0.2 to the bit).
 
 - **F-9 (RESOLVED 2026-08-01 by Jon — SHOW) — whether venue phone numbers are shown to
   parents at all.** Routed rather than decided unilaterally, on the same basis as F-5: the
@@ -1675,6 +1721,74 @@ implemented**, not open.
   strictly more honest in both directions. **Not built**: it is a data-model change in the
   ingest lane, the same lane as F-8, and the current wording is accurate rather than merely
   defensible. Worth doing when someone is next in `venue` schema, not on its own.
+
+*The five flags below were all raised by the independent QA of F-8's fix (2026-08-01,
+registry round 73). They are recorded together because they share an origin worth noting:
+building one silent-failure detector is what exposed them. F-11 in particular means the
+project has been shipping alert codes that no operator is shown — a conclusion nobody
+reached while writing the alert codes themselves.*
+
+- **F-11 (`high`, 2026-08-01) — an alerting run health verdict with `status: 'partial'`
+  reaches NO operator.** Not adapter-specific and not introduced by F-8; F-8's build is
+  simply what surfaced it. `ingestSource` marks a run that produced occurrences `partial`
+  (worker/core/ingest.ts), but the health board's failures panel selects
+  `WHERE cr.status = 'failed'` (lib/admin/dashboard.ts) and worker/health/sla.ts counts
+  `partial` as SUCCEEDED for both `last_success_at` and the success ratio. So the alert text
+  is durably written to `source_check_run.errors` — queryable, unlike a run warning, which is
+  a real difference in kind — and then shown to nobody. **Every `partial` alert code in the
+  system is affected**: `shape_drift`, `coverage_truncated`, `coverage_shortfall`,
+  `asset_build_drift` and now `phone_rejection_spike`. Compounding it, `Adapter.assessRun()`
+  returns only `{code, alert, detail}` (worker/core/adapter.ts), so an adapter's own
+  `status` is discarded — meaning the careful `partial`-not-`failed` reasoning in both
+  health modules currently has no effect whatsoever, in either direction.
+  **Deliberately not fixed in F-8's stream**: the fix is either a board query change
+  (lib/admin) or a status-plumbing change (worker/core), both outside an ActiveNet adapter
+  task's file scope, and both change behaviour for four other alert codes owned by other
+  work. Wants its own review, and it is the highest-value item on this list — a detector
+  nobody is shown is the same failure this project keeps re-finding, one layer further out.
+
+- **F-12 (`high`, 2026-08-01) — a vendor WITHDRAWING phone numbers is 100% silent, and it is
+  the likeliest vendor change of all.** F-8 detects values we REFUSE. If centerdetails
+  instead returns `""`/`null` for `phone`, or renames the key, then `phonesOffered` is 0,
+  `phonesRejected` is 0, and neither the warning (`rejected > 0`) nor the alert
+  (`offered > 0`) fires — a clean `ok`. Combined with `phone = COALESCE($8, phone)`, every
+  stored number then freezes and keeps rendering as a live `tel:` link forever (see F-8
+  prediction 3). **Why it was not simply folded into F-8**: detecting withdrawal honestly
+  needs a baseline, and there is none. Within a single run, "this roster published zero
+  phones" is indistinguishable from "this tenant never had any" — a tenant that legitimately
+  publishes none would alert on every run, which is precisely the cry-wolf failure F-8's
+  two-rejection floor exists to avoid. It needs either a trailing baseline (the shape
+  `loadRecordsFoundBaseline` already provides for occurrences) or a per-tenant
+  `expectsVenuePhones` expectation in config. Both are real design decisions, not a guard
+  clause. Recorded here so the next person does not re-derive the same dead end.
+
+- **F-13 (`medium`, 2026-08-01) — `shape_drift` masking is PERMANENT, not transient.**
+  `phone_rejection_spike` ranks below `shape_drift`, which is the right call when both fire
+  on one vendor reshape. But `KNOWN_BODY_KEYS` (worker/adapters/activenet/client.ts) is a
+  static committed const, so a single benign added vendor key pins `shape_drift` on for
+  every subsequent run and makes every lower-ranked code structurally unreachable until a
+  human updates the list. A precedence order that assumes the higher code clears is wrong
+  about this canary. Either the drift canary needs to be self-clearing/acknowledgeable, or
+  lower codes need to be reported alongside rather than instead of it.
+
+- **F-14 (`medium`, 2026-08-01) — the phone-coverage metric is venue-weighted while the harm
+  is record-weighted.** `phonesRejected / phonesOffered` counts facilities equally. Vancouver
+  drop-in volume is not distributed equally: QA's worked case is that breaking the 4 centres
+  that carry a run's occurrences is 11.1% of the roster — under the 20% threshold, verdict
+  `ok` — while being 100% of the listings a parent actually sees losing their number. The
+  venue-weighted metric is the correct one for "is the vendor's format drifting"; it is the
+  wrong one for "how many parents are affected". Both are worth having and `applyVenues`
+  already holds the records needed to compute the second.
+
+- **F-15 (`low-medium`, 2026-08-01) — a venue-join collapse silences the phone signal AND the
+  geo signal together.** If centerdetails returns `[]`, or a soft 500 is swallowed
+  (client.ts), or the `id`/`name` shape changes, the index is empty: `phonesOffered` is 0, so
+  `phone_rejection_spike` cannot fire, and `venuesWithoutGeo` is derived from the same empty
+  index so it reports nothing either. No health code exists for "centres in the feed that
+  centerdetails did not resolve" — `unmappedCentreIds` produces a run warning only, and
+  **run warnings are read by nothing** (F-8 prediction 2). BONUS FINDING, recorded because it
+  is the same bug one field over: `venuesWithoutGeo` has always ridden that dead channel, so
+  the geo silent-discard F-8 fixed for phone is still open for coordinates.
 
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source

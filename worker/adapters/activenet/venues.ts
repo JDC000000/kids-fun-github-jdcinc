@@ -41,6 +41,17 @@ export interface ResolvedVenue {
   venueAddress?: string;
   venuePhone?: string;
   venueMunicipalityName: string;
+  /**
+   * The value centerdetails published for this facility when normaliseVenuePhone()
+   * REFUSED it — i.e. the vendor sent something and we declined to store it. Undefined
+   * covers both "sent nothing" and "sent something we accepted"; `venuePhone` tells
+   * those two apart. Kept as the raw string rather than a boolean because the whole
+   * point of surfacing a rejection is to let an operator SEE what the vendor moved to:
+   * `Tel: (604) 718-8222` diagnoses a format change in one glance, `phoneRejected: true`
+   * sends them to the payload to find out. It never leaves this index — applyVenues
+   * names venues and counts, and StructuredRecord's field list is explicit.
+   */
+  venuePhoneRejected?: string;
   /** Curated coordinates for this facility, when venue-geo.ts has an entry. */
   geo?: ActiveNetVenueGeo;
   /**
@@ -105,11 +116,17 @@ const MIN_PHONE_DIGITS = 7;
  * fail-closed posture as the rest of this function: we lose a nicety, we do not store
  * something no caller can dial.
  *
- * KNOWN GAP, NOT CLOSED HERE (register flag F-8): a rejected value is SILENT. A wholesale
- * vendor format change would drop coverage 36/36 → 0/36 on a green run with nothing saying
- * so — and since the detail page now RENDERS this column, that failure is user-visible:
- * phone numbers disappear from listings and no run output reports it. Fixing it changes
- * `buildVenueIndex`'s signature, so it is its own review. See docs/source-register.md F-8.
+ * THAT GAP IS NOW CLOSED (register flag F-8). A rejected value used to be SILENT — measured:
+ * the full 36-centre roster with every value switched to a rejected-but-callable form gave
+ * coverage 0/36, `warnings: []` and records still produced. It is now recorded here
+ * (`venuePhoneRejected`), counted and NAMED by applyVenues, and alerted by health.ts's
+ * `phone_rejection_spike`.
+ *
+ * NO SIGNATURE CHANGE was needed, contrary to what this note used to predict. Carrying the
+ * rejection on the ENTRY reuses the mechanism `venuesWithoutGeo` already uses — derive from
+ * `[...index.values()]` in applyVenues — so the index stays a plain Map for its ~15 call
+ * sites and this function stays pure. It does not log: the only channel from a completed
+ * run to an operator is the health verdict, not stdout. See health.ts.
  *
  * WHY NOT A DB CHECK CONSTRAINT instead: a phone number has no canonical shape worth
  * asserting in SQL, and this function already means the column never sees garbage. See
@@ -151,11 +168,17 @@ export function buildVenueIndex(
     if (!Number.isFinite(detail.id)) continue;
     const name = stripCentreSentinel(detail.name);
     if (!name) continue;
+    const offeredPhone = (detail.phone ?? '').trim();
+    const acceptedPhone = normaliseVenuePhone(detail.phone);
     index.set(detail.id, {
       centreId: detail.id,
       venueName: name,
       venueAddress: formatAddress(detail),
-      venuePhone: normaliseVenuePhone(detail.phone),
+      venuePhone: acceptedPhone,
+      // Offered-but-refused only, never "vendor published nothing" — see venuePhoneRejected's
+      // docstring above for why conflating the two would poison a signal whose entire value
+      // is that it currently reads zero.
+      venuePhoneRejected: offeredPhone && !acceptedPhone ? offeredPhone : undefined,
       venueMunicipalityName: tenant.municipality,
       // Committed constant, exact normalised name match. No network, no geocoder,
       // no fuzzy fallback — a miss is reported by applyVenues, never guessed at.
@@ -181,6 +204,18 @@ export interface VenueApplyResult {
   venuesWithoutGeo: string[];
   /** Records that ended up with no coordinates. */
   recordsWithoutGeo: number;
+  /**
+   * Centres whose centerdetails entry carried a non-empty phone — the DENOMINATOR of the
+   * coverage ratio, and deliberately not "all centres". A vendor that stops publishing a
+   * number is a different event from one that changes its format, and only the second is
+   * this file rejecting something; see buildVenueIndex.
+   */
+  phonesOffered: number;
+  /** Of those, how many normaliseVenuePhone() refused. Zero on every run measured to date. */
+  phonesRejected: number;
+  /** The facilities behind that count, BY NAME — same doctrine as venuesWithoutGeo above:
+   *  a percentage reads as solved, a name says which parent taps a missing button. */
+  venuesWithRejectedPhone: string[];
   warnings: string[];
 }
 
@@ -316,12 +351,55 @@ export function applyVenues(
     );
   }
 
+  // Phone rejections, derived from the index for the same reason venuesWithoutGeo is: a
+  // roster entry is a fact about the run whether or not it happened to carry occurrences
+  // this week, and a format change that lands on a quiet facility first is exactly the
+  // early warning this is for.
+  //
+  // WHY A WARNING IS NOT THE WHOLE FIX. Everything pushed here rides in
+  // ActiveNetRunReport.warnings, which — checked, not assumed, and independently
+  // re-verified by QA — is read by tests and by NOTHING else. It is never persisted. So a
+  // warning is a developer-facing breadcrumb, not a signal; health.ts's
+  // `phone_rejection_spike` is what actually leaves the process, via assessRun →
+  // ingestSource's `errors.push` → `source_check_run.errors`.
+  //
+  // AND IT STOPS THERE, WHICH IS NOT GOOD ENOUGH — register flag F-11, raised by the QA of
+  // this very change. An earlier version of this comment claimed the verdict reaches "the
+  // T15 board". It does not. ingestSource marks a run with occurrences `partial`
+  // (worker/core/ingest.ts), and the board's failures panel selects
+  // `WHERE cr.status = 'failed'` (lib/admin/dashboard.ts) while worker/health/sla.ts counts
+  // `partial` as SUCCEEDED. The alert text is durably persisted and queryable, which is a
+  // real improvement over a warning that evaporates — but no operator is shown it.
+  // This is a PRE-EXISTING platform gap, not one this change introduced: every `partial`
+  // alert code shares it, `shape_drift` included. F-8's build is what surfaced it.
+  // Do not "fix" it by returning `failed` from health.ts — see the note there.
+  const rejectedVenues = venues.filter((v) => v.venuePhoneRejected);
+  const venuesWithRejectedPhone = rejectedVenues.map((v) => v.venueName).sort((a, b) => a.localeCompare(b));
+  const phonesRejected = rejectedVenues.length;
+  const phonesOffered = venues.filter((v) => v.venuePhone || v.venuePhoneRejected).length;
+
+  if (phonesRejected > 0) {
+    // The refused VALUES, not just the names — an operator diagnosing this needs to see
+    // the new shape, and capping at three keeps a wholesale 36-centre switch from turning
+    // one warning into a wall of near-identical strings.
+    const samples = rejectedVenues
+      .slice(0, 3)
+      .map((v) => `${v.venueName}: ${JSON.stringify(v.venuePhoneRejected)}`);
+    warnings.push(
+      `centerdetails published an unusable phone for ${phonesRejected} of ${phonesOffered} centre(s) ` +
+        `that carry one — e.g. ${samples.join('; ')}${phonesRejected > samples.length ? ', …' : ''}`
+    );
+  }
+
   return {
     records: out,
     unmappedCentreIds,
     recordsWithoutAddress,
     venuesWithoutGeo,
     recordsWithoutGeo,
+    phonesOffered,
+    phonesRejected,
+    venuesWithRejectedPhone,
     warnings,
   };
 }

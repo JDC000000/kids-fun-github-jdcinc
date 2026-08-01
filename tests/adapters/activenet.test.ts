@@ -47,7 +47,12 @@ import {
   applyVenues,
   normaliseVenuePhone,
 } from '../../worker/adapters/activenet/venues';
-import { assessRunHealth, loadYieldBaseline, YIELD_COLLAPSE_RATIO } from '../../worker/adapters/activenet/health';
+import {
+  assessRunHealth,
+  loadYieldBaseline,
+  YIELD_COLLAPSE_RATIO,
+  PHONE_REJECTION_ALERT_RATIO,
+} from '../../worker/adapters/activenet/health';
 import { zonedLocalToUtcIso } from '../../worker/core/time';
 import { clearPolicyState } from '../../worker/health/policy';
 
@@ -677,6 +682,116 @@ describe('venue phone capture from centerdetails', () => {
       expect(venue.geo, 'geo is unaffected by a rejected phone').toBeDefined();
     });
   });
+
+  // ── F-8: a rejected phone is COUNTED, NAMED and ALERTED, never silent ───────────────
+  //
+  // The flag this closes was measured, not theorised: feeding the full 36-centre roster
+  // through with every value switched to a rejected-but-still-callable form produced
+  // coverage 0/36, `warnings: []`, `unmappedCentreIds: []` and records still emitted.
+  // Re-rated low → medium on 2026-08-01 when the number began rendering on the
+  // parent-facing detail page, i.e. when the silent loss became a silent loss OF
+  // SOMETHING PARENTS SEE. These tests re-run that exact measurement and require the
+  // opposite outcome.
+  describe('F-8 phone rejections are observable', () => {
+    /** The 36-centre Vancouver roster, every phone rewritten to a form we refuse. */
+    function rosterWithRewrittenPhones(rewrite: (phone: string, i: number) => string) {
+      return fixture<{ body: { center_details: Array<{ id: number; phone?: string }> } }>(
+        'vancouver.centerdetails.json'
+      ).body.center_details.map((d, i) => ({
+        ...d,
+        phone: d.phone ? rewrite(d.phone, i) : d.phone,
+      }));
+    }
+
+    it('the healthy baseline reads zero — the signal is only worth having if it is quiet', () => {
+      const details = fixture<{ body: { center_details: Array<{ id: number }> } }>(
+        'vancouver.centerdetails.json'
+      ).body.center_details;
+      const applied = applyVenues([], buildVenueIndex(VANCOUVER, details));
+      expect(applied.phonesOffered).toBe(36);
+      expect(applied.phonesRejected).toBe(0);
+      expect(applied.venuesWithRejectedPhone).toEqual([]);
+      expect(applied.warnings.filter((w) => /phone/i.test(w))).toEqual([]);
+    });
+
+    it('records the refused VALUE on the entry, not merely a flag', () => {
+      const index = buildVenueIndex(VANCOUVER, [
+        { id: 44, name: '*Hastings Community Centre', phone: 'Tel: (604) 718-8222' },
+        { id: 45, name: '*Kerrisdale Community Centre', phone: '(604) 257-8100' },
+        { id: 46, name: '*Phoneless Centre' },
+        { id: 47, name: '*Blank Phone Centre', phone: '   ' },
+      ]);
+      expect(index.get(44)!.venuePhoneRejected).toBe('Tel: (604) 718-8222');
+      expect(index.get(44)!.venuePhone).toBeUndefined();
+      expect(index.get(45)!.venuePhoneRejected, 'accepted ⇒ nothing to report').toBeUndefined();
+      expect(index.get(46)!.venuePhoneRejected, 'never offered ≠ refused').toBeUndefined();
+      expect(index.get(47)!.venuePhoneRejected, 'whitespace is not an offer').toBeUndefined();
+    });
+
+    it('THE MEASURED CASE: a wholesale vendor format change is no longer silent', () => {
+      const details = rosterWithRewrittenPhones((p) => `Tel: ${p}`);
+      const applied = applyVenues([], buildVenueIndex(VANCOUVER, details));
+
+      // Exactly the old measurement — coverage really is 0/36 …
+      expect(applied.phonesOffered).toBe(36);
+      expect(applied.phonesRejected).toBe(36);
+      expect(applied.venuesWithRejectedPhone.length).toBe(36);
+
+      // … and it is now SAID OUT LOUD, with the new shape quoted so an operator can see
+      // what moved without opening the payload.
+      const warning = applied.warnings.find((w) => /unusable phone/i.test(w));
+      expect(warning, 'the run must not stay silent').toBeDefined();
+      expect(warning).toMatch(/36 of 36/);
+      expect(warning).toMatch(/Tel: \(604\)/);
+
+      // Fail-soft is preserved: the run still produced its venue index and its records.
+      expect(buildVenueIndex(VANCOUVER, details).size).toBe(36);
+      expect(applied.unmappedCentreIds).toEqual([]);
+    });
+
+    it('separates "vendor stopped publishing" from "we refused it" — only the second counts', () => {
+      const applied = applyVenues(
+        [],
+        buildVenueIndex(VANCOUVER, [
+          { id: 44, name: '*A', phone: 'Tel: (604) 718-8222' },
+          { id: 45, name: '*B', phone: '(604) 257-8100' },
+          { id: 46, name: '*C' }, // no phone at all — a vendor coverage gap, not our doing
+        ])
+      );
+      expect(applied.phonesOffered, 'the centre with no phone is not in the denominator').toBe(2);
+      expect(applied.phonesRejected).toBe(1);
+      expect(applied.venuesWithRejectedPhone).toEqual(['A']);
+    });
+
+    it('names the affected facilities, sorted, and caps the quoted examples at three', () => {
+      const applied = applyVenues(
+        [],
+        buildVenueIndex(
+          VANCOUVER,
+          ['*Zulu', '*Alpha', '*Mike', '*Bravo'].map((name, i) => ({
+            id: 100 + i,
+            name,
+            phone: '(604) 718-8222, press 2',
+          }))
+        )
+      );
+      expect(applied.venuesWithRejectedPhone).toEqual(['Alpha', 'Bravo', 'Mike', 'Zulu']);
+      const warning = applied.warnings.find((w) => /unusable phone/i.test(w))!;
+      expect(warning.match(/press 2/g)!.length, 'capped at 3 quoted examples').toBe(3);
+      expect(warning).toMatch(/, …$/);
+    });
+
+    it('is derived from the roster, so a quiet facility still raises it on the first run', () => {
+      // Zero records — the format change lands on a centre with no occurrences this week.
+      // venuesWithoutGeo already works this way; the phone signal must not be weaker.
+      const applied = applyVenues(
+        [],
+        buildVenueIndex(VANCOUVER, [{ id: 44, name: '*Hastings Community Centre', phone: 'see website' }])
+      );
+      expect(applied.records).toEqual([]);
+      expect(applied.phonesRejected).toBe(1);
+    });
+  });
 });
 
 // ── G-T7R-2 client: sequencing, budget, circuit breaker ──────────────────────────────
@@ -687,7 +802,14 @@ interface StubCall {
 }
 
 /** A fetch stub that answers the four endpoints from the captured fixtures. */
-function stubPortal(overrides: { status?: number; headers?: Record<string, string> } = {}) {
+function stubPortal(
+  overrides: {
+    status?: number;
+    headers?: Record<string, string>;
+    /** Swap the centerdetails payload — the seam F-8's induced-spike test drives. */
+    centreDetails?: unknown;
+  } = {}
+) {
   const calls: StubCall[] = [];
   const impl = (async (input: unknown, init?: RequestInit) => {
     const url = String(input);
@@ -699,7 +821,8 @@ function stubPortal(overrides: { status?: number; headers?: Record<string, strin
     if (url.includes(ENDPOINTS.calendars)) body = fixture('vancouver.calendars.json');
     else if (url.includes(ENDPOINTS.filters)) body = fixture('vancouver.filters.calendar-5.json');
     else if (url.includes(ENDPOINTS.events)) body = fixture('vancouver.events.calendar-5.json');
-    else if (url.includes(ENDPOINTS.centerDetails)) body = fixture('vancouver.centerdetails.json');
+    else if (url.includes(ENDPOINTS.centerDetails))
+      body = overrides.centreDetails ?? fixture('vancouver.centerdetails.json');
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -1009,6 +1132,10 @@ describe('G-T7R-6 health: breakage and thinning are both observable', () => {
     vi.useRealTimers();
 
     expect(records.length).toBeGreaterThan(0);
+    // F-8 rides along here rather than in a second adapter+timer harness: this is already
+    // the healthy-roster E2E run, so the `alert: false` below IS the phone signal's
+    // false-alarm guard — a rejection miscount on 36 good numbers fails this line.
+    expect(adapter.lastRunReport()!.phonesRejected, 'no phone was refused on a clean roster').toBe(0);
     expect(adapter.assessRun(null), 'no history ⇒ not a collapse').toMatchObject({ alert: false });
     const collapsed = adapter.assessRun(records.length * 10);
     expect(collapsed).toMatchObject({ code: 'yield_collapse', alert: true });
@@ -1039,5 +1166,142 @@ describe('G-T7R-6 health: breakage and thinning are both observable', () => {
     });
     expect(verdict.status).toBe('partial');
     expect(verdict.occurrences).toBe(800);
+  });
+
+  // ── F-8 ────────────────────────────────────────────────────────────────────────────
+  describe('F-8 phone_rejection_spike', () => {
+    const healthy = { ...base, occurrencesParsed: 1100 };
+
+    // DELIBERATELY ASYMMETRIC (12 of 36, six names, five shown). A 36-of-36 wholesale case
+    // reads better as a story but cannot detect a swapped numerator and denominator — QA
+    // demonstrated that an inverted `${offered} of ${rejected}` survives every symmetric
+    // assertion in this file. Every count here is distinct for that reason: 12 ≠ 36, and
+    // 6 named ≠ 5 shown, so a transposition anywhere in the detail string fails a line.
+    it('alerts when a fifth of the published numbers become undialable', () => {
+      const verdict = assessRunHealth({
+        ...healthy,
+        phonesOffered: 36,
+        phonesRejected: 12,
+        venuesWithRejectedPhone: ['Britannia', 'Dunbar', 'Hastings', 'Kerrisdale', 'Killarney', 'Kitsilano'],
+      });
+      expect(verdict).toMatchObject({ code: 'phone_rejection_spike', status: 'partial', alert: true });
+      expect(verdict.detail, 'rejected of offered, in that order').toMatch(
+        /12 of 36 published phone number\(s\) were unusable/
+      );
+      expect(verdict.detail, 'names, not a percentage').toMatch(/affected: Britannia, Dunbar/);
+      expect(verdict.detail, 'and says how many it did not name').toMatch(/\+1 more/);
+      // partial, not failed: the occurrences are good and must still land.
+      expect(verdict.occurrences).toBe(1100);
+    });
+
+    it('does not fire on a single rejection — one centre adding a label is not a contract change', () => {
+      const verdict = assessRunHealth({ ...healthy, phonesOffered: 3, phonesRejected: 1 });
+      expect(verdict, 'an alarm that cries wolf gets muted').toMatchObject({ code: 'ok', alert: false });
+    });
+
+    it('holds the ratio boundary in both directions', () => {
+      // 7/36 = 19.4% — under. 8/36 = 22.2% — over. Both carry >= 2 rejections, so the
+      // ratio is the only thing being tested here.
+      expect(assessRunHealth({ ...healthy, phonesOffered: 36, phonesRejected: 7 }).code).toBe('ok');
+      expect(assessRunHealth({ ...healthy, phonesOffered: 36, phonesRejected: 8 }).code).toBe(
+        'phone_rejection_spike'
+      );
+      // EXACTLY on the line, because neither case above sits on it — 2/10 is 0.2 to the
+      // bit, so this is the only assertion that distinguishes `>=` from `>`. QA found that
+      // relaxing the comparison passed the whole suite without it.
+      expect(2 / 10 === PHONE_REJECTION_ALERT_RATIO, 'exact-boundary premise').toBe(true);
+      expect(
+        assessRunHealth({ ...healthy, phonesOffered: 10, phonesRejected: 2 }).code,
+        'the threshold is inclusive — at the line IS a spike'
+      ).toBe('phone_rejection_spike');
+      // Burnaby's 7-centre roster must be able to alert at all — a floor tuned to
+      // Vancouver would have made the smaller tenant permanently unwatchable.
+      expect(assessRunHealth({ ...healthy, phonesOffered: 7, phonesRejected: 2 }).code).toBe(
+        'phone_rejection_spike'
+      );
+      expect(assessRunHealth({ ...healthy, phonesOffered: 7, phonesRejected: 1 }).code).toBe('ok');
+    });
+
+    it('a run that publishes no phones at all is not a spike (0/0 is not 100%)', () => {
+      expect(assessRunHealth({ ...healthy, phonesOffered: 0, phonesRejected: 0 }).code).toBe('ok');
+      // …and an adapter that never supplies the fields behaves exactly as before.
+      expect(assessRunHealth(healthy).code).toBe('ok');
+    });
+
+    it('yields to the codes above it — a spike never masks a collapse or drift', () => {
+      const spiking = { phonesOffered: 36, phonesRejected: 36 };
+      expect(
+        assessRunHealth({ ...base, ...spiking, occurrencesParsed: 1 }).code,
+        'an empty municipality is the bigger story'
+      ).toBe('yield_collapse');
+      expect(
+        assessRunHealth({ ...healthy, ...spiking, unrecognisedKeys: ['events.new_block'] }).code,
+        'if the payload moved, say THAT — phones are one field of it'
+      ).toBe('shape_drift');
+      expect(
+        assessRunHealth({ ...healthy, ...spiking, error: new PortalBlockedError('vancouver', '/x') }).code
+      ).toBe('portal_blocked');
+    });
+
+    it('END TO END: an induced format change reaches ingestSource as an alerting verdict', async () => {
+      // The test the whole flag is about. Everything above checks a part; this drives a
+      // real run through fetch → extract → assessRun with nothing but the vendor's phone
+      // FORMAT changed, and requires the signal to come out the far end — the one place
+      // ingestSource actually looks (`if (verdict?.alert) errors.push(...)`).
+      const roster = fixture<{ body: { center_details: Array<{ phone?: string }> } }>(
+        'vancouver.centerdetails.json'
+      );
+      const mutated = {
+        ...roster,
+        body: {
+          ...roster.body,
+          center_details: roster.body.center_details.map((d) => ({
+            ...d,
+            // Still a perfectly callable number to a human, which is the whole trap:
+            // nothing else in the run has any reason to complain.
+            phone: d.phone ? `Tel: ${d.phone}` : d.phone,
+          })),
+        },
+      };
+
+      process.env.KIDS_FUN_LIVE_ACTIVENET = 'vancouver';
+      const { impl } = stubPortal({ centreDetails: mutated });
+      vi.spyOn(globalThis, 'fetch').mockImplementation(impl);
+      const adapter = new ActiveNetAdapter(ONE_CALENDAR_TENANT);
+      vi.useFakeTimers();
+      const pending = adapter.fetch();
+      await vi.advanceTimersByTimeAsync(120_000);
+      const records = adapter.extract(await pending);
+      vi.useRealTimers();
+
+      // The run looks entirely healthy by every pre-F-8 measure …
+      expect(records.length, 'occurrences are fine').toBeGreaterThan(0);
+      const report = adapter.lastRunReport()!;
+      expect(report.unmappedCentreIds).toEqual([]);
+      expect(report.unrecognisedKeys).toEqual([]);
+      expect(records.every((r) => r.venuePhone === undefined), 'every phone was dropped').toBe(true);
+
+      // … and it now reports the loss instead of passing as green.
+      expect(report.phonesOffered).toBe(36);
+      expect(report.phonesRejected).toBe(36);
+      const verdict = adapter.assessRun(null);
+      expect(verdict, 'this is what ingestSource turns into a run error').toMatchObject({
+        code: 'phone_rejection_spike',
+        alert: true,
+      });
+      // THE DETAIL STRING IS THE PAYLOAD, so assert it, not just the code. QA found the
+      // 4th mutation here: deleting the `venuesWithRejectedPhone` re-feed in index.ts left
+      // the whole suite green while stripping every facility name out of the only text an
+      // operator ever sees — because nothing asserted a verdict's `detail`. The same hole
+      // let a blanked detail, an inverted "36 of 8", and an off-by-one threshold survive.
+      expect(verdict!.detail, 'names the facilities, quantified, not just a code').toMatch(
+        /36 of 36 published phone number\(s\) were unusable/
+      );
+      expect(verdict!.detail).toMatch(/affected: .+ Community Centre/);
+      expect(verdict!.detail, 'and says how many it did not name').toMatch(/\+31 more/);
+      expect(report.warnings.some((w) => /unusable phone/i.test(w))).toBe(true);
+      // The stored report is updated too, so lastRunReport() and the check run agree.
+      expect(adapter.lastRunReport()!.health.code).toBe('phone_rejection_spike');
+    });
   });
 });
