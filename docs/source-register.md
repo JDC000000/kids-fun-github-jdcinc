@@ -492,6 +492,98 @@ are `class_program`. The taxonomy is not tuned for this source's vocabulary.
    `terms_status`/`robots_status` promotion described in §1 before anything ingests. That
    promotion is an operator action, deliberately not performed here.
 
+#### 6.3.6 Venue phone numbers — captured 2026-08-01, stored, and deliberately not surfaced
+
+`/onlinecalendar/centerdetails` returns a public phone number for each facility alongside
+the address this adapter was already reading. From T7 REBUILD until 2026-08-01 that number
+was parsed into `ResolvedVenue.venuePhone` and then **silently discarded**: `StructuredRecord`
+had no field to carry it and `venue` had no column to hold it, so every run fetched it and
+dropped it at the record boundary. Jon approved capturing it; migration `0024_venue_phone.sql`
+adds `venue.phone` and the existing wire now carries it end to end. **No new network request
+was added** — this is the same batched call the run already makes.
+
+**Coverage, measured live rather than projected.** Re-fetched 2026-08-01 for both tenants:
+**36/36 Vancouver** and **7/7 Burnaby** centres publish a non-empty phone, byte-identical to
+the 2026-07-30 captured fixtures. Four values were corroborated against **non-ActiveNet**
+sources (the facilities' own sites and the City of Burnaby listing, since `vancouver.ca`
+403s automated fetches): Britannia Community Centre `604-718-5800`, Britannia Pool
+`604-718-5831`, False Creek `604-257-8195`, Bonsor `604-297-4597` — **4/4 matched**.
+
+**Stored verbatim, never reformatted.** 35 of the 36 Vancouver values render `(604) NNN-NNNN`
+and one renders `+1 (604) NNN-NNNN`. Choosing a canonical rendering is a *display* decision
+and no display layer consumes this column yet; normalising at ingest would destroy the
+source's own rendering irreversibly for a consumer that has not been designed. Same rule
+`address` already follows.
+
+**No CHECK constraint, and the honest reason.** A phone number has no canonical shape worth
+asserting in SQL — this source alone publishes parenthesised, `+1`-prefixed and
+`ext.`-suffixed forms — and `normaliseVenuePhone()` already refuses to emit a value it
+cannot stand behind, so a constraint would re-assert one layer down a property established
+one layer up. *An earlier draft of this decision claimed a CHECK "would fail a whole
+municipality's run"; that was false and is corrected in the migration header rather than
+quietly dropped.* Measured: `ingestSource` has no run-level transaction (`pool.query`
+auto-commit inside a per-record `try`/`catch`), so a constraint violation costs every record
+at **one venue**, not the run — a real cost, but an ordinary trade-off, not the catastrophe
+originally asserted. The contrast with §6.8.5's `robots_override_decision` CHECKs still
+holds on its own terms: that field is a *human authorisation* where refusing the write is
+the safe outcome; nobody authors a vendor phone string and refusing it costs listings.
+
+**Write semantics are §6.6's, unchanged and not forked.** `enrichVenue` runs
+`phone = COALESCE(<incoming>, phone)` — the same **last-writer-wins** statement, with the
+same reading, as the geo discussion in §6.6. The five venue names `activenet` and
+`citycalendar` both write (Britannia, Killarney, Kitsilano, Renfrew Park and Trout Lake
+community centres) churn on `geo` because both families supply coordinates; they **cannot**
+churn on `phone` because citycalendar supplies none and COALESCE preserves what ActiveNet
+wrote. That stability is a property of **today's single-writer coverage, not of the column**
+— a second populating family reproduces the geo churn exactly, with the same
+converge-the-tables fix.
+
+**No other source family populates it, and each decline is a decision.** Surveyed
+2026-08-01 against live payloads, not just against the code:
+
+| family | phone in source? | decision |
+|---|---|---|
+| `activenet` | Yes — structured, 43/43 | **Captured** |
+| `city_calendar` (Trumba) | Yes — an `Organizer phone` custom field, 2 of 39 live events | **Declined on MEANING.** It is the *event organiser's* number, frequently a community volunteer's. Writing it to the shared `venue` row would republish one organiser's number as the facility's own on every other event there — the same class of false claim §6.6's per-venue attribution notice was removed for, plus a personal-data exposure the column cannot justify. |
+| `library_generic_rss` (NVDPL) | Only inside free-text HTML descriptions (`"Register by phone (604-987-4471 ext. 8175)"`) | **Declined.** Harvesting means regexing prose for a number whose referent is unknown; this family does not do fuzzy inference. |
+| `perfectmind` | No — full captured key set carries `Email`, no phone | n/a |
+| `eventbrite` | No — venue expansion carries address/lat/lng only | n/a |
+| `venue`, `seasonal` | Hand-curated config, no upstream feed | **Deferred.** A phone here is a NEW hand-authored fact and needs per-entry attribution (`venue-geo.ts`'s shape). Cheap and worth doing; deliberately not smuggled into the capture task. |
+
+**Adapter-boundary guard.** `normaliseVenuePhone()` accepts a value only if it matches an
+anchored dial-string shape AND carries ≥7 digits. Both checks are required and neither
+subsumes the other — proven by mutation in both directions: a digit count alone keeps
+digit-*bearing* prose (`Mon-Fri 9:00-17:00, Sat 10:00-14:00`, `Ages 0-5, 6-12, …`, 37
+unbroken digits), while the shape pattern alone keeps digit-*free* punctuation (`(((((((`,
+`()()()()()()`) because its length bound counts characters, not digits. Verified: 43/43 real
+values kept, 21 prose/degenerate cases dropped. **The anchoring has a stated cost:** strings
+carrying a callable number *plus* anything else are also dropped — `Tel: (604) 718-8222`,
+`(604) 718-8222 (front desk)`, `(604) 718-8222, press 2`, `(604) 718-8222 / TTY 711`,
+`604-718-8222 or 604-718-8223`. None occurs in current data; all five are pinned as tests so
+the trade-off cannot be reversed by accident. Allowing a bounded trailing label would reopen
+the prose hole (there is no principled line between `, press 2` and `, Sat 10:00-14:00`), and
+the last two hold *two* numbers, which a scalar column cannot honestly represent at all.
+
+**NOT SURFACED TO PARENTS — a deliberate sequencing call, not an omission.** The number is
+captured and stored; nothing parent-facing reads it. Three reasons, recorded in
+`app/preview/_components/ActivityDetail.tsx`: (1) one source family of seven populates it, so
+rec-centre listings would carry a number and every library/museum/Eventbrite listing would
+not — a parent cannot see that the gap tracks which back-end a municipality bought, it reads
+as missing data; (2) 13 of the 36 Vancouver facilities share a line in 6 groups, 7 of them
+satellites answering on a parent centre's main number (Hillcrest contributes two — its Rink
+and its Aquatic Centre), so printed beside one drop-in session it implies "call about this
+session," which the data does not support; (3) it is not reachable from that component
+without changing `lib/search/postgres-repository.ts`'s listing SELECT and `GROUP BY`,
+`ListingRecord`, the fixture mappers and the `Activity` type — the search lane, a separate
+review. **Revisit when** a second family populates `venue.phone` AND the parent-facing
+wording is settled with Jon.
+
+**Known gap, tracked not closed:** a value rejected by the guard is **silent**. If the vendor
+switched wholesale to `Tel: …`, coverage would fall 36/36 → 0/36 with nothing in the run
+output saying so — the same silent-discard shape this section exists to record, one layer up.
+Closing it needs `buildVenueIndex` to return rejection counts alongside the index (a
+signature change plus a new `VenueApplyResult` field), so it is deliberately its own review.
+
 ---
 
 ### 6.4 PerfectMind / Xplor BookMe4 rec-portal (T8) — live-capable under D-10/D-11, and one honest zero
@@ -1490,6 +1582,30 @@ implemented**, not open.
   independent review — a scope expansion the collision-avoidance convention exists to
   prevent, over one numeric literal. Verified collision-safe (no in-flight branch touches
   those three files) and mechanical, so it is a clean small follow-up for whoever wants it.
+
+- **F-8 (low, 2026-08-01) — a phone value rejected by `normaliseVenuePhone()` is SILENT.**
+  The guard (§6.3.6) correctly refuses anything that is not plausibly a dial string, but it
+  refuses it *quietly*: nothing in the run output distinguishes "this vendor published no
+  phone" from "this vendor published something we refused." Today that is invisible — 43/43
+  real values pass — but it means a wholesale vendor format change (e.g. every value becoming
+  `Tel: (604) …`) would drop coverage from 36/36 to 0/36 with a clean green run, which is the
+  same silent-discard shape that made the original `venuePhone` bug survive two days. The fix
+  is a rejection count surfaced alongside the existing `venuesWithoutGeo` warning, which
+  requires `buildVenueIndex` to return more than a `Map` — a signature change plus a new
+  `VenueApplyResult` field. **Deliberately NOT bundled** into the capture task's
+  documentation/pin commits, where it would have been an unreviewed scope expansion on the
+  ingest path; flagged here so it is a tracked decision rather than a comment nobody reads.
+
+- **F-9 (info, needs a product decision not investigation, 2026-08-01) — whether venue phone
+  numbers are shown to parents at all.** `venue.phone` is populated and stored; nothing
+  parent-facing reads it. The engineering is not the blocker — the two open questions are
+  (a) whether a field only one source family populates should render at all before a second
+  one does, given that the gap tracks which back-end a municipality bought rather than
+  anything a parent can perceive, and (b) what the number should be *called*, since for 7 of
+  the 36 Vancouver facilities it is a parent centre's main desk rather than a line about that
+  session. Full reasoning in §6.3.6 and in `ActivityDetail.tsx`. **Routed rather than decided
+  unilaterally**, on the same basis as F-5: the capture was Jon's explicit approval, the
+  surfacing and its wording were not.
 
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source
