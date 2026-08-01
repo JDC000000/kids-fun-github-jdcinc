@@ -50,14 +50,35 @@ export interface FinishCheckRunOptions {
   startedAt: Date;
 }
 
+/**
+ * Close out a check run, and — on a run that actually refreshed the data — stamp
+ * `source.last_check_at`.
+ *
+ * That stamp is the ONLY input to worker/core/confidence.ts's `freshness` factor, and until
+ * now nothing on the ingest path ever wrote it (only the seasonal adapter did, via
+ * worker/adapters/seasonal/map.ts). The consequences were measured on 2026-08-01:
+ *   • sources whose stamp was still NULL scored freshness = 1.0 unconditionally — the
+ *     factor was inert, so a source going dark was never discounted;
+ *   • the two sources that HAD been stamped once, by an unrelated job 18 days earlier,
+ *     were frozen at the 0.2 FRESHNESS_FLOOR forever even though their runs succeeded
+ *     daily. With freshness pinned at 0.2 the parse-quality bar for `medium` becomes 2.5,
+ *     i.e. unreachable, so every one of their occurrences was permanently low/unscored.
+ * Stamping it here closes the loop the formula always assumed was closed.
+ *
+ * Only success/partial stamp it: `freshness` means "how current is the DATA we hold", so a
+ * failed fetch must not be able to claim the data was refreshed. Failures are already
+ * carried by the success-rate dimension of worker/health/sla.ts.
+ */
 export async function finishCheckRun(
   pool: Pool,
   checkRunId: string,
   opts: FinishCheckRunOptions
 ): Promise<void> {
   const durationMs = Date.now() - opts.startedAt.getTime();
-  await pool.query(
-    `UPDATE source_check_run SET status = $2, records_found = $3, errors = $4, duration_ms = $5 WHERE id = $1`,
+  const { rows } = await pool.query<{ source_id: string }>(
+    `UPDATE source_check_run SET status = $2, records_found = $3, errors = $4, duration_ms = $5
+      WHERE id = $1
+      RETURNING source_id`,
     [
       checkRunId,
       opts.status,
@@ -66,4 +87,8 @@ export async function finishCheckRun(
       durationMs,
     ]
   );
+
+  const sourceId = rows[0]?.source_id;
+  if (!sourceId || opts.status === 'failed') return;
+  await pool.query(`UPDATE source SET last_check_at = now() WHERE id = $1`, [sourceId]);
 }

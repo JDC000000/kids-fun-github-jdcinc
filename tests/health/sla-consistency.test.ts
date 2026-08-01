@@ -19,7 +19,27 @@ describe('worker vs admin cadence-adherence parity', () => {
 
   it('the two predicates agree across a table of inputs', () => {
     const cadences = [null, 0, 3600, DAY, 7 * DAY];
-    const lags = [null, 0, 1800, DAY - 1, DAY, DAY + 1, 2 * DAY, 8 * DAY];
+    // Lags deliberately straddle BOTH the 1× and the grace× boundary, so the two
+    // constants cannot drift apart around either edge.
+    const lags = [
+      null,
+      0,
+      1800,
+      3600,
+      3600 + 30,
+      1.5 * 3600,
+      2 * 3600,
+      DAY - 1,
+      DAY,
+      DAY + 1,
+      DAY + 60,
+      1.5 * DAY - 1,
+      1.5 * DAY,
+      1.5 * DAY + 1,
+      2 * DAY,
+      8 * DAY,
+      11 * DAY,
+    ];
     for (const cadenceSeconds of cadences) {
       for (const lag of lags) {
         const input = { lastSuccessAtMs: lag == null ? null : agoMs(lag), cadenceSeconds };

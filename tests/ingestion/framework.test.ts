@@ -218,6 +218,41 @@ describe.skipIf(!hasDb)('Job queue + no-op ingest pipeline (G-T5-2, G-T5-4)', ()
     expect(second.occurrenceId).toBe(occurrenceId);
     expect(second.created).toBe(false);
   });
+
+  // ── REGRESSION (2026-08-01) ────────────────────────────────────────────────────
+  // Nothing on the ingest path ever stamped source.last_check_at, so the `freshness`
+  // factor in worker/core/confidence.ts — which reads ONLY that column — was inert
+  // (NULL → 1.0) for every source, and permanently pinned at its 0.2 floor for the two
+  // sources an unrelated job had stamped once, 18 days earlier. Freshness at 0.2 puts
+  // the parse-quality bar for `medium` at 2.5, i.e. unreachable, so those sources'
+  // occurrences could never leave low/unscored no matter how healthy the source was.
+  it('a successful check-run stamps source.last_check_at (freshness input)', async () => {
+    const pool = getPool();
+    await pool.query(`UPDATE source SET last_check_at = NULL WHERE id = $1`, [sourceId]);
+
+    const { id: checkRunId, startedAt } = await startCheckRun(pool, sourceId);
+    await finishCheckRun(pool, checkRunId, { status: 'success', recordsFound: 1, startedAt });
+
+    const [row] = await query<{ last_check_at: Date | null }>(
+      `SELECT last_check_at FROM source WHERE id = $1`,
+      [sourceId]
+    );
+    expect(row.last_check_at).not.toBeNull();
+  });
+
+  it('a FAILED check-run does not stamp last_check_at (a failed fetch refreshed nothing)', async () => {
+    const pool = getPool();
+    await pool.query(`UPDATE source SET last_check_at = NULL WHERE id = $1`, [sourceId]);
+
+    const { id: checkRunId, startedAt } = await startCheckRun(pool, sourceId);
+    await finishCheckRun(pool, checkRunId, { status: 'failed', errors: ['boom'], startedAt });
+
+    const [row] = await query<{ last_check_at: Date | null }>(
+      `SELECT last_check_at FROM source WHERE id = $1`,
+      [sourceId]
+    );
+    expect(row.last_check_at).toBeNull();
+  });
 });
 
 // G-T5-3 — tiered scheduler, DB-backed.
