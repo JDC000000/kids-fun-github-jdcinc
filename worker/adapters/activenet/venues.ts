@@ -16,8 +16,12 @@
 // further — StructuredRecord had no field and `venue` had no column, so it was fetched
 // and dropped every run. It now lands in `venue.phone` (migration 0024) through
 // StructuredRecord.venuePhone and resolveVenue()'s existing COALESCE enrichment. Stored
-// verbatim, guarded by normaliseVenuePhone() below, and read by NOTHING parent-facing
-// yet — that is a deliberate sequencing call, recorded in ActivityDetail.tsx.
+// verbatim, guarded by normaliseVenuePhone() below, and — since the 2026-08-01 reversal
+// of the original hold-back — READ BY THE PARENT-FACING DETAIL PAGE. What this file emits
+// is now what a parent taps to call, so a value that reaches `venue.phone` is a live
+// user-visible fact, not an admin/ops column. Display keeps the verbatim rule: only the
+// `tel:` href is normalised, at render time (app/preview/_data/format.ts). See
+// docs/source-register.md §6.3.6 and app/preview/_components/ActivityDetail.tsx.
 //
 // Unmapped centres are a WARNING, never a silent null: a centre that appears in the
 // feed but not in centerdetails means the batch missed something, and that must be
@@ -100,12 +104,15 @@ const MIN_PHONE_DIGITS = 7;
  * fail-closed posture as the rest of this function: we lose a nicety, we do not store
  * something no caller can dial.
  *
- * KNOWN GAP, NOT CLOSED HERE (follow-up, deliberately not smuggled into a text-fix
- * commit): a rejected value is currently SILENT. If the vendor ever switched wholesale to
- * one of the forms above, phone coverage would fall from 36/36 to 0/36 with nothing in
- * the run output saying so — the same silent-discard shape as the bug 0024 exists to fix,
- * one layer up. Reporting it needs `buildVenueIndex` to return rejection counts alongside
- * the index, which changes its signature and deserves its own review.
+ * KNOWN GAP, NOT CLOSED HERE (register flag F-8, re-rated `low` → `medium` on 2026-08-01
+ * when the number started rendering): a rejected value is SILENT. If the vendor ever
+ * switched wholesale to one of the forms above, phone coverage would fall from 36/36 to
+ * 0/36 with nothing in the run output saying so — the same silent-discard shape as the bug
+ * 0024 exists to fix, one layer up. That used to be invisible to parents; it no longer is,
+ * because the detail page renders this column, so the failure mode is now "phone numbers
+ * disappear from listings on a green run." Reporting it needs `buildVenueIndex` to return
+ * rejection counts alongside the index, which changes its signature and deserves its own
+ * review — still not smuggled into an unrelated commit, but it is next, not backlog.
  *
  * WHY NOT A DB CHECK CONSTRAINT instead: a phone number has no canonical shape worth
  * asserting in SQL, and this function already means the column never sees garbage. See

@@ -82,6 +82,12 @@ export interface Activity {
   detailUrl?: string;
   bookingUrl?: string;
   locationUrl?: string;
+  /**
+   * The venue's own published phone number (`venue.phone`), verbatim as the source renders
+   * it. Absent for every listing whose source family publishes no facility number — the
+   * detail UI renders nothing at all in that case rather than an empty field.
+   */
+  venuePhone?: string;
   lastCheckedIso: string; // freshness stamp source of truth
   seasonLabel?: string; // for seasonal_out_of_season copy
   indoor: boolean;

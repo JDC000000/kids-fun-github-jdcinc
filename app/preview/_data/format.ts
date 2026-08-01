@@ -314,6 +314,31 @@ export function practicalFacts(
   return facts;
 }
 
+/** Trailing extension the ingest guard admits (`ext`/`x`/`extension`, ≤6 digits). */
+const PHONE_EXTENSION = /\s*(?:ext|x|extension)\.?\s*(\d{1,6})\s*$/i;
+
+/**
+ * `tel:` target for a venue phone. The stored value is the SOURCE'S OWN rendering and is
+ * displayed verbatim (docs/source-register.md §6.3.6) — only the dial target is normalised,
+ * to the digits a dialer can actually use, keeping a leading `+` when the source gave one.
+ *
+ * The extension is split off rather than swept into the digit run: `normaliseVenuePhone`
+ * admits `ext.`-suffixed values, and concatenating those digits onto the subscriber number
+ * would dial a DIFFERENT number. RFC 3966's `;ext=` is what dialers actually understand.
+ *
+ * Returns null when nothing dialable survives, so a caller renders no link rather than a
+ * dead one.
+ */
+export function telHref(phone: string): string | null {
+  const value = phone.trim();
+  const extension = value.match(PHONE_EXTENSION);
+  const subscriber = extension ? value.slice(0, extension.index) : value;
+  const digits = subscriber.replace(/\D/g, '');
+  if (digits.length < 7) return null; // same floor the ingest guard uses (MIN_PHONE_DIGITS)
+  const plus = subscriber.trimStart().startsWith('+') ? '+' : '';
+  return `tel:${plus}${digits}${extension ? `;ext=${extension[1]}` : ''}`;
+}
+
 /** Short booking/registration tag copy (empty string when nothing to book). */
 export function bookingTag(booking: Activity['booking']): string {
   switch (booking) {

@@ -126,4 +126,56 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
     await expect(loadPostgresListingById(getPool(), occurrence.id)).resolves.toBeNull();
   });
 
+  // The reason the detail page could not show a phone number was NOT policy — the listing
+  // SELECT simply never fetched `v.phone`, and this query is aggregated, so a new venue
+  // column has to be added to the GROUP BY as well or Postgres rejects it outright. Both
+  // read paths are asserted (list + detail-by-id): they are separate SQL statements sharing
+  // one builder, and a phone that reaches the list but not the detail page is the exact
+  // shape of failure that would ship silently.
+  it('carries venue.phone through both read paths, and leaves it null when the venue has none', async () => {
+    const suffix = crypto.randomUUID();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('activenet', $1, 'official', 'allowed') RETURNING id`,
+      [`Phone Repository Source ${suffix}`]
+    );
+    const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'public_swim' LIMIT 1`);
+    const [withPhone] = await query<{ id: string }>(
+      `INSERT INTO venue (name, phone) VALUES ($1, $2) RETURNING id`,
+      [`Phone Test Centre ${suffix}`, '(604) 555-0142']
+    );
+    const [noPhone] = await query<{ id: string }>(`INSERT INTO venue (name) VALUES ($1) RETURNING id`, [
+      `Phoneless Test Branch ${suffix}`,
+    ]);
+
+    const occurrenceAt = async (venueId: string, label: string): Promise<string> => {
+      const [series] = await query<{ id: string }>(
+        `INSERT INTO activity_series (canonical_title, source_id, venue_id) VALUES ($1, $2, $3) RETURNING id`,
+        [`${label} ${suffix}`, source.id, venueId]
+      );
+      const [occurrence] = await query<{ id: string }>(
+        `INSERT INTO activity_occurrence (
+           series_id, source_record_id, activity_name, primary_category_id,
+           start_datetime_utc, end_datetime_utc, cost_status, source_url,
+           status_state, confidence_label, last_checked_at
+         ) VALUES ($1,$2,$3,$4,'2026-09-17T17:30:00Z','2026-09-17T18:00:00Z','free',$5,'confirmed','high',now())
+         RETURNING id`,
+        [series.id, `${label}-${suffix}`, `${label} ${suffix}`, category.id, 'https://example.org/events/phone-test']
+      );
+      return occurrence.id;
+    };
+
+    const phoneOccurrenceId = await occurrenceAt(withPhone.id, 'Phone Family Swim');
+    const phonelessOccurrenceId = await occurrenceAt(noPhone.id, 'Phoneless Family Swim');
+
+    const listings = await loadPostgresListings(getPool());
+    expect(listings.find((l) => l.id === phoneOccurrenceId)?.venuePhone).toBe('(604) 555-0142');
+    expect(listings.find((l) => l.id === phonelessOccurrenceId)?.venuePhone).toBeNull();
+
+    await expect(loadPostgresListingById(getPool(), phoneOccurrenceId)).resolves.toMatchObject({
+      venuePhone: '(604) 555-0142',
+    });
+    await expect(loadPostgresListingById(getPool(), phonelessOccurrenceId)).resolves.toMatchObject({
+      venuePhone: null,
+    });
+  });
 });

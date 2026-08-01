@@ -1,6 +1,18 @@
 // The activity card — the atomic unit. Answers the six parent questions on the
 // face (what / who / when / where / cost / bookable) plus the freshness stamp,
 // so a parent can judge it without opening the source. Capped for one-glance scan.
+//
+// NO PHONE NUMBER HERE, and the reason is structural rather than editorial. When the
+// 2026-08-01 decision to surface `venue.phone` prominently was made, this card and the
+// map popup (app/search/_components/ResultsMap.tsx) were both evaluated as candidate
+// surfaces. Both are ONE anchor wrapping their ENTIRE body — see the <Link>/<a> below
+// and the popup's `setHTML('<a class="kf-map__pop" …>')`. A `tel:` link nested inside
+// another anchor is invalid HTML: the parser closes the outer anchor at the inner one,
+// so the tail of the card stops being clickable and the primary "See details" action
+// breaks. Restructuring the card to escape that is a redesign of the scan unit, not a
+// phone-number change. The number therefore lives on the detail page (ActivityDetail),
+// which is exactly one tap away behind this card's own explicit CTA, and sits in that
+// page's hero where it is the first thing under the venue name.
 
 import Link from 'next/link';
 import { Badge } from '@/components/ui';

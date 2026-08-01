@@ -38,6 +38,7 @@ interface ListingRow {
   municipality_id: string | null;
   neighbourhood: string | null;
   display_area: string | null;
+  phone: string | null;
 }
 
 export interface LoadPostgresListingsOptions {
@@ -111,7 +112,8 @@ function listingSelectSql(): string {
        CASE WHEN v.geo IS NULL THEN NULL ELSE ST_X(v.geo::geometry) END AS lng,
        v.municipality_id::text AS municipality_id,
        v.neighbourhood,
-       v.display_area
+       v.display_area,
+       v.phone
      FROM activity_occurrence o
      JOIN activity_series ser ON ser.id = o.series_id
      JOIN source s ON s.id = ser.source_id
@@ -135,7 +137,7 @@ function listingGroupBySql(): string {
        o.description_snippet, o.start_datetime_utc, o.end_datetime_utc, o.open_hours_state,
        o.cost_status, o.cost_min_cad, o.cost_max_cad, o.source_url, o.booking_url,
        o.location_url, o.status_state, o.confidence_label, o.last_checked_at,
-       oa.age_min_months, oa.age_max_months, oa.age_notes, v.geo, v.municipality_id, v.neighbourhood, v.display_area`;
+       oa.age_min_months, oa.age_max_months, oa.age_notes, v.geo, v.municipality_id, v.neighbourhood, v.display_area, v.phone`;
 }
 
 function rowToListing(row: ListingRow): ListingRecord {
@@ -172,6 +174,7 @@ function rowToListing(row: ListingRow): ListingRecord {
     municipalityId: row.municipality_id,
     neighbourhood: row.neighbourhood,
     displayArea: row.display_area,
+    venuePhone: row.phone,
     sourceUrl: row.source_url,
     bookingUrl: row.booking_url,
     locationUrl: row.location_url,

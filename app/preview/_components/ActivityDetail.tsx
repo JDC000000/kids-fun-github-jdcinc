@@ -12,6 +12,7 @@ import {
   formatWhen,
   practicalFacts,
   statusMeta,
+  telHref,
 } from '../_data/format';
 
 // Activity detail / source page body (Screen 3) — everything to decide and to trust,
@@ -47,6 +48,10 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   const bookLabel = bookingTag(activity.booking) || 'View booking page';
   const ages = ageGuide(activity.ageMin, activity.ageMax);
   const facts = practicalFacts(activity);
+  // Null for the majority of listings (no source family but ActiveNet publishes a facility
+  // number) and also for the pathological "stored but undialable" case — one gate, because
+  // both mean the same thing to a parent: there is no number to offer, so offer none.
+  const phoneHref = activity.venuePhone ? telHref(activity.venuePhone) : null;
 
   return (
     <div className="kf-detail">
@@ -60,6 +65,24 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
         <p className="kf-detail__venue">
           {activity.area} · {activity.driveMinutes} min drive · {activity.distanceKm.toFixed(1)} km
         </p>
+
+        {/* Venue phone — in the hero, above the fold, on purpose (Jon, 2026-08-01: "make
+            those phone numbers prominent and easily available"). Renders only when the
+            source published one; see the decision note in the Source & freshness panel. */}
+        {phoneHref && (
+          <div className="kf-detail__contact">
+            <a className="kf-phone" href={phoneHref} aria-label={`Call the venue at ${activity.venuePhone}`}>
+              <span aria-hidden="true">☎</span>
+              <span className="kf-phone__label">Call the venue</span>
+              <span className="kf-phone__number">{activity.venuePhone}</span>
+            </a>
+            <p className="kf-phone__note">
+              The venue&apos;s front desk — not a line for this specific session. At sites with more
+              than one facility it may ring the main centre.
+            </p>
+          </div>
+        )}
+
         <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
           <CategoryTile category={activity.category} size={64} />
           <FreshnessStamp activity={activity} />
@@ -149,38 +172,33 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             is unconditionally true. Do not reintroduce a per-record version without a
             provenance column on `venue`. See docs/source-register.md §6.6. */}
 
-        {/* DECISION, 2026-08-01 — venue phone numbers are CAPTURED but deliberately NOT
-            SHOWN HERE YET. Jon approved capturing them; `venue.phone` (migration 0024)
-            now stores what ActiveNet publishes. Rendering them to parents is a separate
-            call, and it is a NO for now, for three reasons worth stating rather than
-            re-deriving:
+        {/* DECISION, 2026-08-01 — REVERSED THE SAME DAY, and the reversal is the live rule.
+            An earlier build captured `venue.phone` (migration 0024) and deliberately did NOT
+            render it, for three reasons. Jon overruled two of them directly: "show parents the
+            telephone number for all venues… the key user experience is finding information —
+            discoverability and details. If they want to convert to a phone call off-platform,
+            that's great." The number now renders in the hero above, high on the page on purpose.
 
-            1. ONE SOURCE OF SEVEN populates it. Vancouver and Burnaby rec-centre
-               listings would carry a number; every library, museum, Eventbrite and
-               city-calendar listing would not. A parent cannot see that the gap tracks
-               which back-end system a municipality happens to use — it just reads as
-               "this site has half the information." Selectively showing a fact without
-               room to explain the selection is the same failure the OGL notice above
-               was removed for.
-            2. THE NUMBER IS A FRONT DESK, NOT A BOOKING LINE. 13 of the 36 Vancouver
-               facilities share a line with another facility, in 6 groups — 7 of them
-               satellites answering on a parent centre's main number (Britannia Rink on
-               Britannia Community Centre's; Killarney and Kensington pools on their
-               centres'; Hillcrest contributes two, its Rink AND its Aquatic Centre).
-               Printed beside one drop-in session it implies "call this about this
-               session," which the data does not support. Honest copy needs to say what
-               the number actually is, and that wording is Jon's call.
-            3. IT IS NOT A ONE-LINER HERE ANYWAY. This component renders `Activity`
-               (app/preview/_data/types.ts), fed by mapListingRecordToActivity ←
-               loadPostgresListingById ← the listing SELECT in
-               lib/search/postgres-repository.ts. Surfacing phone means changing that
-               query, its GROUP BY, ListingRecord, the fixture mappers and the fixture
-               listings — the search lane, a different review than this one.
+            What became of each original reason:
+            1. ONLY ONE SOURCE FAMILY OF SEVEN POPULATES IT — accepted, and shown anyway.
+               Coverage follows which back-end a municipality bought, so rec-centre listings
+               carry a number and library/museum/Eventbrite/city-calendar listings do not. This
+               is handled the way `locationUrl` two lines below already handles it: render only
+               when present. A listing without a phone shows NOTHING — never a blank field, never
+               a placeholder implying one is missing.
+            2. THE NUMBER IS A FRONT DESK, NOT A BOOKING LINE — answered by COPY, not by hiding.
+               13 of the 36 Vancouver facilities share a line in 6 groups (7 satellites answering
+               on a parent centre's main number; Hillcrest contributes two). So the label claims
+               only what is true of all 43 captured values: it is THE VENUE's front desk, not this
+               session's line, and at multi-facility sites it may ring the main centre. Prominent
+               and honest, rather than prominent and misleading.
+            3. IT WAS NOT REACHABLE FROM THIS COMPONENT — a real technical fact, now fixed rather
+               than cited: `v.phone` flows through the listing SELECT and its GROUP BY
+               (lib/search/postgres-repository.ts) → `ListingRecord.venuePhone` →
+               mapListingRecordToActivity → `Activity.venuePhone`.
 
-            REVISIT WHEN: a second source family populates `venue.phone` (so coverage is
-            no longer one vendor's footprint), AND the copy question above is answered.
-            Until then the data accumulates in the DB where it is queryable by admin/ops,
-            which is strictly better than being discarded at ingest as it was before. */}
+            Full record, including the coverage measurements and the ingest-side guard, in
+            docs/source-register.md §6.3.6. */}
       </section>
 
       {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action. */}

@@ -25,6 +25,8 @@ export interface ListingRecordDto {
   displayArea: string | null;
   neighbourhood: string | null;
   municipalityId: string | null;
+  /** venue.phone, verbatim. Optional here because most source families never populate it. */
+  venuePhone?: string | null;
   sourceUrl: string | null;
   bookingUrl: string | null;
   locationUrl: string | null;
@@ -98,6 +100,7 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     sourceUrl,
     ...(l.bookingUrl ? { bookingUrl: l.bookingUrl } : {}),
     ...(l.locationUrl ? { locationUrl: l.locationUrl } : {}),
+    ...(l.venuePhone ? { venuePhone: l.venuePhone } : {}),
     lastCheckedIso: l.lastCheckedAtUtc ?? new Date().toISOString(),
     indoor: tags.has('indoor') || ['open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play'].includes(l.primaryCategoryKey),
     rainyDay: tags.has('rainy_day') || tags.has('indoor') || ['open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play'].includes(l.primaryCategoryKey),
