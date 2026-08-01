@@ -586,7 +586,7 @@ What happened to each of the three original reasons:
 | original reason | disposition |
 |---|---|
 | **(1) one source family of seven populates it** — the gap tracks which back-end a municipality bought, which a parent cannot perceive | **Overruled, and shown anyway.** Handled the way `locationUrl` already is: rendered only when present. A listing with no phone renders *nothing* — no empty field, no placeholder, no "not available" implying one is missing. Pinned by test, across every phone-less fixture rather than one sample. |
-| **(2) the number is a front desk, not a booking line** — 13 of the 36 Vancouver facilities share a line in 6 groups, 7 of them satellites on a parent centre's main number | **Answered by COPY, not by hiding** — QA's own recommendation (priority 6), which argued this reason was the load-bearing one and was resolvable today without a vendor. The CTA reads **"Call the venue"** and never interpolates the facility name (`Call {venue}` would be false for exactly those 7 satellites); the note reads *"The venue's front desk — not a line for this specific session. At sites with more than one facility it may ring the main centre."* Every clause is true of all 43 captured values, shared-line or not. The copy is asserted as a contract in `tests/ui/venue-phone.test.tsx`, including negative assertions against the claims the data cannot support ("call about this session", "book by phone"). |
+| **(2) the number is a front desk, not a booking line** — 13 of the 36 Vancouver facilities share a line in 6 groups, 7 of them satellites on a parent centre's main number (the groups, recomputed from the captured fixtures by independent QA rather than carried forward: Hillcrest CC/Rink/Aquatic `(604) 257-8680` — **two** satellites; Britannia CC/Rink `(604) 718-5800`; Sunset CC/Rink `(604) 718-6505`; Trout Lake CC/Rink `(604) 257-6955`; Killarney CC/Pool `(604) 718-8200`; Kensington CC/Pool `(604) 718-6200`. Britannia **Pool** has its own distinct line and is NOT in the Britannia group — an earlier partial enumeration of this list named only 5 of the 7 satellites, omitting Trout Lake Rink and Sunset Rink) | **Answered by COPY, not by hiding** — QA's own recommendation (priority 6), which argued this reason was the load-bearing one and was resolvable today without a vendor. The CTA reads **"Call the venue"** and never interpolates the facility name (`Call {venue}` would be false for exactly those 7 satellites); the note reads *"The venue's front desk — not a line for this specific session. At sites with more than one facility it may ring the main centre."* Every clause is true of all 43 captured values, shared-line or not. The copy is asserted as a contract in `tests/ui/venue-phone.test.tsx`, including negative assertions against the claims the data cannot support ("call about this session", "book by phone"). |
 | **(3) not reachable from that component** | **Was true; fixed rather than cited.** `v.phone` added to the listing SELECT **and its GROUP BY** (`lib/search/postgres-repository.ts` — the query is aggregated, so the GROUP BY is not optional) → `ListingRecord.venuePhone` → `mapListingRecordToActivity` → `Activity.venuePhone` → hero of `ActivityDetail`. Proven against real Postgres on both read paths (list and detail-by-id) in `tests/search/postgres-repository.test.ts`. |
 
 **Placement, and why the search card is not it.** The number sits in the detail-page hero,
@@ -595,7 +595,12 @@ half of the instruction, and the ordering is asserted in test rather than left t
 It is deliberately NOT on the search result card or the map popup: both are ONE anchor
 wrapping their entire body, and a `tel:` link nested inside another anchor is invalid HTML
 that terminates the outer link early, breaking the card's own primary action. That is a
-structural constraint, not an editorial preference, and it is recorded in
+structural constraint rather than an editorial preference — but **not an impossibility, and
+this section should not be read as claiming one.** Independent QA named the escape hatch:
+the *stretched-link* pattern (plain `<div>`, an invisible `::after` full-cover anchor for
+"See details", and a normal higher-stacking anchor for the phone) would carry both links
+without nesting. That is a redesign of the scan unit, declined for scope here, and it is the
+route to take if surfacing the number from the list view ever becomes a goal. Recorded in
 `app/preview/_components/ActivityCard.tsx` so it is not re-litigated as a copy question.
 
 **Consequence for F-8 (§7).** F-8 — a value rejected by `normaliseVenuePhone()` is silent —
@@ -1635,6 +1640,10 @@ implemented**, not open.
   parent-facing copy review is the cross-lane scope expansion the convention exists to
   prevent. It should be its own small change, **next** — not left open indefinitely on the
   strength of "the display already shipped."
+  **DISPATCHED 2026-08-01** as its own stream (registry round 73, session `39c1c2b9`) rather
+  than parked, on the explicit call that it does not block the display merge: the phone data
+  is correct and independently verified *right now*, and F-8 protects against future drift,
+  not present error.
 
 - **F-9 (RESOLVED 2026-08-01 by Jon — SHOW) — whether venue phone numbers are shown to
   parents at all.** Routed rather than decided unilaterally, on the same basis as F-5: the
@@ -1652,6 +1661,20 @@ implemented**, not open.
   Built and shipped in the same decision — see §6.3.6 for the wire, the placement and the
   copy contract. **F-8 is now a live `medium` follow-up rather than a parallel backlog item**,
   exactly as this flag's original text said it would become.
+
+- **F-10 (info, from independent QA of the phone-display change, 2026-08-01) — the caveat
+  copy is universal because the data model cannot tell a satellite from a parent centre.**
+  "At sites with more than one facility it **may** ring the main centre" is a single static
+  string shown on every phone-bearing listing. QA verified it is the *correct* universal
+  wording given the available signal — it stays true across all 43 values, for the 7 where it
+  definitely does ring the main centre and the 36 where it does not — and explicitly rated it
+  "not hedging-into-uselessness." But the hedge exists only because nothing on `venue` marks
+  a facility as a satellite of another. A per-venue flag (derivable today: the 6 groups are
+  exactly the venues sharing a phone value) would let the copy say **"answers on the main
+  centre's line"** definitively for those 7 and drop the caveat entirely for the other 36 —
+  strictly more honest in both directions. **Not built**: it is a data-model change in the
+  ingest lane, the same lane as F-8, and the current wording is accurate rather than merely
+  defensible. Worth doing when someone is next in `venue` schema, not on its own.
 
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source

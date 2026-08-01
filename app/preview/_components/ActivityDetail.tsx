@@ -21,6 +21,11 @@ import {
 // route-specific bit is the back link (backHref/backLabel), so neither surface
 // regresses visually. Presentation only — data loading + analytics stay in the route.
 
+/* Ties the front-desk caveat to the call link via aria-describedby, so a screen-reader
+   user who lands on the link hears the "not this session" qualifier with it rather than
+   only on the next read. The caveat is the whole reason the number could ship at all. */
+const PHONE_NOTE_ID = 'kf-phone-note';
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="kf-stat">
@@ -71,12 +76,17 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             source published one; see the decision note in the Source & freshness panel. */}
         {phoneHref && (
           <div className="kf-detail__contact">
-            <a className="kf-phone" href={phoneHref} aria-label={`Call the venue at ${activity.venuePhone}`}>
+            <a
+              className="kf-phone"
+              href={phoneHref}
+              aria-label={`Call the venue at ${activity.venuePhone}`}
+              aria-describedby={PHONE_NOTE_ID}
+            >
               <span aria-hidden="true">☎</span>
               <span className="kf-phone__label">Call the venue</span>
               <span className="kf-phone__number">{activity.venuePhone}</span>
             </a>
-            <p className="kf-phone__note">
+            <p className="kf-phone__note" id={PHONE_NOTE_ID}>
               The venue&apos;s front desk — not a line for this specific session. At sites with more
               than one facility it may ring the main centre.
             </p>
@@ -172,33 +182,15 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             is unconditionally true. Do not reintroduce a per-record version without a
             provenance column on `venue`. See docs/source-register.md §6.6. */}
 
-        {/* DECISION, 2026-08-01 — REVERSED THE SAME DAY, and the reversal is the live rule.
-            An earlier build captured `venue.phone` (migration 0024) and deliberately did NOT
-            render it, for three reasons. Jon overruled two of them directly: "show parents the
-            telephone number for all venues… the key user experience is finding information —
-            discoverability and details. If they want to convert to a phone call off-platform,
-            that's great." The number now renders in the hero above, high on the page on purpose.
-
-            What became of each original reason:
-            1. ONLY ONE SOURCE FAMILY OF SEVEN POPULATES IT — accepted, and shown anyway.
-               Coverage follows which back-end a municipality bought, so rec-centre listings
-               carry a number and library/museum/Eventbrite/city-calendar listings do not. This
-               is handled the way `locationUrl` two lines below already handles it: render only
-               when present. A listing without a phone shows NOTHING — never a blank field, never
-               a placeholder implying one is missing.
-            2. THE NUMBER IS A FRONT DESK, NOT A BOOKING LINE — answered by COPY, not by hiding.
-               13 of the 36 Vancouver facilities share a line in 6 groups (7 satellites answering
-               on a parent centre's main number; Hillcrest contributes two). So the label claims
-               only what is true of all 43 captured values: it is THE VENUE's front desk, not this
-               session's line, and at multi-facility sites it may ring the main centre. Prominent
-               and honest, rather than prominent and misleading.
-            3. IT WAS NOT REACHABLE FROM THIS COMPONENT — a real technical fact, now fixed rather
-               than cited: `v.phone` flows through the listing SELECT and its GROUP BY
-               (lib/search/postgres-repository.ts) → `ListingRecord.venuePhone` →
-               mapListingRecordToActivity → `Activity.venuePhone`.
-
-            Full record, including the coverage measurements and the ingest-side guard, in
-            docs/source-register.md §6.3.6. */}
+        {/* Venue phone renders in the hero above (Jon, 2026-08-01), reversing the same-day
+            decision to capture `venue.phone` but hold it back from parents. Full record —
+            the three original reasons and what became of each — in docs/source-register.md
+            §6.3.6; not restated here.
+            THE COPY IS A CONTRACT, NOT A DRAFT. "Call the venue" must never become
+            "Call {venue}", and the caveat must keep saying front-desk / not-this-session:
+            7 of the 36 Vancouver facilities answer on a PARENT centre's number, so the
+            named-facility phrasing is false for exactly those. It is asserted, including
+            negatively, in tests/ui/venue-phone.test.tsx — reword only with that file. */}
       </section>
 
       {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action. */}

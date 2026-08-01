@@ -2,17 +2,14 @@
 // face (what / who / when / where / cost / bookable) plus the freshness stamp,
 // so a parent can judge it without opening the source. Capped for one-glance scan.
 //
-// NO PHONE NUMBER HERE, and the reason is structural rather than editorial. When the
-// 2026-08-01 decision to surface `venue.phone` prominently was made, this card and the
-// map popup (app/search/_components/ResultsMap.tsx) were both evaluated as candidate
-// surfaces. Both are ONE anchor wrapping their ENTIRE body — see the <Link>/<a> below
-// and the popup's `setHTML('<a class="kf-map__pop" …>')`. A `tel:` link nested inside
-// another anchor is invalid HTML: the parser closes the outer anchor at the inner one,
-// so the tail of the card stops being clickable and the primary "See details" action
-// breaks. Restructuring the card to escape that is a redesign of the scan unit, not a
-// phone-number change. The number therefore lives on the detail page (ActivityDetail),
-// which is exactly one tap away behind this card's own explicit CTA, and sits in that
-// page's hero where it is the first thing under the venue name.
+// NO PHONE NUMBER HERE. This card and the map popup (ResultsMap.tsx) are each ONE anchor
+// wrapping their ENTIRE body, and a `tel:` link nested inside another anchor is invalid
+// HTML — the parser closes the outer anchor at the inner one, so the tail of the card
+// stops being clickable and the primary "See details" action breaks. NOT impossible,
+// though: the stretched-link pattern (plain <div>, invisible ::after full-cover anchor for
+// details, normal higher-stacking anchor for the phone) would work. That is a redesign of
+// the scan unit, declined for scope — see docs/source-register.md §6.3.6. The number lives
+// on the detail page, one tap away behind this card's own CTA.
 
 import Link from 'next/link';
 import { Badge } from '@/components/ui';

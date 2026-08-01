@@ -25,7 +25,11 @@ vi.mock('next/link', () => ({
 import { ActivityDetail } from '../../app/preview/_components/ActivityDetail';
 import { ACTIVITIES } from '../../app/preview/_data/fixtures';
 import { telHref } from '../../app/preview/_data/format';
-import { mapListingRecordToActivity } from '../../app/preview/_data/search-api';
+import {
+  mapListingRecordToActivity,
+  mapSearchItemToActivity,
+  type ListingRecordDto,
+} from '../../app/preview/_data/search-api';
 import { makeListing } from '../../lib/search/__fixtures__/factory';
 import type { Activity } from '../../app/preview/_data/types';
 
@@ -81,6 +85,14 @@ describe('the number is prominent and reachable when the source published one', 
 
   it('gives assistive tech a self-contained accessible name', () => {
     expect(html).toContain(`aria-label="Call the venue at ${WITH_PHONE.venuePhone}"`);
+  });
+
+  it('ties the front-desk caveat to the link, so it is not missed on direct focus', () => {
+    // The caveat is the reason this number could ship at all (7 satellites answer on a
+    // parent centre's line). A screen-reader user who tabs straight to the link must get
+    // it with the link, not only when they read on.
+    expect(html).toMatch(/aria-describedby="kf-phone-note"/);
+    expect(html).toMatch(/id="kf-phone-note"/);
   });
 
   it('renders the +1 rendering verbatim too — the one shape that differs across the 36 values', () => {
@@ -166,9 +178,25 @@ describe('the search lane actually carries the field to the component', () => {
     expect(mapListingRecordToActivity(makeListing({})).venuePhone).toBeUndefined();
   });
 
-  it('survives the JSON hop the /api/search response makes', () => {
-    const listing = makeListing({ venuePhone: '(604) 555-0142' });
-    const overWire = JSON.parse(JSON.stringify(listing));
-    expect(mapListingRecordToActivity(overWire).venuePhone).toBe('(604) 555-0142');
+  // The LIVE path is /api/search JSON -> ListingRecordDto -> mapSearchItemToActivity, which
+  // is a different function and a different type from the ListingRecord one above. An earlier
+  // version of this test round-tripped a ListingRecord through JSON and called
+  // mapListingRecordToActivity — which never actually crosses the wire, so it could not fail
+  // independently of the test above it. This exercises the real boundary instead.
+  it('carries venuePhone across the real /api/search DTO boundary', () => {
+    const dto: ListingRecordDto = {
+      id: 'occ-phone', activityName: 'Family Swim', primaryCategoryKey: 'public_swim',
+      venueName: 'Kitsilano Pool', organisation: 'City of Vancouver', descriptionSnippet: '',
+      startDatetimeUtc: '2026-07-18T21:00:00.000Z', endDatetimeUtc: '2026-07-18T23:00:00.000Z',
+      costStatus: 'free', costMinCad: null, costMaxCad: null, statusState: 'confirmed',
+      confidenceLabel: 'official_recent', lastCheckedAtUtc: '2026-07-13T16:00:00.000Z',
+      ageMinMonths: null, ageMaxMonths: null, geo: null, displayArea: null, neighbourhood: null,
+      municipalityId: null, venuePhone: '(604) 555-0142', sourceUrl: 'https://example.org',
+      bookingUrl: null, locationUrl: null,
+    };
+    expect(mapSearchItemToActivity({ listing: dto, distanceKm: 1 }).venuePhone).toBe('(604) 555-0142');
+
+    const { venuePhone: _dropped, ...withoutPhone } = dto;
+    expect(mapSearchItemToActivity({ listing: withoutPhone, distanceKm: 1 }).venuePhone).toBeUndefined();
   });
 });
