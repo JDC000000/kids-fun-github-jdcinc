@@ -54,8 +54,13 @@ export class PolicyViolationError extends Error {
 
 /**
  * The canonical runtime decision for "may this source perform a live fetch in this env?".
- * Fail-closed: production requires terms_status ∈ {allowed, summarise_only} AND
- * robots_status = 'allowed'; anything else (pending/unknown/disallowed/blocked) is blocked.
+ * Fail-closed: production requires terms_status ∈ {allowed, summarise_only} AND robots
+ * cleared — robots_status = 'allowed', or the single narrow F-5 exception (robots_status =
+ * 'unknown' AND a non-blank robots_override_decision naming the human decision that
+ * accepted an UNREADABLE robots.txt for that source by name). Anything else —
+ * pending/disallowed/blocked, and 'unknown' with NO decision reference, i.e. a source
+ * nobody has ever checked — is blocked. The predicate itself lives in
+ * worker/core/terms-gate.ts; this function must never restate it.
  */
 export function evaluateSourcePolicy(source: SourceTermsInfo, env: Environment): GateDecision {
   return evaluateLiveFetchGate(source, env);

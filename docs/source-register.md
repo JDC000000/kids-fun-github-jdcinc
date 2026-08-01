@@ -1251,8 +1251,12 @@ cancellation or location element. Hence:
    live-fetch merely by being named in the env var.)*
 2. **env** — `KIDS_FUN_LIVE_LIBRARY_SYSTEMS` must name `nvdpl`. **Unset everywhere**;
    `.env.example` documents it commented-out with the D-12 caveat attached.
-3. **DB** — `source.terms_status` / `robots_status` via `worker/core/terms-gate.ts`, both
-   `pending` for the NVDPL row. Enforced independently of 1 and 2, in **two** places
+3. **DB** — `source.terms_status` / robots clearance via `worker/core/terms-gate.ts`.
+   `terms_status` is still `pending` for the NVDPL row, so this gate refuses it on terms
+   alone. Its robots side is now recorded honestly rather than left `pending`:
+   `robots_status = 'unknown'` (the true fact) plus `robots_override_decision = 'D-12'`
+   (the authorisation) — F-5 in §7, migration `0022_source_robots_override.sql`.
+   Enforced independently of 1 and 2, in **two** places
    (**corrected by QA finding F-C — it is NOT `politeFetch`**, which only does rate-limiting,
    the identified UA and the request deadline):
    - `worker/core/source-runner.ts` — `evaluateLiveFetchGate()` per run;
@@ -1302,8 +1306,10 @@ because an earlier revision recorded truncation as a boolean and silently failed
 in exactly the case where the missing number mattered most.
 
 **Classification:** **summarise-only** — same posture as the other library feeds. DB
-`terms_status` should be `summarise_only` with `robots_status` recorded honestly (see the
-flag in §7).
+`terms_status` should be `summarise_only`; promoting it is still the deliberate out-of-band
+ops action it is for every other source (F-3). `robots_status` is now recorded honestly —
+`'unknown'` + `robots_override_decision = 'D-12'` — per F-5 in §7, which is **resolved and
+implemented**, not open.
 
 ---
 
@@ -1353,22 +1359,119 @@ flag in §7).
     `kids-fun-scope-to-task-v1.1.md`.
   - **No investigation needed; this is a ratification item.** Asserted exhaustively in
     `tests/ingestion/editorial-candidate.test.ts`.
-- **F-5 (MEDIUM, added 2026-07-31 by the NVDPL build) — what `robots_status` should the
-  NVDPL row actually carry, given robots.txt cannot be read?** `worker/core/terms-gate.ts`
-  requires `robots_status = 'allowed'` to permit a live fetch, and the vocabulary has no
-  value meaning *"unreadable, risk accepted by named human decision"*. Setting it to
-  `allowed` would make the production DB assert something **we did not verify and cannot
-  verify** — every other `allowed` row on this project is backed by a robots.txt somebody
-  actually read, and flattening this case into the same value erases exactly the distinction
-  D-12 was careful to preserve. **Not resolved here, and deliberately not worked around:**
-  the adapter ships gated OFF, so nothing depends on the answer yet. Two options for
-  whoever enables it — (a) set `allowed` and record the override in the row's own audit
-  note, accepting that the field is then imprecise; or (b) add a distinct
-  `override_unverifiable` status that the gate treats as passing but which reads honestly in
-  the admin UI and in any future audit. **Recommend (b)**, since D-12 is explicitly scoped to
-  one source and a value that says so keeps the next source with this fact pattern from
-  inheriting the clearance by copy-paste — which is precisely what D-12's own scope
-  paragraph forbids. Flagged to the operator/Jon, not decided by the implementing stream.
+- **F-5 (RESOLVED 2026-08-01, Option A — built, not merely decided) — what `robots_status`
+  should the NVDPL row carry, given robots.txt cannot be read?**
+
+  **The question (raised 2026-07-31 by the NVDPL build).** The live-fetch gate required
+  `robots_status = 'allowed'`, and the vocabulary had no value meaning *"unreadable, risk
+  accepted by a named human decision"*. Setting `allowed` would have made the production DB
+  assert something **we did not verify and cannot verify** — every other `allowed` row on
+  this project is backed by a robots.txt somebody actually read — flattening exactly the
+  distinction D-12 was careful to preserve. Setting `unknown` alone was honest about the
+  *fact* but indistinguishable from "nobody ever checked", which must keep failing closed.
+  The flag was routed rather than self-resolved; **Jon approved Option A on 2026-08-01**
+  (relayed via the operator).
+
+  **What was built.** `robots_status` keeps its existing four-value vocabulary — `unknown`
+  already states the true fact — and the *authorisation* is recorded beside it, in its own
+  columns. "Unreadable" and "a human accepted that" are two different facts, now stored as
+  two different facts:
+
+  | Column | Type | Meaning |
+  |---|---|---|
+  | `source.robots_override_decision` | `text NULL` | The decision record that authorised it — literally `'D-12'` for NVDPL. A reference, not a boolean: "someone said yes" is not auditable. **This is the field the gate keys on.** |
+  | `source.robots_override_note` | `text NULL` | One line of context + a pointer to where the reasoning lives (this document). Never the reasoning itself. |
+
+  Migration `supabase/migrations/0022_source_robots_override.sql`. Both columns are NULL for
+  **every** row today except NVDPL's, and nothing writable by an existing code path sets
+  them — the admin console reads them but its INSERT/UPDATE column lists deliberately
+  exclude them, so an override can never be minted from a dropdown. Granting one is a routed
+  human decision that lands as a seed/migration change alongside its written reasoning.
+
+  **The exact predicate** (authored ONCE, in `worker/core/terms-gate.ts`, in both languages):
+
+  ```
+  robots cleared  ⇔  robots_status = 'allowed'
+                  OR (robots_status = 'unknown'
+                      AND robots_override_decision ~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$)
+  ```
+
+  `isRobotsClearedForLiveFetch()` (TypeScript) and `robotsClearedForLiveFetchSql(alias)`
+  (the SQL twin) both come from that module. Both halves of the override branch are
+  load-bearing: the status alone is not enough (a never-checked source is also `unknown`),
+  and the reference alone is not enough (it speaks only for an *unreadable* robots.txt, never
+  for one that was read and refused). **The terms gate is checked first and is not
+  overridable**: the override answers one question and discharges nothing else, exactly as
+  D-12's own scope paragraph says.
+
+  **Why the reference test is a SHAPE test and not "is it blank?" — QA finding F-QA-1,
+  2026-08-01.** The first implementation asked each side whether the value was blank after
+  trimming, and **the two runtimes do not agree on what whitespace is.** PostgreSQL's bare
+  `btrim()` strips spaces only; JavaScript's `String.trim()` strips all whitespace. So a
+  tab-only reference read as *present* in SQL and *absent* in TypeScript: the scheduler
+  enqueued a row the gate then blocked — genuine drift between the two enforcement points,
+  i.e. the exact failure this whole entry exists to prevent, reached through the one door
+  nobody had checked. Naming the ASCII whitespace characters explicitly
+  (`btrim(x, E' \t\n\r\f\v')`) closes tab and newline and **does not close the finding** —
+  measured, not assumed: `U+00A0` and `U+2003` still read as non-blank in Postgres while
+  `.trim()` calls them blank. So the *question* was changed rather than the answer. Both
+  sides now test one anchored ASCII allowlist, which two engines evaluate identically by
+  construction — no locale, encoding or Unicode-version dependency anywhere in it, because
+  whitespace simply is not in the allowlist. A padded `'  D-12  '` is **rejected, not
+  silently repaired**: on a field authorising a fetch we cannot verify, "looks almost right"
+  must fail closed. Migration `0023_robots_override_decision_shape.sql` enforces the same
+  pattern at write time, and a test reads that constraint back out of the catalog to assert
+  the SQL and TypeScript copies still match.
+
+  **Both enforcement points, updated together — this was the trap.** The rule is enforced by
+  two machines that never call each other: `worker/core/source-runner.ts`
+  (`evaluateLiveFetchGate()`, per run, TypeScript) and `worker/scheduler/tiered.ts` (a
+  set-based SQL predicate deciding what is ever *enqueued*). Fixing only the first would have
+  produced the worst available outcome — NVDPL passing every "is this allowed?" check a human
+  or a log would consult, while the scheduler silently never enqueued it: **enabled
+  everywhere anyone looks, and simply never running, with no error and no health signal.**
+  Both now compose the same predicate, so they cannot be edited independently, and
+  `tests/scheduler/robots-override-db.test.ts` proves they agree row-for-row against a real
+  database rather than trusting that they do. A third gate — the `SELECT` that *feeds* the
+  TypeScript gate — was found while implementing: a query omitting `robots_override_decision`
+  fails closed on an authorised source with nothing reporting the omission, so
+  `SOURCE_GATE_COLUMNS` is the shared projection used by `source-runner.ts` and the seasonal
+  watcher alike.
+
+  **Three write-time invariants** (0022, tightened by 0023 — same "structural not procedural"
+  reasoning as 0021: a constraint holds for raw SQL, a future admin action and a DB-backed
+  test, none of which route through the gate): the decision reference must match the shape
+  above (0023; 0022's weaker "non-blank" form is what F-QA-1 defeated); a note cannot exist
+  without the decision it explains; and an override may **never** sit on a row whose
+  robots_status is `disallowed`. The last blocks no reachable bypass today — it exists so
+  that loosening the predicate later cannot silently turn an explicit Disallow into a
+  cleared source.
+
+  **NVDPL's row is still gated OFF, and this change did not enable it.** The seed sets
+  `robots_status='unknown'`, `robots_override_decision='D-12'` and a pointer-note; it does
+  **not** touch `terms_status`, which remains `pending`. Both enforcement points therefore
+  still refuse this row — on terms, before robots is even reached. Promoting `terms_status`
+  to `summarise_only` is the same deliberate out-of-band ops action it is for VPL, RPL and
+  the city calendar (F-3); this seed has never production-enabled a source and still doesn't.
+  **Applying the seed to a live database is a prerequisite for the first live-fetch attempt,
+  not the trigger for it.**
+
+  **Why not option (b), a new `robots_status` value?** A new enum value must be taught to
+  every consumer of the column at once — the admin console vocab and its DB drift guard, two
+  badge renderers, the scheduler SQL, the terms gate — and any consumer that had not learned
+  it yet would fall into whatever its `else` branch happens to do, which is not reliably
+  fail-closed. Two nullable columns are *additive*: existing readers keep seeing exactly the
+  values they always have, and a reader that has not learned about the override simply does
+  not grant it. Additive beats widening when the widened case is the dangerous one. Option A
+  keeps the property (b) was recommended for — the next source with this fact pattern cannot
+  inherit the clearance by copy-paste, because the clearance is a named decision record, not
+  a status value.
+
+  **Honesty in the admin console.** `app/admin/sources` renders an `override: D-12` badge
+  (with the note as its tooltip) beside the robots badge. Without it, an overridden source
+  displays as a muted `unknown` — visually identical to one nobody has ever checked — while
+  the scheduler is actively fetching it. That is the same dishonesty this flag exists to
+  remove, pointed the other way.
 - **F-6 (info, 2026-07-31) — NVDPL branch geo is genuinely absent, by choice.** 30 of 41
   NVDPL records resolve to no specific branch and none of the curated NVDPL locations carry
   coordinates (§6.8.4 trap 4). This is honest rather than complete: coordinates were not
@@ -1391,8 +1494,9 @@ flag in §7).
 All three live sources are, on the evidence available (verified robots.txt + ToS +
 adapter code + passing compliance tests), operating within their terms. No live source
 has an *unclear* status that I have silently resolved; F-3 is the one item that needs a
-production-DB confirmation I cannot perform from here, and **F-5 is a genuine open
-question the NVDPL build declined to answer unilaterally.**
+production-DB confirmation I cannot perform from here. **F-5 was a genuine open question the
+NVDPL build declined to answer unilaterally; it was routed, decided by Jon (Option A,
+2026-08-01) and is now implemented — see its entry above for the built shape.**
 
 ---
 

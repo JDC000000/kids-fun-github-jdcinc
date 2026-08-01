@@ -15,19 +15,35 @@ import {
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
-/** Extract the literal set from a column's CHECK (… IN (…)) constraint on `source`. */
+/**
+ * Extract the literal set from a column's MEMBERSHIP CHECK constraint on `source`.
+ *
+ * The match is deliberately narrow — `<column> = ANY (ARRAY[…])`, which is how Postgres
+ * renders `CHECK (col IN (…))` back out of pg_get_constraintdef. An earlier, looser matcher
+ * accepted any constraint whose text merely mentioned the column, and took the FIRST hit
+ * from an unordered catalog scan. That was already fragile and became wrong the moment a
+ * second constraint referenced one of these columns for a different purpose (0022's
+ * `robots_override_decision IS NULL OR robots_status <> 'disallowed'`): it would have
+ * matched, yielded {'disallowed'}, and failed this drift guard NON-DETERMINISTICALLY —
+ * a red test blaming the wrong thing. Matching the shape, and asserting exactly one
+ * constraint has it, makes that class of confusion impossible rather than unlikely.
+ */
 async function checkSet(column: string): Promise<Set<string>> {
   const rows = await query<{ def: string }>(
     `SELECT pg_get_constraintdef(c.oid) AS def
        FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
       WHERE t.relname = 'source' AND c.contype = 'c'`
   );
-  const def = rows.map((r) => r.def).find((d) => d.includes(`(${column} `) || d.includes(`(${column})`) || d.includes(`${column} =`) || d.includes(`${column} IN`));
-  if (!def) throw new Error(`no CHECK constraint found for source.${column}`);
+  const membership = new RegExp(String.raw`\b${column}\s*=\s*ANY\s*\(\s*ARRAY\[([^\]]*)\]`);
+  const matches = rows.map((r) => membership.exec(r.def)).filter((m): m is RegExpExecArray => m !== null);
+  if (matches.length === 0) throw new Error(`no membership CHECK constraint found for source.${column}`);
+  if (matches.length > 1) {
+    throw new Error(`source.${column} has ${matches.length} membership CHECK constraints — the vocab it accepts is ambiguous`);
+  }
   const set = new Set<string>();
   const re = /'([^']+)'/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(def)) !== null) set.add(m[1]);
+  while ((m = re.exec(matches[0][1])) !== null) set.add(m[1]);
   return set;
 }
 
