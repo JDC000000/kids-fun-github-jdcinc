@@ -275,10 +275,9 @@ export class ActiveNetAdapter implements Adapter {
       requestsUsed: this.report.requestsUsed,
       baselineOccurrences: baselineRecordsFound,
       unrecognisedKeys: this.report.unrecognisedKeys,
-      // Re-fed from the stored report, not recomputed: this pass has no index. Omitting
-      // them here would have made the phone verdict a purely cosmetic one — extract()
-      // would raise it and THIS call, the only one ingestSource ever sees, would
-      // immediately overwrite it with a phone-blind `ok`.
+      // Omitting these would make the phone verdict cosmetic: extract() raises it, but
+      // THIS call is the only one ingestSource sees — it would overwrite the alert with a
+      // phone-blind `ok` (see phonesOffered's docstring above for why there's no index here).
       phonesOffered: this.report.phonesOffered,
       phonesRejected: this.report.phonesRejected,
       venuesWithRejectedPhone: this.report.venuesWithRejectedPhone,

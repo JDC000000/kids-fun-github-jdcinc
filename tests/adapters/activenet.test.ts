@@ -47,7 +47,12 @@ import {
   applyVenues,
   normaliseVenuePhone,
 } from '../../worker/adapters/activenet/venues';
-import { assessRunHealth, loadYieldBaseline, YIELD_COLLAPSE_RATIO } from '../../worker/adapters/activenet/health';
+import {
+  assessRunHealth,
+  loadYieldBaseline,
+  YIELD_COLLAPSE_RATIO,
+  PHONE_REJECTION_ALERT_RATIO,
+} from '../../worker/adapters/activenet/health';
 import { zonedLocalToUtcIso } from '../../worker/core/time';
 import { clearPolicyState } from '../../worker/health/policy';
 
@@ -1127,6 +1132,10 @@ describe('G-T7R-6 health: breakage and thinning are both observable', () => {
     vi.useRealTimers();
 
     expect(records.length).toBeGreaterThan(0);
+    // F-8 rides along here rather than in a second adapter+timer harness: this is already
+    // the healthy-roster E2E run, so the `alert: false` below IS the phone signal's
+    // false-alarm guard — a rejection miscount on 36 good numbers fails this line.
+    expect(adapter.lastRunReport()!.phonesRejected, 'no phone was refused on a clean roster').toBe(0);
     expect(adapter.assessRun(null), 'no history ⇒ not a collapse').toMatchObject({ alert: false });
     const collapsed = adapter.assessRun(records.length * 10);
     expect(collapsed).toMatchObject({ code: 'yield_collapse', alert: true });
@@ -1163,16 +1172,23 @@ describe('G-T7R-6 health: breakage and thinning are both observable', () => {
   describe('F-8 phone_rejection_spike', () => {
     const healthy = { ...base, occurrencesParsed: 1100 };
 
+    // DELIBERATELY ASYMMETRIC (12 of 36, six names, five shown). A 36-of-36 wholesale case
+    // reads better as a story but cannot detect a swapped numerator and denominator — QA
+    // demonstrated that an inverted `${offered} of ${rejected}` survives every symmetric
+    // assertion in this file. Every count here is distinct for that reason: 12 ≠ 36, and
+    // 6 named ≠ 5 shown, so a transposition anywhere in the detail string fails a line.
     it('alerts when a fifth of the published numbers become undialable', () => {
       const verdict = assessRunHealth({
         ...healthy,
         phonesOffered: 36,
-        phonesRejected: 36,
+        phonesRejected: 12,
         venuesWithRejectedPhone: ['Britannia', 'Dunbar', 'Hastings', 'Kerrisdale', 'Killarney', 'Kitsilano'],
       });
       expect(verdict).toMatchObject({ code: 'phone_rejection_spike', status: 'partial', alert: true });
-      expect(verdict.detail).toMatch(/36 of 36/);
-      expect(verdict.detail, 'names, not a percentage').toMatch(/Britannia/);
+      expect(verdict.detail, 'rejected of offered, in that order').toMatch(
+        /12 of 36 published phone number\(s\) were unusable/
+      );
+      expect(verdict.detail, 'names, not a percentage').toMatch(/affected: Britannia, Dunbar/);
       expect(verdict.detail, 'and says how many it did not name').toMatch(/\+1 more/);
       // partial, not failed: the occurrences are good and must still land.
       expect(verdict.occurrences).toBe(1100);
@@ -1190,6 +1206,14 @@ describe('G-T7R-6 health: breakage and thinning are both observable', () => {
       expect(assessRunHealth({ ...healthy, phonesOffered: 36, phonesRejected: 8 }).code).toBe(
         'phone_rejection_spike'
       );
+      // EXACTLY on the line, because neither case above sits on it — 2/10 is 0.2 to the
+      // bit, so this is the only assertion that distinguishes `>=` from `>`. QA found that
+      // relaxing the comparison passed the whole suite without it.
+      expect(2 / 10 === PHONE_REJECTION_ALERT_RATIO, 'exact-boundary premise').toBe(true);
+      expect(
+        assessRunHealth({ ...healthy, phonesOffered: 10, phonesRejected: 2 }).code,
+        'the threshold is inclusive — at the line IS a spike'
+      ).toBe('phone_rejection_spike');
       // Burnaby's 7-centre roster must be able to alert at all — a floor tuned to
       // Vancouver would have made the smaller tenant permanently unwatchable.
       expect(assessRunHealth({ ...healthy, phonesOffered: 7, phonesRejected: 2 }).code).toBe(
@@ -1265,24 +1289,19 @@ describe('G-T7R-6 health: breakage and thinning are both observable', () => {
         code: 'phone_rejection_spike',
         alert: true,
       });
+      // THE DETAIL STRING IS THE PAYLOAD, so assert it, not just the code. QA found the
+      // 4th mutation here: deleting the `venuesWithRejectedPhone` re-feed in index.ts left
+      // the whole suite green while stripping every facility name out of the only text an
+      // operator ever sees — because nothing asserted a verdict's `detail`. The same hole
+      // let a blanked detail, an inverted "36 of 8", and an off-by-one threshold survive.
+      expect(verdict!.detail, 'names the facilities, quantified, not just a code').toMatch(
+        /36 of 36 published phone number\(s\) were unusable/
+      );
+      expect(verdict!.detail).toMatch(/affected: .+ Community Centre/);
+      expect(verdict!.detail, 'and says how many it did not name').toMatch(/\+31 more/);
       expect(report.warnings.some((w) => /unusable phone/i.test(w))).toBe(true);
       // The stored report is updated too, so lastRunReport() and the check run agree.
       expect(adapter.lastRunReport()!.health.code).toBe('phone_rejection_spike');
-    });
-
-    it('END TO END: the unmodified roster stays green — no false alarm on a healthy run', async () => {
-      process.env.KIDS_FUN_LIVE_ACTIVENET = 'vancouver';
-      const { impl } = stubPortal();
-      vi.spyOn(globalThis, 'fetch').mockImplementation(impl);
-      const adapter = new ActiveNetAdapter(ONE_CALENDAR_TENANT);
-      vi.useFakeTimers();
-      const pending = adapter.fetch();
-      await vi.advanceTimersByTimeAsync(120_000);
-      adapter.extract(await pending);
-      vi.useRealTimers();
-
-      expect(adapter.lastRunReport()!.phonesRejected).toBe(0);
-      expect(adapter.assessRun(null)).toMatchObject({ code: 'ok', alert: false });
     });
   });
 });

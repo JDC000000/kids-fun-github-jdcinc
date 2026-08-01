@@ -144,18 +144,32 @@ export function assessRunHealth(diag: ActiveNetRunDiagnostics): ActiveNetHealthV
   }
 
   // F-8 — the vendor still returns a phone for every centre, and we can no longer dial any
-  // of them. Occurrences are fine, the payload shape is fine, nothing above fires, and the
-  // parent-facing detail page quietly stops showing a number it showed yesterday. This is
+  // of them. Occurrences are fine, the payload shape is fine, nothing above fires. This is
   // the "cheerfully green" failure this module exists for, one field down.
+  //
+  // WHAT THE HARM ACTUALLY IS, corrected after QA (register F-8, prediction 3). It is NOT
+  // "numbers vanish from listings" — that was wrong and is worth stating plainly because
+  // the wrong version drove this design. resolveVenue() enriches with
+  // `phone = COALESCE($8, phone)` (worker/core/venue.ts), so a rejected value sends NULL
+  // and the STORED number survives untouched. Nothing disappears. The real failure is
+  // FREEZING: the column silently stops tracking the vendor and keeps serving a
+  // last-known-good number as a live `tel:` link, indefinitely, with no staleness marker.
+  // A parent taps a number the facility may have changed months ago. That is quieter than
+  // vanishing and worse to detect, which makes this check MORE justified, not less.
   //
   // BELOW shape_drift, deliberately. Both fire when the vendor reshapes the payload, and
   // "unrecognised keys" is then the larger, more actionable statement — phones are one
   // field, drift may be everything. Above `ok` and nothing else, because on its own this
-  // is a narrow, confirmed, precisely-quantified loss.
+  // is a narrow, confirmed, precisely-quantified loss. KNOWN COST (register F-13): the
+  // drift canary's key list is a static const, so one benign new vendor key pins
+  // `shape_drift` on forever and makes this check unreachable until someone updates it.
   //
-  // STATUS `partial`, NOT `failed`. The run's occurrences are good and must land; degrading
-  // it further would trade real activity data for a missing convenience field. `partial` +
-  // alert is exactly the shape_drift posture directly above, for the same reason.
+  // STATUS `partial`, AND IT CHANGES NOTHING TODAY. Stated honestly because the previous
+  // version of this comment reasoned carefully about a field nobody reads: `assessRun()`
+  // returns only `{code, alert, detail}` (AdapterRunDiagnostics), so this `status` never
+  // reaches ingestSource, which derives the run's own status from whether occurrences
+  // upserted. Returning `failed` here would therefore ALSO change nothing — see F-11 for
+  // where the signal actually dies, and do not chase it from this file.
   const offered = diag.phonesOffered ?? 0;
   const rejected = diag.phonesRejected ?? 0;
   if (

@@ -175,11 +175,9 @@ export function buildVenueIndex(
       venueName: name,
       venueAddress: formatAddress(detail),
       venuePhone: acceptedPhone,
-      // "Offered but refused" is the only fact worth carrying: a centre that publishes no
-      // phone at all is a vendor coverage gap we have never had a say in, whereas one that
-      // publishes a phone WE dropped is a decision this file made, and F-8 is about making
-      // our own decisions countable. Conflating the two would put permanent, unfixable
-      // noise into a signal whose entire value is that it currently reads zero.
+      // Offered-but-refused only, never "vendor published nothing" — see venuePhoneRejected's
+      // docstring above for why conflating the two would poison a signal whose entire value
+      // is that it currently reads zero.
       venuePhoneRejected: offeredPhone && !acceptedPhone ? offeredPhone : undefined,
       venueMunicipalityName: tenant.municipality,
       // Committed constant, exact normalised name match. No network, no geocoder,
@@ -215,11 +213,8 @@ export interface VenueApplyResult {
   phonesOffered: number;
   /** Of those, how many normaliseVenuePhone() refused. Zero on every run measured to date. */
   phonesRejected: number;
-  /**
-   * The facilities behind that count, BY NAME — same doctrine as venuesWithoutGeo above.
-   * "phone coverage 78%" reads as nearly-solved; "Britannia, Hillcrest and Killarney now
-   * publish a number we cannot dial" says which parents tap a missing button.
-   */
+  /** The facilities behind that count, BY NAME — same doctrine as venuesWithoutGeo above:
+   *  a percentage reads as solved, a name says which parent taps a missing button. */
   venuesWithRejectedPhone: string[];
   warnings: string[];
 }
@@ -362,25 +357,32 @@ export function applyVenues(
   // early warning this is for.
   //
   // WHY A WARNING IS NOT THE WHOLE FIX. Everything pushed here rides in
-  // ActiveNetRunReport.warnings, which — checked, not assumed — is read by tests and by
-  // nothing else; the sole channel from a completed run to an operator is the health
-  // verdict (assessRun → ingestSource's `errors.push` → source_check_run → the T15 board).
-  // So this warning is the AUDIT TRAIL and health.ts's `phone_rejection_spike` is the
-  // ALARM. Emitting only the warning would have re-created F-8 one layer up, which is the
-  // precise mistake this flag exists to record.
-  const venuesWithRejectedPhone = venues
-    .filter((v) => v.venuePhoneRejected)
-    .map((v) => v.venueName)
-    .sort((a, b) => a.localeCompare(b));
-  const phonesRejected = venuesWithRejectedPhone.length;
+  // ActiveNetRunReport.warnings, which — checked, not assumed, and independently
+  // re-verified by QA — is read by tests and by NOTHING else. It is never persisted. So a
+  // warning is a developer-facing breadcrumb, not a signal; health.ts's
+  // `phone_rejection_spike` is what actually leaves the process, via assessRun →
+  // ingestSource's `errors.push` → `source_check_run.errors`.
+  //
+  // AND IT STOPS THERE, WHICH IS NOT GOOD ENOUGH — register flag F-11, raised by the QA of
+  // this very change. An earlier version of this comment claimed the verdict reaches "the
+  // T15 board". It does not. ingestSource marks a run with occurrences `partial`
+  // (worker/core/ingest.ts), and the board's failures panel selects
+  // `WHERE cr.status = 'failed'` (lib/admin/dashboard.ts) while worker/health/sla.ts counts
+  // `partial` as SUCCEEDED. The alert text is durably persisted and queryable, which is a
+  // real improvement over a warning that evaporates — but no operator is shown it.
+  // This is a PRE-EXISTING platform gap, not one this change introduced: every `partial`
+  // alert code shares it, `shape_drift` included. F-8's build is what surfaced it.
+  // Do not "fix" it by returning `failed` from health.ts — see the note there.
+  const rejectedVenues = venues.filter((v) => v.venuePhoneRejected);
+  const venuesWithRejectedPhone = rejectedVenues.map((v) => v.venueName).sort((a, b) => a.localeCompare(b));
+  const phonesRejected = rejectedVenues.length;
   const phonesOffered = venues.filter((v) => v.venuePhone || v.venuePhoneRejected).length;
 
   if (phonesRejected > 0) {
     // The refused VALUES, not just the names — an operator diagnosing this needs to see
     // the new shape, and capping at three keeps a wholesale 36-centre switch from turning
     // one warning into a wall of near-identical strings.
-    const samples = venues
-      .filter((v) => v.venuePhoneRejected)
+    const samples = rejectedVenues
       .slice(0, 3)
       .map((v) => `${v.venueName}: ${JSON.stringify(v.venuePhoneRejected)}`);
     warnings.push(
