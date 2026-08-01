@@ -26,13 +26,13 @@
 // the three LIVE tier-10 producers, whose emissions are unbounded — that residual is real
 // and is recorded here rather than in a doc nobody reads.
 //
-// WHY THIS IS NOT `source.authority_tier`. That column (0003_core_places.sql:21) ranks who
-// published the PROGRAMMING. This ranks who measured the COORDINATE. They are orthogonal,
-// and the counterexample is the system's own most important source: ActiveNet is
+// WHY THIS IS NOT `source.authority_tier`. That column (`source`, 0003_core_places.sql)
+// ranks who published the PROGRAMMING. This ranks who measured the COORDINATE. They are
+// orthogonal, and the counterexample is the system's own most important source: ActiveNet is
 // `official` for Vancouver drop-in schedules and is simultaneously the worst geo source in
-// the product for pools and rinks, because no City dataset covers them and 12 of the 36
-// Vancouver points are hand-placed. Reusing that column would have been a category error
-// that looked like reuse.
+// the product for pools and rinks, because no City dataset covers them at all and their
+// points are hand-placed. Reusing that column would have been a category error that looked
+// like reuse.
 //
 // EVERY RUNG IS A MEASUREMENT ALREADY IN THE REPO, not an intuition. The justifications are
 // on each constant. The gaps between rungs are deliberate: new tiers are expected, and
@@ -42,7 +42,9 @@ export const VENUE_GEO_AUTHORITY = {
   /**
    * 50 — admin manual listing, entered by a human in-product
    * (`app/admin/listings/`). Outranks everything because a person looked at THIS specific
-   * venue on purpose. The form range-validates lat/lng (`_lib/vocab.ts:113-124`).
+   * venue on purpose. The form range-validates lat/lng — see `parseManualListingInput` in
+   * `_lib/vocab.ts` (named, not line-numbered: a line range into a form-validation file is a
+   * citation that goes stale on somebody else's unrelated edit).
    */
   ADMIN_MANUAL: 50,
 
@@ -50,10 +52,18 @@ export const VENUE_GEO_AUTHORITY = {
    * 40 — curated coordinate carrying per-entry provenance
    * (`worker/adapters/activenet/venue-geo.ts` entries with `source: 'curated'`). The only
    * producer in the system with real provenance: `source` + `attribution` + `derivedFrom`
-   * per entry. Measured: 12 of the 36 Vancouver points are hand-placed pool/rink/arena
-   * facilities the City publishes no dataset for at all, and they carry ~74% of measured
-   * Vancouver drop-in occurrences/week. The Britannia convergence measured 139-172 m
-   * closer to the building than the City's own community-centres point.
+   * per entry. Outranks committed open data because the City's point is sometimes the wrong
+   * building on a shared campus: the Britannia convergence measured 139-172 m closer to the
+   * building than `community-centres` did, and the pool/rink/arena facilities the City
+   * publishes no dataset for at all carry ~74% of measured Vancouver drop-in occurrences per
+   * week — the curated entries are the load-bearing half, not the residue.
+   *
+   * NO COUNT IS RESTATED HERE, deliberately, and this is not fastidiousness — an earlier
+   * draft of this comment carried a hardcoded "N of 36 are hand-placed" and it was WRONG, in
+   * a way no test could catch, in the file that calls itself the canonical definition. The
+   * measured split lives in `VANCOUVER_VENUE_GEO_PROVENANCE`
+   * (worker/adapters/activenet/venue-geo.ts), where a test pins it against the actual table.
+   * Read it there; a copy here would be unfalsifiable and would drift again.
    */
   CURATED_PROVENANCED: 40,
 
@@ -89,10 +99,16 @@ export const VENUE_GEO_AUTHORITY = {
 
   /**
    * 5 — the out-of-band Mapbox geocoder backfill (`scripts/backfill-venue-geo.ts`).
-   * Address-derived, so it is the weakest claim in the system. It keeps its own
-   * `AND geo IS NULL` predicate ON TOP of this ordinal: 5 outranks 0, so the authority rule
-   * ALONE would newly permit it to overwrite every legacy coordinate in the database with a
-   * geocoded guess. The ordinal is a ceiling on what a writer may do, not a licence.
+   * Address-derived, so it is the weakest claim in the system.
+   *
+   * THE CANONICAL STATEMENT OF WHY IT KEEPS ITS OWN `AND geo IS NULL`, which the other three
+   * sites point at instead of restating: this tier outranks LEGACY_UNATTRIBUTED, so the
+   * authority rule ALONE would newly permit the weakest source in the system to overwrite
+   * every legacy hand-placed coordinate in the database with an address-derived guess — a
+   * regression introduced by a change whose whole purpose is to protect coordinates. The
+   * ordinal is a CEILING on what a writer may do, not a licence; an individual path may be
+   * stricter, and this one is. Note the rungs are spaced so new tiers can be inserted, so
+   * "5 > 0" is a relation between these two constants, not a fact about the literals 5 and 0.
    */
   GEOCODER_BACKFILL: 5,
 

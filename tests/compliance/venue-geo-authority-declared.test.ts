@@ -217,10 +217,9 @@ describe('(A) every coordinate emission declares an authority', () => {
   });
 
   it('the geocoder backfill declares its tier AND keeps its stricter NULL-only predicate', () => {
-    // 5 > 0, so the authority rule ALONE would newly let the weakest source in the system
-    // overwrite every legacy coordinate in the database. The `AND geo IS NULL` is what stops
-    // that, and it is pinned here because deleting it would be an invisible, catastrophic,
-    // one-line regression in a file nobody reads.
+    // Deleting this predicate would be an invisible, catastrophic, one-line regression in a
+    // file nobody reads — which is why it is pinned mechanically rather than left to review.
+    // Why it is load-bearing: `GEOCODER_BACKFILL` in worker/core/venue-geo-authority.ts.
     const src = stripComments(readFileSync(resolve(ROOT, 'scripts/backfill-venue-geo.ts'), 'utf8'));
     expect(src).toMatch(/VENUE_GEO_AUTHORITY\.GEOCODER_BACKFILL/);
     expect(src).toMatch(/WHERE id = \$1 AND geo IS NULL/);

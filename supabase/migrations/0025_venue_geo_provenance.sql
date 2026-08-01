@@ -13,12 +13,14 @@
 -- what this migration adds. The comparison itself is 0025's sibling change in
 -- `worker/core/venue.ts` (G-VGEO-A2); this file writes NO coordinate and moves NO data.
 --
--- WHY NOT REUSE `source.authority_tier` (0003_core_places.sql:21). Because it answers a
--- different question. `authority_tier` ranks WHO PUBLISHED THE PROGRAMMING; this ranks WHO
--- MEASURED THE COORDINATE, and the two are genuinely orthogonal. ActiveNet is `official`
--- for Vancouver drop-in schedules and is simultaneously the WORST geo source in the system
--- for pools and rinks — the City publishes no pool/rink/arena dataset at all, so 12 of the
--- 36 Vancouver points in `worker/adapters/activenet/venue-geo.ts` are hand-placed.
+-- WHY NOT REUSE `source.authority_tier` (the `source` table, 0003_core_places.sql). Because
+-- it answers a different question. `authority_tier` ranks WHO PUBLISHED THE PROGRAMMING;
+-- this ranks WHO MEASURED THE COORDINATE, and the two are genuinely orthogonal. ActiveNet is
+-- `official` for Vancouver drop-in schedules and is simultaneously the WORST geo source in
+-- the system for pools and rinks — the City publishes no pool/rink/arena dataset at all, so
+-- those points are hand-placed. No count is restated here: the measured split lives in
+-- `VANCOUVER_VENUE_GEO_PROVENANCE` (worker/adapters/activenet/venue-geo.ts), where a test
+-- pins it against the actual table. A prose count in a migration is unfalsifiable and drifts.
 -- Reusing the column would have been a category error that looked like reuse.
 --
 -- THE ORDINAL, and the measurement behind each rung (not intuition — every one of these is
@@ -27,9 +29,10 @@
 -- reading `\d venue` is not sent hunting.
 --
 --   50  admin manual listing (human, in-product)   a human looked at THIS venue on purpose
---   40  curated w/ per-entry provenance            12 hand-placed pool/rink points; the
---                                                  Britannia convergence measured 139-172 m
---                                                  closer than the City's own point
+--   40  curated w/ per-entry provenance            hand-placed pool/rink points the City
+--                                                  publishes no dataset for; the Britannia
+--                                                  convergence measured 139-172 m closer
+--                                                  than the City's own point
 --   30  committed open-data point                  verbatim from a licensed dataset for
 --                                                  that exact facility
 --   20  adapter config literal                     curated, but no per-entry provenance and
@@ -46,14 +49,10 @@
 -- event is captured in the golden baseline (`tests/geo/__fixtures__/venue-geo-baseline.json`)
 -- BEFORE it happens, which is why the harness was built first.
 --
--- ONE PLACE THE ORDINAL ALONE WOULD HAVE MADE THINGS WORSE, RECORDED RATHER THAN GLOSSED.
--- `scripts/backfill-venue-geo.ts` (the Mapbox geocoder, tier 5) is today the ONLY writer
--- with safe semantics: `... WHERE id = $1 AND geo IS NULL`, strict gap-fill, cannot clobber.
--- Under the authority rule alone, 5 > 0 — so after this backfill the geocoder would be
--- permitted to overwrite every legacy hand-placed coordinate in the system with an
--- address-derived guess. It keeps its `AND geo IS NULL` predicate for exactly that reason.
--- The authority rule is a CEILING on what a writer may do, not a licence; an individual
--- path may be stricter, and that one is, deliberately.
+-- ONE PLACE THE ORDINAL ALONE WOULD HAVE MADE THINGS WORSE. `scripts/backfill-venue-geo.ts`
+-- (the Mapbox geocoder) keeps its own `AND geo IS NULL` on top of this ordinal — deliberately
+-- stricter than the ordinal permits, so it stays the one writer that structurally cannot
+-- clobber. Full reasoning: `GEOCODER_BACKFILL` in worker/core/venue-geo-authority.ts.
 --
 -- WHY THE CHECK CONSTRAINT. `geo` and `geo_authority` are NULL together or non-NULL
 -- together, enforced in the database. Without it, "every geo-bearing row declares an

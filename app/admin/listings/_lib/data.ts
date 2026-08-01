@@ -67,24 +67,16 @@ async function getOrCreateManualSource(client: PoolClient): Promise<string> {
 
 /**
  * Resolve-or-create a venue on the transaction client, through the SAME function the worker
- * uses. Not a copy of it.
+ * uses — not a copy of it. This replaced a private reimplementation whose "mirrors
+ * worker/core/venue.ts" comment had been false for some time; see that file's header for the
+ * full story and for why there is now one implementation and two callers.
  *
- * WHAT THIS REPLACED, AND WHY IT MATTERS MORE THAN IT LOOKS. This was a private
- * reimplementation under a comment claiming it "mirrors worker/core/venue.ts". It did not,
- * and had not for some time: the worker OVERWROTE a venue's geo on every ingest, while this
- * copy returned early on a name hit and never updated geo — or address, or display_area —
- * at all. So an admin who corrected a venue's coordinates in the form saw the listing save
- * successfully and the coordinate silently not change. Two write paths, two merge rules, and
- * a comment asserting they were the same.
+ * BEHAVIOUR CHANGE WORTH NAMING: a manual listing at an EXISTING venue now updates that
+ * venue's address / display_area / coordinates instead of discarding them — which is what
+ * the form has always appeared to do.
  *
- * Deleting the copy is the actual fix; keeping two in step by hand is what failed. The
- * behaviour change worth naming explicitly is that a manual listing at an EXISTING venue now
- * updates that venue's address / display_area / coordinates instead of discarding them —
- * which is what the form has always appeared to do.
- *
- * Authority 50: a human looked at THIS venue on purpose, in-product, and the form
- * range-validates the coordinate (`./vocab.ts:113-124`). That is the strongest claim in the
- * system and it outranks every adapter.
+ * Authority 50, the strongest claim in the system: a human looked at THIS venue on purpose,
+ * in-product, and `parseManualListingInput` (./vocab.ts) range-validates the coordinate.
  */
 async function resolveManualVenue(client: PoolClient, input: ManualListingInput): Promise<string> {
   const hasCoordinate = input.venueLat != null && input.venueLng != null;

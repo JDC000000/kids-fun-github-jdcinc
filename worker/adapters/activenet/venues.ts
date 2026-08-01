@@ -268,10 +268,11 @@ export function applyVenues(
       // Coordinate authority is declared PER ENTRY, not per adapter, because this table is
       // genuinely mixed and flattening it would throw away the only real provenance in the
       // system: a point taken verbatim from the City's licensed `community-centres` dataset
-      // and a point a human hand-placed against OSM are not the same claim. 25 entries are
-      // City points; 11 are hand-placed, and they are the pool/rink/arena facilities that
-      // carry ~74% of measured Vancouver drop-in occurrences per week — i.e. the curated
-      // ones are the load-bearing half, which is why they outrank the licensed ones.
+      // and a point a human hand-placed against OSM are not the same claim. The curated half
+      // is the load-bearing one — it covers the pool/rink/arena facilities carrying ~74% of
+      // measured Vancouver drop-in occurrences per week — which is why it outranks the
+      // licensed half. Measured split: `VANCOUVER_VENUE_GEO_PROVENANCE` in ./venue-geo.ts,
+      // test-pinned against the table rather than restated here.
       venueGeoAuthority: venue.geo
         ? venue.geo.source === 'opendata-vancouver'
           ? VENUE_GEO_AUTHORITY.COMMITTED_OPEN_DATA

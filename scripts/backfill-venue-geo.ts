@@ -41,14 +41,12 @@ const LIST_MISSING_SQL = `
 
 // Idempotent: fills a NULL geo only; never overwrites an existing (feed/deterministic) point.
 //
-// `AND geo IS NULL` IS RETAINED ON PURPOSE AND IS STRICTER THAN THE AUTHORITY RULE. Migration
-// 0025 stamps every pre-existing coordinate `geo_authority = 0`, and this writer declares
-// tier 5 — so under the authority rule ALONE (5 > 0) this script would newly be permitted to
-// overwrite every legacy hand-placed coordinate in the database with an address-derived
-// Mapbox guess. That would be a regression introduced by a change whose entire purpose is to
-// protect coordinates. The ordinal is a CEILING on what a writer may do, not a licence; this
-// path is deliberately stricter than its ceiling, and it stays the only writer in the system
-// that structurally cannot clobber.
+// `AND geo IS NULL` IS RETAINED ON PURPOSE AND IS STRICTER THAN THE AUTHORITY RULE. This
+// writer's tier outranks the legacy tier migration 0025 stamps onto pre-existing coordinates,
+// so the ordinal ALONE would newly let this script clobber them — deleting this predicate is a
+// silent one-line regression, which is why it is pinned by
+// tests/compliance/venue-geo-authority-declared.test.ts. Full reasoning: `GEOCODER_BACKFILL`
+// in worker/core/venue-geo-authority.ts.
 const SET_GEO_SQL = `
   UPDATE venue
   SET geo = ST_SetSRID(ST_MakePoint($2::double precision, $3::double precision), 4326)::geography,
