@@ -13,9 +13,10 @@
 // Supplementary Vancouver open dataset, same licence: `property-addresses`
 // (civic address → point), used for the two facilities that have their own civic
 // address and no community-centres record.
-// Two coordinates come from OpenStreetMap (© OpenStreetMap contributors, ODbL,
+// Three coordinates come from OpenStreetMap (© OpenStreetMap contributors, ODbL,
 // https://www.openstreetmap.org/copyright) — flagged per-entry as
 // `attribution: 'osm-odbl'`, so they render the ODbL notice and NOT the OGL one.
+// (Two until 2026-08-01, when Britannia Rink moved onto its own OSM building footprint.)
 //
 // NOTE, recorded rather than glossed: the licence TEXT is not readable from this
 // infrastructure. opendata.vancouver.ca/pages/licence/ answers 200 but is a JS-rendered
@@ -51,10 +52,12 @@
 //        RayCam Co-operative Centre            ⟷ open data "Ray-Cam Co-Operative Center"
 //                                                (hyphen AND US spelling)
 //        West Point Grey Community Centre - Aberthau ⟷ open data "West Point Grey"
-//   • 12 are pools, rinks and an arena with NO `community-centres` record at all. 8 take
+//   • 12 are pools, rinks and an arena with NO `community-centres` record at all. 7 take
 //     the co-located centre's point (shared civic address, verified in centerdetails),
-//     2 resolve against the OGL `property-addresses` dataset, and 2 — in parkland, in
-//     neither City dataset — come from OpenStreetMap. All 12 are hand-placed.
+//     2 resolve against the OGL `property-addresses` dataset, and 3 come from
+//     OpenStreetMap — 2 in parkland, in neither City dataset, plus Britannia Rink, which
+//     has its own OSM building footprint and moved off the campus site-point on
+//     2026-08-01. All 12 are hand-placed.
 //
 // THE COVERAGE LIMIT, STATED SO NOBODY MISREADS THIS FILE AS "VANCOUVER GEO SOLVED".
 // Vancouver publishes no pool, rink, arena or swimming dataset (catalogue searches
@@ -326,13 +329,21 @@ export const VANCOUVER_VENUE_GEO: Readonly<Record<string, ActiveNetVenueGeo>> = 
     lat: 49.2756, lng: -123.0738, displayArea: 'Grandview-Woodland',
     source: 'curated', attribution: 'ogl-vancouver',
     derivedFrom:
-      'co-located: shares civic address 1661 Napier Street with Britannia Community Centre (ActiveNet centerdetails); point from community-centres "Britannia" — the City\'s SITE-level point, deliberately kept here even though the community-centre entry itself now uses a building-level point, because no per-building source exists for the pool or the rink',
+      'co-located: shares civic address 1661 Napier Street with Britannia Community Centre (ActiveNet centerdetails); point from community-centres "Britannia" — the City\'s SITE-level point, deliberately kept here even though the community-centre entry itself now uses a building-level point, because no per-building source exists FOR THE POOL. Narrowed 2026-08-01: this sentence used to say "for the pool or the rink" and the rink half became false when OSM way 32896473 was adopted for it. Re-measured at the same time rather than assumed — an Overpass sweep of the whole Britannia campus (49.2735,-123.0765,49.2780,-123.0685) returns a named building for the icerink, the community centre, both schools and the library, and NOTHING for a pool. The claim holds for this entry, and it holds because it was checked.',
   },
+  // CORRECTED 2026-08-01 (registry round 56 / venue-geo QA session d33dea61), and this
+  // entry is the reason the file records `derivedFrom` per entry at all: the previous
+  // point was FAITHFUL to its stated source and still 236 m from the building. It was
+  // the City's SITE-level point for the whole Britannia campus, inherited because no
+  // per-building source was known to exist. One does — OSM carries the rink as its own
+  // named building footprint — and OSM is a source this table already trusts and cites
+  // for two other facilities, so this introduces no new source class. Not a defect in
+  // the shipped code; an accuracy improvement that had been logged and never dispatched.
   'britannia rink': {
-    lat: 49.2756, lng: -123.0738, displayArea: 'Grandview-Woodland',
-    source: 'curated', attribution: 'ogl-vancouver',
+    lat: 49.276, lng: -123.0706, displayArea: 'Grandview-Woodland',
+    source: 'curated', attribution: 'osm-odbl',
     derivedFrom:
-      'co-located: shares civic address 1661 Napier Street with Britannia Community Centre (ActiveNet centerdetails); point from community-centres "Britannia" — the City\'s SITE-level point, deliberately kept here even though the community-centre entry itself now uses a building-level point, because no per-building source exists for the pool or the rink',
+      'OpenStreetMap way 32896473 "Britannia Icerink" (leisure=ice_rink, sport=ice_skating, 1661 Parker Street) — the rink\'s own building footprint. Verified 2026-08-01 against the OSM API directly: the way\'s polygon centroid (49.2759622, -123.0705506) and Overpass\'s bbox centre (49.2759951, -123.0706414) are two independent derivations that agree at this file\'s 4dp convention, so the stored value is not an artefact of one method (rounding cost 3-6 m). Replaces the City community-centres "Britannia" SITE-level point, measured 236 m away. Sanity check: 67 m from the Britannia Community Centre building point, consistent with a separate building on the same campus rather than a duplicate of it. © OpenStreetMap contributors, ODbL',
   },
   'hillcrest aquatic centre': {
     lat: 49.2438, lng: -123.1079, displayArea: 'Riley Park',
