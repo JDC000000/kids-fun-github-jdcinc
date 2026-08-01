@@ -1609,9 +1609,9 @@ implemented**, not open.
   prevent, over one numeric literal. Verified collision-safe (no in-flight branch touches
   those three files) and mechanical, so it is a clean small follow-up for whoever wants it.
 
-- **F-8 (DETECTION BUILT 2026-08-01, registry round 73, on branch
-  `f8/phone-rejection-observability` — NOT yet merged; was `low` → `medium` when F-9 resolved
-  to SHOW) — a phone value rejected by `normaliseVenuePhone()` is SILENT.**
+- **F-8 (DETECTION BUILT AND MERGED 2026-08-01 as `92b8462`, registry round 73 — was `low` →
+  `medium` when F-9 resolved to SHOW) — a phone value rejected by `normaliseVenuePhone()` is
+  SILENT.**
   *Status is deliberately not "RESOLVED". The detection half is built and independently
   QA'd; the signal it raises does not reach an operator, for reasons that are not this
   change's fault and are tracked as **F-11**. Closing F-8 outright would assert an
