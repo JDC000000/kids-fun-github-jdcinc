@@ -838,3 +838,207 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * DESKTOP / TABLET LAYER
+ *
+ * Everything above this line is the original mobile fixture (route: /preview),
+ * which became the global app shell the moment app/layout.tsx started importing
+ * this file. That shell hard-caps `.kf-app` at 440px, and until this layer there
+ * was NO width-based media query anywhere in the public CSS — so a 1920px
+ * desktop rendered the entire product as a 440px phone column (23% of the
+ * viewport) floating on an empty dotted background.
+ *
+ * Widths follow the approved Visual Blueprint v0.1 §"Layout / spacing / radius":
+ * "Content max-width 1120-1280px; hero up to 1440px. Mobile pad 16px, desktop
+ * pad 64-80px." The blueprint never named a breakpoint value, so the scale below
+ * is this file's — and it is the one home.css and search.css also key off:
+ *
+ *   md  768px   tablet / small laptop — shell widens, scroll rails become wraps
+ *   lg 1024px   laptop                — content goes multi-column
+ *   xl 1280px   desktop               — shell reaches the blueprint's 1120px
+ *
+ * This layer is mobile-first and purely additive: nothing below 768px changes,
+ * so the phone design and the 320-390px stamp-overflow guards (BUG-011) are
+ * untouched.
+ *
+ * `--kf-gutter` is the single horizontal inset for the whole shell. It steps up
+ * per breakpoint HERE, once, so every rule below can just say var(--kf-gutter)
+ * instead of restating a pixel value at each breakpoint.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+.kf-app {
+  --kf-gutter: 16px; /* matches the mobile padding already inlined above */
+}
+
+@media (min-width: 768px) {
+  .kf-app {
+    --kf-gutter: 28px;
+    max-width: 720px;
+    border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  }
+  .kf-page {
+    padding: 24px 24px 0;
+  }
+
+  /* Phone padding reads as cramped once the shell is wide. */
+  .kf-hero {
+    padding: 32px var(--kf-gutter) 28px;
+  }
+  .kf-hero__title {
+    font-size: 32px;
+  }
+  .kf-hero__sub {
+    font-size: 15px;
+    max-width: 60ch;
+  }
+  .kf-results {
+    padding: 4px var(--kf-gutter) 32px;
+  }
+  .kf-detail__hero {
+    padding: 4px var(--kf-gutter) 12px;
+  }
+  .kf-statrow,
+  .kf-panel,
+  .kf-honesty {
+    margin-left: var(--kf-gutter);
+    margin-right: var(--kf-gutter);
+  }
+
+  /* Horizontal scroll rails are a thumb-swipe affordance. With a mouse they
+     hide content behind a scrollbar this design deliberately hides, so wrap
+     them as soon as there is room to. */
+  .kf-chips {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    scroll-snap-type: none;
+    padding: 12px var(--kf-gutter);
+  }
+  .kf-dateArea,
+  .kf-radius {
+    padding-left: var(--kf-gutter);
+    padding-right: var(--kf-gutter);
+  }
+
+  /* The stats read as one row instead of a 2x2 block. Flex rather than more
+     grid columns: the stat count varies by listing (distance and cost are both
+     optional), and a fixed column count leaves empty cells that render as bare
+     grey holes — the 1px "dividers" are this container's background showing
+     through the gaps, so an empty cell shows the divider colour at full size.
+     Wrapped flex items grow to fill their row instead. */
+  .kf-statrow {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .kf-statrow > .kf-stat {
+    flex: 1 1 150px;
+  }
+
+  /* Stacked full-width buttons are a phone pattern. */
+  .kf-empty__actions,
+  .kf-linkrow {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .kf-empty__action,
+  .kf-link {
+    flex: 0 1 auto;
+  }
+
+  /* A 100%-width primary button looks broken past roughly 500px. */
+  .kf-actionbar {
+    padding: 12px var(--kf-gutter) calc(12px + env(safe-area-inset-bottom));
+  }
+  .kf-actionbar .kf-btn--primary {
+    flex: 0 1 320px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .kf-app {
+    --kf-gutter: 40px;
+    max-width: 960px;
+  }
+
+  /* Results: one column of 900px-wide cards is the same "long thin display" in
+     a different costume. Two-up keeps each card at a readable measure. Section
+     heads, notes and day groups stay full-bleed rows of the grid. */
+  .kf-results section,
+  .kf-daygroup {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-items: start;
+  }
+  .kf-results section > .kf-section__head,
+  .kf-results section > .kf-section__note,
+  .kf-results section > .kf-daygroup,
+  .kf-daygroup > .kf-daygroup__title {
+    grid-column: 1 / -1;
+  }
+  .kf-results .kf-card {
+    margin-bottom: 0;
+    height: 100%;
+  }
+
+  /* Detail: the independent panels sit two-up, everything else spans the row.
+     The gutter moves onto the grid container rather than each panel, because the
+     panel count varies (Good to know / Parent notes / Report wrong info are all
+     conditional) and an nth-child gutter rule would land on the wrong side. */
+  .kf-detail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 20px;
+    align-content: start;
+    padding-left: var(--kf-gutter);
+    padding-right: var(--kf-gutter);
+  }
+  .kf-detail > :not(.kf-panel) {
+    grid-column: 1 / -1;
+  }
+  .kf-detail > .kf-panel {
+    margin: 16px 0 0;
+    align-self: start;
+  }
+  /* These carry their own gutter from the md layer; the container padding owns
+     it now, so zero theirs out rather than doubling the inset. */
+  .kf-detail > .kf-statrow,
+  .kf-detail > .kf-honesty {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .kf-detail > .kf-detail__hero,
+  .kf-detail > .kf-actionbar {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  /* A sticky bottom action bar is a phone pattern: it exists because a thumb
+     can't reach a CTA that scrolled away. On a desktop viewport most of the
+     listing is visible at once, and a 1120px-wide white bar pinned over the
+     panels reads as a rendering fault rather than an affordance. Let it settle
+     at the end of the content and drop the 88px reserved for it. */
+  .kf-detail {
+    padding-bottom: 24px;
+  }
+  .kf-detail > .kf-actionbar {
+    position: static;
+    box-shadow: none;
+    border-top: 1px solid var(--hairline);
+    background: transparent;
+  }
+}
+
+@media (min-width: 1280px) {
+  .kf-app {
+    --kf-gutter: 64px; /* blueprint: "desktop pad 64-80px" */
+    max-width: 1120px; /* blueprint: "content max-width 1120-1280px" */
+  }
+  .kf-hero__title {
+    font-size: 38px;
+  }
+  .kf-results section,
+  .kf-daygroup {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

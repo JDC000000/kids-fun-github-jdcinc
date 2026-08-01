@@ -613,3 +613,97 @@
   font-weight: 600;
   color: var(--ink-muted);
 }
+
+/* ── Desktop / tablet layer ───────────────────────────────────────────────────
+ * Breakpoint scale and --kf-gutter are defined once in preview.css.
+ *
+ * /search was the worst-hit route: every filter group is a stacked horizontal
+ * scroll rail, so on a desktop shell a parent scrolled past roughly 900px of
+ * chips before reaching the first result. Rails are a thumb-swipe affordance;
+ * with a mouse they hide options behind a scrollbar this design hides on
+ * purpose. Once there is width, wrap them and set the groups side by side.
+ *
+ * NOTE: Visual Blueprint v0.1 Screen 2 specifies a STICKY LEFT FILTER RAIL on
+ * desktop, not the wrapped grid below. That needs `.kf-filters` and
+ * `.kf-results` to become columns of a shared parent, which is a markup change
+ * in app/search/page.tsx — deliberately out of scope for this responsive fix. */
+
+@media (min-width: 768px) {
+  .kf-sbar {
+    padding: 18px var(--kf-gutter) 14px;
+  }
+  .kf-sbar__field {
+    max-width: 560px;
+  }
+  /* Wrap instead of scroll — nothing stays hidden off-rail with a mouse. */
+  .kf-fgroup__rail {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    scroll-snap-type: none;
+    padding: 2px var(--kf-gutter);
+  }
+  /* Direct children of .kf-app — these own their gutter. */
+  .kf-fgroup__label,
+  .kf-filters__foot,
+  .kf-savebar {
+    padding-left: var(--kf-gutter);
+    padding-right: var(--kf-gutter);
+  }
+
+  /* .kf-browse__summary and its sortline live INSIDE .kf-results, which already
+     carries the gutter. Giving them one too double-indents the results header
+     away from the cards below it, so drop their phone inset and let everything
+     in the results column share one left edge. */
+  .kf-browse__summary,
+  .kf-browse__filterline {
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+@media (min-width: 1024px) {
+  /* Filter groups sit side by side rather than stacking, so results start near
+     the top of the page instead of below the entire filter block. The gutter
+     moves onto the grid container: the per-element padding above is a
+     full-bleed inset and would become a doubled margin between the columns. */
+  .kf-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 24px;
+    align-items: start;
+    padding-left: var(--kf-gutter);
+    padding-right: var(--kf-gutter);
+  }
+  .kf-filters .kf-fgroup__label,
+  .kf-filters .kf-fgroup__rail,
+  .kf-filters .kf-filters__foot,
+  .kf-filters .kf-daterange,
+  .kf-filters .kf-daterange__clear {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .kf-filters__foot {
+    grid-column: 1 / -1;
+  }
+
+  /* .kf-daterange__input sets `width: auto; min-width: 150px` so both date
+     fields plus Apply fit one full-bleed row. In a grid column that intrinsic
+     width (~193px for a native date input) overflows the field and the Apply
+     button lands on top of the "To" input. Inside the grid the fields share the
+     column and Apply wraps beneath instead. (The remaining 30px overflow was
+     the Input primitive's missing box-sizing — fixed in Input.module.css.) */
+  .kf-filters .kf-daterange__field {
+    flex: 1 1 130px;
+    min-width: 0;
+  }
+  .kf-filters .kf-daterange__input {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (min-width: 1280px) {
+  .kf-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
