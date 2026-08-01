@@ -132,6 +132,16 @@ export interface SearchState {
   q: string;
   sort: SearchSort;
   includeUnknownCost: boolean;
+  /**
+   * Show registration-required courses/camps/lessons (structured `reg=` param, off by default).
+   *
+   * An inclusion WIDENER, in the same family as `includeUnknownCost` and deliberately not one of
+   * the narrowing quick filters: results exclude registered programmes unless a parent asks for
+   * them, and turning it on can only ever add cards — each labelled "Registration required".
+   * Structured rather than composed into `q` for the same reason includeUnknownCost is: it states
+   * a policy the caller chose, so it must not be inferrable from words the parent happened to type.
+   */
+  includeRegistration: boolean;
   /** Additive region-chip ids (structured `region=` param). */
   regions: string[];
   /** Date quick-pick (composed into `q`). Mutually exclusive with a custom date range. */
@@ -168,8 +178,13 @@ export interface SearchState {
   radiusKm: RadiusKm;
 }
 
-/** Filter fields reset to defaults, preserving the text query + sort/cost preferences. */
+/**
+ * Filter fields reset to defaults, preserving the text query + sort/cost preferences.
+ * `includeRegistration` IS reset: "Clear filters" should return a parent to the default
+ * drop-in-only view, not silently leave course content switched on.
+ */
 export const CLEARED_FILTERS: Partial<SearchState> = {
+  includeRegistration: false,
   regions: [],
   when: 'any',
   dateFrom: null,
@@ -191,6 +206,7 @@ export const DEFAULT_STATE: SearchState = {
   q: '',
   sort: 'best_match',
   includeUnknownCost: true,
+  includeRegistration: false,
   regions: [],
   when: 'any',
   dateFrom: null,
@@ -292,6 +308,9 @@ export function parseSearchState(sp: RawParams): SearchState {
     q,
     sort,
     includeUnknownCost,
+    // Absent/malformed → OFF. The default view is drop-in only; only an explicit opt-in turns
+    // registration content on, so a hand-edited or truncated URL can never quietly re-enable it.
+    includeRegistration: parseBool(first(sp.reg)),
     regions: parseOrderedCsv(first(sp.region), REGION_ORDER),
     when,
     dateFrom,
@@ -333,6 +352,9 @@ function pageParams(state: SearchState): URLSearchParams {
   if (state.sort !== DEFAULT_STATE.sort) p.set('sort', state.sort);
   // Cost is written explicitly (default-on / explicit-off), matching the toggle semantics.
   p.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
+  // Registration is default-OFF, so it is written only when on — a bare /search URL stays clean
+  // and, more importantly, unambiguously means "drop-in only".
+  if (state.includeRegistration) p.set('reg', '1');
   if (state.regions.length) p.set('region', state.regions.join(','));
   if (state.when !== 'any') p.set('when', state.when);
   // Custom date range (T26 / FR-04) — a structured `from`/`to` pair, emitted only when the
@@ -458,7 +480,14 @@ export function hrefForParams(params: Record<string, unknown>): string {
   return qs ? `/search?${qs}` : '/search';
 }
 
-/** Does the state carry any structured/intent filter beyond a plain text query? */
+/**
+ * Does the state carry any NARROWING structured/intent filter beyond a plain text query?
+ *
+ * Deliberately excludes `includeRegistration` (and, as before, `includeUnknownCost`): those only
+ * ever ADD results. This predicate's job is to decide how hard the engine should broaden
+ * (`apiQuery` minResults), and a widener being on is not a reason to stop filling a thin browse.
+ * For "is there anything the parent might want to clear?", use `hasClearableFilters`.
+ */
 export function hasActiveFilters(state: SearchState): boolean {
   return (
     state.regions.length > 0 ||
@@ -473,6 +502,15 @@ export function hasActiveFilters(state: SearchState): boolean {
     state.ages.length > 0 ||
     hasOrigin(state)
   );
+}
+
+/**
+ * Is any non-default filter state in play that a parent might want to undo? Everything
+ * `hasActiveFilters` covers, plus the registration widener — so "Clear filters" is offered (and
+ * actually resets) when the only thing switched on is course content.
+ */
+export function hasClearableFilters(state: SearchState): boolean {
+  return hasActiveFilters(state) || state.includeRegistration;
 }
 
 /** The intent phrases the current filters compose into the free-text `q` (parser reads these). */
@@ -514,6 +552,9 @@ export function analyticsFilterTokens(state: SearchState): string[] {
   if (state.bookableNow) tokens.push('bookable_now');
   if (state.rainyDay) tokens.push('rainy_day');
   if (state.dropIn) tokens.push('drop_in');
+  // Records that a parent explicitly asked to see registration courses — the demand signal that
+  // tells us whether the separate "browse courses" mode is worth building.
+  if (state.includeRegistration) tokens.push('include_registration');
   if (state.free) tokens.push('free');
   if (state.costMaxCad != null) tokens.push(`cost_max:${state.costMaxCad}`);
   for (const band of state.ages) tokens.push(`age:${band}`);
@@ -540,6 +581,8 @@ export function apiQuery(state: SearchState, savedOrigin?: SavedOrigin | null): 
   params.set('q', q);
   params.set('sort', state.sort);
   params.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
+  // Structured, never composed into `q` — the route reads it directly (route.ts buildSearchRequest).
+  params.set('includeRegistration', state.includeRegistration ? '1' : '0');
   if (state.regions.length) params.set('region', state.regions.join(','));
   // Custom date range (T26 / FR-04): forwarded as structured `from`/`to`, NOT composed into `q`
   // — an ISO date can't survive normalize() (its hyphens become spaces). Only when complete.

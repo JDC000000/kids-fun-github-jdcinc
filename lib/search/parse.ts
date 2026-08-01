@@ -19,6 +19,12 @@ export interface ParseOptions {
   sort?: SortKey;
   /** Explicit include-unknown-cost flag from the UI (FR-10); OR-ed with any text intent. */
   includeUnknownCost?: boolean;
+  /**
+   * Explicit include-registration-courses flag from the UI. Structured only — deliberately NOT
+   * parsed from `q`. It is an inclusion policy, not something a parent types, and keeping it out
+   * of the text pipeline means it can never be triggered by a query that merely mentions a course.
+   */
+  includeRegistration?: boolean;
 }
 
 const WEEKDAYS: Record<string, number> = {
@@ -55,6 +61,7 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
     nearMe: false,
     costFree: false,
     includeUnknownCost: opts.includeUnknownCost ?? false,
+    includeRegistration: opts.includeRegistration ?? false,
     costMaxCad: null,
     bookableNow: false,
     rainyDay: false,

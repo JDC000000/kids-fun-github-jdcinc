@@ -232,8 +232,9 @@ describe.skipIf(!hasDb)('Venue ingest end-to-end + search visibility (G-T11-1/2/
       start_datetime_utc: string | null;
       category_key: string | null;
       activity_name: string;
+      status_state: string;
     }>(
-      `SELECT o.id, o.open_hours_state, o.start_datetime_utc, c.key AS category_key, o.activity_name
+      `SELECT o.id, o.open_hours_state, o.start_datetime_utc, c.key AS category_key, o.activity_name, o.status_state
        FROM activity_occurrence o
        JOIN activity_series s ON s.id = o.series_id
        LEFT JOIN category c ON c.id = o.primary_category_id
@@ -266,11 +267,23 @@ describe.skipIf(!hasDb)('Venue ingest end-to-end + search visibility (G-T11-1/2/
     expect(eventListing!.openHours).toBe(false);
     expect(eventListing!.startDatetimeUtc).toBeTruthy();
 
-    // Both of my source's occurrences appear in the full listing scan the engine consumes.
+    // Both of my source's occurrences reach the full listing scan the engine consumes — subject to
+    // parent visibility, which the scan now applies in SQL rather than in memory afterwards.
+    //
+    // Asserting `eventRows[0]` is present unconditionally would be asserting that a `needs_review`
+    // row is shown to parents, which contradicts the product rule. It is not hypothetical either:
+    // confidence is a product of source freshness/volatility, so this adapter's special events land
+    // `confirmed` on some runs and `needs_review` on others. Keying the expectation to the row's
+    // actual status makes the check deterministic AND stronger — every visible occurrence must be
+    // there, and every hidden one must not.
     const listings = await loadPostgresListings(pool, { limit: 1000 });
     const ids = new Set(listings.map((l) => l.id));
+    const hidden = new Set(['cancelled', 'suspended', 'needs_review']);
+    for (const row of occ) {
+      expect(ids.has(row.id), `${row.activity_name} (${row.status_state})`).toBe(!hidden.has(row.status_state));
+    }
+    // The open-hours "visit" record is always confirmed, so it is always in the scan.
     expect(ids.has(openHoursRows[0].id)).toBe(true);
-    expect(ids.has(eventRows[0].id)).toBe(true);
 
     // Idempotent: a second ingest updates in place (no duplicate series/occurrences).
     const second = await ingestSource(pool, adapter, source.id);

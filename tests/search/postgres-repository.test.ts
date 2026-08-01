@@ -178,4 +178,50 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       venuePhone: null,
     });
   });
+
+  // The list query is hard-capped, so a hidden-status row that survives into the result set has
+  // consumed a slot a showable row could have had — on live staging that was two thirds of every
+  // page fetched. Filtering in SQL is what makes the cap buy 500 usable rows instead of ~170.
+  // Asserted against a REAL query rather than the in-memory predicate, because the in-memory one
+  // would have gone on passing while the budget quietly leaked.
+  it('never loads hidden-status rows into the capped list, but still resolves them by id', async () => {
+    const suffix = crypto.randomUUID();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
+      [`Hidden Status Source ${suffix}`]
+    );
+    const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
+    const [series] = await query<{ id: string }>(
+      `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
+      [`Hidden Status Series ${suffix}`, source.id]
+    );
+    const insert = async (statusState: string, confidence: string) => {
+      const [row] = await query<{ id: string }>(
+        `INSERT INTO activity_occurrence (
+           series_id, source_record_id, activity_name, primary_category_id,
+           start_datetime_utc, end_datetime_utc, cost_status, source_url,
+           status_state, confidence_label, last_checked_at
+         ) VALUES ($1,$2,$3,$4, now() + interval '1 hour', now() + interval '2 hours', 'free', 'https://example.org/hidden', $5, $6, now())
+         RETURNING id`,
+        [series.id, `hidden-${statusState}-${suffix}`, `Hidden ${statusState} ${suffix}`, category.id, statusState, confidence]
+      );
+      return row.id;
+    };
+
+    const needsReviewId = await insert('needs_review', 'low');
+    const confirmedId = await insert('confirmed', 'high');
+
+    const listings = await loadPostgresListings(getPool(), { limit: 1000 });
+    expect(listings.some((l) => l.id === confirmedId)).toBe(true);
+    expect(listings.some((l) => l.id === needsReviewId)).toBe(false);
+    // No hidden status of any kind reaches the read model.
+    expect(listings.some((l) => ['cancelled', 'suspended', 'needs_review'].includes(l.statusState))).toBe(false);
+
+    // The detail path is deliberately NOT narrowed: it has no cap to protect and is reached by an
+    // explicit id, so already-shared links keep resolving.
+    await expect(loadPostgresListingById(getPool(), needsReviewId)).resolves.toMatchObject({
+      id: needsReviewId,
+      statusState: 'needs_review',
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import type { ListingRecord } from '@/lib/search/types';
+import { isRegistrationShaped } from '@/lib/search/filters/registration';
 import type { Activity, BookingType, Category, ConfidenceLabel, CostStatus, StatusState, TimeOfDay } from './types';
 
 export interface ListingRecordDto {
@@ -35,6 +36,12 @@ export interface ListingRecordDto {
 export interface SearchItemDto {
   listing: ListingRecordDto;
   distanceKm: number | null;
+  /** Same-series-same-day occurrences this result stands for (lib/search/collapse.ts). */
+  slots?: { id: string; startDatetimeUtc: string | null; endDatetimeUtc: string | null }[];
+  /** End of the last slot, when the result covers several. */
+  slotSpanEndUtc?: string | null;
+  /** Engine's registration classification; recomputed locally when absent (fixture/detail paths). */
+  registrationRequired?: boolean;
 }
 
 export interface SearchResponseDto {
@@ -77,6 +84,15 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
   const distanceKm = item.distanceKm ?? (l.geo ? distance(EAST_VAN, l.geo) : 0);
   const tags = new Set([...(l.suitabilityTags ?? []), ...(l.categoryTags ?? [])]);
   const sourceUrl = l.sourceUrl ?? '#';
+  const slotCount = item.slots?.length ?? 1;
+  // The engine classifies once and sends the answer; the fallback covers the paths that build an
+  // Activity without going through search (the detail loader, fixtures) so a course is labelled
+  // as one wherever it is rendered. Same pure predicate either way — one definition, two callers.
+  const registrationRequired = item.registrationRequired ?? isRegistrationShaped({
+    activityName: l.activityName,
+    suitabilityTags: l.suitabilityTags,
+    categoryTags: l.categoryTags,
+  });
   return {
     id: l.id,
     activityName: l.activityName,
@@ -102,6 +118,9 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     ...(l.locationUrl ? { locationUrl: l.locationUrl } : {}),
     ...(l.venuePhone ? { venuePhone: l.venuePhone } : {}),
     lastCheckedIso: l.lastCheckedAtUtc ?? new Date().toISOString(),
+    ...(slotCount > 1 ? { slotCount } : {}),
+    ...(slotCount > 1 && item.slotSpanEndUtc ? { slotEndIso: item.slotSpanEndUtc } : {}),
+    ...(registrationRequired ? { registrationRequired } : {}),
     indoor: tags.has('indoor') || ['open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play'].includes(l.primaryCategoryKey),
     rainyDay: tags.has('rainy_day') || tags.has('indoor') || ['open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play'].includes(l.primaryCategoryKey),
     dropIn: tags.has('drop_in'),

@@ -11,7 +11,7 @@ import {
   TIME_OF_DAY_OPTIONS,
   WHEN_OPTIONS,
   dateRangeFormFields,
-  hasActiveFilters,
+  hasClearableFilters,
   hasDateRange,
   hasNearMeCoords,
   hrefFor,
@@ -260,6 +260,23 @@ export function FilterRail({
         </Chip>
       </Group>
 
+      {/* Courses — the one control that changes WHAT KIND of thing results contain, so it is its
+          own group with its default state spelled out rather than a lone toggle buried in the quick
+          filters (those all narrow; this one widens). Registered courses, camps and lesson programmes
+          are left out of results unless a parent asks for them: this product answers "what can we do
+          today", and a 12-week programme with a registration deadline is a different question. The
+          left chip is the default and is checkmarked on a bare /search, so the exclusion is stated on
+          the page instead of being invisible. Nothing is unreachable — turning the right chip on
+          brings every course back, each card labelled "Registration required". */}
+      <Group label="Courses" id="kf-fg-courses">
+        <Chip href={hrefFor(state, { includeRegistration: false })} active={!state.includeRegistration}>
+          Drop-in only
+        </Chip>
+        <Chip href={hrefFor(state, { includeRegistration: true })} active={state.includeRegistration}>
+          Include registration courses
+        </Chip>
+      </Group>
+
       {/* Max price — cost ceiling (radio-like: one at a time). Sits alongside the binary
           "Free" quick-filter so "cost range / free" is fully exposed (G-T21-4). Already leads
           with an "Any price" default pill (costMaxCad null), so it needs no separate label — the
@@ -304,7 +321,7 @@ export function FilterRail({
           ))}
       </Group>
 
-      {hasActiveFilters(state) && (
+      {hasClearableFilters(state) && (
         <div className="kf-filters__foot">
           <Link className="kf-filters__clear" href={hrefFor(state, CLEARED_FILTERS)}>
             Clear filters

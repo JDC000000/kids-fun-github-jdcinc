@@ -41,7 +41,7 @@ const fixtureBundle = makeFixtureEngine();
 
 export const GET = withObservedRoute(searchGet, { tags: { route: 'api/search' } });
 
-/** GET /api/search?q=open+gym&lat=..&lng=..&sort=..&region=van,bby&includeUnknownCost=1&limit=20 */
+/** GET /api/search?q=open+gym&lat=..&lng=..&sort=..&region=van,bby&includeUnknownCost=1&includeRegistration=1&limit=20 */
 async function searchGet(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const searchRequest = buildSearchRequest(url.searchParams);
@@ -155,6 +155,9 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   const origin = buildOriginRequest(p);
   const regionChipIds = (p.get('region') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const includeUnknownCost = ['1', 'true', 'yes'].includes((p.get('includeUnknownCost') ?? '').toLowerCase());
+  // Registration courses are OFF unless explicitly asked for. Structured, like includeUnknownCost:
+  // an inclusion policy the caller states, never something inferred from the text of `q`.
+  const includeRegistration = ['1', 'true', 'yes'].includes((p.get('includeRegistration') ?? '').toLowerCase());
   const dateRange = buildDateRange(p);
   const limit = clampInt(p.get('limit'), 1, 100);
   const minResults = clampInt(p.get('minResults'), 0, 100);
@@ -166,6 +169,7 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
     regionChipIds,
     sort,
     includeUnknownCost,
+    includeRegistration,
     ...(dateRange != null ? { dateRange } : {}),
     ...(limit != null ? { limit } : {}),
     ...(minResults != null ? { minResults } : {}),
