@@ -59,7 +59,7 @@
 // See docs/source-register.md for the terms/robots classification these tests
 // back up.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { LibraryAdapter, LIBRARY_SYSTEMS } from '../../worker/adapters/library';
 import { CityCalendarAdapter, CITY_CALENDARS } from '../../worker/adapters/citycalendar';
@@ -754,10 +754,11 @@ const ADAPTER_SOURCES = [
   'worker/adapters/activenet/client.ts',
   'worker/adapters/activenet/parse.ts',
   'worker/adapters/activenet/venues.ts',
-  // G-VENUE-1: a committed constant, not a fetcher — listed anyway. The scan is an
-  // explicit list, not a glob, so a new file in an adapter directory silently escapes
-  // it otherwise, and "this one can't make requests" is exactly the assumption a
-  // tripwire exists to stop anyone having to trust.
+  // G-VENUE-1: a committed constant, not a fetcher — listed anyway, because
+  // "this one can't make requests" is exactly the assumption a tripwire exists to stop
+  // anyone having to trust. (This list stays hand-written so each entry is a deliberate
+  // act; what changed in PRODREC-3 is that section (D) below now PROVES the list is
+  // complete against the real directory tree, so an omission can no longer be silent.)
   'worker/adapters/activenet/venue-geo.ts',
   'worker/adapters/activenet/health.ts',
   'worker/adapters/perfectmind/index.ts',
@@ -769,6 +770,143 @@ const ADAPTER_SOURCES = [
   'worker/adapters/venue/config.ts',
   'worker/adapters/venue/separate.ts',
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRODREC-3 — REQUIRED-COVERAGE REGISTRY (the structural fix; see section (D)).
+//
+// THE GAP THIS CLOSES, stated plainly. Until now the structural scan worked from
+// ADAPTER_SOURCES alone — a hand-kept enumeration. Nothing forced a NEW adapter family
+// to actually be added to it. Two independent QA sessions proved this the same way:
+// drop an adapter file with hardcoded credentials and banned request patterns into a
+// directory nobody listed, and the whole compliance suite stays green — because the
+// file is never opened. A KNOWN instance had been live since the family was built:
+// all four worker/adapters/seasonal/*.ts files had never been in any compliance scan.
+//
+// The fix: discovery is now by DIRECTORY ENUMERATION, not by memory. Every subdirectory
+// of worker/adapters/ is an adapter family, and every .ts file in it must be covered by
+// EITHER this file's ADAPTER_SOURCES scan OR a per-family compliance suite registered
+// below. A new family, or a new file in an existing family, fails section (D) LOUDLY
+// until its coverage is declared. Forgetting is no longer a silent pass.
+//
+// WHY PER-FAMILY SUITES EXIST AT ALL. Some families have a legitimately different
+// security shape that the shared prohibitions above would misjudge in BOTH directions.
+// Registering one is a narrowing, so it is handled the way T7/T8's POST narrowing and
+// D-11 were — named, scoped, and re-proven, never silently omitted. Each registered
+// suite must re-run EVERY prohibition from this file against its family and narrow only
+// what it names and justifies.
+//   • eventbrite — no anonymous read path exists at all, so an organizer-granted bearer
+//     token is the only way to satisfy "authorized feeds only" rather than a way around
+//     it. Narrows exactly one item (Authorization header). Built T10.
+//   • seasonal   — its config carries robots.txt COMPLIANCE RECORDS that quote the very
+//     paths we are banned from ("Disallow /checkout*,/cart*,…"). Those string literals
+//     survive stripComments and trip the checkout/cart fingerprint, so the shared scan
+//     would read a record PROVING we stay out of checkout as if it were checkout code.
+//     Narrows exactly that, positionally. Built PRODREC-3.
+//
+// Registration is deliberately NOT self-certifying: (D) asserts each registered suite
+// exists on disk AND literally names every file it claims to cover. You cannot register
+// a family and then quietly not cover it.
+const PER_FAMILY_COMPLIANCE_SUITES: Record<string, string> = {
+  eventbrite: 'tests/compliance/eventbrite-organizer-scope.test.ts',
+  seasonal: 'tests/compliance/seasonal-status-watcher.test.ts',
+};
+
+const ADAPTERS_ROOT = 'worker/adapters';
+
+/** Directories inside an adapter family that hold test data, not adapter code. */
+const NON_CODE_DIRS = new Set(['__fixtures__', '__snapshots__', '__mocks__']);
+
+/**
+ * Discover every adapter family and its code files from the real directory tree.
+ * Pure w.r.t. its `root` argument so (D) can run it against synthetic trees.
+ * Returns family name → repo-relative .ts paths, sorted for stable assertions.
+ */
+function discoverAdapterFamilies(root: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const abs = resolve(process.cwd(), root);
+  if (!existsSync(abs)) return out;
+  for (const entry of readdirSync(abs, { withFileTypes: true })) {
+    if (!entry.isDirectory() || NON_CODE_DIRS.has(entry.name)) continue;
+    const files = readdirSync(resolve(abs, entry.name), { withFileTypes: true })
+      .filter((f) => f.isFile() && f.name.endsWith('.ts') && !f.name.endsWith('.d.ts'))
+      .map((f) => `${root}/${entry.name}/${f.name}`)
+      .sort();
+    out.set(entry.name, files);
+  }
+  return out;
+}
+
+interface CoverageGaps {
+  /** Families with no coverage of either kind. */
+  uncoveredFamilies: string[];
+  /** Individual files no scan would ever open. */
+  uncoveredFiles: string[];
+  /** Families registered to a suite that does not exist on disk. */
+  missingSuites: string[];
+  /** `file → suite` where the registered suite never names that file. */
+  unreferencedFiles: string[];
+  /** ADAPTER_SOURCES entries that no longer exist on disk (stale list). */
+  staleSources: string[];
+}
+
+/**
+ * THE GUARANTEE, as a pure function so section (D) can mutation-test it directly on
+ * synthetic inputs instead of trusting that it works. Everything it needs is injected:
+ * the discovered tree, the hand-kept list, the registry, and a reader for suite text.
+ *
+ * A file is covered iff it is named in ADAPTER_SOURCES, OR its family is registered to
+ * a per-family suite that EXISTS and literally names that file.
+ */
+function computeCoverageGaps(
+  discovered: Map<string, string[]>,
+  adapterSources: readonly string[],
+  perFamilySuites: Record<string, string>,
+  readSuite: (rel: string) => string | null
+): CoverageGaps {
+  const listed = new Set(adapterSources);
+  const gaps: CoverageGaps = {
+    uncoveredFamilies: [],
+    uncoveredFiles: [],
+    missingSuites: [],
+    unreferencedFiles: [],
+    staleSources: [],
+  };
+
+  const suiteText = new Map<string, string | null>();
+  for (const [family, rel] of Object.entries(perFamilySuites)) {
+    const text = readSuite(rel);
+    suiteText.set(family, text);
+    if (text === null && discovered.has(family)) gaps.missingSuites.push(`${family} → ${rel}`);
+  }
+
+  for (const [family, files] of discovered) {
+    const registered = Object.prototype.hasOwnProperty.call(perFamilySuites, family);
+    const text = registered ? suiteText.get(family) ?? null : null;
+    const anyListed = files.some((f) => listed.has(f));
+
+    // A family with zero coverage of EITHER kind — the exact seasonal case, and the
+    // exact shape a brand-new adapter family arrives in.
+    if (!anyListed && !(registered && text !== null)) {
+      gaps.uncoveredFamilies.push(family);
+      gaps.uncoveredFiles.push(...files);
+      continue;
+    }
+
+    for (const file of files) {
+      if (listed.has(file)) continue;
+      if (text !== null && text.includes(file)) continue;
+      if (registered && text !== null) {
+        gaps.unreferencedFiles.push(`${file} → ${perFamilySuites[family]}`);
+      } else {
+        gaps.uncoveredFiles.push(file);
+      }
+    }
+  }
+
+  const onDisk = new Set([...discovered.values()].flat());
+  gaps.staleSources = adapterSources.filter((f) => !onDisk.has(f));
+  return gaps;
+}
 
 interface BypassPattern {
   label: string;
@@ -896,6 +1034,183 @@ describe('G-T35-2 (B) adapter source contains no login/paywall/CAPTCHA-bypass co
         `${name} must be OFF with no KIDS_FUN_LIVE_* env var set`
       ).toBe(false);
     }
+  });
+});
+
+// ── (D) required coverage: no adapter family can escape the scan ─────────────
+//
+// PRODREC-3. Discovery by directory enumeration, not by memory. These are the tests
+// that make forgetting LOUD. The pure-function mutation cases at the bottom prove the
+// mechanism actually bites rather than being read and assumed to work.
+
+describe('PRODREC-3 (D) every adapter family is covered by a compliance scan', () => {
+  const readSuite = (rel: string): string | null => {
+    const abs = resolve(process.cwd(), rel);
+    return existsSync(abs) ? readFileSync(abs, 'utf8') : null;
+  };
+  const discovered = () => discoverAdapterFamilies(ADAPTERS_ROOT);
+  const gaps = () =>
+    computeCoverageGaps(discovered(), ADAPTER_SOURCES, PER_FAMILY_COMPLIANCE_SUITES, readSuite);
+
+  it('discovery actually finds the real adapter tree (guards against a vacuous pass)', () => {
+    // If this ever returns nothing, every assertion below would pass trivially. That is
+    // the failure mode a coverage check has to rule out about ITSELF first.
+    const families = discovered();
+    expect(families.size, 'at least one adapter family must be discovered').toBeGreaterThan(0);
+    for (const [family, files] of families) {
+      expect(files.length, `family ${family} must contain at least one .ts file`).toBeGreaterThan(0);
+    }
+    // The families known at the time of writing. A NEW family makes this fail on
+    // purpose — the point is that adding one is a deliberate, visible act.
+    expect([...families.keys()].sort()).toEqual([
+      'activenet',
+      'citycalendar',
+      'eventbrite',
+      'library',
+      'perfectmind',
+      'seasonal',
+      'venue',
+    ]);
+  });
+
+  it('NO adapter family is without compliance coverage of either kind', () => {
+    const { uncoveredFamilies } = gaps();
+    expect(
+      uncoveredFamilies,
+      `adapter families with NO compliance coverage: ${uncoveredFamilies.join(', ')}. ` +
+        'Add each file to ADAPTER_SOURCES, or register a per-family compliance suite in ' +
+        'PER_FAMILY_COMPLIANCE_SUITES. Do not delete this assertion.'
+    ).toEqual([]);
+  });
+
+  it('NO individual adapter file escapes every scan', () => {
+    // Family-level coverage is not enough: a new file dropped into an ALREADY-covered
+    // family would otherwise slip through, which is the same bug one level down.
+    const { uncoveredFiles } = gaps();
+    expect(
+      uncoveredFiles,
+      `adapter files no compliance scan opens: ${uncoveredFiles.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('every registered per-family suite exists and names every file it covers', () => {
+    const { missingSuites, unreferencedFiles } = gaps();
+    expect(missingSuites, `registered suites missing from disk: ${missingSuites.join(', ')}`).toEqual([]);
+    expect(
+      unreferencedFiles,
+      `files whose registered suite never names them: ${unreferencedFiles.join(', ')}`
+    ).toEqual([]);
+  });
+
+  it('ADAPTER_SOURCES contains no stale entry for a deleted file', () => {
+    // The mirror image: a renamed/deleted file leaving a dead entry behind would make
+    // the list look more complete than it is.
+    const { staleSources } = gaps();
+    expect(staleSources, `ADAPTER_SOURCES names files that do not exist: ${staleSources.join(', ')}`).toEqual([]);
+  });
+
+  it('the registry is exactly the two justified narrowings', () => {
+    // Same drift-guard shape as the READ_ONLY_POST_SEARCH assertion: widening the set of
+    // families exempt from the shared scan must be a visible, deliberate edit that fails
+    // here first, with a written justification in the block comment above.
+    expect(Object.keys(PER_FAMILY_COMPLIANCE_SUITES).sort()).toEqual(['eventbrite', 'seasonal']);
+  });
+
+  // ── the guarantee mutation-tests itself ────────────────────────────────────
+  //
+  // Each case feeds computeCoverageGaps a SYNTHETIC tree. These are the proofs that the
+  // mechanism catches what it claims to; the assertions above only prove today's tree is
+  // clean, which a broken mechanism would also report.
+
+  const suiteOf = (map: Record<string, string>) => (rel: string) => map[rel] ?? null;
+
+  it('MUTATION: a brand-new unlisted adapter family is caught', () => {
+    // Precisely the fake-unsafe-adapter proof both QA sessions ran, as a unit case.
+    const tree = new Map([
+      ['library', ['worker/adapters/library/index.ts']],
+      ['fakeunsafe', ['worker/adapters/fakeunsafe/index.ts', 'worker/adapters/fakeunsafe/client.ts']],
+    ]);
+    const g = computeCoverageGaps(tree, ['worker/adapters/library/index.ts'], {}, suiteOf({}));
+    expect(g.uncoveredFamilies).toEqual(['fakeunsafe']);
+    expect(g.uncoveredFiles).toEqual([
+      'worker/adapters/fakeunsafe/index.ts',
+      'worker/adapters/fakeunsafe/client.ts',
+    ]);
+  });
+
+  it('MUTATION: a new FILE inside an already-covered family is caught', () => {
+    const tree = new Map([
+      ['library', ['worker/adapters/library/index.ts', 'worker/adapters/library/sneaky.ts']],
+    ]);
+    const g = computeCoverageGaps(tree, ['worker/adapters/library/index.ts'], {}, suiteOf({}));
+    expect(g.uncoveredFamilies).toEqual([]);
+    expect(g.uncoveredFiles).toEqual(['worker/adapters/library/sneaky.ts']);
+  });
+
+  it('MUTATION: registering a family whose suite does not exist is caught', () => {
+    const tree = new Map([['ghost', ['worker/adapters/ghost/index.ts']]]);
+    const g = computeCoverageGaps(tree, [], { ghost: 'tests/compliance/ghost.test.ts' }, suiteOf({}));
+    expect(g.missingSuites).toEqual(['ghost → tests/compliance/ghost.test.ts']);
+    expect(g.uncoveredFamilies).toEqual(['ghost']);
+  });
+
+  it('MUTATION: a registered suite that does NOT name a file cannot cover it', () => {
+    // The anti-forgery property: registration alone must not launder coverage. A suite
+    // that names only one of two files leaves the other reported, not absorbed.
+    const tree = new Map([['eb', ['worker/adapters/eb/index.ts', 'worker/adapters/eb/client.ts']]]);
+    const g = computeCoverageGaps(
+      tree,
+      [],
+      { eb: 'tests/compliance/eb.test.ts' },
+      suiteOf({ 'tests/compliance/eb.test.ts': "scan('worker/adapters/eb/index.ts')" })
+    );
+    expect(g.uncoveredFamilies).toEqual([]);
+    expect(g.unreferencedFiles).toEqual(['worker/adapters/eb/client.ts → tests/compliance/eb.test.ts']);
+  });
+
+  it('MUTATION: a fully-covered tree reports NO gaps (the check is not stuck-on-fail)', () => {
+    // A guard that always fails is as useless as one that never does.
+    const tree = new Map([
+      ['library', ['worker/adapters/library/index.ts']],
+      ['eb', ['worker/adapters/eb/index.ts']],
+    ]);
+    const g = computeCoverageGaps(
+      tree,
+      ['worker/adapters/library/index.ts'],
+      { eb: 'tests/compliance/eb.test.ts' },
+      suiteOf({ 'tests/compliance/eb.test.ts': "scan('worker/adapters/eb/index.ts')" })
+    );
+    expect(g).toEqual({
+      uncoveredFamilies: [],
+      uncoveredFiles: [],
+      missingSuites: [],
+      unreferencedFiles: [],
+      staleSources: [],
+    });
+  });
+
+  it('MUTATION: a stale ADAPTER_SOURCES entry for a deleted file is caught', () => {
+    const tree = new Map([['library', ['worker/adapters/library/index.ts']]]);
+    const g = computeCoverageGaps(
+      tree,
+      ['worker/adapters/library/index.ts', 'worker/adapters/library/deleted.ts'],
+      {},
+      suiteOf({})
+    );
+    expect(g.staleSources).toEqual(['worker/adapters/library/deleted.ts']);
+  });
+
+  it('MUTATION: fixture directories are not mistaken for adapter families', () => {
+    // __fixtures__ holds captured vendor payloads, not adapter code. If discovery counted
+    // them as families they would demand coverage that means nothing — and the resulting
+    // noise is how a real gap gets rationalised away.
+    const families = discoverAdapterFamilies(ADAPTERS_ROOT);
+    for (const dir of NON_CODE_DIRS) expect(families.has(dir)).toBe(false);
+    expect([...families.values()].flat().some((f) => f.includes('__fixtures__'))).toBe(false);
+  });
+
+  it('MUTATION: discovery of a non-existent root yields nothing rather than throwing', () => {
+    expect(discoverAdapterFamilies('worker/adapters-does-not-exist').size).toBe(0);
   });
 });
 
