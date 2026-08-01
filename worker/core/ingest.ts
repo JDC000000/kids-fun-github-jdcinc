@@ -130,6 +130,7 @@ export async function ingestSource(
           ? await resolveVenue(pool, {
               name: record.venueName,
               address: record.venueAddress,
+              phone: record.venuePhone,
               lat: record.venueLat,
               lng: record.venueLng,
               municipalityName: record.venueMunicipalityName,

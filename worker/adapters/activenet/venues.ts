@@ -11,6 +11,14 @@
 // Vancouver's OGL-licensed open data plus curated pool/rink coordinates. Zero network
 // calls; exact (normalised) name match only, never a fuzzy join.
 //
+// PHONE. The same centerdetails response carries each facility's public phone number,
+// and until 2026-08-01 this file read it into ResolvedVenue and nothing carried it any
+// further — StructuredRecord had no field and `venue` had no column, so it was fetched
+// and dropped every run. It now lands in `venue.phone` (migration 0024) through
+// StructuredRecord.venuePhone and resolveVenue()'s existing COALESCE enrichment. Stored
+// verbatim, guarded by normaliseVenuePhone() below, and read by NOTHING parent-facing
+// yet — that is a deliberate sequencing call, recorded in ActivityDetail.tsx.
+//
 // Unmapped centres are a WARNING, never a silent null: a centre that appears in the
 // feed but not in centerdetails means the batch missed something, and that must be
 // visible in the run output. The same rule now applies to geo — a facility with no
@@ -40,6 +48,83 @@ export interface ResolvedVenue {
   geoTableAvailable: boolean;
 }
 
+/**
+ * Dial-string shape: an optional `+`, then only digits and the punctuation a phone
+ * number is actually written with, then an optional extension. The 7–24 bound is what
+ * separates a number from a sentence of digits; the 24 ceiling is load-bearing, since
+ * an unbounded run of digits is not a phone number.
+ */
+const PHONE_SHAPE = /^\+?[\d\s().-]{7,24}(\s*(?:ext|x|extension)\.?\s*\d{1,6})?$/i;
+/**
+ * Minimum DIGITS (not characters). Seven is the shortest real NANP subscriber number
+ * (local, no area code); every value this source has ever returned carries ten or
+ * eleven. Checked separately from PHONE_SHAPE — see below for why both are needed.
+ */
+const MIN_PHONE_DIGITS = 7;
+
+/**
+ * The source's own phone string, trimmed — or nothing.
+ *
+ * WHY A GUARD AT ALL, when 43/43 measured values are clean. `phone` is a free-text
+ * field on an undocumented, unversioned vendor payload. The failure that matters is not
+ * a malformed number, it is PROSE: the day someone types "call the centre" or an
+ * opening-hours line into that field, an unguarded wire writes it into a column named
+ * `phone`, and every downstream reader is entitled to treat it as callable. Dropping a
+ * value we cannot stand behind is cheaper and more honest than storing a lie, and it
+ * costs the record nothing else — address, geo and occurrences all still land.
+ *
+ * TWO CHECKS, NOT ONE, and this is deliberate (QA F2, 2026-08-01). The original guard
+ * was a digit COUNT alone, which correctly dropped digit-free prose but happily kept
+ * digit-BEARING prose — QA demonstrated `Mon-Fri 9:00-17:00, Sat 10:00-14:00`,
+ * `Ages 0-5, 6-12, 13-18, 19-64, 65+` and 37 unbroken digits all landing in a column
+ * named `phone`. PHONE_SHAPE closes exactly that class. But the reverse is also true and
+ * was measured before adopting it: PHONE_SHAPE's `{7,24}` counts CHARACTERS from a class
+ * containing non-digits, so `(((((((`, `..........` and `()()()()()()` all satisfy it on
+ * their own. Neither check subsumes the other, so both run. Verified over 43 real values
+ * (36 distinct) plus the `ext.`/`x`/bare-local forms — 100% kept — against 16 prose and
+ * degenerate cases — 100% dropped.
+ *
+ * WHAT THIS COSTS, STATED PLAINLY BECAUSE THE PATTERN IS FULLY ANCHORED. It also drops
+ * strings that carry a genuinely callable number alongside anything else. None appear in
+ * ActiveNet's data today; all five were pre-validated against live payloads by QA and are
+ * pinned as tests below so the choice cannot be reversed by accident:
+ *     `Tel: (604) 718-8222`            `(604) 718-8222 (front desk)`
+ *     `(604) 718-8222, press 2`        `(604) 718-8222 / TTY 711`
+ *     `604-718-8222 or 604-718-8223`
+ * This is a DELIBERATE choice, not an oversight, and the docstring says so because the
+ * alternative — a bounded trailing label — reopens the exact prose hole above. The first
+ * three are "a number plus a label", and there is no principled line a regex can draw
+ * between `, press 2` and `, Sat 10:00-14:00`; both are adjacent free text. The last two
+ * are TWO numbers, which a scalar column cannot honestly hold — any `tel:` link built
+ * from them is broken whichever number the reader assumes. Dropping is the same
+ * fail-closed posture as the rest of this function: we lose a nicety, we do not store
+ * something no caller can dial.
+ *
+ * KNOWN GAP, NOT CLOSED HERE (follow-up, deliberately not smuggled into a text-fix
+ * commit): a rejected value is currently SILENT. If the vendor ever switched wholesale to
+ * one of the forms above, phone coverage would fall from 36/36 to 0/36 with nothing in
+ * the run output saying so — the same silent-discard shape as the bug 0024 exists to fix,
+ * one layer up. Reporting it needs `buildVenueIndex` to return rejection counts alongside
+ * the index, which changes its signature and deserves its own review.
+ *
+ * WHY NOT A DB CHECK CONSTRAINT instead: a phone number has no canonical shape worth
+ * asserting in SQL, and this function already means the column never sees garbage. See
+ * 0024_venue_phone.sql, which also records the measured cost of the CHECK alternative
+ * (every record at ONE venue, not the run — an earlier claim that it would fail a whole
+ * municipality's run was wrong and is corrected there).
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO: reformat. `(604) 718-8222` and
+ * `+1 (604) 257-8195` are both stored exactly as published. Picking a canonical
+ * rendering is a display decision and nothing parent-facing reads this yet.
+ */
+export function normaliseVenuePhone(raw: string | undefined): string | undefined {
+  const value = (raw ?? '').trim();
+  if (!value) return undefined;
+  if (!PHONE_SHAPE.test(value)) return undefined;
+  if (value.replace(/\D/g, '').length < MIN_PHONE_DIGITS) return undefined;
+  return value;
+}
+
 /** Join the address fields into one line, skipping blanks (address2 is usually empty). */
 function formatAddress(detail: ActiveNetCentreDetail): string | undefined {
   const street = [detail.address1, detail.address2].map((s) => (s ?? '').trim()).filter(Boolean).join(', ');
@@ -64,7 +149,7 @@ export function buildVenueIndex(
       centreId: detail.id,
       venueName: name,
       venueAddress: formatAddress(detail),
-      venuePhone: (detail.phone ?? '').trim() || undefined,
+      venuePhone: normaliseVenuePhone(detail.phone),
       venueMunicipalityName: tenant.municipality,
       // Committed constant, exact normalised name match. No network, no geocoder,
       // no fuzzy fallback — a miss is reported by applyVenues, never guessed at.
@@ -105,9 +190,9 @@ function centreIdOf(record: StructuredRecord): number | undefined {
 }
 
 /**
- * Attach venue name/address/municipality/geo to each record. Records keep the venue name
- * parse.ts already derived when centerdetails has nothing better; only the address, the
- * canonical name and the coordinates come from the index.
+ * Attach venue name/address/phone/municipality/geo to each record. Records keep the venue
+ * name parse.ts already derived when centerdetails has nothing better; only the address,
+ * the phone, the canonical name and the coordinates come from the index.
  */
 export function applyVenues(
   records: StructuredRecord[],
@@ -133,6 +218,7 @@ export function applyVenues(
       ...record,
       venueName: venue.venueName,
       venueAddress: venue.venueAddress,
+      venuePhone: venue.venuePhone,
       venueMunicipalityName: venue.venueMunicipalityName,
       // Attaching geo here is the whole of the write path — no core or DB change needed.
       //
@@ -145,6 +231,37 @@ export function applyVenues(
       // with 5 names byte-identical to venue-geo.ts's, so those rows change with ingest
       // order. Converging both tables is a tracked follow-up; the one venue where the
       // divergence measurably hurt (Britannia) is already converged in venue-geo.ts.
+      //
+      // PHONE RIDES THE SAME WIRE, and is NOT a special case. resolveVenue() enriches it
+      // with the identical `phone = COALESCE(<incoming>, phone)` it already uses for
+      // address/display_area/official_url/geo, so the last-writer-wins reading above
+      // applies verbatim. It is invisible today only because ActiveNet is the sole
+      // family that populates phone — the five venue rows citycalendar also writes
+      // (Britannia, Killarney, Kitsilano, Renfrew Park, Trout Lake community centres)
+      // churn on `geo` because both families send coordinates, and cannot churn on
+      // `phone` because citycalendar sends none. That is a property of the CURRENT
+      // coverage, not of the field: a second populating family turns it into the same
+      // churn geo already has, with the same converge-the-tables fix.
+      //
+      // NO OTHER FAMILY POPULATES IT, and each decline is a decision, not an oversight
+      // (surveyed 2026-08-01 against live payloads, not just against the code):
+      //   • citycalendar (Trumba) — HAS an "Organizer phone" custom field, populated on
+      //     2 of 39 live events. Declined on MEANING, not coverage: it is the phone of
+      //     whoever runs the EVENT, frequently a community volunteer, and writing it to
+      //     the shared `venue` row would republish one organiser's number as the
+      //     facility's own on every other event at that venue. That is the same class of
+      //     false claim G-VENUE-3's QA F1 closed (attribution inferred from a venue
+      //     NAME), plus a real personal-data exposure the venue column cannot justify.
+      //   • library / generic-rss (NVDPL) — phone numbers exist ONLY inside free-text
+      //     HTML descriptions ("Register by phone (604-987-4471 ext. 8175)"), never as a
+      //     structured field. Harvesting them means regexing prose for a number whose
+      //     referent is unknown; this adapter family does not do fuzzy inference.
+      //   • perfectmind, eventbrite — no phone anywhere in the payload (checked the full
+      //     key set of the captured fixtures; PerfectMind exposes `Email`, not a phone).
+      //   • venue (aquarium/space centre), seasonal — hand-curated config with no
+      //     upstream feed. A phone here would be a NEW hand-authored fact, which this
+      //     project requires per-entry attribution for (venue-geo.ts's shape). Cheap and
+      //     worth doing; deliberately not smuggled into this task's diff.
       venueLat: venue.geo?.lat,
       venueLng: venue.geo?.lng,
       venueDisplayArea: venue.geo?.displayArea ?? record.venueDisplayArea,

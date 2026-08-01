@@ -1,0 +1,82 @@
+-- 0024_venue_phone.sql — venue.phone. Stop discarding a number we already fetch.
+--
+-- THE GAP THIS CLOSES. `worker/adapters/activenet/venues.ts` has read a centre's
+-- phone number out of ActiveNet's own `/onlinecalendar/centerdetails` response since
+-- T7 REBUILD (`venuePhone` on ResolvedVenue). It went nowhere: StructuredRecord had
+-- no field to carry it and `venue` had no column to hold it, so every run fetched the
+-- number and threw it away at the record boundary. Jon approved capturing it
+-- (2026-08-01). This column is the missing end of that wire.
+--
+-- MEASURED COVERAGE AT ADOPTION (2026-08-01, live, not assumed): 36/36 Vancouver
+-- centres and 7/7 Burnaby centres carry a non-empty phone, byte-identical to the
+-- 2026-07-30 captured fixtures. Four values were independently corroborated against
+-- non-ActiveNet sources (Britannia Community Centre 604-718-5800, Britannia Pool
+-- 604-718-5831, False Creek 604-257-8195, Bonsor/Burnaby 604-297-4597) — all four
+-- matched. ActiveNet is currently the ONLY family that populates this; see
+-- `worker/adapters/activenet/venues.ts` for the survey of the other six and why each
+-- one is a deliberate decline rather than an oversight.
+--
+-- NULLABLE, AND NO CHECK CONSTRAINT. The reason is that a phone number has NO
+-- CANONICAL SHAPE worth asserting in SQL, and the adapter boundary already guarantees
+-- the column never sees garbage.
+--
+-- Free-text contact strings vary by source, vendor and country. This source alone
+-- publishes `(604) 718-8222`, `+1 (604) 257-8195` and the extension form
+-- `604-987-4471 ext. 8175`. Any pattern strict enough to be worth writing would reject
+-- legitimate values of a kind we have already observed; any pattern loose enough to be
+-- safe asserts almost nothing. Meanwhile `normaliseVenuePhone()` (worker/adapters/
+-- activenet/venues.ts) already refuses to emit a value it cannot stand behind, so a
+-- CHECK would re-assert one layer down a property established one layer up — and would
+-- fire, in practice, only on legitimate-but-unusual renderings.
+--
+-- CORRECTED 2026-08-01 (QA F1). An earlier version of this comment justified the same
+-- decision by claiming a CHECK "would convert one malformed vendor string into a failed
+-- transaction for a whole municipality's run." That was FALSE and is worth recording
+-- rather than quietly deleting, because it was the load-bearing sentence. MEASURED, by
+-- installing exactly such a CHECK and ingesting 5 records (3 at a venue with a bad
+-- phone, 2 at a clean venue): recordsFound=5, occurrencesUpserted=2, errors=3, check run
+-- 'partial', and the clean venue's phone landed normally. `ingestSource` has NO
+-- run-level transaction — every statement is `pool.query` auto-commit inside a
+-- PER-RECORD try/catch — so the real blast radius is every record at ONE venue, not the
+-- run. That is a genuine cost (a venue's listings silently disappear), but it is an
+-- ordinary argument about trade-offs, not the catastrophe originally claimed.
+--
+-- The contrast with 0022/0023 still holds, on its own terms: those constrain
+-- `source.robots_override_decision`, a value a HUMAN authors to authorise a fetch
+-- against a third party's terms. Refusing that write costs one operator a retry and is
+-- the safe outcome. Nobody authors a vendor phone string, nothing gates on it, and
+-- refusing it costs listings. Different failure economics, different mechanism.
+--
+-- Most venues will be NULL on day one and that is honest.
+--
+-- STORED VERBATIM (trimmed only), NOT reformatted. 35 of the 36 Vancouver values
+-- render as `(604) 718-8222` and one as `+1 (604) 257-8195`; both are what the
+-- source published. Choosing a canonical rendering is a DISPLAY decision, and the
+-- display layer that would make it does not exist yet (nothing parent-facing reads
+-- this column — see the note in app/preview/_components/ActivityDetail.tsx).
+-- Normalising at ingest would destroy the source's own rendering irreversibly, for
+-- a consumer that has not been designed. Same rule the `address` column already
+-- follows.
+--
+-- WRITE SEMANTICS are `resolveVenue()`'s existing COALESCE enrichment, unchanged and
+-- deliberately not forked: `phone = COALESCE($n, phone)`, i.e. a non-NULL incoming
+-- value OVERWRITES and a NULL one preserves — LAST-WRITER-WINS among non-NULL
+-- writers, exactly as address/display_area/official_url/geo already behave (the F3/F5
+-- wording finding from the venue-geo round). Five venue rows are genuinely written by
+-- two adapters today (Britannia, Killarney, Kitsilano, Renfrew Park and Trout Lake
+-- community centres are carried by BOTH activenet and citycalendar). Those rows churn
+-- on `geo` because both families send coordinates; they cannot churn on `phone`,
+-- because citycalendar sends none and COALESCE preserves what ActiveNet wrote. That
+-- stability is a consequence of single-writer coverage, NOT a property of the column
+-- — the day a second family populates phone, these five rows will churn on it exactly
+-- the way they already churn on geo, and the fix will be the same tracked
+-- converge-the-tables work, not a special case here.
+
+-- ── forward ──────────────────────────────────────────────────────────────────
+ALTER TABLE venue ADD COLUMN phone text;
+
+COMMENT ON COLUMN venue.phone IS
+  'Public contact number for the facility, as the upstream source published it (trimmed, never reformatted). Nullable and sparsely populated: only the activenet family supplies it as of 2026-08-01. Enriched last-writer-wins via resolveVenue() COALESCE, same as address/display_area/geo.';
+
+-- ── rollback ────────────────────────────────────────────────────────────────
+--   ALTER TABLE venue DROP COLUMN IF EXISTS phone;
