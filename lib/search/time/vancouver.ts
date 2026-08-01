@@ -31,13 +31,36 @@ export interface VancouverParts {
   isoDate: string; // YYYY-MM-DD local
 }
 
+// Intl.DateTimeFormat.formatToParts costs ~5µs per call — trivial once, ruinous in a filter
+// loop. Search decomposes the SAME handful of instants over and over: every date/time-of-day
+// predicate, every ranking pass, every rung of the broadening ladder, and every facet count
+// re-derives the local parts of the same occurrence start/end. The instants are a small,
+// bounded set (two per listing) and the mapping is deterministic, so memoise it. Bounded and
+// cleared wholesale on overflow: this module lives for the life of the server process, and a
+// simple cap is enough — the working set is one page of listings, not a growing history.
+const PARTS_CACHE_LIMIT = 4096;
+const partsCache = new Map<number, VancouverParts>();
+
 /** Decompose a UTC instant into Vancouver-local calendar/clock parts. */
 export function toVancouverParts(instant: Date): VancouverParts {
+  const key = instant.getTime();
+  const cached = partsCache.get(key);
+  if (cached) return cached;
+  const parts = computeVancouverParts(instant);
+  // An invalid Date already threw above; only real instants reach the cache.
+  if (partsCache.size >= PARTS_CACHE_LIMIT) partsCache.clear();
+  partsCache.set(key, parts);
+  return parts;
+}
+
+function computeVancouverParts(instant: Date): VancouverParts {
   const parts = PARTS_FMT.formatToParts(instant);
   const map: Record<string, string> = {};
   for (const p of parts) map[p.type] = p.value;
   const hour = map.hour === '24' ? 0 : Number(map.hour); // Intl may emit '24' at midnight
-  return {
+  // Frozen because it is shared out of the cache — a caller mutating it would corrupt
+  // every later reader of the same instant.
+  return Object.freeze({
     year: Number(map.year),
     month: Number(map.month),
     day: Number(map.day),
@@ -45,7 +68,7 @@ export function toVancouverParts(instant: Date): VancouverParts {
     minute: Number(map.minute),
     weekday: WEEKDAY_INDEX[map.weekday] ?? 0,
     isoDate: `${map.year}-${map.month}-${map.day}`,
-  };
+  });
 }
 
 /** Vancouver-local minutes-past-midnight for a UTC instant (0..1439). */
