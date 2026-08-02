@@ -27,6 +27,7 @@ interface ListingRow {
   source_url: string | null;
   booking_url: string | null;
   location_url: string | null;
+  registration_required: boolean | null;
   status_state: StatusState;
   confidence_label: string | null;
   last_checked_at: Date | string | null;
@@ -115,6 +116,7 @@ function listingSelectSql(): string {
        o.source_url,
        o.booking_url,
        o.location_url,
+       o.registration_required,
        o.status_state,
        o.confidence_label,
        o.last_checked_at,
@@ -150,7 +152,7 @@ function listingGroupBySql(): string {
        o.id, o.series_id, o.activity_name, c.key, v.name, s.name, ser.canonical_title, s.authority_tier,
        o.description_snippet, o.start_datetime_utc, o.end_datetime_utc, o.open_hours_state,
        o.cost_status, o.cost_min_cad, o.cost_max_cad, o.source_url, o.booking_url,
-       o.location_url, o.status_state, o.confidence_label, o.last_checked_at,
+       o.location_url, o.registration_required, o.status_state, o.confidence_label, o.last_checked_at,
        oa.age_min_months, oa.age_max_months, oa.age_notes, v.geo, v.municipality_id, v.neighbourhood, v.display_area, v.phone`;
 }
 
@@ -189,6 +191,10 @@ function rowToListing(row: ListingRow): ListingRecord {
     neighbourhood: row.neighbourhood,
     displayArea: row.display_area,
     venuePhone: row.phone,
+    // Passed through VERBATIM, including the null. Coercing an absent value to false here
+    // would turn "the source never said" into "the source says drop-in" at the one boundary
+    // where the distinction stops being recoverable — see supabase/migrations/0027.
+    registrationRequired: row.registration_required,
     sourceUrl: row.source_url,
     bookingUrl: row.booking_url,
     locationUrl: row.location_url,

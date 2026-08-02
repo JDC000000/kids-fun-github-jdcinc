@@ -29,6 +29,10 @@ export interface ListingRecordDto {
   municipalityId: string | null;
   /** venue.phone, verbatim. Optional here because most source families never populate it. */
   venuePhone?: string | null;
+  /** activity_occurrence.registration_required — the source's own answer, when it gave one.
+   *  Optional AND nullable: absent/null both mean "the source said nothing" and leave the
+   *  title heuristic in charge. See supabase/migrations/0027. */
+  registrationRequired?: boolean | null;
   sourceUrl: string | null;
   bookingUrl: string | null;
   locationUrl: string | null;
@@ -101,6 +105,10 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     activityName: l.activityName,
     suitabilityTags: l.suitabilityTags,
     categoryTags: l.categoryTags,
+    // The persisted source fact, when the row has one — so the fixture/detail paths that
+    // recompute locally reach the SAME verdict the engine does instead of falling back to
+    // the title heuristic and disagreeing with the list the card was clicked from.
+    registrationRequired: l.registrationRequired,
   });
   return {
     id: l.id,

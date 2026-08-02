@@ -41,6 +41,20 @@ interface BiblioEvent {
   ages: string;
   url: string;
   registrationRequired: boolean;
+  /**
+   * WHERE `registrationRequired` came from — recorded at the point it is derived rather than
+   * re-inferred downstream, for the same reason `LibraryBranchLocation.coordsFrom` exists:
+   * once the boolean is in hand there is no way left to tell a structured vendor flag from a
+   * regex over prose, and they are not the same claim.
+   *
+   *   'registration-info'  — BiblioCommons' structured `registrationInfo` block. Authoritative
+   *                          in BOTH directions: this IS the library's own booking system, so
+   *                          "no registration methods enabled" genuinely means turn up.
+   *   'description-prose'  — /registration required/i over the RSS description. Authoritative
+   *                          only when it MATCHES. A miss means the prose did not mention it,
+   *                          which is silence, not a drop-in claim.
+   */
+  registrationSignal: 'registration-info' | 'description-prose';
   descriptionText?: string;
   categoryHint?: string;
   location?: LibraryBranchLocation;
@@ -121,6 +135,30 @@ function registrationRequired(event: BiblioCommonsGatewayEvent): boolean {
   );
 }
 
+/**
+ * What this event lets us honestly ASSERT about registration, for StructuredRecord.
+ *
+ * The boolean on BiblioEvent is not symmetric across the two feeds, and collapsing that
+ * asymmetry is the one thing this function exists to prevent:
+ *
+ *   • `registration-info` (the JSON gateway) reads BiblioCommons' own structured
+ *     registrationInfo block. A false there is the vendor saying no registration method is
+ *     enabled on its own booking system — a real drop-in claim — so it passes through.
+ *   • `description-prose` (the RSS feed) is /registration required/i over free text. A true
+ *     is real evidence; a false only means the sentence was absent. Returning `false` for
+ *     that would invent a drop-in assertion out of silence, which is exactly the failure
+ *     mode ./adapter.ts's tri-state contract exists to make impossible. So a prose miss
+ *     yields `undefined`.
+ *
+ * Note the existing `bookingUrl` encoding is left EXACTLY as it was. It has always
+ * collapsed both feeds' booleans into one url-or-nothing and downstream consumers read it;
+ * changing its meaning is a separate decision from persisting the fact alongside it.
+ */
+export function registrationAssertion(event: BiblioEvent): boolean | undefined {
+  if (event.registrationSignal === 'registration-info') return event.registrationRequired;
+  return event.registrationRequired ? true : undefined;
+}
+
 function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommonsGatewayResponse): BiblioEvent[] {
   const ids = body.events?.items ?? [];
   const events = body.entities?.events ?? {};
@@ -152,6 +190,7 @@ function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommon
         ages: ageText || audienceNames.join(', ') || 'See event details',
         url: detailUrl,
         registrationRequired: registrationRequired(event),
+        registrationSignal: 'registration-info',
         descriptionText,
         categoryHint: categoryHint(def.title, typeNames),
         location,
@@ -330,6 +369,7 @@ function parseBiblioCommonsRss(system: LibrarySystemConfig, xml: string): Biblio
       ages: ageText,
       url: link,
       registrationRequired: /registration\s+required/i.test(descriptionText),
+      registrationSignal: 'description-prose',
       descriptionText,
       categoryHint: categoryHint(title, categories),
       location,
@@ -462,6 +502,10 @@ export class LibraryAdapter implements Adapter {
           ages: '0-2 years',
           url: `${this.system.feedBaseUrl}/${this.system.systemKey}-baby-storytime-1`,
           registrationRequired: false,
+          // Mirrors the gateway shape: a BiblioCommons event with no registration methods
+          // enabled. The fixture asserts drop-in because the real payload it stands in for
+          // does — not because `false` is a convenient default.
+          registrationSignal: 'registration-info',
         },
       ];
       return events;
@@ -510,7 +554,10 @@ export class LibraryAdapter implements Adapter {
         ageText: e.ages,
         categoryHint: e.categoryHint,
         sourceUrl: e.url,
-        // The feed exposes no registration flag at all, so no bookingUrl is asserted.
+        // The feed exposes no registration flag at all, so no bookingUrl is asserted — and
+        // for the same reason `registrationRequired` is left UNSET rather than false. NVDPL
+        // publishes nothing either way; claiming drop-in from that silence is the one thing
+        // the tri-state contract in ../../core/adapter.ts forbids.
         locationUrl: e.location?.locationUrl || undefined,
         raw: e,
       }));
@@ -537,11 +584,19 @@ export class LibraryAdapter implements Adapter {
         ageText: e.ages,
         categoryHint: e.categoryHint ?? categoryHint(e.title),
         sourceUrl: e.url,
+        // Two DIFFERENT things, deliberately both emitted. `bookingUrl` is a link, and its
+        // presence has been the only trace of registration on any persisted row until now —
+        // which is why the DB could not distinguish a public swim from a 12-week course.
+        // `registrationRequired` is the fact itself, including the case where the source
+        // positively says NO registration is needed, which a url can never express.
         bookingUrl: e.registrationRequired ? e.url : undefined,
+        registrationRequired: registrationAssertion(e),
         locationUrl: e.location?.locationUrl,
         raw: e,
       }));
     }
+    // Communico carries no registration field either — `registrationRequired` stays unset,
+    // same reasoning as generic_rss above.
     return (raw as CommunicoEvent[]).map((e) => ({
       sourceRecordId: e.eventId,
       title: e.name,

@@ -35,6 +35,7 @@ export function makeListing(partial: Partial<ListingRecord> & { id?: string }): 
     neighbourhood: partial.neighbourhood ?? null,
     displayArea: partial.displayArea ?? null,
     venuePhone: partial.venuePhone ?? null,
+    registrationRequired: partial.registrationRequired ?? null,
     sourceUrl: partial.sourceUrl ?? null,
     bookingUrl: partial.bookingUrl ?? null,
     locationUrl: partial.locationUrl ?? null,

@@ -1,0 +1,94 @@
+-- 0027_occurrence_registration_required.sql — activity_occurrence.registration_required.
+-- Option A, first slice: persist the drop-in-vs-registration distinction that two adapters
+-- already compute on every run and then throw away at the record boundary.
+--
+-- THE GAP THIS CLOSES. The ingest pipeline was deliberately built drop-in-only — every
+-- adapter's config filters to the vendor's drop-in feed and the registered-course endpoints
+-- are explicitly blocked (worker/adapters/perfectmind/client.ts:80). But that filtering
+-- happens at FETCH time and leaves no trace on any persisted row, and the vendors publish
+-- registration content into their own drop-in calendars anyway. So the database genuinely
+-- cannot tell a same-day public swim from a 12-week course, and the read side has had to
+-- guess from the title (lib/search/filters/registration.ts, which says in its own header
+-- that it is "sized to be replaced by a real column, not to be permanent"). This column is
+-- that replacement. Full measurement: docs/kids-fun-dropin-vs-registration-investigation.md
+-- (Q1 in particular). Same shape as the 0024 venue-phone fix: stop discarding a fact we
+-- already download.
+--
+-- NULLABLE, AND THE NULL IS LOAD-BEARING — THREE STATES, NOT TWO.
+--   TRUE  — the source asserts you must register/book in advance.
+--   FALSE — the source asserts you do NOT: turn up. A POSITIVE claim, not an absence.
+--   NULL  — the source says nothing at all. Unknown.
+-- NOT NULL DEFAULT false was rejected outright: it would have written "this is drop-in"
+-- onto every row from the five families that publish no registration signal (activenet,
+-- citycalendar, eventbrite, venue, seasonal — plus library's generic_rss path), which is
+-- precisely the over-claim the investigation was written about. A backfill of existing rows
+-- is likewise NOT performed for the same reason: nothing is known about them, and inventing
+-- a value for 10,952 staging rows to make a column look populated would be the worst
+-- possible outcome for a field whose entire purpose is to distinguish fact from guess.
+-- Every pre-existing row stays NULL and keeps falling through to the title heuristic.
+--
+-- COVERAGE AT ADOPTION IS SMALL AND THAT IS HONEST. Only `library` (BiblioCommons) and
+-- `perfectmind` populate it today — measured on staging 2026-08-01, that is ~1,100 of
+-- ~4,724 visible future occurrences (perfectmind/NVRC) plus ~46 (library). ActiveNet is
+-- 78% of the visible corpus and is DELIBERATELY not wired here: it has no structured
+-- registration field at all, so it needs new extraction logic over its calendar name and
+-- description prose rather than a wire-through of an existing computed value. Tracked as
+-- explicit follow-up, not silently omitted.
+--
+-- WHY THERE IS NO capacity / full-vs-open COLUMN IN THIS MIGRATION. Four reasons, all
+-- specific, recorded here because "we'll add it later" is otherwise indistinguishable from
+-- an oversight:
+--
+--   1. `status_state` — the column that already carries 'full' and 'waitlist' in its enum,
+--      and whose entire read side is already built and tested for them — is doing DOUBLE
+--      DUTY. It is simultaneously the availability state AND the parent-visibility gate:
+--      worker/core/confidence.ts::statusForIngestedRecord composes three gates onto it and
+--      lib/search/filters/status.ts hides 'needs_review' from parents. Both 'full' and
+--      'waitlist' are classified 'primary' (visible). So writing 'full' onto a row would
+--      REPLACE its confidence verdict and make a low-confidence record VISIBLE — silently
+--      inverting the BR-05 gate. Capacity therefore needs either its own column or an
+--      explicit, reviewed precedence rule between the two meanings. That is a design
+--      decision, not the wiring job this migration is.
+--   2. The confidence-scoring drain is live and unresolved (investigation Q2 note: staging
+--      lost 33% of its visible catalogue in half an hour, one-directional, and the erosion
+--      has reached the `high` tier). Changing what writes `status_state` while its inputs
+--      are actively moving would make both problems unreadable.
+--   3. Jon's approved display for capacity is "full as of <date of last check>" WITH a
+--      click-through to the source AND the venue's phone number. `venue.phone` is populated
+--      by activenet and nothing else (0024). PerfectMind — the only family that carries a
+--      capacity signal at all — writes no phone. The approved display cannot be built for
+--      the exact rows that would carry the data.
+--   4. The signal is nearly absent on the content we actually ingest. MEASURED across the
+--      committed PerfectMind fixtures: on NVRC's Open Gym drop-in calendar, `Spots` is the
+--      empty string on 17 of 18 records. The three "Full" and two "1 spot left" values all
+--      come from richmond.classes.registered-visits.json — a REGISTERED calendar this
+--      adapter never ingests (Richmond has no PerfectMind drop-in widget, G-T8-1).
+--
+-- NO CHECK CONSTRAINT and no index. A boolean's domain is already its own constraint, and
+-- nothing filters on this column in SQL today — the read model loads it as one more selected
+-- field and the predicate runs in the engine. Adding an index for a query that does not
+-- exist would be the "slow query → add an index" reflex the project's own coding standard
+-- names as a symptom patch.
+--
+-- WRITE SEMANTICS are the plain EXCLUDED overwrite every other occurrence field already uses
+-- (worker/core/upsert.ts), NOT a COALESCE enrichment. Deliberate, and the opposite of the
+-- venue-phone decision in 0024 — because the failure modes are opposite. A venue phone is a
+-- slowly-changing fact enriched by several adapters, so preserving a known value against a
+-- NULL writer is right. Registration status belongs to ONE source record and can genuinely
+-- change (a vendor moves an item out of a drop-in category); COALESCE would pin the first
+-- value ever seen and make the column impossible to correct without manual intervention.
+-- Last run wins, same as start time and cost.
+--
+-- DEPLOY NOTE FOR WHOEVER SHIPS THIS: per this project's own hard-learned rule, apply to
+-- kids-fun-supabase-staging AND kids-fun-supabase-prod as TWO separate deliberate steps.
+-- 0026 is taken by the in-flight check-run health-verdict branch; this is 0027 to avoid the
+-- collision.
+
+-- ── forward ──────────────────────────────────────────────────────────────────
+ALTER TABLE activity_occurrence ADD COLUMN registration_required boolean;
+
+COMMENT ON COLUMN activity_occurrence.registration_required IS
+  'Does the SOURCE say you must register/book in advance? TRUE = yes, FALSE = no (a positive drop-in claim), NULL = the source said nothing (fall back to the title heuristic in lib/search/filters/registration.ts). Nullable and sparsely populated by design: only the library (BiblioCommons) and perfectmind families assert it as of 2026-08-02. NOT a capacity signal — says nothing about whether a spot is left.';
+
+-- ── rollback ────────────────────────────────────────────────────────────────
+--   ALTER TABLE activity_occurrence DROP COLUMN IF EXISTS registration_required;

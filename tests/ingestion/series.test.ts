@@ -80,4 +80,50 @@ describe.skipIf(!hasDb)('Series resolution (G-T5-4)', () => {
     );
     expect(occ.series_id).toBe(seriesId);
   });
+
+  // Option A (supabase/migrations/0027). The column is TRI-STATE and the write path is the
+  // only place the third state can be destroyed: `?? false` instead of `?? null` in
+  // upsertOccurrence would turn every silent source into a drop-in claim, and nothing else
+  // in the suite would notice. Asserted against real SQL, including the round trip on
+  // re-ingest, because that is where the coercion would happen.
+  it('persists registrationRequired as a tri-state, and re-ingest corrects it', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      [`Registration Tri-State Source ${crypto.randomUUID()}`]
+    );
+    const { seriesId } = await resolveSeries(pool, { sourceId: source.id, canonicalTitle: 'Tri-State Gym' });
+
+    const base = {
+      title: 'Tri-State Gym',
+      startDatetimeUtc: '2026-08-14T18:00:00.000Z',
+      costStatus: 'unknown' as const,
+      sourceUrl: 'https://example.org/tri-state',
+    };
+
+    const read = async (id: string) => {
+      const [row] = await query<{ registration_required: boolean | null }>(
+        `SELECT registration_required FROM activity_occurrence WHERE id = $1`,
+        [id]
+      );
+      return row.registration_required;
+    };
+
+    const required = await upsertOccurrence(pool, seriesId, { ...base, sourceRecordId: 'tri-true', registrationRequired: true });
+    const dropIn = await upsertOccurrence(pool, seriesId, { ...base, sourceRecordId: 'tri-false', registrationRequired: false });
+    const silent = await upsertOccurrence(pool, seriesId, { ...base, sourceRecordId: 'tri-null' });
+
+    expect(await read(required.occurrenceId)).toBe(true);
+    // FALSE, not null: the source positively said no booking is needed.
+    expect(await read(dropIn.occurrenceId)).toBe(false);
+    // NULL, not false: an adapter that emits nothing must not assert drop-in.
+    expect(await read(silent.occurrenceId)).toBeNull();
+
+    // Plain overwrite on conflict, NOT COALESCE — a vendor moving an item out of its drop-in
+    // calendar has to be able to correct the row. A COALESCE write path would pin the false.
+    const reIngest = await upsertOccurrence(pool, seriesId, { ...base, sourceRecordId: 'tri-false', registrationRequired: true });
+    expect(reIngest.created).toBe(false);
+    expect(reIngest.occurrenceId).toBe(dropIn.occurrenceId);
+    expect(await read(dropIn.occurrenceId)).toBe(true);
+  });
 });

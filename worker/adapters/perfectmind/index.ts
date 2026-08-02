@@ -30,6 +30,7 @@ import {
   type PerfectMindTenantConfig,
 } from './config';
 import {
+  CLASSES_BOOKING_TYPE,
   RequestBudget,
   fetchTenant,
   stridesForWindow,
@@ -181,6 +182,10 @@ function fixtureCalendars(tenant: PerfectMindTenantConfig): CalendarFetchResult[
       calendarId: '00000000-0000-0000-0000-000000000001',
       calendarName: 'Open Gym Schedules',
       categoryName: '**Drop-In Schedules',
+      // Shape-faithful to what selectDropInCalendars() records for a real drop-in calendar,
+      // so the fixture path exercises parse.ts's drop-in assertion rather than falling
+      // through it to "unknown" and quietly diverging from the live path.
+      bookingType: CLASSES_BOOKING_TYPE,
       occurrenceCount: 1,
       pagesFetched: 0,
       stridesWalked: stridesForWindow(DEFAULT_WINDOW_DAYS), // synthetic: a dry run walks nothing

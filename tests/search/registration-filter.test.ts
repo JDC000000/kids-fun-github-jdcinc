@@ -147,3 +147,52 @@ describe('hasDropInSignal', () => {
     expect(hasDropInSignal({ activityName: 'Anything' })).toBe(false);
   });
 });
+
+// ── Option A: the persisted source fact (supabase/migrations/0027) ─────────────────────
+//
+// The module header above says this classifier is "sized to be replaced by a real column".
+// This block is the first half of that replacement landing: where a row carries the source's
+// OWN answer, it is read instead of guessed. Every case here changes an outcome — a suite
+// that only asserted "null still uses the heuristic" would pass with the new branch deleted.
+describe('isRegistrationShaped — a persisted source fact overrides the title', () => {
+  it('flags a drop-in-SHAPED title the source says you must register for', () => {
+    // Real shape: a BiblioCommons "Baby Storytime" whose registrationInfo requires a login.
+    // The title vocabulary says drop-in and is WRONG; the library's own booking system is not.
+    expect(isRegistrationShaped(listing('Baby Storytime'))).toBe(false); // heuristic alone
+    expect(isRegistrationShaped({ activityName: 'Baby Storytime', registrationRequired: true })).toBe(true);
+    // Beats the explicit drop_in TAG too, not just the title regex.
+    expect(
+      isRegistrationShaped({ activityName: 'Baby Storytime', suitabilityTags: ['drop_in'], registrationRequired: true })
+    ).toBe(true);
+  });
+
+  it('keeps a course-SHAPED title in the default view when the source says no booking is needed', () => {
+    // The shape under test: a record sitting on a '**Drop-In Schedules' calendar (BookingType 2)
+    // whose TITLE carries course vocabulary the heuristic cannot help but flag. The string is
+    // illustrative — what is being pinned is the precedence, not this particular wording — and
+    // this is the direction of error the module header calls the expensive one, so the fact
+    // has to be able to rescue it.
+    expect(isRegistrationShaped(listing('Skating Level 1'))).toBe(true); // heuristic alone
+    expect(isRegistrationShaped({ activityName: 'Skating Level 1', registrationRequired: false })).toBe(false);
+    expect(hasDropInSignal({ activityName: 'Skating Level 1', registrationRequired: false })).toBe(true);
+  });
+
+  it('leaves the heuristic completely untouched when the source said nothing', () => {
+    // null AND undefined both mean silence — the state ~99% of rows are in today, including
+    // every activenet row. Any behaviour change here would be a regression, not a feature.
+    for (const silent of [null, undefined] as const) {
+      expect(isRegistrationShaped({ activityName: 'Frozen Ballet Dance Camp 3-5yrs', registrationRequired: silent })).toBe(true);
+      expect(isRegistrationShaped({ activityName: 'Public Swim - Family', registrationRequired: silent })).toBe(false);
+      expect(isRegistrationShaped({ activityName: 'Sportball Multisport  (3-5 yrs)', registrationRequired: silent })).toBe(false);
+      expect(hasDropInSignal({ activityName: 'Anything At All', registrationRequired: silent })).toBe(false);
+    }
+  });
+
+  it('does not let the two facts contradict each other', () => {
+    // true wins over false is not a case that can arise (one column), but the ordering inside
+    // isRegistrationShaped must be checked explicitly: the fact is read BEFORE hasDropInSignal,
+    // otherwise a `false` fact would short-circuit a `true` one via the drop-in veto.
+    expect(isRegistrationShaped({ activityName: 'Public Swim', registrationRequired: true })).toBe(true);
+    expect(isRegistrationShaped({ activityName: 'Summer Camp', registrationRequired: false })).toBe(false);
+  });
+});

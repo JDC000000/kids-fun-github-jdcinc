@@ -35,7 +35,7 @@
 import type { StructuredRecord } from '../../core/adapter';
 import { zonedLocalToUtcIso } from '../../core/time';
 import { VENUE_GEO_AUTHORITY, type VenueGeoAuthority } from '../../core/venue-geo-authority';
-import type { BookMe4Class, CalendarFetchResult } from './client';
+import { CLASSES_BOOKING_TYPE, type BookMe4Class, type CalendarFetchResult } from './client';
 import { calendarPageUrl, type PerfectMindTenantConfig } from './config';
 
 /** Small HTML fragments occasionally appear in Details. */
@@ -350,6 +350,87 @@ export function categoryHintForCalendar(calendarName: string | undefined): strin
   return CALENDAR_CATEGORY_RULES.find((r) => r.re.test(calendarName))?.key;
 }
 
+// ── registration ────────────────────────────────────────────────────────────────────
+//
+// This adapter has always KNOWN which of its content is drop-in — it just never wrote it
+// down. Two facts are established at fetch time and were both consumed and discarded:
+// the calendar's CATEGORY NAME (matched against the tenant's `dropInCategoryNames`, e.g.
+// '**Drop-In Schedules') and its `BookingType` (2 = the Classes surface this adapter reads;
+// 3 = the registered Courses surface it deliberately refuses — client.ts:80). Together they
+// are the strongest drop-in signal any family in this project has.
+//
+// Both are now carried on CalendarFetchResult and RE-CHECKED here rather than assumed from
+// "this calendar was fetched, therefore it is drop-in". The difference matters: if a future
+// code path ever fetches a non-drop-in calendar, its records get `undefined` (unknown) — not
+// a false drop-in claim. The safer failure mode, and directly testable.
+
+/**
+ * Does the CALENDAR this record came from positively assert drop-in?
+ *
+ * Both halves are required. A category-name match alone would accept a BookingType 3
+ * registered-course calendar that happened to be filed under a drop-in category name; a
+ * BookingType match alone accepts every Classes calendar the tenant publishes, drop-in or
+ * not.
+ */
+export function calendarAssertsDropIn(
+  tenant: PerfectMindTenantConfig,
+  calendar: Pick<CalendarFetchResult, 'categoryName' | 'bookingType'>
+): boolean {
+  return (
+    !!calendar.categoryName &&
+    tenant.dropInCategoryNames.includes(calendar.categoryName) &&
+    calendar.bookingType === CLASSES_BOOKING_TYPE
+  );
+}
+
+/** The vendor's own per-record call to action, when it says REGISTER. */
+const REGISTER_BUTTON_RE = /^\s*register\b/i;
+
+/**
+ * Does the RECORD ITSELF contradict its calendar by demanding registration?
+ *
+ * Same precedence shape as classifyCost() above, and for the same reason: on this platform a
+ * container-level field being wrong is a known failure mode, so a per-record statement beats
+ * a per-calendar default. `BookButtonText: "REGISTER"` is the vendor telling a parent, on
+ * that exact listing, that they must register.
+ *
+ * `BookButtonDescription` IS NOT USED, and that is a measured decision rather than an
+ * oversight. It looked like the richer signal — until the committed fixtures were checked:
+ * `"Add to $3 Open Gym 8yrs+ JBCC Friday 6:15-9:15am waitlist"` sits on NVRC's Open Gym
+ * DROP-IN calendar (nvrc.classes.open-gym.page1.json), with `Spots: ""` and
+ * `BookButtonText: "More Info"`. Treating "waitlist" wording as a registration signal would
+ * therefore flip a genuine $3 open gym into registration content and take it out of the
+ * default view — precisely the expensive direction of error.
+ *
+ * HONEST LIMIT: across all committed fixtures, `BookButtonText: "REGISTER"` appears only in
+ * richmond.classes.registered-visits.json (a REGISTERED calendar this adapter never ingests
+ * — Richmond has no drop-in widget, G-T8-1). All 18 records on the real drop-in calendar say
+ * "More Info". So this override is a GUARD against the vendor mixing registered items into a
+ * drop-in calendar — the documented behaviour of these platforms — and is not currently
+ * exercised by live drop-in data. It is pinned by a synthetic fixture in
+ * tests/adapters/perfectmind-registration.test.ts, not by observed traffic.
+ */
+export function recordAssertsRegistration(record: BookMe4Class): boolean {
+  return REGISTER_BUTTON_RE.test(String(record.BookButtonText ?? ''));
+}
+
+/**
+ * The composed verdict written to `StructuredRecord.registrationRequired`.
+ *
+ * Precedence: a per-record REGISTER button beats the calendar's drop-in assertion; absent
+ * that, the calendar's assertion stands; absent both, UNKNOWN — never `false`, because a
+ * record we cannot place must not be published as drop-in (../../core/adapter.ts).
+ */
+export function resolveRegistrationRequired(
+  tenant: PerfectMindTenantConfig,
+  calendar: Pick<CalendarFetchResult, 'categoryName' | 'bookingType'>,
+  record: BookMe4Class
+): boolean | undefined {
+  if (recordAssertsRegistration(record)) return true;
+  if (calendarAssertsDropIn(tenant, calendar)) return false;
+  return undefined;
+}
+
 // ── venue ───────────────────────────────────────────────────────────────────────────
 
 export interface VenueFields {
@@ -429,6 +510,14 @@ export interface ParseResult {
     ageFromDisplayText: number;
     ageUnresolved: number;
     venueWithCoordinates: number;
+    /** Records the calendar positively placed as drop-in (registrationRequired === false). */
+    registrationDropIn: number;
+    /** Records whose own REGISTER button overrode their calendar (=== true). */
+    registrationRequired: number;
+    /** Records neither signal could place (undefined). Expected to be 0 on a healthy run —
+     *  a non-zero count means calendars are being fetched that no drop-in rule recognises,
+     *  which is worth seeing rather than silently absorbing into a null column. */
+    registrationUnknown: number;
   };
   warnings: string[];
 }
@@ -447,6 +536,9 @@ export function emptyStats(): ParseResult['stats'] {
     ageFromDisplayText: 0,
     ageUnresolved: 0,
     venueWithCoordinates: 0,
+    registrationDropIn: 0,
+    registrationRequired: 0,
+    registrationUnknown: 0,
   };
 }
 
@@ -514,6 +606,11 @@ function parseCalendar(
     const venue = extractVenue(cls);
     if (venue.venueLat != null) stats.venueWithCoordinates += 1;
 
+    const registrationRequired = resolveRegistrationRequired(tenant, calendar, cls);
+    if (registrationRequired === false) stats.registrationDropIn += 1;
+    else if (registrationRequired === true) stats.registrationRequired += 1;
+    else stats.registrationUnknown += 1;
+
     records.push({
       sourceRecordId: occurrenceRecordId(cls, range.start),
       title: title || 'Drop-in activity',
@@ -532,6 +629,7 @@ function parseCalendar(
       ageText: age.ageText,
       categoryHint,
       sourceUrl,
+      registrationRequired,
       raw: cls,
     });
     stats.recordsEmitted += 1;

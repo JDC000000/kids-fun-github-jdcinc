@@ -71,10 +71,21 @@ export interface RegistrationSignalInput {
   activityName: string;
   suitabilityTags?: string[];
   categoryTags?: string[];
+  /**
+   * `activity_occurrence.registration_required` — what the SOURCE ITSELF said, when it said
+   * anything. TRI-STATE: true / false / null-or-undefined = the source was silent.
+   *
+   * This is the column this module's header anticipated ("sized to be replaced by a real
+   * column, not to be permanent"). It is populated today only by the `library` and
+   * `perfectmind` families (supabase/migrations/0027); every other row is null and still
+   * gets the title heuristic below, unchanged.
+   */
+  registrationRequired?: boolean | null;
 }
 
 /** True when the listing carries any positive "no booking needed" signal (tag or title prose). */
 export function hasDropInSignal(listing: RegistrationSignalInput): boolean {
+  if (listing.registrationRequired === false) return true;
   const tags = [...(listing.suitabilityTags ?? []), ...(listing.categoryTags ?? [])];
   if (tags.includes(DROP_IN_TAG)) return true;
   return DROP_IN_TITLE.test(listing.activityName ?? '');
@@ -82,10 +93,30 @@ export function hasDropInSignal(listing: RegistrationSignalInput): boolean {
 
 /**
  * True when the listing reads as a registration-required course/camp/lesson rather than something
- * a parent can turn up to today. A drop-in signal always wins, so this can only ever be true for
- * listings with NO evidence of being drop-in.
+ * a parent can turn up to today.
+ *
+ * A PERSISTED SOURCE FACT WINS OVER THE TITLE, IN BOTH DIRECTIONS. Everything below the first
+ * two lines is unchanged and still runs for the ~99% of rows that carry no fact — but where the
+ * vendor itself answered the question, guessing from words is strictly worse than reading the
+ * answer. The graded policy the investigation recommended, implemented as one branch: structured
+ * vendor flag → fact; calendar name → (not wired here); title prose → heuristic.
+ *
+ * The `true` branch deliberately outranks `hasDropInSignal`'s title vocabulary, and that is the
+ * only behaviour change with teeth: a BiblioCommons event titled "Baby Storytime" whose own
+ * registrationInfo says you must log in to register is a course you must book, however
+ * drop-in-shaped its name reads. The veto in `hasDropInSignal` exists because the registration
+ * signal is normally a GUESS; when it is the vendor's own structured flag, the reason for the
+ * veto is gone.
+ *
+ * KNOWN, UNMEASURED RISK — stated rather than buried. The library boolean is derived from
+ * `loginToRegister || enabledMethods.length || maxSeats || cap` (worker/adapters/library/
+ * index.ts). `loginToRegister` is unambiguous; a bare seat cap arguably means "registration is
+ * AVAILABLE", not "required". Its precision has never been measured against live RPL data,
+ * because the field was never stored until now. That measurement is the natural first use of
+ * this column and should precede any decision to hide on it by default.
  */
 export function isRegistrationShaped(listing: RegistrationSignalInput): boolean {
+  if (listing.registrationRequired === true) return true;
   if (hasDropInSignal(listing)) return false;
   const title = listing.activityName ?? '';
   return REGISTRATION_TITLE.test(title) || PROGRAM_LEVEL.test(title);
