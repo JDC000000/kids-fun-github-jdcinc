@@ -154,7 +154,13 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   const sort = sortParam && (VALID_SORTS as string[]).includes(sortParam) ? (sortParam as SortKey) : undefined;
   const origin = buildOriginRequest(p);
   const regionChipIds = (p.get('region') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  const includeUnknownCost = ['1', 'true', 'yes'].includes((p.get('includeUnknownCost') ?? '').toLowerCase());
+  const includeUnknownCost = isOn(p.get('includeUnknownCost'));
+  // Facet counts for the filter UI (`facets=1`). Deliberately part of THIS request rather
+  // than a second endpoint: the counts are derived from the candidate set this search has
+  // already loaded and matched, so asking for them here costs a few in-memory passes, while
+  // a separate /facets route would re-run the entire pipeline (including the listing load)
+  // a second time on every filter interaction.
+  const facets = isOn(p.get('facets'));
   const dateRange = buildDateRange(p);
   const limit = clampInt(p.get('limit'), 1, 100);
   const minResults = clampInt(p.get('minResults'), 0, 100);
@@ -166,10 +172,16 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
     regionChipIds,
     sort,
     includeUnknownCost,
+    facets,
     ...(dateRange != null ? { dateRange } : {}),
     ...(limit != null ? { limit } : {}),
     ...(minResults != null ? { minResults } : {}),
   };
+}
+
+/** Boolean query param, accepting the same truthy spellings across the API. */
+function isOn(raw: string | null): boolean {
+  return ['1', 'true', 'yes'].includes((raw ?? '').toLowerCase());
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

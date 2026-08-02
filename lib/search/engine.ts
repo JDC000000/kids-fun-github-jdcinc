@@ -12,18 +12,15 @@ import type { AliasResolver } from './expand';
 import type { CandidateMatcher, MatchCandidate } from './match';
 import type { RankConfigProvider } from './rank-config';
 import type { RankContext, ScoredListing } from './rank';
-import { RegionHierarchy, matchesRegion } from '../geo/region';
-import { withinRadius } from '../geo/radius';
+import { RegionHierarchy } from '../geo/region';
 import { resolveOrigin, OriginResolutionError } from '../geo/origin';
 import type { Geocoder, OriginRequest, ResolvedOrigin } from '../geo/origin';
 import { WeightedTrigramMatcher } from './match';
 import { StaticRankConfig } from './rank-config';
 import { FixtureAliasResolver } from './expand';
 import { parseQuery } from './parse';
-import { matchesAge } from './filters/age';
-import { matchesTimeOfDay, matchesDate } from './filters/time';
-import { matchesCost } from './filters/cost';
-import { matchesStatus, isPrimaryResult, isExpectedSection, isHidden } from './filters/status';
+import { passesAllFilters, type ResultMode } from './filters/predicate';
+import { computeFacetCounts, type FacetCounts } from './facets';
 import { rankCandidates } from './rank';
 import { applySort } from './sort';
 import {
@@ -62,6 +59,13 @@ export interface SearchRequest {
   /** Broaden when the primary result count is below this (default 3). */
   minResults?: number;
   limit?: number;
+  /**
+   * Also return per-filter-value result counts for the filter UI (lib/search/facets.ts).
+   * Opt-in: it costs a handful of extra in-memory filter passes over the candidate set this
+   * search already built (no query, no second matcher run), but every caller that doesn't
+   * render filters shouldn't pay for it or carry the payload.
+   */
+  facets?: boolean;
 }
 
 export interface SearchResultItem {
@@ -81,6 +85,12 @@ export interface SearchResponse {
   expected: SearchResultItem[];
   total: number;
   broadening: { applied: BroadenRung[]; emptyState: ConstraintExplanation | null };
+  /**
+   * Per-filter-value counts for the filter UI; present only when `facets` was requested.
+   * Computed against the SAME context that produced `results` (post-broadening), so
+   * `facets.total === total` always holds and the rail can never contradict the list.
+   */
+  facets?: FacetCounts;
   meta: { fixtureBacked: boolean; sort: SortKey; backend?: 'fixture' | 'database'; fallbackReason?: string };
 }
 
@@ -141,26 +151,38 @@ export class SearchEngine {
 
     // Primary run.
     let working = ctx0;
-    let scored = primaryOf(ctx0);
+    let run = primaryOf(ctx0);
     const applied: BroadenRung[] = [];
     let emptyState: ConstraintExplanation | null = null;
 
     // Broaden if too few results (deterministic ladder).
-    if (scored.length < minResults) {
-      emptyState = explainEmptyState(ctx0, (v) => primaryOf(v).length);
+    if (run.scored.length < minResults) {
+      emptyState = explainEmptyState(ctx0, (v) => primaryOf(v).scored.length);
       for (const rung of buildBroadeningLadder(ctx0)) {
         applied.push(rung);
         working = rung.context;
-        scored = primaryOf(rung.context);
-        if (scored.length >= minResults) break;
+        run = primaryOf(rung.context);
+        if (run.scored.length >= minResults) break;
       }
     }
+    const scored = run.scored;
 
     // Expected/seasonal section — populated once the ladder reached it, or when still short.
     const expected =
       working.includeExpected || scored.length < minResults
         ? this.runExpected({ ...working, includeExpected: true }, origin, regionChips, now)
         : [];
+
+    // Facet counts (opt-in). Computed from the FINAL run's candidate set and the working
+    // context — the very inputs that produced `results` — so a count can never describe a
+    // different search than the one on screen (notably after the broadening ladder fires).
+    // Reusing the already-matched candidates is what keeps this cheap: no query, no re-match.
+    const facets = req.facets
+      ? computeFacetCounts(
+          run.candidates.map((c) => c.listing),
+          { ctx: working, origin, regionChipIds: regionChips, regions: this.regions, now },
+        )
+      : undefined;
 
     const applyLimit = <T,>(arr: T[]): T[] => (req.limit != null ? arr.slice(0, req.limit) : arr);
     return {
@@ -171,38 +193,40 @@ export class SearchEngine {
       expected: applyLimit(expected).map(toItem),
       total: scored.length,
       broadening: { applied, emptyState },
+      ...(facets ? { facets } : {}),
       meta: { fixtureBacked: this.fixtureBacked, sort: working.sort },
     };
   }
 
-  /** parse-expanded context → matched, filtered, ranked, sorted PRIMARY listings. */
-  private runPrimary(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): ScoredListing[] {
-    const candidates = this.matchAndFilter(ctx, origin, chips, 'primary');
-    const scored = rankCandidates(candidates, this.rankContext(ctx, origin, now));
-    return applySort(scored, ctx.sort);
+  /**
+   * parse-expanded context → matched, filtered, ranked, sorted PRIMARY listings. Returns the
+   * matched candidate set alongside the scored results so facet counting can reuse it instead
+   * of paying for a second matcher pass over every listing.
+   */
+  private runPrimary(
+    ctx: SearchContext,
+    origin: ResolvedOrigin | null,
+    chips: string[],
+    now: Date,
+  ): { scored: ScoredListing[]; candidates: MatchCandidate[] } {
+    const candidates = this.match(ctx);
+    const filtered = candidates.filter((c) => this.passesFilters(c.listing, ctx, origin, chips, 'primary'));
+    const scored = rankCandidates(filtered, this.rankContext(ctx, origin, now));
+    return { scored: applySort(scored, ctx.sort), candidates };
   }
 
   /** Expected/seasonal/evergreen suggestions: relaxed status class, loose filters. */
   private runExpected(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): ScoredListing[] {
-    const candidates = this.matchAndFilter(ctx, origin, chips, 'expected');
+    const candidates = this.match(ctx).filter((c) => this.passesFilters(c.listing, ctx, origin, chips, 'expected'));
     return rankCandidates(candidates, this.rankContext(ctx, origin, now));
   }
 
-  private matchAndFilter(
-    ctx: SearchContext,
-    origin: ResolvedOrigin | null,
-    chips: string[],
-    mode: 'primary' | 'expected',
-  ): MatchCandidate[] {
+  /** Alias-expand + text-match the context into a candidate set (no filtering yet). */
+  private match(ctx: SearchContext): MatchCandidate[] {
     const expanded = this.aliases.expand(ctx.terms);
-    const listings = this.repo.all();
-    const candidates = this.matcher.match(expanded, listings);
-    const matchedAliases = expanded.matchedAliases;
-
-    return candidates
-      .filter((c) => this.passesFilters(c.listing, ctx, origin, chips, mode))
-      // stash matched aliases for explainability without widening the candidate type
-      .map((c) => Object.assign(c, { _matchedAliases: matchedAliases }));
+    const candidates = this.matcher.match(expanded, this.repo.all());
+    // stash matched aliases for explainability without widening the candidate type
+    return candidates.map((c) => Object.assign(c, { _matchedAliases: expanded.matchedAliases }));
   }
 
   private passesFilters(
@@ -210,29 +234,10 @@ export class SearchEngine {
     ctx: SearchContext,
     origin: ResolvedOrigin | null,
     chips: string[],
-    mode: 'primary' | 'expected',
+    mode: ResultMode,
   ): boolean {
-    if (isHidden(listing)) return false;
-    if (mode === 'primary' && !isPrimaryResult(listing)) return false;
-    if (mode === 'expected' && !isExpectedSection(listing)) return false;
-
-    // Region chips (additive, hierarchical). Independent of radius.
-    if (!matchesRegion([listing.municipalityId, listing.displayArea, listing.neighbourhood], this.regions, chips)) {
-      return false;
-    }
-    // Radius (only when we have an origin).
-    if (origin && !withinRadius(origin.geo, listing.geo, ctx.radiusKm)) return false;
-    // Age (orthogonal).
-    if (!matchesAge(listing, ctx.ageBands)) return false;
-
-    if (mode === 'primary') {
-      // Strict temporal + cost + status chips for the primary list.
-      if (!matchesDate(listing, ctx.date)) return false;
-      if (!matchesTimeOfDay(listing, ctx.timeOfDay)) return false;
-      if (!matchesCost(listing, { free: ctx.costFree, includeUnknown: ctx.includeUnknownCost, maxCad: ctx.costMaxCad })) return false;
-      if (!matchesStatus(listing, { bookableNow: ctx.bookableNow, rainyDay: ctx.rainyDay, dropIn: ctx.dropIn })) return false;
-    }
-    return true;
+    // Single source of truth, shared with the facet counter — see filters/predicate.ts.
+    return passesAllFilters(listing, { ctx, origin, regionChipIds: chips, mode }, { regions: this.regions });
   }
 
   private rankContext(ctx: SearchContext, origin: ResolvedOrigin | null, now: Date): RankContext {

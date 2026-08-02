@@ -42,6 +42,23 @@ export class RegionHierarchy {
     return this.byId.get(id)?.centroid ?? null;
   }
 
+  /**
+   * Every region at one level, ordered by name. Lets consumers derive the chip vocabulary
+   * from the hierarchy itself — the area facet counts (lib/search/facets.ts) use this so the
+   * rail's area options can come from the data rather than a hard-coded list in the UI.
+   *
+   * The ordering is this method's own, deliberately NOT the source's: the live `region`
+   * query carries no ORDER BY, so row order there is whatever Postgres returns and could
+   * differ between cache refreshes — which would silently reshuffle the area chips in front
+   * of a parent. Sorted by name (id as tie-break) it is stable everywhere; a UI that wants a
+   * different order (by size, by proximity) has the names and can impose its own.
+   */
+  atLevel(level: RegionLevel): Region[] {
+    return [...this.byId.values()]
+      .filter((r) => r.level === level)
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  }
+
   /** A region id + all transitive descendants (Vancouver → its sub-areas). */
   descendantIds(id: string): string[] {
     const out: string[] = [];

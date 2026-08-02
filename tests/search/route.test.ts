@@ -137,3 +137,47 @@ describe('GET /api/search — precise saved-home geocoding (Task 36)', () => {
     expect(body.origin.geo.lng).toBeCloseTo(-123.1336, 2);
   });
 });
+
+describe('GET /api/search — facet counts for the filter UI (facets=1)', () => {
+  // Counts ride along with the search that produced them rather than living on a second
+  // endpoint, so the filter UI gets results and counts from one request — see the note in
+  // buildSearchRequest for why a separate /facets route would double the pipeline cost.
+  it('omits facets unless they are asked for', async () => {
+    const { body } = await call('q=open+gym&minResults=1');
+    expect(body.facets).toBeUndefined();
+  });
+
+  it('returns per-value counts for every filter group, agreeing with the result total', async () => {
+    const { body } = await call('q=open+gym&facets=1&minResults=0');
+    expect(body.facets.total).toBe(body.total);
+    expect(body.facets.groups.map((g: { key: string }) => g.key)).toEqual(
+      expect.arrayContaining(['when', 'timeOfDay', 'ages', 'areas', 'quick', 'costMax', 'category'])
+    );
+    const ages = body.facets.groups.find((g: { key: string }) => g.key === 'ages');
+    expect(ages.values.map((v: { value: string }) => v.value)).toEqual([
+      'any', 'under2', '2-4', '5-9', '10-14', '15+',
+    ]);
+    expect(ages.values.every((v: { count: number }) => Number.isInteger(v.count))).toBe(true);
+  });
+
+  it('counts against the filters already applied, and marks them selected', async () => {
+    const { body } = await call('q=open+gym&region=van&facets=1&minResults=0');
+    const areas = body.facets.groups.find((g: { key: string }) => g.key === 'areas');
+    expect(areas.values.find((v: { value: string }) => v.value === 'van').selected).toBe(true);
+    // Every listed result is in Vancouver, so the Vancouver count is the whole result set…
+    expect(areas.values.find((v: { value: string }) => v.value === 'van').count).toBe(body.total);
+    // …while the other areas still report what SWITCHING to them would give (drop-one).
+    const nvan = areas.values.find((v: { value: string }) => v.value === 'nvan');
+    const { body: nvanBody } = await call('q=open+gym&region=nvan&facets=1&minResults=0');
+    expect(nvan.count).toBe(nvanBody.total);
+  });
+
+  it('adds the radius group only once an origin is in play', async () => {
+    const { body: noOrigin } = await call('q=open+gym&facets=1&minResults=0');
+    expect(noOrigin.facets.groups.some((g: { key: string }) => g.key === 'radius')).toBe(false);
+    const { body: nearMe } = await call('q=open+gym&lat=49.26&lng=-123.07&facets=1&minResults=0');
+    const radius = nearMe.facets.groups.find((g: { key: string }) => g.key === 'radius');
+    expect(radius.values.map((v: { value: string }) => v.value)).toEqual(['5', '10', '20']);
+    expect(radius.values.find((v: { value: string }) => v.value === '10').selected).toBe(true);
+  });
+});
