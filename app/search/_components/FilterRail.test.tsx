@@ -120,6 +120,41 @@ describe('FilterRail — optional facet counts (Proposal C)', () => {
     expect(tag).toContain('href=');
   });
 
+  it('counts area chips in DATABASE mode, where the facet value is a region UUID', () => {
+    // THE BUG THIS PINS, and why it was invisible until it was probed against the deployed
+    // build: `areas` is the one data-driven group. In fixture mode its values ARE the chip
+    // ids, so a naive value===id lookup works locally and in every unit test. In database
+    // mode the values are region UUIDs carrying a `label`, so the same lookup silently
+    // matches nothing and the Areas group renders with NO counts at all — no error, no
+    // warning, just the one group a parent most needs numbers on, quietly bare in
+    // production. Measured on staging: values like "10000000-…-0010" / label "Vancouver".
+    const dbFacets: FacetCounts = {
+      total: 143,
+      groups: [
+        {
+          key: 'areas',
+          selection: 'multi',
+          values: [
+            { value: 'any', count: 143, selected: true },
+            { value: '10000000-0000-0000-0000-000000000010', label: 'Vancouver', count: 96, selected: false },
+            // The two chips whose SHORT copy differs from the region's real name — the
+            // case a plain label===label match would miss.
+            { value: '10000000-0000-0000-0000-000000000011', label: 'North Vancouver', count: 28, selected: false },
+            { value: '10000000-0000-0000-0000-000000000012', label: 'West Vancouver', count: 0, selected: false },
+          ],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(<FilterRail state={DEFAULT_STATE} savedLocation={null} facets={dbFacets} />);
+    const areas = html.slice(html.indexOf('id="kf-fg-areas"'), html.indexOf('id="kf-fg-quick"'));
+    expect(areas).toContain('96 matching');
+    expect(areas).toContain('28 matching');
+    // A real zero still reads as a zero, not as "no data".
+    expect(chipTag(areas, 'West Van')).toContain('data-empty="true"');
+    // And a chip the payload says nothing about carries no invented numeral.
+    expect(chipTag(areas, 'Richmond')).not.toContain('kf-fchip__n');
+  });
+
   it('never invents a count for a value the facets do not carry', () => {
     expect(facetCount(FACETS, 'when', 'never')).toBeNull();
     const html = renderToStaticMarkup(<FilterRail state={DEFAULT_STATE} savedLocation={null} facets={FACETS} />);

@@ -41,12 +41,26 @@ export const SORT_OPTIONS: { key: SearchSort; label: string; sentence: string }[
 // resolves against the region hierarchy (each chip unions its subtree). Ids match the
 // hierarchy the current (fixture-default) backend resolves; once live region data lands
 // these options should be served by the backend rather than hard-coded (see follow-ups).
-export const REGION_CHIPS: { id: string; label: string }[] = [
-  { id: 'van', label: 'Vancouver' },
-  { id: 'nvan', label: 'North Van' },
-  { id: 'wvan', label: 'West Van' },
-  { id: 'bby', label: 'Burnaby' },
-  { id: 'rmd', label: 'Richmond' },
+/**
+ * `regionName` is the region's REAL name as the data carries it, which is not always the
+ * chip's copy ("North Van" on a 200px rail, "North Vancouver" in the region hierarchy).
+ *
+ * It exists for ONE job: matching a facet count back to its chip. The facet payload is
+ * data-driven for this group alone — in fixture mode its values are these chip ids, but in
+ * database mode they are region UUIDs carrying a `label`, so an id-only lookup silently
+ * finds nothing and the Areas group renders bare in production while every local test
+ * passes. See FilterRail's `countFor`.
+ *
+ * It is display/lookup metadata only. `id` remains the sole URL vocabulary — parseSearchState
+ * still accepts exactly these five ids and nothing else, and no facet value is ever placed
+ * in a `region=` param (a UUID would be silently dropped by that fixed-vocabulary parser).
+ */
+export const REGION_CHIPS: { id: string; label: string; regionName: string }[] = [
+  { id: 'van', label: 'Vancouver', regionName: 'Vancouver' },
+  { id: 'nvan', label: 'North Van', regionName: 'North Vancouver' },
+  { id: 'wvan', label: 'West Van', regionName: 'West Vancouver' },
+  { id: 'bby', label: 'Burnaby', regionName: 'Burnaby' },
+  { id: 'rmd', label: 'Richmond', regionName: 'Richmond' },
 ];
 const REGION_ORDER = REGION_CHIPS.map((r) => r.id);
 

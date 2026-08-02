@@ -244,6 +244,32 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
     return facetCount(facets, key, value) ?? undefined;
   };
 
+  /**
+   * Areas is the ONE data-driven group, and it needs its own lookup.
+   *
+   * Every other group's facet values come from a fixed vocabulary shared with the URL
+   * ('today', '5-9', 'free'), so `value === chip id` always holds. Areas values come from the
+   * region hierarchy: in fixture mode they happen to be these same chip ids, but in DATABASE
+   * mode they are region UUIDs carrying a `label`. An id-only lookup therefore matches
+   * nothing in production while passing every local test — the Areas group would render with
+   * no counts at all, silently, on the one group a parent most needs numbers on.
+   *
+   * Matching falls back to the region's real name (REGION_CHIPS[].regionName) rather than the
+   * chip's short copy, because the two differ for North/West Vancouver.
+   *
+   * NOTE the direction of travel: the facet VALUE is never used to build a href. The links
+   * below are still built from the chip id, because `region=` is parsed against a
+   * fixed five-id vocabulary and a UUID round-tripped through it would be silently dropped.
+   */
+  const areaCountFor = (chip: { id: string; regionName: string }): number | undefined => {
+    if (!facets) return undefined;
+    const group = facets.groups.find((g) => g.key === 'areas');
+    const match = group?.values.find(
+      (v) => v.value === chip.id || v.label?.toLowerCase() === chip.regionName.toLowerCase(),
+    );
+    return match?.count;
+  };
+
   const groups: Record<RailGroupId, ReactNode> = {
     /* When — date quick-pick (radio-like: one at a time). Picking one clears any custom
        date range (from/to) — the quick-pick and the range are mutually-exclusive date intent. */
@@ -332,7 +358,7 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
               key={r.id}
               href={hrefFor(state, { regions: toggleRegion(state, r.id) })}
               active={active}
-              count={countFor('areas', r.id)}
+              count={areaCountFor(r)}
             >
               {r.label}
             </Chip>
