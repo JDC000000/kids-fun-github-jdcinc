@@ -65,11 +65,19 @@ export async function auditRoute(
   testInfo: TestInfo,
   route: string,
   label: string,
+  /**
+   * Optional step run after load and before axe, for a surface that only exists once a
+   * parent has interacted — e.g. the mobile filter bottom sheet, which is a modal dialog
+   * that no URL can reach. Without this the sweep could only ever audit the closed state,
+   * and a dialog's accessibility lives entirely in its open one.
+   */
+  prepare?: (page: Page) => Promise<void>,
 ): Promise<RouteAuditResult> {
   await page.goto(route, { waitUntil: 'load' });
   // Give any late client island (e.g. the home "on now" strip) a chance to settle;
   // never let idle-wait flakiness fail an audit — the SSR DOM is already present.
   await page.waitForLoadState('networkidle').catch(() => {});
+  if (prepare) await prepare(page);
 
   const project = testInfo.project.name;
   const colorScheme = /dark/i.test(project) ? 'dark' : 'light';

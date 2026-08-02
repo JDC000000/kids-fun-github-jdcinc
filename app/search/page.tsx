@@ -11,6 +11,8 @@ import { listSavedSearches } from '@/lib/db/saved-search';
 import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { SearchBar } from './_components/SearchBar';
 import { FilterRail, type SavedLocationInfo } from './_components/FilterRail';
+import { MobileFilterSheet } from './_components/MobileFilterSheet';
+import { activeFilterCount, otherFilterChips, whenChipLabel, whereChipLabel } from './_lib/filter-summary';
 import { SearchResultsView } from './_components/SearchResultsView';
 import { SaveSearchButton } from './_components/SaveSearchButton';
 import { ResumeSearch } from './_components/ResumeSearch';
@@ -322,7 +324,23 @@ export default async function SearchPage({
       </header>
 
       <SearchBar state={state} />
-      <FilterRail state={state} savedLocation={savedLocation} />
+
+      {/* Filters (Blueprint §04 / Screen 5). ONE rail, relocated by viewport: the inline
+          column it has always been at >=768px, and a sticky summary bar + bottom sheet at
+          <=767px, where the permanently-expanded stack put ~1.7 viewport-heights of chrome
+          above the first result. MobileFilterSheet is a client island that WRAPS the
+          server-rendered rail rather than replacing it, so every chip stays a real URL
+          <Link> and the deep-link/back-button/quick-start architecture is unchanged. */}
+      <MobileFilterSheet
+        whenLabel={whenChipLabel(state)}
+        whereLabel={whereChipLabel(state, savedLocation)}
+        activeCount={activeFilterCount(state)}
+        otherChips={otherFilterChips(state)}
+        clearHref={hrefFor(state, CLEARED_FILTERS)}
+        resultCount={total}
+      >
+        <FilterRail state={state} savedLocation={savedLocation} />
+      </MobileFilterSheet>
 
       {/* Anon memory (T26): on an active search this quietly refreshes the on-device "last
           search"; on a bare landing it offers an explicit, dismissible resume of it. Rendered

@@ -12,7 +12,16 @@ import { auditRoute } from './axe-helper';
 // without a database (app/preview/_data/fixtures.ts), so the audit is stable regardless
 // of DB contents — the same reason the existing public specs are DB-independent.
 
-const ANON_ROUTES: { route: string; label: string }[] = [
+interface AnonRoute {
+  route: string;
+  label: string;
+  /** Phone viewport, for a surface that only exists below the 768px breakpoint. */
+  viewport?: { width: number; height: number };
+  /** Interaction that reveals the surface under audit (see auditRoute's `prepare`). */
+  prepare?: (page: import('@playwright/test').Page) => Promise<void>;
+}
+
+const ANON_ROUTES: AnonRoute[] = [
   { route: '/', label: 'home' },
   { route: '/search', label: 'search (no query)' },
   { route: '/search?q=swim&region=van', label: 'search (query + region filter)' },
@@ -38,12 +47,28 @@ const ANON_ROUTES: { route: string; label: string }[] = [
   // page (static approved prose — renders identically regardless of DB state), so it
   // belongs in the anon WCAG-AA sweep in both the light and dark projects.
   { route: '/privacy', label: 'privacy policy' },
+  // Mobile filter bottom sheet (Blueprint §04). A modal dialog no URL can reach, on the
+  // breakpoint most parents are on — so it needs both a phone viewport AND an interaction
+  // to exist at all. Left out, the sweep would report "/search is clean" while never having
+  // seen the one component on that page with focus management, aria-modal and a scroll lock.
+  // The functional gate on it is hard (search-mobile-filter-sheet.public.spec.ts); this entry
+  // adds the durable light+dark artifact the rest of the app already gets.
+  {
+    route: '/search?region=nvan&when=today&age=5-9',
+    label: 'search (mobile filter sheet, open)',
+    viewport: { width: 390, height: 844 },
+    prepare: async (page) => {
+      await page.locator('.kf-mfilters__btn--all').click();
+      await page.locator('#kf-msheet-panel[role="dialog"]').waitFor({ state: 'visible' });
+    },
+  },
 ];
 
 test.describe('a11y audit — anonymous routes', () => {
-  for (const { route, label } of ANON_ROUTES) {
+  for (const { route, label, viewport, prepare } of ANON_ROUTES) {
     test(`axe: ${label}`, async ({ page }, testInfo) => {
-      await auditRoute(page, testInfo, route, label);
+      if (viewport) await page.setViewportSize(viewport);
+      await auditRoute(page, testInfo, route, label, prepare);
     });
   }
 });

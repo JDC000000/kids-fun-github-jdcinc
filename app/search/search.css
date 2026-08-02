@@ -614,6 +614,365 @@
   color: var(--ink-muted);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * MOBILE FILTER SHEET — sticky bar + bottom sheet (Visual Blueprint v0.2 §04 /
+ * Screen 5). Phone only (<=767px). See MobileFilterSheet.tsx for the rationale.
+ *
+ * THE DEFAULT STATE IN THIS BLOCK IS THE DESKTOP ONE, ON PURPOSE. `.kf-msheet`
+ * and `.kf-msheet__body` are `display: contents`, so at >=768px `.kf-filters`
+ * stays a direct flex child of `.kf-app` and every rule in the desktop/tablet
+ * layer below (the wrapped rails at 768px, the 2- and 3-column filter grids at
+ * 1024/1280px that shipped in fix/desktop-responsive-shell) applies unchanged —
+ * this component adds no wrapper to their cascade. Only the `max-width: 767px`
+ * block turns the same node into a sheet. Nothing here is inside a
+ * `min-width` query, so the desktop layer is untouched by construction.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* Desktop/tablet default: the sheet chrome does not exist and the panel is a
+   pass-through container around the inline rail. */
+.kf-msheet,
+.kf-msheet__body {
+  display: contents;
+}
+
+.kf-mfilters,
+.kf-msheet__head,
+.kf-msheet__foot,
+.kf-msheet__scrim {
+  display: none;
+}
+
+/* Screen-reader-only text. Used for the "N filters applied" phrase behind the
+   count badge — a bare numeral on a gear glyph is shape-only information. */
+.kf-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 767px) {
+  /* The search module stops being sticky here. It is ~245px tall — 29% of an
+     844px phone viewport — and pinning it AND the filter bar would put ~300px of
+     permanent chrome over the results (it is also the "tall sticky search bar"
+     half of the List->Map scroll-clamp bug). The filter bar is what a parent
+     needs pinned; the query field stays at the top of the page. >=768px keeps
+     the sticky search module exactly as it is today. */
+  .kf-sbar {
+    position: static;
+  }
+
+  /* Focus must never end up underneath the pinned bar (WCAG 2.4.11 Focus Not
+     Obscured): reserve its height on every scroll-into-view. */
+  html {
+    scroll-padding-top: 76px;
+  }
+
+  /* ── Sticky filter bar (Elevation 200) ── */
+  .kf-mfilters {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 25;
+    background: var(--surface);
+    border-bottom: 1px solid var(--hairline);
+    box-shadow: var(--e-200);
+  }
+
+  .kf-mfilters__row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .kf-mfilters__row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .kf-mfilters__btn {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 44px; /* our 44px standard — clears WCAG 2.5.8 AA (24px) and 2.5.5 AAA */
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    font: inherit;
+    text-align: left;
+    color: var(--ink);
+    background: var(--canvas);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    cursor: pointer;
+  }
+
+  /* Micro-label ABOVE the value, not beside it (same shape as the .kf-control
+     date/area control in the design system). Side by side, the uppercase label ate
+     the width and every value truncated to "Any d…" on a 390px phone — a summary
+     that has to be tapped to be read is not a summary. */
+  .kf-mfilters__btn-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.15;
+  }
+
+  .kf-mfilters__btn-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .kf-mfilters__btn-value {
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .kf-mfilters__caret,
+  .kf-mfilters__glyph {
+    flex: 0 0 auto;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  .kf-mfilters__btn--all {
+    flex: 0 0 auto;
+  }
+
+  /* Applied-count badge: fill + numeral, always paired with the visually-hidden
+     "N filters applied" phrase so it is never colour/shape-only. */
+  .kf-mfilters__count {
+    flex: 0 0 auto;
+    min-width: 20px;
+    padding: 0 6px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+    color: var(--confirmed-text);
+    background: var(--confirmed-bg);
+    border: 1px solid var(--confirmed-text);
+    border-radius: 9999px;
+  }
+
+  .kf-mfilters__summary {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 0;
+    padding: 0 12px 8px;
+    font-size: 12px;
+    color: var(--ink-secondary);
+  }
+
+  .kf-mfilters__summary-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .kf-mfilters__clear {
+    flex: 0 0 auto;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--anchor);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* ── The sheet ── */
+  .kf-msheet__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(16, 35, 22, 0.55);
+    animation: kf-msheet-fade var(--motion) both;
+  }
+
+  .kf-msheet[data-open='false'] {
+    display: none;
+  }
+
+  .kf-msheet[data-open='true'] {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    width: 100%;
+    max-width: 440px; /* match the .kf-app artboard so the sheet lines up with it */
+    margin-inline: auto;
+    max-height: 88vh;
+    max-height: 88dvh;
+    background: var(--surface);
+    border-top-left-radius: var(--r-sheet);
+    border-top-right-radius: var(--r-sheet);
+    box-shadow: var(--e-300);
+    animation: kf-msheet-rise 200ms cubic-bezier(0.2, 0, 0, 1) both;
+  }
+
+  .kf-msheet[data-open='true'] .kf-msheet__body {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .kf-msheet[data-open='true'] .kf-filters {
+    border-bottom: 0;
+  }
+
+  /* The panel itself is focused on open so the dialog announces before its contents.
+     It is not in the tab order (tabindex=-1) and is not an interactive control, so a
+     focus ring drawn around the whole sheet is noise, not an affordance — every real
+     control inside keeps its own. */
+  .kf-msheet[data-open='true']:focus,
+  .kf-msheet[data-open='true']:focus-visible {
+    outline: none;
+  }
+
+  /* Chips WRAP inside the sheet instead of scrolling off the right edge. The
+     horizontal scroll-snap rail is a thumb affordance for a rail squeezed into a
+     results page; in a sheet there is vertical room, and a parent should be able to
+     see every age band and area without discovering a hidden sideways scroll. Scoped
+     to the open sheet, so the /preview rails and the >=768px layout are untouched. */
+  .kf-msheet[data-open='true'] .kf-fgroup__rail {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    scroll-snap-type: none;
+  }
+
+  .kf-msheet__head {
+    display: block;
+    flex: 0 0 auto;
+    padding: 8px 12px 6px;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  /* Decorative sheet affordance. Nothing here is drag-operated — every action has
+     a button — so this can never become a WCAG 2.5.7 dragging-only control. */
+  .kf-msheet__grip {
+    display: block;
+    width: 40px;
+    height: 4px;
+    margin: 0 auto 8px;
+    border-radius: 9999px;
+    background: var(--neutral-300);
+  }
+
+  .kf-msheet__head-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .kf-msheet__title {
+    flex: 1 1 auto;
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+
+  .kf-msheet__clear {
+    flex: 0 0 auto;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--anchor);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .kf-msheet__close {
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font: inherit;
+    font-size: 16px;
+    color: var(--ink);
+    background: var(--canvas);
+    border: 1px solid var(--hairline);
+    border-radius: 9999px;
+    cursor: pointer;
+  }
+
+  .kf-msheet__foot {
+    display: block;
+    flex: 0 0 auto;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+    border-top: 1px solid var(--hairline);
+  }
+
+  .kf-msheet__live {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--ink-secondary);
+  }
+
+  .kf-msheet__live b {
+    color: var(--ink);
+  }
+}
+
+@keyframes kf-msheet-rise {
+  from {
+    transform: translateY(12%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes kf-msheet-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The sheet must not animate for a parent who asked for less motion (Blueprint
+   a11y: prefers-reduced-motion honoured). It still opens — only the transition
+   is removed, never the functionality. */
+@media (prefers-reduced-motion: reduce) {
+  .kf-msheet[data-open='true'],
+  .kf-msheet__scrim {
+    animation: none;
+  }
+}
+
 /* ── Desktop / tablet layer ───────────────────────────────────────────────────
  * Breakpoint scale and --kf-gutter are defined once in preview.css.
  *
