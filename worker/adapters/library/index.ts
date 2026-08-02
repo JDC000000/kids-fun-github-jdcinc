@@ -125,14 +125,43 @@ function categoryHint(title: string, typeNames: string[] = []): string | undefin
   return 'class_program';
 }
 
+/**
+ * Does BiblioCommons' own booking system say you must register to attend?
+ *
+ * NARROWED 2026-08-02 (QA round 139, F-16) — `maxSeats` and `cap` were dropped as
+ * triggers, and the reason is stronger than the "unmeasured breadth" this was originally
+ * flagged for. It was INTERNALLY INCOHERENT.
+ *
+ * `enabledMethods` is the set of registration methods the vendor has enabled, and
+ * `loginToRegister` is whether one of them needs an account. If BOTH are empty/false, the
+ * event offers NO WAY TO REGISTER AT ALL. `maxSeats`/`cap` alone therefore made this
+ * function assert "you must register" for an event the vendor provides no mechanism to
+ * register for — a claim that cannot be true whether or not anyone measures it. What those
+ * two fields actually mean is "the room holds N people", which is true of nearly every
+ * genuinely walk-in library storytime.
+ *
+ * That mattered because this feeds `StructuredRecord.registrationRequired`, which now
+ * EVICTS content from the default view (lib/search/filters/registration.ts). Wrongly
+ * evicting real drop-in storytimes is the expensive direction of error the whole design is
+ * built to avoid, so shipping the broad form behind a "known risk" comment — which is what
+ * the first version of this branch did — was not sufficient.
+ *
+ * MEASURED BLAST RADIUS OF THIS NARROWING: zero live rows. No configured library system
+ * sets `gatewayEventsUrl` (VPL and RPL both migrated to `rssEventsUrl` in Task 8), so this
+ * gateway path is retained generic capability and is not on any production run today. Which
+ * also means QA's suggested alternative — ship broad, then measure precision against live
+ * RPL data — was NOT EXECUTABLE as described: RPL never calls this function. There is no
+ * live gateway traffic to measure, so the choice had to be made on the logic, not deferred
+ * to data that cannot arrive.
+ *
+ * Deliberately kept as ONE function feeding both `bookingUrl` and the persisted boolean
+ * rather than forked into a broad-for-links / narrow-for-facts pair. An event you cannot
+ * register for has no booking page worth flagging either, and nothing is lost by dropping
+ * the url: `sourceUrl` already carries the identical link.
+ */
 function registrationRequired(event: BiblioCommonsGatewayEvent): boolean {
   const info = event.definition?.registrationInfo;
-  return Boolean(
-    info?.loginToRegister ||
-      (info?.enabledMethods && info.enabledMethods.length > 0) ||
-      info?.maxSeats ||
-      info?.cap
-  );
+  return Boolean(info?.loginToRegister || (info?.enabledMethods && info.enabledMethods.length > 0));
 }
 
 /**

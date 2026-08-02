@@ -1492,12 +1492,19 @@ heuristic, unchanged.
   carries a capacity signal; (d) `Spots` is empty on 17 of 18 records on the real drop-in
   calendar. **This needs its own column or an explicit precedence rule — a design decision,
   not wiring.**
-- **F-16 (low) — the library boolean's precision is unmeasured.** `registrationRequired` is
-  true when `loginToRegister || enabledMethods.length || maxSeats || cap`. `loginToRegister`
-  is unambiguous; a bare seat cap arguably means registration is AVAILABLE rather than
-  REQUIRED. Wiring it through does not change its meaning, but this column is now the first
-  thing that makes measuring it possible. **Measure against live RPL data before hiding on
-  it by default.**
+- **F-16 (low) — NARROWED, then still worth measuring.** The derivation was originally
+  `loginToRegister || enabledMethods.length || maxSeats || cap`. QA round 139 flagged the
+  breadth; on inspection the last two terms were not merely unmeasured but INCOHERENT — with
+  no enabled method and no login requirement the vendor offers no way to register at all,
+  while `maxSeats`/`cap` only state room capacity, which is true of nearly every walk-in
+  storytime. Since this field now evicts content from the default view, that would have
+  removed real drop-in programming. **Narrowed to `loginToRegister || enabledMethods.length
+  > 0`, at zero live cost** — no configured system uses the gateway path that produces it
+  (VPL and RPL both moved to `rssEventsUrl` in Task 8), which also means QA's suggested
+  alternative of measuring precision against live RPL data was not executable: RPL never
+  calls it. Residual breadth remains (an event with an enabled method may still admit
+  walk-ins) and is still unmeasured. **Measure before extending this signal to another
+  family.**
 
 ---
 

@@ -109,6 +109,7 @@ describe.skipIf(!hasDb)('Series resolution (G-T5-4)', () => {
       return row.registration_required;
     };
 
+    try {
     const required = await upsertOccurrence(pool, seriesId, { ...base, sourceRecordId: 'tri-true', registrationRequired: true });
     const dropIn = await upsertOccurrence(pool, seriesId, { ...base, sourceRecordId: 'tri-false', registrationRequired: false });
     const silent = await upsertOccurrence(pool, seriesId, { ...base, sourceRecordId: 'tri-null' });
@@ -125,5 +126,17 @@ describe.skipIf(!hasDb)('Series resolution (G-T5-4)', () => {
     expect(reIngest.created).toBe(false);
     expect(reIngest.occurrenceId).toBe(dropIn.occurrenceId);
     expect(await read(dropIn.occurrenceId)).toBe(true);
+    } finally {
+      // Same reason as the roundtrip test in tests/search/postgres-repository.test.ts: these
+      // rows are visible to every DB-lane suite that reads a global aggregate, and left
+      // behind they accumulate across runs until they displace other suites' fixtures.
+      // Scoped to this test's own source, never a blanket DELETE.
+      await query(
+        `DELETE FROM activity_occurrence WHERE series_id IN (SELECT id FROM activity_series WHERE source_id = $1)`,
+        [source.id]
+      );
+      await query(`DELETE FROM activity_series WHERE source_id = $1`, [source.id]);
+      await query(`DELETE FROM source WHERE id = $1`, [source.id]);
+    }
   });
 });

@@ -129,14 +129,39 @@ describe('library (BiblioCommons JSON gateway) — a structured flag, authoritat
     expect(record.bookingUrl).toBeUndefined();
   });
 
-  it('treats a bare seat cap as registration, matching the existing derivation exactly', async () => {
+  it('does NOT treat a bare seat cap as registration — there is no mechanism to register with', async () => {
+    // NARROWED in QA round 139 (F-16). An earlier version of this branch asserted `true`
+    // here, matching the adapter's pre-existing derivation. That was incoherent, not merely
+    // broad: enabledMethods is empty and loginToRegister is false, so the vendor offers NO
+    // WAY to register — while maxSeats/cap only say how many people the room holds, which is
+    // true of nearly every walk-in library storytime. Because this field now evicts content
+    // from the default view, the broad form would have removed real drop-in programming.
+    // ONE extractGateway call per test, deliberately: politeFetch enforces a ~3s per-source
+    // rate-limit floor, so two live-path fetches in a single `it` blow the 5s default
+    // timeout. `maxSeats` gets its own case below rather than being batched in here.
     const [capOnly] = await extractGateway([
       { id: 'evt-cap', title: 'Craft Session', registrationInfo: { enabledMethods: [], loginToRegister: false, maxSeats: null, cap: 12 } },
     ]);
-    // Deliberately NOT re-litigated here: this is the boolean the adapter already computed
-    // and used for bookingUrl. Wiring it through must not silently change its meaning. Its
-    // precision against live data is flagged in lib/search/filters/registration.ts.
-    expect(capOnly.registrationRequired).toBe(true);
+    expect(capOnly.registrationRequired).toBe(false);
+    expect(capOnly.bookingUrl).toBeUndefined();
+  });
+
+  it('does NOT treat a bare maxSeats as registration either', async () => {
+    const [seatsOnly] = await extractGateway([
+      { id: 'evt-seats', title: 'Baby Storytime', registrationInfo: { enabledMethods: [], loginToRegister: false, maxSeats: 30, cap: null } },
+    ]);
+    expect(seatsOnly.registrationRequired).toBe(false);
+    expect(seatsOnly.bookingUrl).toBeUndefined();
+  });
+
+  it('still flags a capped event that DOES expose a registration method', () => {
+    // The narrowing must not go too far the other way: a cap alongside a real enabled method
+    // is still registration-required. The cap is simply not what makes it so.
+    return extractGateway([
+      { id: 'evt-both', title: 'Lego Club', registrationInfo: { enabledMethods: ['ONLINE'], loginToRegister: false, maxSeats: 20, cap: 20 } },
+    ]).then(([record]) => {
+      expect(record.registrationRequired).toBe(true);
+    });
   });
 
   it('reports both verdicts in one payload rather than collapsing the calendar to a single value', async () => {

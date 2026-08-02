@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { getPool, query, closePool } from '../../lib/db/client';
+import { resolveSeries } from '../../worker/core/series';
+import { upsertOccurrence } from '../../worker/core/upsert';
+import { isRegistrationShaped } from '../../lib/search/filters/registration';
 import { loadPostgresListingById, loadPostgresListings } from '../../lib/search/postgres-repository';
 import { SearchEngine } from '../../lib/search/engine';
 import { InMemoryListingRepository } from '../../lib/search/repository';
@@ -223,5 +226,105 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       id: needsReviewId,
       statusState: 'needs_review',
     });
+  });
+
+  // ── Option A / QA round 139 F1: the WRITE -> READ -> PREDICATE chain ──────────────────
+  //
+  // The adapter and predicate halves were unit-tested independently and both were correct,
+  // but nothing exercised the SQL between them. Six mutations survived that gap: dropping
+  // the column from listingSelectSql, coercing it with `?? false` in rowToListing, and the
+  // upsert's EXCLUDED-vs-COALESCE distinction among them. Each of those silently converts
+  // "the source said nothing" (NULL, ~99% of the corpus) into "the source says drop-in", or
+  // loses the signal entirely, with every unit test still green.
+  //
+  // This drives the REAL chain: upsertOccurrence writes -> loadPostgresListings reads ->
+  // isRegistrationShaped decides. No stubs anywhere in the middle.
+  it('round-trips registration_required through SQL and into the search predicate', async () => {
+    const pool = getPool();
+    const suffix = crypto.randomUUID();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name, authority_tier, terms_status)
+       VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
+      [`Registration Roundtrip Source ${suffix}`]
+    );
+    const { seriesId } = await resolveSeries(pool, {
+      sourceId: source.id,
+      canonicalTitle: `Registration Roundtrip ${suffix}`,
+    });
+
+    // Titles chosen so the TITLE HEURISTIC and the PERSISTED FACT disagree in both
+    // directions. If the column is dropped or coerced anywhere along the way, the heuristic
+    // answers instead and these assertions flip — which is exactly what the survivors did.
+    const write = async (recordId: string, title: string, registrationRequired?: boolean) => {
+      const { occurrenceId } = await upsertOccurrence(
+        pool,
+        seriesId,
+        {
+          sourceRecordId: recordId,
+          title,
+          startDatetimeUtc: '2026-09-17T17:30:00.000Z',
+          endDatetimeUtc: '2026-09-17T18:00:00.000Z',
+          costStatus: 'free' as const,
+          sourceUrl: 'https://example.org/events/reg-roundtrip',
+          ...(registrationRequired === undefined ? {} : { registrationRequired }),
+        },
+        { statusState: 'confirmed', confidenceLabel: 'high' }
+      );
+      return occurrenceId;
+    };
+
+    // Drop-in-SHAPED title, but the source says you must register.
+    const factTrueId = await write(`rt-true-${suffix}`, `Baby Storytime ${suffix}`, true);
+    // Course-SHAPED title, but the source says you need not.
+    const factFalseId = await write(`rt-false-${suffix}`, `Skating Level 1 ${suffix}`, false);
+    // The silent majority.
+    const factNullId = await write(`rt-null-${suffix}`, `Frozen Ballet Dance Camp ${suffix}`);
+
+    // CLEANUP IS MANDATORY HERE, not hygiene. These rows are confirmed + future-dated, so
+    // they enter the shared DB lane's read model and are visible to every suite that reads a
+    // global aggregate. Leaving them behind broke tests/email/weekly_send.test.ts (they
+    // displaced its "new activity") and this file's own engine test — the exact cross-file
+    // interference vitest.workspace.ts documents. try/finally so it runs on assertion
+    // failure too, otherwise one red test poisons every subsequent run.
+    try {
+    const listings = await loadPostgresListings(pool, { limit: 1000 });
+    const byId = (id: string) => listings.find((l) => l.id === id)!;
+
+    // 1. The column survives the SELECT and reaches ListingRecord with its value intact.
+    expect(byId(factTrueId).registrationRequired).toBe(true);
+    expect(byId(factFalseId).registrationRequired).toBe(false);
+    // 2. NULL stays NULL. `?? false` in rowToListing would make this `false` and assert
+    //    "drop-in" over the whole silent corpus; a dropped column would make it `undefined`.
+    expect(byId(factNullId).registrationRequired).toBeNull();
+
+    // 3. The predicate consumes it end-to-end, overriding the title in BOTH directions.
+    expect(isRegistrationShaped(byId(factTrueId))).toBe(true);
+    expect(isRegistrationShaped(byId(factFalseId))).toBe(false);
+    // 4. …and the silent row still falls through to the unchanged heuristic ('camp').
+    expect(isRegistrationShaped(byId(factNullId))).toBe(true);
+
+    // 5. The DETAIL path reads the same column through the same SQL, so a card and the page
+    //    it opens can never disagree about whether registration is required.
+    for (const id of [factTrueId, factFalseId, factNullId]) {
+      const detail = await loadPostgresListingById(pool, id);
+      expect(detail!.registrationRequired).toBe(byId(id).registrationRequired);
+      expect(isRegistrationShaped(detail!)).toBe(isRegistrationShaped(byId(id)));
+    }
+
+    // 6. Re-ingest CORRECTS the row (EXCLUDED overwrite, not COALESCE) — verified through
+    //    the read model rather than a direct SELECT, so the whole chain has to carry it.
+    await write(`rt-false-${suffix}`, `Skating Level 1 ${suffix}`, true);
+    const reread = await loadPostgresListings(pool, { limit: 1000 });
+    expect(reread.find((l) => l.id === factFalseId)!.registrationRequired).toBe(true);
+    } finally {
+      // Scoped to THIS test's own source id — never a blanket DELETE over the table, which
+      // is its own well-documented way to break neighbouring suites.
+      await query(
+        `DELETE FROM activity_occurrence WHERE series_id IN (SELECT id FROM activity_series WHERE source_id = $1)`,
+        [source.id]
+      );
+      await query(`DELETE FROM activity_series WHERE source_id = $1`, [source.id]);
+      await query(`DELETE FROM source WHERE id = $1`, [source.id]);
+    }
   });
 });

@@ -15,7 +15,16 @@ import {
   recordAssertsRegistration,
   resolveRegistrationRequired,
 } from '../../worker/adapters/perfectmind/parse';
-import { CLASSES_BOOKING_TYPE, type BookMe4Class, type CalendarFetchResult } from '../../worker/adapters/perfectmind/client';
+import {
+  CLASSES_BOOKING_TYPE,
+  RequestBudget,
+  fetchCalendar,
+  fetchTenant,
+  selectDropInCalendars,
+  type BookMe4Category,
+  type BookMe4Class,
+  type CalendarFetchResult,
+} from '../../worker/adapters/perfectmind/client';
 import { getPerfectMindTenant } from '../../worker/adapters/perfectmind/config';
 
 const nvrc = getPerfectMindTenant('nvrc')!;
@@ -178,5 +187,99 @@ describe('perfectmind — against the REAL committed vendor payloads', () => {
     expect(verdicts.filter((v) => v === true)).toHaveLength(2);
     expect(verdicts.filter((v) => v === undefined)).toHaveLength(3);
     expect(verdicts.filter((v) => v === false)).toHaveLength(0);
+  });
+});
+
+// ── QA round 139 F1: the bookingType CARRY, not just the rule that reads it ────────────
+//
+// `calendarAssertsDropIn` was well covered, but nothing proved the value it reads actually
+// arrives. bookingType is set once in selectDropInCalendars and copied at TWO separate
+// CalendarFetchResult construction sites in client.ts (the success path and the
+// per-calendar failure path). Deleting either copy left every previous test green while
+// silently downgrading real drop-in content to "unknown" — a whole-family regression with
+// no failing assertion behind it.
+describe('perfectmind — bookingType survives the fetch boundary', () => {
+  const category: BookMe4Category = {
+    Name: DROP_IN_CATEGORY,
+    Calendars: [
+      { Id: 'cal-dropin', Name: 'Open Gym Schedules', BookingTypeInfo: { BookingType: CLASSES_BOOKING_TYPE }, BookingLink: '/x' },
+      { Id: 'cal-course', Name: 'Registered Courses', BookingTypeInfo: { BookingType: 3 }, BookingLink: '/y' },
+    ],
+  };
+
+  it('records the vendor BookingType on selection, and drops the Courses surface', () => {
+    const { calendars } = selectDropInCalendars(nvrc, [category]);
+    expect(calendars).toHaveLength(1);
+    expect(calendars[0]).toMatchObject({ calendarId: 'cal-dropin', bookingType: CLASSES_BOOKING_TYPE });
+    // The recorded value is what makes the drop-in assertion possible downstream.
+    expect(calendarAssertsDropIn(nvrc, calendars[0])).toBe(true);
+  });
+
+  it('carries it onto the SUCCESS-path fetch result, end to end into a real verdict', async () => {
+    const [discovered] = selectDropInCalendars(nvrc, [category]).calendars;
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({
+          classes: [
+            {
+              EventId: 'e1',
+              EventName: '$3 Open Gym 8yrs+ Delbrook',
+              OccurrenceDate: '20260814',
+              EventTimeDescription: '10:00 am - 11:30 am',
+              Facility: 'Gymnasium',
+              Location: 'Delbrook Community Recreation Centre',
+              BookButtonText: 'More Info',
+            },
+          ],
+          nextKey: '0001-01-01',
+        }),
+        { status: 200 }
+      )) as unknown as typeof fetch;
+
+    const result = await fetchCalendar(
+      nvrc,
+      discovered,
+      { budget: new RequestBudget('nvrc', 20), fetchImpl, sleepImpl: async () => {} },
+      undefined,
+      1
+    );
+    expect(result.bookingType).toBe(CLASSES_BOOKING_TYPE);
+
+    // The point of the carry: parse produces a real drop-in FACT, not "unknown".
+    const { records, stats } = parseTenantCalendars(nvrc, [result], { window: { startDate: '2026-08-01', endDate: '2026-08-31' } });
+    expect(records).toHaveLength(1);
+    expect(records[0].registrationRequired).toBe(false);
+    expect(stats.registrationUnknown).toBe(0);
+  });
+
+  it('carries it onto the FAILURE-path result too, driven through fetchTenant', async () => {
+    // Deliberately driven through fetchTenant rather than fetchCalendar: the failure-path
+    // CalendarFetchResult is built inside fetchTenant's catch block, which is a SECOND
+    // construction site from the success path. An earlier version of this test only asserted
+    // that fetchCalendar rejects — which passes with the bookingType copy deleted, i.e. it
+    // was named after a property it did not actually check.
+    const fetchImpl = (async (url: unknown) => {
+      if (String(url).includes('GetCategoriesDataV2')) {
+        return new Response(JSON.stringify([category]), { status: 200 });
+      }
+      // Malformed body on the classes endpoint → this calendar fails, the run continues.
+      return new Response('{"classes":[', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchTenant(
+      nvrc,
+      { budget: new RequestBudget('nvrc', 40), fetchImpl, sleepImpl: async () => {} },
+      1
+    );
+
+    expect(result.calendars).toHaveLength(1);
+    const failed = result.calendars[0];
+    expect(failed.failure).toBeTruthy();
+    expect(failed.classes).toHaveLength(0);
+    // THE ASSERTION THAT MATTERS: the provenance survives the failure path too, so the two
+    // construction sites cannot drift. Nothing depends on it today (a failed calendar
+    // carries no records), which is exactly why the drift would be invisible.
+    expect(failed.bookingType).toBe(CLASSES_BOOKING_TYPE);
+    expect(calendarAssertsDropIn(nvrc, failed)).toBe(true);
   });
 });

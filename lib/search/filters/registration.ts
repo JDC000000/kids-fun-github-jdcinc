@@ -108,12 +108,15 @@ export function hasDropInSignal(listing: RegistrationSignalInput): boolean {
  * signal is normally a GUESS; when it is the vendor's own structured flag, the reason for the
  * veto is gone.
  *
- * KNOWN, UNMEASURED RISK — stated rather than buried. The library boolean is derived from
- * `loginToRegister || enabledMethods.length || maxSeats || cap` (worker/adapters/library/
- * index.ts). `loginToRegister` is unambiguous; a bare seat cap arguably means "registration is
- * AVAILABLE", not "required". Its precision has never been measured against live RPL data,
- * because the field was never stored until now. That measurement is the natural first use of
- * this column and should precede any decision to hide on it by default.
+ * WHAT THE LIBRARY BOOLEAN NOW MEANS. It is derived from `loginToRegister ||
+ * enabledMethods.length > 0` (worker/adapters/library/index.ts) — i.e. the vendor has an
+ * enabled registration mechanism. `maxSeats`/`cap` were originally included and were removed
+ * in QA round 139: a seat cap with no enabled method asserts "you must register" for an event
+ * that cannot be registered for, which would have evicted genuinely walk-in storytimes from
+ * the default view. Narrowing cost zero live rows (no configured system uses the gateway path
+ * that produces this value). Residual breadth is small but non-zero: an event with an enabled
+ * method may still admit walk-ins. Precision remains unmeasured — see source-register F-16 —
+ * and that measurement should precede extending this signal to another family.
  */
 export function isRegistrationShaped(listing: RegistrationSignalInput): boolean {
   if (listing.registrationRequired === true) return true;
