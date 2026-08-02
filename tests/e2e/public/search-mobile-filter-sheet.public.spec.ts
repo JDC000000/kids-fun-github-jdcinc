@@ -182,6 +182,45 @@ test.describe('mobile /search — the sheet is a real dialog', () => {
     }
   });
 
+  test('still traps focus once "More filters" is EXPANDED inside the dialog', async ({ page }) => {
+    // Added by the desktop-rail work (Round 31), which put a new interactive element type —
+    // a native <details> disclosure — inside this focus trap for the first time. That is
+    // worth its own case rather than trusting the closed-state test above, for two specific
+    // reasons found by reading the trap rather than assuming it:
+    //
+    //   1. The trap re-queries the panel on EVERY Tab and filters by offsetParent, so chips
+    //      revealed by expanding the disclosure are picked up immediately and chips still
+    //      folded are correctly excluded. That is the behaviour this test pins — a trap that
+    //      snapshotted its focusables at open time would strand every newly-revealed chip.
+    //   2. <summary> is natively focusable but is NOT matched by the trap's FOCUSABLE
+    //      selector. It happens to be harmless today because the sheet's own footer renders
+    //      after the rail, so the summary can never be the last element and the wrap-around
+    //      never hinges on it. If the footer ever moves above the rail, this test is what
+    //      catches it.
+    await page.goto('/search');
+    await filtersTrigger(page).click();
+    await expect(panel(page)).toBeVisible();
+
+    const more = panel(page).locator('.kf-filters__more > summary');
+    await more.click();
+    await expect(panel(page).locator('.kf-filters__more[open]')).toHaveCount(1);
+
+    // Every chip inside the disclosure is now real, visible and reachable.
+    const revealed = panel(page).locator('.kf-filters__more[open] a[href^="/search"]');
+    expect(await revealed.count()).toBeGreaterThan(0);
+
+    for (let i = 0; i < 60; i++) {
+      await page.keyboard.press('Tab');
+      const inside = await page.evaluate(() =>
+        document.querySelector('#kf-msheet-panel')!.contains(document.activeElement),
+      );
+      expect(inside, `focus left the dialog after ${i + 1} Tab presses with the disclosure open`).toBe(true);
+    }
+    // Escape must still close from inside the newly-revealed region.
+    await page.keyboard.press('Escape');
+    await expect(panel(page)).toBeHidden();
+  });
+
   test('locks the page behind it, and gives the parent their place back on close', async ({ page }) => {
     await page.goto('/search', { waitUntil: 'networkidle' });
     await page.evaluate(() => document.fonts.ready);
