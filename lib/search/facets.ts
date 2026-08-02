@@ -377,14 +377,54 @@ function categoryGroup(c: CountContext): FacetGroupCounts {
   // A breakdown of the CURRENT result set — nothing is dropped, because no category control
   // exists yet for a parent to have selected. Ordered biggest-first so a UI can show the
   // handful that actually carry the results and fold the tail away.
-  const byCategory = new Map<string, ListingRecord[]>();
-  for (const listing of c.base(c.applied)) {
-    const bucket = byCategory.get(listing.primaryCategoryKey);
-    if (bucket) bucket.push(listing);
-    else byCategory.set(listing.primaryCategoryKey, [listing]);
+  //
+  // Bucketing is by CARD, not by occurrence. Categorisation is per-occurrence
+  // (primary_category_id lives on activity_occurrence, not activity_series — see
+  // postgres-repository.ts), so the slots of one collapsed card can legitimately disagree about
+  // their category. Bucketing occurrences first and collapsing inside each bucket counted such a
+  // card once in EVERY category it touched, and the breakdown summed to more than the total.
+  const counts = new Map<string, number>();
+  for (const listing of cardRepresentatives(c.base(c.applied))) {
+    counts.set(listing.primaryCategoryKey, (counts.get(listing.primaryCategoryKey) ?? 0) + 1);
   }
-  const values = [...byCategory.entries()]
-    .map(([value, bucket]) => ({ value, count: countCards(bucket), selected: false }))
+  const values = [...counts.entries()]
+    .map(([value, count]) => ({ value, count, selected: false }))
     .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
   return { key: 'category', selection: 'breakdown', values };
+}
+
+/**
+ * One listing per CARD — the occurrence a card is counted as when a per-card ATTRIBUTE, not just
+ * a card total, is being reported. Returns exactly `countCards(listings)` entries, since both
+ * are driven by the same `collapseKey`.
+ *
+ * The representative is the card's earliest slot, ties broken by id — the same ordering
+ * collapse.ts sorts a card's own slots by, and independent of the order the candidate set arrives
+ * in, so fixture mode and database mode split the same catalogue the same way.
+ */
+function cardRepresentatives(listings: ListingRecord[]): ListingRecord[] {
+  const byKey = new Map<string, ListingRecord>();
+  // Listings belonging to no single day (open-hours, undated) are never collapsed: each is its
+  // own card and its own representative.
+  const uncollapsable: ListingRecord[] = [];
+  for (const listing of listings) {
+    const key = collapseKey(listing);
+    if (key == null) {
+      uncollapsable.push(listing);
+      continue;
+    }
+    const held = byKey.get(key);
+    if (held == null || isEarlierSlot(listing, held)) byKey.set(key, listing);
+  }
+  return [...byKey.values(), ...uncollapsable];
+}
+
+function isEarlierSlot(a: ListingRecord, b: ListingRecord): boolean {
+  const diff = slotStartMs(a) - slotStartMs(b);
+  return diff !== 0 ? diff < 0 : a.id.localeCompare(b.id) < 0;
+}
+
+function slotStartMs(listing: ListingRecord): number {
+  // Anything reaching here has a parseable start — collapseKey already rejected the rest.
+  return listing.startDatetimeUtc ? Date.parse(listing.startDatetimeUtc) : Number.POSITIVE_INFINITY;
 }
