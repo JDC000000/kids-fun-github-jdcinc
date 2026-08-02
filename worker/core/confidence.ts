@@ -23,7 +23,10 @@
 //   • volatility    — how reliably/stably this source produces parseable records.
 //                     Reused from T15's canonical source-health score
 //                     (worker/health/sla.ts computeSourceHealth = success-rate +
-//                     cadence-adherence + parse-yield over a rolling window). True
+//                     cadence-adherence + parse-yield over a rolling window). The
+//                     cadence-adherence term is CONTINUOUS (sla.ts adherenceFactor) for
+//                     the same reason freshness is: a step function inside a product
+//                     moves every one of a source's rows at once. True
 //                     record-DIFF churn ("how often do this source's rows actually
 //                     change") is not tracked anywhere yet — flagged as a follow-up,
 //                     NOT fabricated. Source-health is the closest real signal, so we
@@ -67,7 +70,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Pool } from 'pg';
 import {
-  cadenceAdherent,
+  adherenceFactor,
   checkSuccessRate,
   parseYieldRate,
   computeSourceHealth,
@@ -341,9 +344,9 @@ export async function loadSourceConfidenceContext(
   };
   const cadenceSeconds = r.cadence_seconds ?? null;
   const lastSuccessAtMs = r.last_success_at ? new Date(r.last_success_at).getTime() : null;
-  const adherent = cadenceAdherent({ lastSuccessAtMs, cadenceSeconds }, nowMs);
+  const adherence = adherenceFactor({ lastSuccessAtMs, cadenceSeconds }, nowMs);
   const health = computeSourceHealth({
-    adherent,
+    adherence,
     successRate: checkSuccessRate(counts),
     parseYieldRate: parseYieldRate(counts),
     attempted: counts.attempted,

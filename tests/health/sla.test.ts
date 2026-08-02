@@ -74,16 +74,16 @@ describe('SLA dimensions (pure)', () => {
   });
 
   it('computeSourceHealth folds the three dimensions with the documented precedence', () => {
-    expect(computeSourceHealth({ adherent: true, successRate: null, parseYieldRate: null, attempted: 0 }))
+    expect(computeSourceHealth({ adherence: 1, successRate: null, parseYieldRate: null, attempted: 0 }))
       .toMatchObject({ state: 'unknown', score: null });
-    expect(computeSourceHealth({ adherent: false, successRate: 0.4, parseYieldRate: 1, attempted: 5 }).state).toBe('failing');
-    expect(computeSourceHealth({ adherent: false, successRate: 0.8, parseYieldRate: 1, attempted: 5 }).state).toBe('stale');
-    expect(computeSourceHealth({ adherent: true, successRate: 0.8, parseYieldRate: 1, attempted: 5 }).state).toBe('degraded');
-    expect(computeSourceHealth({ adherent: true, successRate: 1, parseYieldRate: 0.4, attempted: 5 }).state).toBe('degraded');
-    const healthy = computeSourceHealth({ adherent: true, successRate: 1, parseYieldRate: 1, attempted: 5 });
+    expect(computeSourceHealth({ adherence: 0, successRate: 0.4, parseYieldRate: 1, attempted: 5 }).state).toBe('failing');
+    expect(computeSourceHealth({ adherence: 0, successRate: 0.8, parseYieldRate: 1, attempted: 5 }).state).toBe('stale');
+    expect(computeSourceHealth({ adherence: 1, successRate: 0.8, parseYieldRate: 1, attempted: 5 }).state).toBe('degraded');
+    expect(computeSourceHealth({ adherence: 1, successRate: 1, parseYieldRate: 0.4, attempted: 5 }).state).toBe('degraded');
+    const healthy = computeSourceHealth({ adherence: 1, successRate: 1, parseYieldRate: 1, attempted: 5 });
     expect(healthy.state).toBe('healthy');
     expect(healthy.score).toBe(1); // 0.5·1 + 0.3·1 + 0.2·1
-    expect(computeSourceHealth({ adherent: true, successRate: 0.95, parseYieldRate: 0.8, attempted: 5 }).score).toBe(0.94); // 0.475+0.3+0.16
+    expect(computeSourceHealth({ adherence: 1, successRate: 0.95, parseYieldRate: 0.8, attempted: 5 }).score).toBe(0.94); // 0.475+0.3+0.16
   });
 
   it('adherencePct / meetsSlaTarget honour the ≥95% target + null-safety', () => {

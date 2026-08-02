@@ -53,20 +53,89 @@ export type HealthState = 'healthy' | 'degraded' | 'stale' | 'failing' | 'unknow
 // Pure dimensions — DB-free, exhaustively unit-testable.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** [0,1] clamp that also absorbs NaN (→ 0), so no dimension can poison the score. */
+function clamp01(value: number): number {
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
+}
+
+export interface CadenceInput {
+  lastSuccessAtMs: number | null;
+  cadenceSeconds: number | null;
+}
+
 /**
- * Cadence adherence: a source is adherent iff it has a successful/partial check within
- * grace × its effective cadence. A source that has NEVER succeeded is NOT adherent. This is
- * the SAME formula as lib/admin/data-health.ts isCadenceAdherent (guard-tested for parity).
+ * CONTINUOUS cadence adherence in [0,1] — how well a source is keeping its promised
+ * schedule, as a gradient rather than a switch. This is the value computeSourceHealth
+ * scores; cadenceAdherent() below is the pass/fail SLA view of the same number.
+ *
+ *   let x = (now − lastSuccess) ÷ cadence          "how many cadences late"
+ *   adherence = 1                 for x ≤ grace    (on time, including scheduler jitter)
+ *             = grace ÷ x         for x > grace    (reciprocal decay → 0)
+ *   never succeeded → 0
+ *
+ * WHY THIS SHAPE.
+ *  • It mirrors worker/core/confidence.ts freshnessFactor(), which is already a
+ *    plateau-then-reciprocal-decay function. Reusing the project's existing idiom for
+ *    "make lateness gradual" rather than inventing a second one.
+ *  • It introduces NO new constant. The decay is pinned to SLA_CADENCE_GRACE, which
+ *    already exists and is not changed here. grace ÷ x equals exactly 1 at x = grace, so
+ *    the curve joins the plateau with no step — there is nothing to tune and nothing to
+ *    drift. The confusion this measure has caused historically came from magic
+ *    thresholds; this adds none.
+ *  • It is 1.0 across the ENTIRE window the boolean called adherent, so the meaning of
+ *    SLA_CADENCE_GRACE (and every board that reports it) is untouched.
+ *
+ * WHY IT WAS NEEDED. Adherence is worth 0.30 of computeSourceHealth and confidence
+ * MULTIPLIES that health in as `volatility`, so as a 0/1 switch it moved every one of a
+ * source's occurrences at once. Measured on real staging history 2026-08-01: the worst
+ * gap still inside grace is 1.4626× against the 1.5× boundary — 0.037× of headroom, so
+ * the switch was one bad night from flipping again — and H.R. MacMillan Space Centre had
+ * already recorded a 2.0005× gap, i.e. a full 0.30 health drop for ONE missed nightly
+ * run. That source now scores 0.75 here instead of 0.
+ *
+ * NO FLOOR, deliberately. freshnessFactor floors at 0.2 because confidence multiplies it
+ * and a zero would annihilate the whole product; computeSourceHealth ADDS this term, so a
+ * zero is harmless — and a floor would let a source that has been dead for months keep
+ * earning health it is not delivering, which the boolean never did.
+ */
+export function adherenceFactor(
+  input: CadenceInput,
+  nowMs: number,
+  grace: number = SLA_CADENCE_GRACE
+): number {
+  if (input.lastSuccessAtMs == null) return 0; // never delivered anything
+  const cadence =
+    input.cadenceSeconds != null && input.cadenceSeconds > 0 ? input.cadenceSeconds : DEFAULT_CADENCE_SECONDS;
+  const thresholdMs = cadence * 1000 * grace;
+  const elapsedMs = Math.max(0, nowMs - input.lastSuccessAtMs); // clock skew → "on time"
+  // NB: compared in the same multiplied form the boolean has always used, so the
+  // pass/fail verdict at the boundary is bit-for-bit what shipped (no divide-then-compare
+  // rounding difference). thresholdMs ÷ elapsedMs is algebraically grace ÷ x.
+  if (elapsedMs <= thresholdMs) return 1;
+  return clamp01(thresholdMs / elapsedMs);
+}
+
+/** The SLA's pass/fail reading of an adherence factor: "is this source on cadence?" */
+export function isFullyAdherent(adherence: number): boolean {
+  return adherence >= 1;
+}
+
+/**
+ * Cadence adherence, pass/fail: a source is adherent iff it has a successful/partial check
+ * within grace × its effective cadence. A source that has NEVER succeeded is NOT adherent.
+ *
+ * Behaviour is UNCHANGED by the continuous rewrite — it is now simply the "at full value"
+ * reading of adherenceFactor, so the two can never disagree about where the SLA boundary
+ * is. tests/health/adherence-continuous.test.ts pins it against the original formula.
+ * This is the SAME formula as lib/admin/data-health.ts isCadenceAdherent (guard-tested
+ * for parity, along with adherenceFactor itself).
  */
 export function cadenceAdherent(
-  input: { lastSuccessAtMs: number | null; cadenceSeconds: number | null },
+  input: CadenceInput,
   nowMs: number,
   grace: number = SLA_CADENCE_GRACE
 ): boolean {
-  if (input.lastSuccessAtMs == null) return false;
-  const cadence =
-    input.cadenceSeconds != null && input.cadenceSeconds > 0 ? input.cadenceSeconds : DEFAULT_CADENCE_SECONDS;
-  return nowMs - input.lastSuccessAtMs <= cadence * 1000 * grace;
+  return isFullyAdherent(adherenceFactor(input, nowMs, grace));
 }
 
 export interface RunCounts {
@@ -92,7 +161,8 @@ export function parseYieldRate(counts: RunCounts): number | null {
 }
 
 export interface SourceHealthInput {
-  adherent: boolean;
+  /** adherenceFactor() — continuous in [0,1], NOT a boolean (see that function). */
+  adherence: number;
   successRate: number | null;
   parseYieldRate: number | null;
   attempted: number;
@@ -106,22 +176,29 @@ export interface SourceHealth {
 
 /**
  * Fold the three dimensions into a health_state + transparent score. Precedence:
- *   unknown (no completed runs) → failing (mostly failing) → stale (not adherent) →
+ *   unknown (no completed runs) → failing (mostly failing) → stale (not fully adherent) →
  *   degraded (adherent but imperfect success/low yield) → healthy.
- * score = 0.5·successRate + 0.3·adherent + 0.2·parseYield (each ~[0,1]).
+ * score = 0.5·successRate + 0.3·adherence + 0.2·parseYield (each ∈ [0,1]).
+ *
+ * The SCORE is continuous in adherence (that is the whole point of adherenceFactor —
+ * confidence multiplies this score in, so a step here mass-reclassifies user-visible
+ * rows). The STATE deliberately is not: health_state answers the operational SLA
+ * question "is this source meeting its cadence, yes or no", which is genuinely pass/fail,
+ * and every board and the ≥95% P0 target are built on that reading. So the gradient goes
+ * into the number and the verdict stays a verdict.
  */
 export function computeSourceHealth(input: SourceHealthInput): SourceHealth {
   if (input.attempted <= 0 || input.successRate == null) {
     return { state: 'unknown', score: null };
   }
   const yieldRate = input.parseYieldRate ?? 0;
-  const score =
-    0.5 * input.successRate + 0.3 * (input.adherent ? 1 : 0) + 0.2 * yieldRate;
+  const adherence = clamp01(input.adherence); // defensive: never let a bad input skew the score
+  const score = 0.5 * input.successRate + 0.3 * adherence + 0.2 * yieldRate;
   const rounded = Math.round(score * 100) / 100;
 
   let state: HealthState;
   if (input.successRate < 0.5) state = 'failing';
-  else if (!input.adherent) state = 'stale';
+  else if (!isFullyAdherent(adherence)) state = 'stale';
   else if (input.successRate < 0.9 || yieldRate < 0.5) state = 'degraded';
   else state = 'healthy';
   return { state, score: rounded };
@@ -158,7 +235,10 @@ export interface SourceHealthRow {
   isP0: boolean;
   cadenceSeconds: number | null;
   lastSuccessAt: string | null;
+  /** Pass/fail SLA verdict — the ≥95% P0 target counts these. */
   adherent: boolean;
+  /** The continuous [0,1] measure that actually feeds the health score. */
+  adherence: number;
   counts: RunCounts;
   successRate: number | null;
   parseYieldRate: number | null;
@@ -259,13 +339,16 @@ export async function computeHealthSla(
     };
     const lastSuccessAt = toIso(r.last_success_at);
     const cadenceSeconds = r.cadence_seconds ?? null;
-    const adherent = cadenceAdherent(
-      { lastSuccessAtMs: lastSuccessAt ? Date.parse(lastSuccessAt) : null, cadenceSeconds },
-      nowMs
-    );
+    const cadenceInput = {
+      lastSuccessAtMs: lastSuccessAt ? Date.parse(lastSuccessAt) : null,
+      cadenceSeconds,
+    };
+    // One computation, two readings: the continuous score and its pass/fail SLA verdict.
+    const adherence = adherenceFactor(cadenceInput, nowMs);
+    const adherent = isFullyAdherent(adherence);
     const successRate = checkSuccessRate(counts);
     const yieldRate = parseYieldRate(counts);
-    const health = computeSourceHealth({ adherent, successRate, parseYieldRate: yieldRate, attempted: counts.attempted });
+    const health = computeSourceHealth({ adherence, successRate, parseYieldRate: yieldRate, attempted: counts.attempted });
     return {
       sourceId: r.id,
       name: r.name,
@@ -275,6 +358,7 @@ export async function computeHealthSla(
       cadenceSeconds,
       lastSuccessAt,
       adherent,
+      adherence,
       counts,
       successRate,
       parseYieldRate: yieldRate,
