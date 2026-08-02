@@ -54,6 +54,22 @@ CREATE INDEX idx_source_check_run_health_alert
 --     discriminator — sound because every non-'ok' verdict in both adapters' assessRunHealth
 --     sets alert: true, and 'ok' is the only one that does not.
 --
+-- A THIRD PRODUCER WRITES THIS COLUMN AND MUST NOT BE SWEPT IN (found in QA — an earlier
+-- version of this backfill mislabelled it). `source_check_run.errors` has THREE shapes, not
+-- two: reconcileAbandonedRuns (worker/core/reconcile.ts) and abandonInFlightRuns
+-- (worker/src/shutdown.ts) close out runs orphaned by a dead process, writing
+-- `{code:'abandoned_run'|'shutdown_abandoned_run', detail}`. Those are INFRASTRUCTURE
+-- CLOSEOUT MARKERS, not adapter health verdicts — no adapter produced them and none of the
+-- five documented codes describes them.
+--
+-- The discriminator is the PRODUCER, not the code value, so it keys off object SHAPE:
+-- `errors ? 'warnings'`. The adapter recorders always include that key (it is `extraWarnings`,
+-- defaulting to []); the two infra writers never do. This is deliberately not a code
+-- allow/deny list: a deny-list goes stale the moment someone adds a fourth infra code (and
+-- mislabels it), and an allow-list goes stale the moment an adapter adds a sixth verdict code
+-- (and silently drops a real alert). Shape tracks the writer, which is the thing actually
+-- being asked about, and it cannot drift as either vocabulary grows.
+--
 -- CONSEQUENCE, STATED PLAINLY: on deploy this moves the headline SLA number DOWNWARD for any
 -- source with a historical alert, because those runs stop counting as clean successes. That
 -- is the honest number the board should have been showing all along, not a regression.
@@ -75,12 +91,14 @@ UPDATE source_check_run cr
        ORDER BY cr2.id, e.ord
     ) from_errors_array
     UNION ALL
-    -- object shape (recordActiveNetCheckRun / recordPerfectMindCheckRun)
+    -- object shape (recordActiveNetCheckRun / recordPerfectMindCheckRun ONLY — the
+    -- `? 'warnings'` test is what keeps reconcile/shutdown closeout markers out)
     SELECT cr3.id,
            cr3.errors ->> 'code'   AS code,
            cr3.errors ->> 'detail' AS detail
       FROM source_check_run cr3
      WHERE jsonb_typeof(cr3.errors) = 'object'
+       AND cr3.errors ? 'warnings'
        AND cr3.errors ->> 'code' IS NOT NULL
        AND cr3.errors ->> 'code' <> 'ok'
   ) v

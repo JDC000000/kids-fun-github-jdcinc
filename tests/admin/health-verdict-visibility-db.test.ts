@@ -351,4 +351,58 @@ describe.skipIf(!hasDb)('F-11 — a health verdict reaches the operator', () => 
     );
     expect(objUntouched.health_alert_code).toBeNull();
   });
+
+  it('the backfill does NOT mislabel infrastructure closeout markers as adapter verdicts', async () => {
+    // THE THIRD PRODUCER, missed on the first pass and caught in QA. `errors` has three
+    // shapes, not two: reconcileAbandonedRuns (worker/core/reconcile.ts) and
+    // abandonInFlightRuns (worker/src/shutdown.ts) close out runs orphaned by a dead process
+    // with {code:'abandoned_run'|'shutdown_abandoned_run', detail} — an OBJECT carrying a
+    // `code`, which an object branch keyed only on "code <> 'ok'" happily swallows. On real
+    // staging these are the ONLY object-shaped rows that exist, so that version of the
+    // backfill would have labelled infra markers as adapter health verdicts and nothing else.
+    // The discriminator is the absent `warnings` key — i.e. the producer, not the vocabulary.
+    const sql = readFileSync(new URL('../../supabase/migrations/0026_check_run_health_verdict.sql', import.meta.url), 'utf8');
+    const start = sql.indexOf('UPDATE source_check_run cr');
+    const end = sql.indexOf('AND v.code IS NOT NULL;', start);
+    const backfill = sql.slice(start, end + 'AND v.code IS NOT NULL;'.length);
+
+    const infraSourceId = await mkSource('infra-closeout');
+    const seedInfra = async (code: string, detail: string): Promise<string> => {
+      const [r] = await query<{ id: string }>(
+        `INSERT INTO source_check_run (source_id, status, started_at, errors)
+         VALUES ($1, 'failed', now() - interval '4 hours', $2::jsonb) RETURNING id`,
+        [infraSourceId, JSON.stringify({ code, detail })]
+      );
+      return r.id;
+    };
+    // Verbatim from the two constants, so a rename there surfaces here.
+    const abandoned = await seedInfra(
+      'abandoned_run',
+      'worker process died while this check run was in progress; closed out by reconcileAbandonedRuns'
+    );
+    const shutdownAbandoned = await seedInfra(
+      'shutdown_abandoned_run',
+      'worker shut down while this check run was in progress; closed out by the shutdown handler'
+    );
+
+    await query(backfill);
+
+    const rows = await query<{ id: string; health_alert_code: string | null }>(
+      `SELECT id, health_alert_code FROM source_check_run WHERE id = ANY($1::uuid[])`,
+      [[abandoned, shutdownAbandoned]]
+    );
+    for (const r of rows) {
+      expect(r.health_alert_code, `infra closeout ${r.id} must not be labelled an adapter verdict`).toBeNull();
+    }
+
+    // They still reach the operator — as FAILED runs, which they are, via the panel's
+    // status disjunct. Nothing is hidden by declining to call them health verdicts.
+    const alerts = await getHealthAlerts(dbNowMs);
+    const shown = alerts.runsNeedingAttention.filter((r) => [abandoned, shutdownAbandoned].includes(r.checkRunId));
+    expect(shown).toHaveLength(2);
+    for (const r of shown) {
+      expect(r.status).toBe('failed');
+      expect(r.healthAlertCode).toBeNull(); // no phantom verdict badge on the board
+    }
+  });
 });

@@ -123,7 +123,12 @@ function AttentionRow({ f, nowMs }: { f: RunNeedingAttention; nowMs: number }) {
       </td>
       <td>
         <span className={`badge ${statusClass(f.status)}`}>{f.status}</span>
-        {f.healthAlertCode && <span className="badge bad mono"> {f.healthAlertCode}</span>}
+        {f.healthAlertCode && (
+          <>
+            {' '}
+            <span className="badge bad mono">{f.healthAlertCode}</span>
+          </>
+        )}
       </td>
       <td className="mono">{formatDurationMs(f.durationMs)}</td>
       <td className="err-cell">
