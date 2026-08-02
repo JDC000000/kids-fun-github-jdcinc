@@ -286,6 +286,27 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
   }
 }
 
+/** Shortest stem worth matching on. "bus" is not the plural of "bu". */
+const MIN_STEM_LENGTH = 3;
+
+/**
+ * Shortest stem an UNDOUBLED agentive "-er"/"-ers" may produce — one character longer than
+ * everywhere else, and the difference is a false-root guard rather than a style choice.
+ *
+ * Undoubling turns "swimmer" into "swim", but it turns "matter" into "mat", "manner" into
+ * "man", "ladder" into "lad", "supper" into "sup" and "copper" into "cop" just as happily,
+ * because nothing here knows which words are agent nouns. Swept over the live catalogue's
+ * 1204-word vocabulary, every false root the rule produced bottomed out at three characters
+ * (mat~matters and manner~man both collide with real vocabulary), and every true agentive
+ * stem reached four or came through the silent-e path instead (swimmer → swim, skater →
+ * skate, dancer → dance). So four is where the two populations actually separate.
+ *
+ * The cost is runner → run and jogger → jog. Measured rather than assumed: "run", "jog" and
+ * "dig" are not tokens anywhere in the catalogue, so nothing real is lost today — and the
+ * reliable inflections keep the lower floor, so "running" → "run" still works if one appears.
+ */
+const MIN_AGENTIVE_STEM_LENGTH = 4;
+
 /**
  * Common English inflectional suffixes, longest first so "-ies" wins over "-es"/"-s".
  * Deliberately a short hand-written list rather than a full stemmer: the matcher needs to
@@ -300,14 +321,19 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
  * restored silent e (skater → skat → skate, dancer → dance) — keeps the agentive nouns a
  * parent actually types while refusing to turn a search for "mother" into moth listings.
  */
-const INFLECTIONAL_SUFFIXES: ReadonlyArray<{ suffix: string; replacement: string; bareBase: boolean }> = [
-  { suffix: 'ies', replacement: 'y', bareBase: true },
-  { suffix: 'ing', replacement: '', bareBase: true },
-  { suffix: 'ers', replacement: '', bareBase: false },
-  { suffix: 'ed', replacement: '', bareBase: true },
-  { suffix: 'er', replacement: '', bareBase: false },
-  { suffix: 'es', replacement: '', bareBase: true },
-  { suffix: 's', replacement: '', bareBase: true },
+const INFLECTIONAL_SUFFIXES: ReadonlyArray<{
+  suffix: string;
+  replacement: string;
+  bareBase: boolean;
+  minUndoubled: number;
+}> = [
+  { suffix: 'ies', replacement: 'y', bareBase: true, minUndoubled: MIN_STEM_LENGTH },
+  { suffix: 'ing', replacement: '', bareBase: true, minUndoubled: MIN_STEM_LENGTH },
+  { suffix: 'ers', replacement: '', bareBase: false, minUndoubled: MIN_AGENTIVE_STEM_LENGTH },
+  { suffix: 'ed', replacement: '', bareBase: true, minUndoubled: MIN_STEM_LENGTH },
+  { suffix: 'er', replacement: '', bareBase: false, minUndoubled: MIN_AGENTIVE_STEM_LENGTH },
+  { suffix: 'es', replacement: '', bareBase: true, minUndoubled: MIN_STEM_LENGTH },
+  { suffix: 's', replacement: '', bareBase: true, minUndoubled: MIN_STEM_LENGTH },
 ];
 
 /** "swimm" → "swim": undo the consonant doubling English adds before -ing/-ed/-er. */
@@ -323,16 +349,21 @@ function undouble(base: string): string {
  */
 function inflectionalForms(word: string): Set<string> {
   const forms = new Set<string>([word]);
-  for (const { suffix, replacement, bareBase } of INFLECTIONAL_SUFFIXES) {
+  for (const { suffix, replacement, bareBase, minUndoubled } of INFLECTIONAL_SUFFIXES) {
     if (word.length <= suffix.length + 1 || !word.endsWith(suffix)) continue;
     const base = word.slice(0, word.length - suffix.length) + replacement;
     const undoubled = undouble(base);
-    const candidates = bareBase
-      ? [base, `${base}e`, undoubled, `${undoubled}e`]
+    const plain = bareBase
+      ? [base, `${base}e`]
       : // Only the spelling-change forms; the bare base is where moth/corn would come from.
-        [`${base}e`, ...(undoubled === base ? [] : [undoubled, `${undoubled}e`])];
-    for (const candidate of candidates) {
-      if (candidate.length >= 3) forms.add(candidate);
+        [`${base}e`];
+    for (const candidate of plain) {
+      if (candidate.length >= MIN_STEM_LENGTH) forms.add(candidate);
+    }
+    // The undoubled forms carry the false-root risk, so they answer to their own floor.
+    if (undoubled !== base && undoubled.length >= minUndoubled) {
+      forms.add(undoubled);
+      forms.add(`${undoubled}e`);
     }
   }
   return forms;

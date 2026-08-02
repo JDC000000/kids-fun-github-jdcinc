@@ -138,7 +138,6 @@ describe('inflectional stem sharing', () => {
     expect(sharesInflectionalStem('skater', 'skate')).toBe(true);
     expect(sharesInflectionalStem('skaters', 'skate')).toBe(true);
     expect(sharesInflectionalStem('dancer', 'dance')).toBe(true);
-    expect(sharesInflectionalStem('runner', 'run')).toBe(true);
     expect(sharesInflectionalStem('swim', 'swimming')).toBe(true);
     expect(sharesInflectionalStem('running', 'run')).toBe(true);
     expect(sharesInflectionalStem('dancing', 'dance')).toBe(true);
@@ -164,6 +163,49 @@ describe('inflectional stem sharing', () => {
     expect(sharesInflectionalStem('corner', 'corn')).toBe(false);
     expect(sharesInflectionalStem('water', 'wat')).toBe(false);
     expect(sharesInflectionalStem('summer', 'summ')).toBe(false);
+  });
+
+  /**
+   * THE ONE THAT WOULD REINTRODUCE THE BUG FROM THE OTHER SIDE. "summer" is itself in the
+   * live vocabulary, so a careless -er rule re-links swimmer and summer through the STEM
+   * tier — a different mechanism reaching the identical wrong result, and one the trigram
+   * guard would never see because the stem tier never consults it.
+   */
+  it('never re-links swimmer and summer through the stem tier', () => {
+    expect(sharesInflectionalStem('swimmer', 'summer')).toBe(false);
+    expect(sharesInflectionalStem('swimmers', 'summer')).toBe(false);
+    expect(sharesInflectionalStem('swimmer', 'summers')).toBe(false);
+    // ...while the route that SHOULD carry it stays open.
+    expect(sharesInflectionalStem('swimmer', 'swim')).toBe(true);
+  });
+
+  /**
+   * False-root guard on the undouble path. Undoubling cannot tell an agent noun from any
+   * other doubled-consonant word, so it turns "matter" into "mat" and "manner" into "man" —
+   * and both of those ARE live catalogue tokens. Swept over the real 1204-word vocabulary,
+   * every false root bottomed out at three characters while every true agentive stem reached
+   * four or came through the silent-e path, which is where MIN_AGENTIVE_STEM_LENGTH sits.
+   */
+  it('does not manufacture three-letter roots from doubled non-agentive words', () => {
+    expect(sharesInflectionalStem('matter', 'mat')).toBe(false);
+    expect(sharesInflectionalStem('matters', 'mat')).toBe(false);
+    expect(sharesInflectionalStem('manner', 'man')).toBe(false);
+    expect(sharesInflectionalStem('ladder', 'lad')).toBe(false);
+    expect(sharesInflectionalStem('supper', 'sup')).toBe(false);
+    expect(sharesInflectionalStem('copper', 'cop')).toBe(false);
+    expect(sharesInflectionalStem('butter', 'but')).toBe(false);
+    expect(sharesInflectionalStem('dinner', 'din')).toBe(false);
+    // Singular/plural of the same word is not a false root and must survive.
+    expect(sharesInflectionalStem('matter', 'matters')).toBe(true);
+  });
+
+  /**
+   * The reliable inflections keep the lower floor — "-ing" really is a gerund in a way
+   * "-er" is not an agent — so this asymmetry is linguistic, not arbitrary.
+   */
+  it('keeps the lower floor for the reliable inflections', () => {
+    expect(sharesInflectionalStem('running', 'run')).toBe(true);
+    expect(sharesInflectionalStem('runner', 'run')).toBe(false); // the disclosed cost
   });
 });
 
