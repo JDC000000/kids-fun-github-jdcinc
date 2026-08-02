@@ -62,29 +62,25 @@ const ANON_ROUTES: AnonRoute[] = [
       await page.locator('#kf-msheet-panel[role="dialog"]').waitFor({ state: 'visible' });
     },
   },
-  // Desktop filter rail, "More filters" OPEN (Round 31, Proposal A+C). The default
-  // Playwright viewport already puts /search into the rail layout, so the rail's CLOSED
-  // state is covered by the entries above — but the folded groups are only rendered
-  // visibly once the <details> is open, and an axe run on a collapsed <details> reports
-  // nothing about its contents. This entry is the desktop counterpart of the sheet entry
-  // above, at the widest supported step where the rail is at its narrowest relative to
-  // the results column.
+  // Desktop filter rail (Round 31, Proposal A). The default Playwright viewport already puts
+  // /search into the rail layout, so the routes above cover it — this entry pins the WIDEST
+  // supported step, where the rail is narrowest relative to the results column, and does so
+  // with real filter state applied.
   //
-  // It exists because this surface has already regressed once: the first build of the
-  // facet counts dimmed zero-count chips with `opacity: .45` and the selected chip's
-  // numeral with `opacity: .75`, which walked the Chip primitive's token-guarded AA
-  // pairings under the threshold without touching a token — invisible to
-  // components/ui/__tests__/contrast.test.ts, visible immediately to axe.
+  // It exists because this surface has already regressed once: the first build of the facet
+  // counts dimmed zero-count chips with `opacity: .45` and the selected chip's numeral with
+  // `opacity: .75`, which walked the Chip primitive's token-guarded AA pairings under the
+  // threshold without touching a token — invisible to components/ui/__tests__/contrast.test.ts,
+  // visible immediately to axe.
+  //
+  // This entry previously also OPENED the "More filters" disclosure. That disclosure is not
+  // rendered while the adaptive plan is gated (QA round 96 / F1 — see ADAPTIVE_RAIL_ENABLED in
+  // app/search/page.tsx); the interaction must be restored here when the flag flips back, or
+  // the folded state ships unaudited.
   {
     route: '/search?reg=1&age=5-9&region=nvan&when=weekend',
-    label: 'search (desktop filter rail, More filters open)',
+    label: 'search (desktop filter rail)',
     viewport: { width: 1440, height: 900 },
-    prepare: async (page) => {
-      const summary = page.locator('.kf-filters__more > summary');
-      await summary.waitFor({ state: 'visible' });
-      await summary.click();
-      await page.locator('.kf-filters__more[open] .kf-fgroup').first().waitFor({ state: 'visible' });
-    },
   },
 ];
 

@@ -108,20 +108,19 @@ test.describe('mobile /search — the sheet is a real dialog', () => {
       true,
     );
 
-    // The full filter set is REACHABLE — nothing is dropped. Since the desktop-rail work
-    // (Round 31) the same single FilterRail instance carries an adaptive plan at every
-    // breakpoint, so a group that cannot narrow the current query renders inside the
-    // "More filters" <details> instead of up front. Reachable, not necessarily on screen:
-    // asserting visibility here would be asserting that the reduction had NOT happened.
-    for (const id of ['when', 'time', 'ages', 'areas', 'quick', 'cost', 'near', 'courses', 'daterange']) {
-      await expect(dialog.locator(`[aria-labelledby="kf-fg-${id}"]`)).toHaveCount(1);
+    // The full filter set is now reachable — every group, not a subset.
+    //
+    // This is the assertion the original review signed off, restored. The desktop-rail work
+    // briefly made it an IDENTITY check because the adaptive plan folded some groups behind a
+    // disclosure at every breakpoint; that behaviour is gated off (QA round 96 / F1 — see
+    // ADAPTIVE_RAIL_ENABLED in app/search/page.tsx), so the sheet is once again the full static
+    // stack and visibility is the right thing to assert. If the flag is ever flipped back on,
+    // this is one of the tests that must be revisited, not quietly relaxed.
+    for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price', 'Near me']) {
+      await expect(dialog.getByRole('group', { name })).toHaveCount(1);
     }
-    // …and whatever is folded is one keyboard-operable, JS-free disclosure away.
-    const folded = dialog.locator('.kf-filters__more');
-    if (await folded.count()) {
-      await folded.locator('summary').click();
-      await expect(dialog.getByRole('group', { name: 'Max price' })).toHaveCount(1);
-    }
+    // Nothing is folded away: the disclosure does not exist while the plan is gated.
+    await expect(dialog.locator('.kf-filters__more')).toHaveCount(0);
   });
 
   test('Esc closes it and returns focus to the exact control that opened it', async ({ page }) => {
@@ -182,7 +181,12 @@ test.describe('mobile /search — the sheet is a real dialog', () => {
     }
   });
 
-  test('still traps focus once "More filters" is EXPANDED inside the dialog', async ({ page }) => {
+  // SKIPPED WHILE THE ADAPTIVE PLAN IS GATED (QA round 96 / F1). There is no disclosure in
+  // the sheet to expand, so this asserts nothing today — but it is kept rather than deleted
+  // because it is exactly the test the F1 fix needs to turn green again, and re-deriving it
+  // later from a changelog entry would be worse than carrying a skipped one. Un-skip together
+  // with ADAPTIVE_RAIL_ENABLED in app/search/page.tsx.
+  test.skip('still traps focus once "More filters" is EXPANDED inside the dialog', async ({ page }) => {
     // Added by the desktop-rail work (Round 31), which put a new interactive element type —
     // a native <details> disclosure — inside this focus trap for the first time. That is
     // worth its own case rather than trusting the closed-state test above, for two specific
@@ -374,10 +378,9 @@ test.describe('desktop /search — untouched by the mobile work', () => {
 
     // Still the same single FilterRail instance, still server-rendered, still visible.
     await expect(page.locator('.kf-filters')).toBeVisible();
-    // Every group is present in the DOM at this width (up front or folded) — the
-    // primary/secondary split itself is asserted in search-desktop-rail.public.spec.ts.
-    for (const id of ['when', 'time', 'ages', 'areas', 'quick', 'cost', 'near', 'courses', 'daterange']) {
-      await expect(page.locator(`[aria-labelledby="kf-fg-${id}"]`)).toHaveCount(1);
+    // Every group is visible at this width again, with the adaptive plan gated (F1).
+    for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price']) {
+      await expect(page.getByRole('group', { name })).toHaveCount(1);
     }
 
     // None of the sheet's chrome exists at this width…

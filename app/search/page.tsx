@@ -252,10 +252,35 @@ export default async function SearchPage({
   // Anything clearable, including the registration widener — gates the "Clear filters" affordances.
   const clearableFilters = hasClearableFilters(state);
   // Live per-filter-value counts, when the search returned them. `null` is a supported state,
-  // not an error: the rail then falls back to a fixed six-group set with no numerals rather
-  // than to the nine-group wall it replaced (see _lib/rail-groups.ts).
+  // not an error: the counts simply do not render (see _lib/rail-groups.ts).
   const facets = result.body?.facets ?? null;
-  const railPlan = planRailGroups(state, facets);
+  // GATED — QA round 96, finding F1. Flip this back to `true` once F1 is fixed and
+  // re-verified against the same focus-return standard.
+  //
+  // The adaptive plan moves a group ACROSS the disclosure fold when the split changes, and a
+  // chip activation is a navigation, so the newly-rendered tree can put the element that had
+  // focus on the other side of that boundary. React then remounts it and focus falls to
+  // <body>: recoverable, but it loses the parent's place and resets a screen reader's virtual
+  // cursor. QA measured it on 7 of 24 up-front chips (29%) on a bare /search, and isolated it
+  // by matched-pair testing as SHAPE-driven — it is the split changing, not the counts.
+  //
+  // WHY THE GATE IS COARSER THAN "MOBILE ONLY": there is exactly ONE FilterRail instance,
+  // rendered once on the server and relocated by CSS. That single-instance reuse is what keeps
+  // the URL/deep-link contract in one place, and it is deliberate — but it also means the
+  // server cannot hand the phone a different plan from the desktop, because it does not know
+  // the viewport. So gating the sheet gates the rail too. The alternative (a second, desktop-only
+  // render) is exactly the duplication this architecture exists to avoid, and would be a worse
+  // thing to ship at speed than a static rail.
+  //
+  // WHAT THIS COSTS, measured rather than assumed: the rail shows all nine groups instead of
+  // 5-6. Because the rail is a SIDEBAR, its height does not push the results down — the
+  // above-the-fold win (461px of chrome, three complete cards at 1440) is unaffected. What is
+  // lost is scannability of the rail itself, not the headline geometry.
+  //
+  // rail-groups.ts and its unit tests stay exactly as they are: the selection logic is pure and
+  // still correct, and it is the RELOCATION of groups between renders that F1 is about.
+  const ADAPTIVE_RAIL_ENABLED = false;
+  const railPlan = ADAPTIVE_RAIL_ENABLED ? planRailGroups(state, facets) : null;
   // Custom date range (T26 / FR-04): when a range is active the confirmed results are grouped
   // by day (one dated subsection per day, open-hours attractions last). The day-by-id lookup is
   // built from the raw API items so grouping reflects each occurrence's true local date.

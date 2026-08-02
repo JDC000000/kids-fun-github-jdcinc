@@ -34,16 +34,7 @@ import { test, expect, type Page } from '@playwright/test';
 // Deleting the phone case and calling the desktop one "the" guard would have quietly
 // dropped coverage on the surface most parents use.
 
-// Group IDENTITY rather than group VISIBILITY. Since the desktop-rail work (Round 31) the
-// one FilterRail instance carries an adaptive plan: a group that cannot narrow the current
-// query renders inside the "More filters" <details> instead of up front, at every
-// breakpoint. Nothing is ever dropped, so presence in the DOM is the invariant this spec
-// actually cares about — it is a "the toggle must not destroy the rail" guard, not a guard
-// on which groups the plan chose. (`getByRole('group')` excludes hidden nodes, so using it
-// here would silently turn this into an assertion that the reduction had NOT happened.)
-const GROUP_IDS = ['when', 'time', 'ages', 'areas', 'quick', 'cost'] as const;
-const groupById = (scope: import('@playwright/test').Locator | import('@playwright/test').Page, id: string) =>
-  scope.locator(`[aria-labelledby="kf-fg-${id}"]`);
+const GROUP_NAMES = ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price'] as const;
 
 async function toggleControls(page: Page) {
   const toggle = page.getByRole('group', { name: 'Choose how to view results' });
@@ -73,11 +64,11 @@ test.describe('public /search — List↔Map toggle must not disturb the filter 
     // The full filter rail and its groups exist up front.
     const filters = page.locator('.kf-filters');
     await expect(filters).toBeVisible();
-    for (const id of GROUP_IDS) {
-      await expect(groupById(page, id)).toHaveCount(1);
+    for (const name of GROUP_NAMES) {
+      await expect(page.getByRole('group', { name })).toHaveCount(1);
     }
     // Ages must actually carry its chips (the reviewer saw "header with no pills").
-    const agesChips = groupById(page, 'ages').getByRole('link');
+    const agesChips = page.getByRole('group', { name: 'Ages' }).getByRole('link');
     const agesChipCount = await agesChips.count();
     expect(agesChipCount).toBeGreaterThan(0);
 
@@ -109,10 +100,10 @@ test.describe('public /search — List↔Map toggle must not disturb the filter 
     expect(Math.abs(railAfterMap!.y - railBefore!.y)).toBeLessThanOrEqual(4);
 
     // The DOM was never the problem, but prove every group + the Ages pills survive the toggle.
-    for (const id of GROUP_IDS) {
-      await expect(groupById(page, id)).toHaveCount(1);
+    for (const name of GROUP_NAMES) {
+      await expect(page.getByRole('group', { name })).toHaveCount(1);
     }
-    expect(await groupById(page, 'ages').getByRole('link').count()).toBe(agesChipCount);
+    expect(await page.getByRole('group', { name: 'Ages' }).getByRole('link').count()).toBe(agesChipCount);
 
     // Switching back to List must likewise leave the scroll offset stable (the reviewer's
     // open question — pre-fix, returning to List did NOT recover the view because the scroll
@@ -152,8 +143,8 @@ test.describe('public /search — List↔Map toggle must not disturb the filter 
     // And the whole filter set is still one tap away, in Map view.
     await page.getByRole('button', { name: /^⚙?\s*Filters/ }).click();
     const dialog = page.getByRole('dialog', { name: 'Filters' });
-    for (const id of GROUP_IDS) {
-      await expect(groupById(dialog, id)).toHaveCount(1);
+    for (const name of GROUP_NAMES) {
+      await expect(dialog.getByRole('group', { name })).toHaveCount(1);
     }
     await page.keyboard.press('Escape');
 

@@ -158,66 +158,66 @@ test.describe('desktop /search — the rail sits beside the results, and the res
   });
 });
 
-test.describe('the rail is ADAPTIVE — 5-6 groups up front, the rest one disclosure away', () => {
+test.describe('the rail while the adaptive plan is GATED (QA round 96 / F1)', () => {
   test.use({ viewport: V.desk1440 });
 
-  test('shows at most six groups up front and folds the rest without dropping any', async ({ page }) => {
+  // The adaptive selection is switched off at the call site (ADAPTIVE_RAIL_ENABLED in
+  // app/search/page.tsx) because moving a group across the disclosure fold between renders
+  // drops focus to <body> — see that flag's note. The SELECTION LOGIC is untouched and stays
+  // fully covered by app/search/_lib/rail-groups.test.ts, which is a pure-function suite and
+  // does not care whether the call site is wired up. What is asserted here is the shipped
+  // behaviour: one static rail, nothing folded, nothing hidden.
+  //
+  // The adaptive assertions this block used to carry are preserved in git history at cefb97c
+  // and must be restored — not re-invented — when F1 is fixed and the flag flips back.
+
+  test('renders every group up front, with no disclosure to fold anything behind', async ({ page }) => {
     await page.goto('/search');
     const g = await geometry(page, V.desk1440.height);
 
-    // Proposal C is not decoration: a persistent sidebar listing every group is the
-    // "relocates 46 controls without reducing them" failure rotated ninety degrees, and
-    // worse — unlike the old inline block it never scrolls away.
-    expect(g.groupsUpFront).toBeLessThanOrEqual(6);
-    expect(g.groupsFolded).toBeGreaterThan(0);
-    expect(g.groupsUpFront + g.groupsFolded).toBe(g.groupsTotal);
+    expect(g.groupsFolded, 'a disclosure exists — is the plan wired up again?').toBe(0);
+    expect(g.groupsUpFront).toBe(g.groupsTotal);
+    expect(g.groupsUpFront).toBeGreaterThanOrEqual(9);
   });
 
-  test('the up-front set CHANGES with the query — that is the whole point', async ({ page }) => {
-    const labels = async () =>
-      page.evaluate(() => {
-        const filters = document.querySelector('.kf-filters');
-        return filters
-          ? [...filters.children]
-              .filter((c) => c.classList.contains('kf-fgroup'))
-              .map((c) => c.querySelector('.kf-fgroup__label')?.textContent?.trim() ?? '')
-          : [];
-      });
+  test('the rail is IDENTICAL across queries — nothing can reshuffle, which is the point of the gate', async ({
+    page,
+  }) => {
+    // The direct inverse of the test this replaces, and deliberately so: F1 is caused by the
+    // rail's SHAPE changing between renders. While gated, no query may change it. This is the
+    // regression guard on the gate itself.
+    const shape = async () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('.kf-fgroup')].map((g) => g.getAttribute('aria-labelledby')).join('|'),
+      );
 
     await page.goto('/search');
-    const bare = await labels();
+    const bare = await shape();
     await page.goto('/search?q=swim');
-    const swim = await labels();
+    const swim = await shape();
+    await page.goto('/search?time=morning&reg=1&age=5-9');
+    const filtered = await shape();
 
     expect(bare.length).toBeGreaterThan(0);
-    expect(swim.length).toBeGreaterThan(0);
-    expect(swim.join('|'), 'the rail is identical for every query — it is not adaptive').not.toBe(bare.join('|'));
+    expect(swim, 'the rail reshuffled for a query while gated').toBe(bare);
+    expect(filtered, 'the rail reshuffled for applied filters while gated').toBe(bare);
   });
 
-  test('a filter the parent applied is never folded away', async ({ page }) => {
-    // Folding applied state would leave a parent filtering blind, with the control that
-    // clears it hidden behind a disclosure they have no reason to open.
-    await page.goto('/search?time=morning&reg=1');
-    const foldedIds = await page.evaluate(() =>
-      [...document.querySelectorAll('.kf-filters__more .kf-fgroup')].map((g) => g.getAttribute('aria-labelledby')),
-    );
-    expect(foldedIds).not.toContain('kf-fg-time');
-    expect(foldedIds).not.toContain('kf-fg-courses');
-  });
-
-  test('folded groups are still real links in the DOM — deep links keep resolving', async ({ page }) => {
-    // The Round-18 contract: every chip is a real <Link> carrying aria-current, never a
-    // <button>. A folded group that stopped rendering would break the homepage's
-    // quick-start deep links AND the back button.
+  test('activating a chip keeps focus inside the rail (the F1 standard, gated)', async ({ page }) => {
+    // The repro QA used, run against the gated build: activate an up-front chip and confirm
+    // focus does not land on <body>. With nothing able to move across a fold, there is no
+    // remount to lose focus to — this asserts that end state rather than assuming it.
     await page.goto('/search');
-    const folded = page.locator('.kf-filters__more');
-    await expect(folded).toBeVisible();
+    const chip = page.locator('.kf-filters a[href*="age="]').first();
+    await chip.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForURL(/age=/);
 
-    const foldedLinks = await folded.locator('a[href^="/search"]').count();
-    expect(foldedLinks).toBeGreaterThan(0);
-
-    // …and a native <details>, so none of this needs JavaScript to reach.
-    expect(await folded.evaluate((el) => el.tagName)).toBe('DETAILS');
+    const landed = await page.evaluate(() => ({
+      onBody: document.activeElement === document.body,
+      tag: document.activeElement?.tagName ?? null,
+    }));
+    expect(landed.onBody, `focus fell to <body> after a chip activation (tag=${landed.tag})`).toBe(false);
   });
 
   test('selected chips still carry aria-current="true" and never aria-pressed', async ({ page }) => {
@@ -228,18 +228,6 @@ test.describe('the rail is ADAPTIVE — 5-6 groups up front, the rest one disclo
     expect(await page.locator('.kf-filters a[aria-pressed]').count()).toBe(0);
     // And they are links, not buttons: the URL is the filter state.
     expect(await page.locator('.kf-filters button[aria-current]').count()).toBe(0);
-  });
-
-  test('the whole rail is keyboard-operable, including the disclosure', async ({ page }) => {
-    await page.goto('/search');
-    const summary = page.locator('.kf-filters__more > summary');
-    await summary.focus();
-    await page.keyboard.press('Enter');
-    await expect(page.locator('.kf-filters__more[open]')).toHaveCount(1);
-    // Focus lands somewhere real inside the now-open group, by Tab alone.
-    await page.keyboard.press('Tab');
-    const inside = await page.evaluate(() => !!document.activeElement?.closest('.kf-filters__more'));
-    expect(inside).toBe(true);
   });
 });
 
