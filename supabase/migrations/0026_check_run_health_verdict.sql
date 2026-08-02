@@ -70,9 +70,33 @@ CREATE INDEX idx_source_check_run_health_alert
 -- (and silently drops a real alert). Shape tracks the writer, which is the thing actually
 -- being asked about, and it cannot drift as either vocabulary grows.
 --
--- CONSEQUENCE, STATED PLAINLY: on deploy this moves the headline SLA number DOWNWARD for any
--- source with a historical alert, because those runs stop counting as clean successes. That
--- is the honest number the board should have been showing all along, not a regression.
+-- The obvious objection — "an older recorder build might have written {code, detail} with no
+-- warnings key, and you would miss it" — was checked in QA rather than reasoned about, and is
+-- provably zero: every historical revision of both recorders writes `warnings: extraWarnings`
+-- (4 commits for activenet since b5c98c3, 6 for perfectmind since 5394619; the no-warnings
+-- shape has never existed), AND neither recorder has ever had a production caller in any
+-- commit — only its own module and tests. So no row of recorder-object shape exists in any
+-- real database. Nothing is traded away for the precision.
+--
+-- `code <> 'ok'` is still load-bearing alongside the shape test, and both must stay: a
+-- recorder writes the object for a NON-alerting verdict too when it carries warnings, and
+-- that row has `warnings` but must not be flagged.
+--
+-- BOUNDED RESIDUAL, written down rather than guarded: if reconcile/shutdown ever gain a
+-- `warnings` key, their markers would match again. This is one-time and forward-only — once
+-- applied everywhere it can never re-run — so only such a change landing BEFORE prod takes
+-- this migration could bite. Not worth a guard; worth knowing.
+--
+-- MEASURED EFFECT ON REAL DATA: NONE. Staging and prod contain no adapter health verdict of
+-- any kind (QA measured twice, from independent fresh restores: array branch 0 rows, object
+-- branch 0 genuine rows, 0 of 49 prod runs with non-null errors; tile adherencePct and worker
+-- p0AdherencePct both 100 → 100, serialised payload byte-for-byte identical). So this backfill
+-- changes no SLA figure today — the mechanism is verified and correct, it simply has nothing
+-- historical to act on yet. An EARLIER version of this comment warned the deployer to brace
+-- for the headline number to drop; that was written before the measurement and is wrong.
+-- Going forward an alerting run will lower the figure rather than raise it, and if that ever
+-- happens the reading is "the measurement stopped overstating reality", not "the SLA got
+-- worse" — but nothing moves at deploy.
 UPDATE source_check_run cr
    SET health_alert_code   = v.code,
        health_alert_detail = v.detail
