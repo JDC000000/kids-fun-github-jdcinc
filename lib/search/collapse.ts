@@ -21,6 +21,7 @@
 // no single day, so there is nothing to collapse them ONTO. Each keeps its own card.
 
 import type { ScoredListing } from './rank';
+import type { ListingRecord } from './types';
 import { localIsoDate } from './time/vancouver';
 
 /** One occurrence inside a collapsed card — enough for the UI to render a time list. */
@@ -69,15 +70,26 @@ export function collapseSameDaySeries(scored: ScoredListing[]): CollapsedListing
   return groups;
 }
 
-/** `seriesId|YYYY-MM-DD` (America/Vancouver local date), or null when the listing has no fixed day. */
-function groupKey(item: ScoredListing): string | null {
-  const listing = item.candidate.listing;
+/**
+ * `seriesId|YYYY-MM-DD` (America/Vancouver local date), or null when the listing belongs to no
+ * single day and is therefore never collapsed onto anything (open-hours / undated / unparseable).
+ *
+ * Exported because "what counts as ONE card" must have exactly one definition. The facet counter
+ * (lib/search/facets.ts) reports counts in CARDS so its numbers match the collapsed list a parent
+ * sees; it counts distinct keys with this function rather than re-deriving the rule, so the two
+ * can never disagree about whether two slots are the same card.
+ */
+export function collapseKey(listing: Pick<ListingRecord, 'seriesId' | 'openHours' | 'startDatetimeUtc'>): string | null {
   if (listing.openHours) return null;
   const start = listing.startDatetimeUtc;
   if (!start) return null;
   const day = safeLocalIsoDate(start);
   if (day == null) return null;
   return `${listing.seriesId}|${day}`;
+}
+
+function groupKey(item: ScoredListing): string | null {
+  return collapseKey(item.candidate.listing);
 }
 
 function safeLocalIsoDate(iso: string): string | null {

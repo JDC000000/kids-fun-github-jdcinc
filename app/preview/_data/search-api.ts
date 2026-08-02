@@ -1,4 +1,5 @@
 import type { ListingRecord } from '@/lib/search/types';
+import type { FacetCounts } from '@/lib/search/facets';
 import { isRegistrationShaped } from '@/lib/search/filters/registration';
 import type { Activity, BookingType, Category, ConfidenceLabel, CostStatus, StatusState, TimeOfDay } from './types';
 
@@ -47,6 +48,14 @@ export interface SearchItemDto {
 export interface SearchResponseDto {
   results: SearchItemDto[];
   expected: SearchItemDto[];
+  /** Total matching results BEFORE `limit` — what the facet counts are measured against. */
+  total?: number;
+  /**
+   * Per-filter-value result counts, returned only when the request asked for them
+   * (`&facets=1`). This is what a count-driven filter rail/sheet renders its numbers from;
+   * see lib/search/facets.ts for the drop-one semantics.
+   */
+  facets?: FacetCounts;
   meta: { fixtureBacked: boolean; sort: string; backend?: 'fixture' | 'database'; fallbackReason?: string };
 }
 

@@ -22,6 +22,17 @@ describe('region hierarchy chips (BR-08, T-03)', () => {
     expect(ids.has(REGION_IDS.vancouver)).toBe(false);
   });
 
+  it('lists a level in a stable, name-ordered form regardless of source row order', () => {
+    // The area facet chips are built from this, and the live `region` query has no ORDER BY —
+    // so the ordering has to come from here, or the chips reshuffle between cache refreshes.
+    const shuffled = new RegionHierarchy([...REGIONS].reverse());
+    const names = (h: RegionHierarchy) => h.atLevel('municipality').map((r) => r.name);
+    expect(names(hierarchy)).toEqual(['Burnaby', 'North Vancouver', 'Richmond', 'Vancouver', 'West Vancouver']);
+    expect(names(shuffled)).toEqual(names(hierarchy));
+    // Only that level — the metro root and the sub-areas stay out of the municipality chips.
+    expect(hierarchy.atLevel('sub_area').map((r) => r.id)).toEqual([REGION_IDS.vanEast, REGION_IDS.vanWestSide]);
+  });
+
   it('West Side narrows to sub-area only', () => {
     expect(matchesRegion([REGION_IDS.vancouver, REGION_IDS.vanWestSide, null], hierarchy, [REGION_IDS.vanWestSide])).toBe(true);
     expect(matchesRegion([REGION_IDS.vancouver, REGION_IDS.vanEast, null], hierarchy, [REGION_IDS.vanWestSide])).toBe(false);
