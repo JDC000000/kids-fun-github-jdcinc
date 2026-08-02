@@ -152,10 +152,43 @@ export function networkShort(family: string): string {
 // Pure, DB-free helpers — exported for unit tests + reuse by the UI. Null-safe.
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface CadenceInput {
+  lastSuccessAtMs: number | null;
+  cadenceSeconds: number | null;
+}
+
+/**
+ * CONTINUOUS cadence adherence in [0,1] — how well a source is keeping its schedule.
+ * Byte-for-byte the same formula as worker/health/sla.ts adherenceFactor; see that
+ * function for the full rationale (plateau to grace, then reciprocal grace ÷ x decay,
+ * no new constants, no floor). Duplicated rather than imported because the Next app must
+ * not build against worker/ — tests/health/sla-consistency.test.ts pins the two copies
+ * together on exact numeric equality so they cannot silently diverge.
+ */
+export function adherenceFactor(input: CadenceInput, nowMs: number, grace: number = SLA_CADENCE_GRACE): number {
+  if (input.lastSuccessAtMs == null) return 0;
+  const cadence =
+    input.cadenceSeconds != null && input.cadenceSeconds > 0 ? input.cadenceSeconds : DEFAULT_CADENCE_SECONDS;
+  const thresholdMs = cadence * 1000 * grace;
+  const elapsedMs = Math.max(0, nowMs - input.lastSuccessAtMs);
+  if (elapsedMs <= thresholdMs) return 1;
+  const decayed = thresholdMs / elapsedMs;
+  return Number.isFinite(decayed) ? Math.min(1, Math.max(0, decayed)) : 0;
+}
+
+/** The SLA's pass/fail reading of an adherence factor: "is this source on cadence?" */
+export function isFullyAdherent(adherence: number): boolean {
+  return adherence >= 1;
+}
+
 /**
  * Is a source SLA-adherent (meeting its cadence)? True iff it has a successful check
  * within grace × its effective cadence. A source that has NEVER succeeded is NOT
  * adherent (it isn't delivering fresh data), regardless of whether it has run.
+ *
+ * Now derived from adherenceFactor so the boundary is defined in exactly one place, but
+ * the pass/fail behaviour is UNCHANGED — this board, its ≥95% target and its counts all
+ * read the same as before the continuous rewrite.
  *
  * RECONCILIATION (Round 23 / Task RR, G-T15-3): the canonical worker-side health SLA lives
  * in worker/health/sla.ts (cadenceAdherent), which computes the broader operational health
@@ -166,15 +199,11 @@ export function networkShort(family: string): string {
  * cannot silently diverge. See the Task RR findings doc for the full reasoning.
  */
 export function isCadenceAdherent(
-  input: { lastSuccessAtMs: number | null; cadenceSeconds: number | null },
+  input: CadenceInput,
   nowMs: number,
   grace: number = SLA_CADENCE_GRACE
 ): boolean {
-  if (input.lastSuccessAtMs == null) return false;
-  const cadence =
-    input.cadenceSeconds != null && input.cadenceSeconds > 0 ? input.cadenceSeconds : DEFAULT_CADENCE_SECONDS;
-  const thresholdMs = cadence * 1000 * grace;
-  return nowMs - input.lastSuccessAtMs <= thresholdMs;
+  return isFullyAdherent(adherenceFactor(input, nowMs, grace));
 }
 
 /**

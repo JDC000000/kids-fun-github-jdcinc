@@ -5,8 +5,18 @@
 // PINS them together: they must agree on every input, so the formula can never silently
 // diverge. If someone edits one grace/threshold and not the other, this goes red.
 import { describe, it, expect } from 'vitest';
-import { cadenceAdherent, SLA_CADENCE_GRACE as WORKER_GRACE } from '../../worker/health/sla';
-import { isCadenceAdherent, SLA_CADENCE_GRACE as ADMIN_GRACE } from '../../lib/admin/data-health';
+import {
+  cadenceAdherent,
+  adherenceFactor as workerAdherenceFactor,
+  isFullyAdherent as workerIsFullyAdherent,
+  SLA_CADENCE_GRACE as WORKER_GRACE,
+} from '../../worker/health/sla';
+import {
+  isCadenceAdherent,
+  adherenceFactor as adminAdherenceFactor,
+  isFullyAdherent as adminIsFullyAdherent,
+  SLA_CADENCE_GRACE as ADMIN_GRACE,
+} from '../../lib/admin/data-health';
 
 const NOW = Date.parse('2026-07-20T12:00:00Z');
 const DAY = 86_400;
@@ -48,6 +58,71 @@ describe('worker vs admin cadence-adherence parity', () => {
           `mismatch for cadence=${cadenceSeconds} lag=${lag}`
         ).toBe(isCadenceAdherent(input, NOW));
       }
+    }
+  });
+
+  // ── the CONTINUOUS measure must be pinned just as hard ──────────────────────────
+  // The boolean is now derived from adherenceFactor in both files, so a divergence in
+  // the decay would drag the pass/fail verdict with it. Exact numeric equality, not
+  // toBeCloseTo: these are two copies of one formula, not two approximations of it.
+  it('the two continuous adherenceFactor copies agree EXACTLY, including deep into the decay', () => {
+    const cadences = [null, 0, -1, 60, 3600, 2 * 3600, DAY, 7 * DAY];
+    const lags = [
+      null,
+      -60, // clock skew: last success in the future
+      0,
+      1,
+      1800,
+      3600,
+      3600 + 30,
+      1.4626 * 3600, // worst in-grace gap actually observed on staging
+      1.5 * 3600,
+      1.5 * 3600 + 0.001,
+      2 * 3600,
+      DAY - 1,
+      DAY,
+      DAY + 1,
+      DAY + 60,
+      1.5 * DAY - 1,
+      1.5 * DAY,
+      1.5 * DAY + 1,
+      2 * DAY,
+      2.0005 * DAY, // the real H.R. MacMillan missed cycle
+      3 * DAY,
+      5.3829 * DAY,
+      7.4923 * DAY, // the real City of Vancouver events-calendar outage
+      12.0508 * DAY,
+      24.0093 * DAY,
+      365 * DAY,
+    ];
+    for (const cadenceSeconds of cadences) {
+      for (const lag of lags) {
+        const input = { lastSuccessAtMs: lag == null ? null : agoMs(lag), cadenceSeconds };
+        expect(
+          workerAdherenceFactor(input, NOW),
+          `mismatch for cadence=${cadenceSeconds} lag=${lag}`
+        ).toBe(adminAdherenceFactor(input, NOW));
+      }
+    }
+  });
+
+  it('a non-default grace stays in parity too', () => {
+    for (const grace of [1, 1.25, 1.5, 2, 3]) {
+      for (const lag of [0, DAY, 1.5 * DAY, 2 * DAY, 10 * DAY]) {
+        const input = { lastSuccessAtMs: agoMs(lag), cadenceSeconds: DAY };
+        expect(workerAdherenceFactor(input, NOW, grace), `grace=${grace} lag=${lag}`).toBe(
+          adminAdherenceFactor(input, NOW, grace)
+        );
+        expect(cadenceAdherent(input, NOW, grace), `grace=${grace} lag=${lag}`).toBe(
+          isCadenceAdherent(input, NOW, grace)
+        );
+      }
+    }
+  });
+
+  it('both files agree on what "fully adherent" means', () => {
+    for (const v of [0, 0.5, 0.9999, 1, 1.0001, 2]) {
+      expect(workerIsFullyAdherent(v)).toBe(adminIsFullyAdherent(v));
     }
   });
 });
