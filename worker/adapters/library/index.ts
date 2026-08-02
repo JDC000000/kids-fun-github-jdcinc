@@ -47,14 +47,26 @@ interface BiblioEvent {
    * once the boolean is in hand there is no way left to tell a structured vendor flag from a
    * regex over prose, and they are not the same claim.
    *
-   *   'registration-info'  — BiblioCommons' structured `registrationInfo` block. Authoritative
-   *                          in BOTH directions: this IS the library's own booking system, so
-   *                          "no registration methods enabled" genuinely means turn up.
+   *   'registration-info'  — BiblioCommons' structured `registrationInfo` block was PRESENT.
+   *                          Authoritative in BOTH directions: this IS the library's own
+   *                          booking system, so a present-but-empty block ("no methods
+   *                          enabled") genuinely means turn up.
    *   'description-prose'  — /registration required/i over the RSS description. Authoritative
    *                          only when it MATCHES. A miss means the prose did not mention it,
    *                          which is silence, not a drop-in claim.
+   *   'absent'             — the gateway event carried NO registrationInfo block at all. No
+   *                          evidence in either direction.
+   *
+   * ADDED 'absent' 2026-08-02 (QA round 139, F5) to close a real tri-state contract
+   * violation. `registrationInfo` is optional on the vendor type, and with the block missing
+   * the derivation computed `Boolean(undefined || undefined)` = `false` while this field was
+   * hardcoded to 'registration-info' — so silence was published as an AUTHORITATIVE drop-in
+   * claim. That pinned the row into the default view AND disabled the title heuristic for it,
+   * which is the precise failure the tri-state contract in ../../core/adapter.ts exists to
+   * prevent, in the one direction nothing was watching. Distinguishing absent from
+   * present-but-empty is what makes both honest: the second is a real fact, the first is not.
    */
-  registrationSignal: 'registration-info' | 'description-prose';
+  registrationSignal: 'registration-info' | 'description-prose' | 'absent';
   descriptionText?: string;
   categoryHint?: string;
   location?: LibraryBranchLocation;
@@ -184,6 +196,9 @@ function registrationRequired(event: BiblioCommonsGatewayEvent): boolean {
  * changing its meaning is a separate decision from persisting the fact alongside it.
  */
 export function registrationAssertion(event: BiblioEvent): boolean | undefined {
+  // No block at all — no evidence either way. Must NOT fall through to the boolean, which is
+  // `false` here only because there was nothing to read (QA round 139, F5).
+  if (event.registrationSignal === 'absent') return undefined;
   if (event.registrationSignal === 'registration-info') return event.registrationRequired;
   return event.registrationRequired ? true : undefined;
 }
@@ -219,7 +234,10 @@ function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommon
         ages: ageText || audienceNames.join(', ') || 'See event details',
         url: detailUrl,
         registrationRequired: registrationRequired(event),
-        registrationSignal: 'registration-info',
+        // Recorded from the payload, NOT hardcoded: `registrationInfo` is optional on the
+        // vendor type, and claiming a structured reading of a block that was never there is
+        // what turned silence into a drop-in claim (F5).
+        registrationSignal: def.registrationInfo ? 'registration-info' : 'absent',
         descriptionText,
         categoryHint: categoryHint(def.title, typeNames),
         location,
@@ -531,9 +549,11 @@ export class LibraryAdapter implements Adapter {
           ages: '0-2 years',
           url: `${this.system.feedBaseUrl}/${this.system.systemKey}-baby-storytime-1`,
           registrationRequired: false,
-          // Mirrors the gateway shape: a BiblioCommons event with no registration methods
-          // enabled. The fixture asserts drop-in because the real payload it stands in for
-          // does — not because `false` is a convenient default.
+          // Mirrors the gateway shape: a BiblioCommons event whose registrationInfo block is
+          // PRESENT and empty (no methods enabled) — which is a real drop-in fact, and is
+          // deliberately not the same as the block being absent ('absent', see F5). The
+          // fixture asserts drop-in because the payload it stands in for does, not because
+          // `false` is a convenient default.
           registrationSignal: 'registration-info',
         },
       ];

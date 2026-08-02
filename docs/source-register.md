@@ -1492,6 +1492,15 @@ heuristic, unchanged.
   carries a capacity signal; (d) `Spots` is empty on 17 of 18 records on the real drop-in
   calendar. **This needs its own column or an explicit precedence rule — a design decision,
   not wiring.**
+- **F5 (was a live contract violation, FIXED 2026-08-02).** `registrationInfo` is optional on
+  the BiblioCommons gateway type. With the block absent the derivation computed
+  `Boolean(undefined || undefined)` = `false`, while the map site hardcoded
+  `registrationSignal: 'registration-info'` — so silence was published as an AUTHORITATIVE
+  drop-in claim, pinning the row into the default view AND disabling the title heuristic for
+  it. The exact failure the tri-state contract exists to prevent, in the direction nothing was
+  watching. Fixed by recording absence as its own provenance (`'absent'`), which keeps the
+  genuinely useful distinction between a block that is MISSING and one that is PRESENT AND
+  EMPTY — the latter is a real drop-in fact from the library's own booking system.
 - **F-16 (low) — NARROWED, then still worth measuring.** The derivation was originally
   `loginToRegister || enabledMethods.length || maxSeats || cap`. QA round 139 flagged the
   breadth; on inspection the last two terms were not merely unmeasured but INCOHERENT — with

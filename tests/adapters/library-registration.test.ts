@@ -26,8 +26,16 @@ const gatewaySystem: LibrarySystemConfig = {
   liveCapable: true,
 };
 
-/** One gateway response carrying two events with the registrationInfo blocks given. */
-function gatewayBody(events: Array<{ id: string; title: string; registrationInfo: unknown }>) {
+/**
+ * One gateway response carrying the events given.
+ *
+ * `registrationInfo` is OPTIONAL here on purpose, mirroring the vendor type
+ * (BiblioCommonsGatewayEvent.definition.registrationInfo is `?`). An earlier version of this
+ * harness typed it as REQUIRED, which made the absent-block case — the one QA round 139 F5
+ * found to be broken — literally inexpressible in a test. A fix could then have "passed"
+ * while proving nothing.
+ */
+function gatewayBody(events: Array<{ id: string; title: string; registrationInfo?: unknown }>) {
   return {
     events: { items: events.map((e) => e.id) },
     entities: {
@@ -164,6 +172,29 @@ describe('library (BiblioCommons JSON gateway) — a structured flag, authoritat
     });
   });
 
+  // ── QA round 139, F5: a tri-state CONTRACT VIOLATION ────────────────────────────────
+  // `registrationInfo` is optional on the vendor type. With the block absent the derivation
+  // computed Boolean(undefined || undefined) = false, and the map site stamped that with
+  // `registrationSignal: 'registration-info'` regardless — so `false` was passed through as
+  // AUTHORITATIVE. Silence became a positive drop-in claim, pinning the row into the default
+  // view and DISABLING the title heuristic for it. Exactly what the tri-state exists to
+  // prevent, in the one direction nothing was watching.
+  it('emits UNDEFINED when the registrationInfo block is ABSENT — silence is not a drop-in claim', async () => {
+    const [record] = await extractGateway([{ id: 'evt-no-block', title: 'Baby Storytime' }]);
+    expect(record.registrationRequired).toBeUndefined();
+    expect(record.bookingUrl).toBeUndefined();
+  });
+
+  it('still distinguishes an absent block from a PRESENT but empty one', async () => {
+    // The distinction the fix must preserve: present-and-empty is the library's own booking
+    // system saying "no registration configured" (a real drop-in fact), whereas absent is no
+    // evidence at all. Collapsing them either way loses a genuine signal.
+    const [present] = await extractGateway([
+      { id: 'evt-empty-block', title: 'Baby Storytime', registrationInfo: { enabledMethods: [], loginToRegister: false } },
+    ]);
+    expect(present.registrationRequired).toBe(false);
+  });
+
   it('reports both verdicts in one payload rather than collapsing the calendar to a single value', async () => {
     const records = await extractGateway([
       { id: 'a', title: 'Registered Program', registrationInfo: { enabledMethods: ['ONLINE'], loginToRegister: true } },
@@ -202,12 +233,30 @@ describe('library (BiblioCommons RSS) — prose, authoritative only when it matc
 });
 
 describe('library — the shared assertion helper', () => {
+  const base = { id: 'x', title: 't', branch: 'b', startsAt: '2026-09-24T18:00:00.000Z', ages: 'a', url: 'u' };
+
   it('passes a structured verdict through and downgrades a prose miss to unknown', () => {
-    const base = { id: 'x', title: 't', branch: 'b', startsAt: '2026-09-24T18:00:00.000Z', ages: 'a', url: 'u' };
     expect(registrationAssertion({ ...base, registrationRequired: true, registrationSignal: 'registration-info' })).toBe(true);
     expect(registrationAssertion({ ...base, registrationRequired: false, registrationSignal: 'registration-info' })).toBe(false);
     expect(registrationAssertion({ ...base, registrationRequired: true, registrationSignal: 'description-prose' })).toBe(true);
     expect(registrationAssertion({ ...base, registrationRequired: false, registrationSignal: 'description-prose' })).toBeUndefined();
+  });
+
+  /**
+   * 'absent' means NO EVIDENCE — whatever the boolean happens to say.
+   *
+   * Tested at a state the mapper cannot currently produce (`absent` always arrives with
+   * `registrationRequired: false`, because there was nothing to read). That is deliberate,
+   * and it is the same treatment `shortfallCalendarsFor` gets in the perfectmind adapter:
+   * without it, deleting the `absent` branch entirely leaves every test green, because the
+   * prose fallback returns `undefined` for a false boolean by coincidence rather than by
+   * intent. Found by mutation-testing my own fix — the branch survived removal, i.e. it was
+   * decoration. This is what makes it load-bearing, so the contract is stated in code rather
+   * than resting on the incidental ordering of the two branches below it.
+   */
+  it('treats an ABSENT block as unknown regardless of the boolean beside it', () => {
+    expect(registrationAssertion({ ...base, registrationRequired: false, registrationSignal: 'absent' })).toBeUndefined();
+    expect(registrationAssertion({ ...base, registrationRequired: true, registrationSignal: 'absent' })).toBeUndefined();
   });
 });
 
