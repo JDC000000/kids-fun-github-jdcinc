@@ -47,7 +47,14 @@ import { typoSimilarity, DEFAULT_TRIGRAM_THRESHOLD, MIN_FUZZY_QUERY_LENGTH } fro
 /** Postgres default tsvector field weights {A,B,C,D}. */
 export const DEFAULT_FIELD_WEIGHTS = { A: 1.0, B: 0.4, C: 0.2, D: 0.1 } as const;
 
-/** Shortest term allowed to prefix-match a longer token ("pa" → park). One character is noise. */
+/**
+ * Shortest term allowed to prefix-match a longer token ("pa" → park). One character is noise.
+ *
+ * DO NOT RAISE THIS TO 3 — it was tested, not assumed. Independent QA (round 97) ran a build
+ * with only this constant flipped to 3, side by side with 2 and with the pre-fix baseline,
+ * against the same live catalogue: "sw", "op", "ki" and "ba" all fell from real results to
+ * zero, and two-character type-ahead stopped working entirely. Two is the measured answer.
+ */
 export const MIN_PREFIX_QUERY_LENGTH = 2;
 
 /** Shortest half of a run-together compound ("open" + "gym"). Below this it is a coincidence. */

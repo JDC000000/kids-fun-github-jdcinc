@@ -1,7 +1,7 @@
 // tests/search/match.test.ts — Weighted tsquery + trigram matcher (G-T16-3).
 
 import { describe, it, expect } from 'vitest';
-import { WeightedTrigramMatcher, sharesInflectionalStem } from '../../lib/search/match';
+import { WeightedTrigramMatcher, sharesInflectionalStem, MIN_PREFIX_QUERY_LENGTH } from '../../lib/search/match';
 import { FixtureAliasResolver } from '../../lib/search/expand';
 import { ALIAS_SEED } from '../../lib/search/__fixtures__/aliases';
 import { FIXTURE_LISTINGS } from '../../lib/search/__fixtures__/listings';
@@ -206,6 +206,18 @@ describe('search-prefix-match repro (registry round 97)', () => {
   describe('SHORT-PREFIX COLLISION — the user-visible harm', () => {
     it('"pa" returns its prefix matches (park, party)', () => {
       expect(idsFor('pa').sort()).toEqual(['l-park', 'l-party']);
+    });
+
+    /**
+     * Independent QA (round 97) built a third server with only MIN_PREFIX_QUERY_LENGTH flipped
+     * to 3 and measured it against the live catalogue: "sw", "op", "ki" and "ba" all dropped
+     * from real results to zero and two-character type-ahead stopped working. Two is measured,
+     * not assumed — this pins it so a later tightening has to argue with the evidence.
+     */
+    it('keeps two-character prefix queries working (QA-measured, do not raise to 3)', () => {
+      expect(MIN_PREFIX_QUERY_LENGTH).toBe(2);
+      expect(idsFor('sw')).toContain('l-swim');
+      expect(idsFor('pa').length).toBeGreaterThan(0);
     });
 
     it('"parade" no longer returns the same result set as "pa"', () => {
