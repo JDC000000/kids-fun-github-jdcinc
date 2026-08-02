@@ -108,9 +108,19 @@ test.describe('mobile /search — the sheet is a real dialog', () => {
       true,
     );
 
-    // The full filter set is now reachable — all eleven groups, not a subset.
-    for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price', 'Near me']) {
-      await expect(dialog.getByRole('group', { name })).toHaveCount(1);
+    // The full filter set is REACHABLE — nothing is dropped. Since the desktop-rail work
+    // (Round 31) the same single FilterRail instance carries an adaptive plan at every
+    // breakpoint, so a group that cannot narrow the current query renders inside the
+    // "More filters" <details> instead of up front. Reachable, not necessarily on screen:
+    // asserting visibility here would be asserting that the reduction had NOT happened.
+    for (const id of ['when', 'time', 'ages', 'areas', 'quick', 'cost', 'near', 'courses', 'daterange']) {
+      await expect(dialog.locator(`[aria-labelledby="kf-fg-${id}"]`)).toHaveCount(1);
+    }
+    // …and whatever is folded is one keyboard-operable, JS-free disclosure away.
+    const folded = dialog.locator('.kf-filters__more');
+    if (await folded.count()) {
+      await folded.locator('summary').click();
+      await expect(dialog.getByRole('group', { name: 'Max price' })).toHaveCount(1);
     }
   });
 
@@ -320,13 +330,15 @@ test.describe('mobile /search — the sheet does not break URL-driven filter sta
 test.describe('desktop /search — untouched by the mobile work', () => {
   test.use({ viewport: DESKTOP });
 
-  test('keeps the inline filter rail, with no sticky bar and no dialog anywhere', async ({ page }) => {
+  test('keeps a persistent filter rail, with no sticky bar and no dialog anywhere', async ({ page }) => {
     await page.goto('/search');
 
-    // The rail that fix/desktop-responsive-shell laid out is still inline and visible.
+    // Still the same single FilterRail instance, still server-rendered, still visible.
     await expect(page.locator('.kf-filters')).toBeVisible();
-    for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price']) {
-      await expect(page.getByRole('group', { name })).toHaveCount(1);
+    // Every group is present in the DOM at this width (up front or folded) — the
+    // primary/secondary split itself is asserted in search-desktop-rail.public.spec.ts.
+    for (const id of ['when', 'time', 'ages', 'areas', 'quick', 'cost', 'near', 'courses', 'daterange']) {
+      await expect(page.locator(`[aria-labelledby="kf-fg-${id}"]`)).toHaveCount(1);
     }
 
     // None of the sheet's chrome exists at this width…
@@ -334,11 +346,13 @@ test.describe('desktop /search — untouched by the mobile work', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Close filters' })).toBeHidden();
 
-    // …and the multi-column desktop grid still applies to the rail itself (proving the
-    // wrapper really is display:contents and not a new box in the cascade).
-    const columns = await page.evaluate(
-      () => getComputedStyle(document.querySelector('.kf-filters')!).gridTemplateColumns,
-    );
-    expect(columns.split(' ').length, `expected the 1280px 3-column filter grid, got "${columns}"`).toBe(3);
+    // …and the rail is a real sidebar beside the results rather than a block above them.
+    // (Superseded assertion: this used to check the inline rail's own 3-column chip grid,
+    // which was the pre-rail desktop layout. Round 31 replaced that layout; the geometry
+    // that matters now — 200px sidebar, results to its right — is pinned in the desktop
+    // rail spec, and re-asserted in one line here so this file cannot silently pass while
+    // the rail has collapsed back into the content column.)
+    const box = await page.locator('.kf-filters').boundingBox();
+    expect(box?.width).toBeLessThanOrEqual(240);
   });
 });

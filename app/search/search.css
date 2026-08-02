@@ -1192,13 +1192,24 @@
   color: var(--ink-secondary);
 }
 
+/* On a selected chip the numeral takes the chip's own foreground. NO opacity: the Chip
+   primitive's pairings are token-guarded for AA (components/ui/__tests__/contrast.test.ts),
+   and an opacity is precisely the thing that walks a guarded pair back under the threshold
+   without touching a single token. Verified with axe: 0.75 here failed on every selected
+   chip in both schemes. The numeral is already distinguished by size and weight. */
 [aria-current='true'] .kf-fchip__n {
   color: inherit;
-  opacity: 0.75;
 }
 
+/* A zero-count chip must read as "this leads nowhere" WITHOUT becoming unreadable — it is
+   still a real, focusable link, and a parent who tabs to it deserves to be able to read it.
+   Dimming the whole chip with opacity: 0.45 did exactly the wrong thing (axe: serious
+   colour-contrast failures on every empty chip, both schemes), so the muting is carried by
+   the border and surface instead, with the text left on its guarded token. */
 .kf-filters [data-empty='true'] {
-  opacity: 0.45;
+  border-style: dashed;
+  border-color: var(--neutral-300);
+  background: transparent;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
