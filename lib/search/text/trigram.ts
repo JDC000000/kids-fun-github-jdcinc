@@ -41,7 +41,7 @@ export function fuzzyMatches(a: string, b: string, threshold = DEFAULT_TRIGRAM_T
 }
 
 // ---------------------------------------------------------------------------
-// Prefix-collision guard (search relevance fix; see lib/search/match.ts).
+// Coincidence guard (search relevance fix; see lib/search/match.ts).
 //
 // pg_trgm pads every word with TWO leading spaces, so a word's first characters
 // generate boundary-anchored trigrams ("  p", " pa", "par") that ANY other word
@@ -49,70 +49,32 @@ export function fuzzyMatches(a: string, b: string, threshold = DEFAULT_TRIGRAM_T
 // genuine similarity, and because short words own few trigrams the ratio stays
 // above the 0.3 threshold on nothing but that opening:
 //
-//   similarity('pa',     'park')  = 0.333   ← a two-character query
-//   similarity('parade', 'park')  = 0.333   ← the user-visible bug: "parade" hit "park"
-//   similarity('swim',   'swimxyz') = 0.444 ← scores HIGHER than swim/swimming (0.4)
+//   similarity('pa',     'park')    = 0.333  ← a two-character query
+//   similarity('parade', 'park')    = 0.333  ← "parade" hit "park" catalogue-wide
+//   similarity('swim',   'swimxyz') = 0.444  ← scores HIGHER than swim/swimming (0.4)
 //
-// The last line is why no threshold tuning fixes this: trigram overlap cannot tell an
-// English inflection from arbitrary trailing junk, because in BOTH cases the entire
-// overlap is just the shared opening. So the matcher asks a structural question
-// instead — "is there any shared trigram the common prefix does NOT explain?" — and
-// treats prefix-only overlap as evidence only when the two words are a single edit
-// apart (a real typo), not merely a coincidental shared opening.
+// That last line is why no threshold tuning fixes this: trigram overlap cannot tell an
+// English inflection from arbitrary trailing junk. But an opening is not the only way
+// two unrelated words collide — a shared ENDING does it just as well, and there the
+// ratio is just as blind:
+//
+//   similarity('swimmer', 'summer')   = 0.364 ← shares "mme"/"mer"/"er ", no prefix at all
+//   similarity('length',  'strength') = 0.333 ← shares "eng"/"ngt"/"gth"/"th "
+//
+// An earlier revision guarded only the prefix case, which is where the bug was REPORTED
+// rather than where it lives; "swimmer" then returned Summer Reading Club and no swim
+// sessions at all. So the guard is stated over the whole word instead of over one end of
+// it: trigram overlap counts as a TYPO only when the two words are within a single edit.
+// Anything further apart has to earn its match through an explicit, direction-safe rule
+// (exact / stem / prefix / infix / compound) rather than through a coincidental ratio.
 // ---------------------------------------------------------------------------
 
 /**
  * Shortest query length that may be fuzzy-matched. Measured, not guessed: over the live
- * staging catalogue's 220-word vocabulary, dropping to 3 buys only false positives
- * (big~bit) and 4 loses no legitimate pair — every surviving fuzzy match is ≥ 4 characters.
+ * staging catalogue's vocabulary, dropping to 3 buys only false positives (big~bit) while
+ * 4 loses no legitimate pair — every surviving fuzzy match is at least 4 characters.
  */
 export const MIN_FUZZY_QUERY_LENGTH = 4;
-
-/** Length of the longest common leading run of characters. */
-export function commonPrefixLength(a: string, b: string): number {
-  const max = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < max && a[i] === b[i]) i++;
-  return i;
-}
-
-/** The padded length-3 windows of a single word, in order. */
-function paddedWindows(word: string): string[] {
-  const padded = `  ${word} `;
-  const out: string[] = [];
-  for (let i = 0; i + 3 <= padded.length; i++) out.push(padded.slice(i, i + 3));
-  return out;
-}
-
-/**
- * True when EVERY trigram two words share is one their common prefix already accounts for —
- * i.e. the overlap says "these start the same" and nothing more.
- *
- * The first `p` windows of `  word ` are exactly the ones that end inside a common prefix of
- * length `p`; a pair with real structural agreement (a typo sharing an interior or a suffix,
- * like libary/library sharing "ary"/"ry ") contributes trigrams outside that set.
- *
- * Multi-word inputs return false — this guard is a single-token question, and declining to
- * answer keeps it from silently suppressing a phrase comparison.
- */
-export function overlapIsPrefixOnly(a: string, b: string): boolean {
-  const wa = normalize(a);
-  const wb = normalize(b);
-  if (!wa || !wb || wa.includes(' ') || wb.includes(' ')) return false;
-
-  const prefixLength = commonPrefixLength(wa, wb);
-  if (prefixLength === 0) return false;
-
-  const explained = new Set(paddedWindows(wa).slice(0, prefixLength));
-  const other = trigrams(wb);
-  let shared = 0;
-  for (const gram of trigrams(wa)) {
-    if (!other.has(gram)) continue;
-    shared++;
-    if (!explained.has(gram)) return false; // overlap reaches past the common prefix
-  }
-  return shared > 0;
-}
 
 /**
  * Damerau-style "at most one edit apart" (substitution, insertion/deletion, or an adjacent
@@ -134,14 +96,20 @@ export function withinOneEdit(a: string, b: string): boolean {
 }
 
 /**
- * Trigram similarity for TYPO tolerance: pg_trgm's score, but 0 whenever the only thing the
- * two words share is an opening and they are more than one edit apart. That single guard is
- * what stops "parade" matching "park" and "swimxyz" matching "swim" while leaving genuine
- * misspellings (libary/library, soccor/soccer, gymm/gym) exactly where they were.
+ * Trigram similarity for TYPO tolerance: pg_trgm's score, but only for pairs that are also
+ * within a single edit. Both halves do work — the edit bound rejects coincidental overlap at
+ * either end of the word (parade/park, swimxyz/swim, swimmer/summer, length/strength), and
+ * the threshold still rejects short pairs where one edit is most of the word (cat/cot).
+ * Genuine misspellings — libary/library, soccor/soccer, gymm/gym, siwm/swim — clear both.
  *
  * Queries shorter than `minLength` are not fuzzy-matched at all: below four characters a
  * single edit is a third or more of the whole word, and every legitimate short query is
  * already served by the exact / prefix / stem tiers in lib/search/match.ts.
+ *
+ * Relationships that span more than one edit are NOT this function's job. A longer word
+ * legitimately containing the query (ball → basketball) is the infix tier; an inflection
+ * (swimmer → swim) is the stem tier. Both are exact string tests, so neither can be talked
+ * into a match by a ratio.
  */
 export function typoSimilarity(
   query: string,
@@ -150,8 +118,7 @@ export function typoSimilarity(
   minLength = MIN_FUZZY_QUERY_LENGTH
 ): number {
   if (query.length < minLength) return 0;
+  if (!withinOneEdit(query, token)) return 0;
   const score = similarity(query, token);
-  if (score < threshold) return 0;
-  if (overlapIsPrefixOnly(query, token) && !withinOneEdit(query, token)) return 0;
-  return score;
+  return score >= threshold ? score : 0;
 }

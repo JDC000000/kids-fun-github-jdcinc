@@ -5,13 +5,7 @@ import { WeightedTrigramMatcher, sharesInflectionalStem } from '../../lib/search
 import { FixtureAliasResolver } from '../../lib/search/expand';
 import { ALIAS_SEED } from '../../lib/search/__fixtures__/aliases';
 import { FIXTURE_LISTINGS } from '../../lib/search/__fixtures__/listings';
-import {
-  similarity,
-  overlapIsPrefixOnly,
-  withinOneEdit,
-  typoSimilarity,
-  MIN_FUZZY_QUERY_LENGTH,
-} from '../../lib/search/text/trigram';
+import { similarity, withinOneEdit, typoSimilarity, MIN_FUZZY_QUERY_LENGTH } from '../../lib/search/text/trigram';
 
 const resolver = new FixtureAliasResolver(ALIAS_SEED);
 const matcher = new WeightedTrigramMatcher();
@@ -80,20 +74,7 @@ describe('trigram similarity (pg_trgm-compatible)', () => {
   });
 });
 
-describe('prefix-collision guard (lib/search/text/trigram)', () => {
-  it('recognises overlap that is nothing but a shared opening', () => {
-    expect(overlapIsPrefixOnly('parade', 'park')).toBe(true);
-    expect(overlapIsPrefixOnly('swimxyz', 'swim')).toBe(true);
-    expect(overlapIsPrefixOnly('storytimezz', 'storytime')).toBe(true);
-    expect(overlapIsPrefixOnly('pa', 'park')).toBe(true);
-  });
-
-  it('does NOT flag pairs that agree past the opening', () => {
-    expect(overlapIsPrefixOnly('libary', 'library')).toBe(false); // shares "ary"/"ry "
-    expect(overlapIsPrefixOnly('ball', 'basketball')).toBe(false);
-    expect(overlapIsPrefixOnly('zzzqqxx', 'swim')).toBe(false); // no overlap at all
-  });
-
+describe('coincidence guard (lib/search/text/trigram)', () => {
   it('measures single edits, including adjacent transpositions', () => {
     expect(withinOneEdit('soccor', 'soccer')).toBe(true); // substitution
     expect(withinOneEdit('gymm', 'gym')).toBe(true); // insertion
@@ -107,13 +88,39 @@ describe('prefix-collision guard (lib/search/text/trigram)', () => {
     expect(typoSimilarity('libary', 'library')).toBeGreaterThan(0);
     expect(typoSimilarity('soccor', 'soccer')).toBeGreaterThan(0);
     expect(typoSimilarity('gymm', 'gym')).toBeGreaterThan(0);
+    expect(typoSimilarity('swiming', 'swimming')).toBeGreaterThan(0);
   });
 
-  it('refuses a shared opening as evidence when the words are more than one edit apart', () => {
+  /**
+   * An honest limitation, pinned so nobody "fixes" it by loosening the threshold. A
+   * transposition inside a short word destroys almost every trigram — siwm and swim share
+   * only "  s" — so pg_trgm cannot see the resemblance no matter how the guard is written.
+   * The edit bound accepts the pair; the similarity floor is what turns it down.
+   */
+  it('cannot rescue a transposition in a short word, and does not pretend to', () => {
+    expect(withinOneEdit('siwm', 'swim')).toBe(true);
+    expect(similarity('siwm', 'swim')).toBeLessThan(0.3);
+    expect(typoSimilarity('siwm', 'swim')).toBe(0);
+  });
+
+  it('refuses overlap at the START of a word when the pair is more than one edit apart', () => {
     expect(typoSimilarity('parade', 'park')).toBe(0);
     expect(typoSimilarity('parade', 'party')).toBe(0);
     expect(typoSimilarity('swimxyz', 'swim')).toBe(0);
     expect(typoSimilarity('storytimezz', 'storytime')).toBe(0);
+  });
+
+  /**
+   * QA re-verify of the first revision: the guard was originally stated over the common
+   * PREFIX, which is where the bug was reported rather than where it lives. A shared ENDING
+   * collides just as readily, and "swimmer" was reaching Summer Reading Club through it.
+   * These pin the guard as a whole-word question so that asymmetry cannot come back.
+   */
+  it('refuses overlap at the END of a word on the same terms', () => {
+    expect(similarity('swimmer', 'summer')).toBeGreaterThanOrEqual(0.3); // raw score still clears
+    expect(typoSimilarity('swimmer', 'summer')).toBe(0); // ...but two edits apart
+    expect(similarity('length', 'strength')).toBeGreaterThanOrEqual(0.3);
+    expect(typoSimilarity('length', 'strength')).toBe(0);
   });
 
   it(`declines to fuzzy-match queries under ${MIN_FUZZY_QUERY_LENGTH} characters`, () => {
@@ -126,6 +133,12 @@ describe('prefix-collision guard (lib/search/text/trigram)', () => {
 describe('inflectional stem sharing', () => {
   it('recognises the common English inflections, both directions', () => {
     expect(sharesInflectionalStem('swimming', 'swim')).toBe(true);
+    expect(sharesInflectionalStem('swimmer', 'swim')).toBe(true);
+    expect(sharesInflectionalStem('swimmers', 'swim')).toBe(true);
+    expect(sharesInflectionalStem('skater', 'skate')).toBe(true);
+    expect(sharesInflectionalStem('skaters', 'skate')).toBe(true);
+    expect(sharesInflectionalStem('dancer', 'dance')).toBe(true);
+    expect(sharesInflectionalStem('runner', 'run')).toBe(true);
     expect(sharesInflectionalStem('swim', 'swimming')).toBe(true);
     expect(sharesInflectionalStem('running', 'run')).toBe(true);
     expect(sharesInflectionalStem('dancing', 'dance')).toBe(true);
@@ -139,6 +152,18 @@ describe('inflectional stem sharing', () => {
     expect(sharesInflectionalStem('storytimezz', 'storytime')).toBe(false);
     expect(sharesInflectionalStem('parade', 'park')).toBe(false);
     expect(sharesInflectionalStem('bus', 'bu')).toBe(false); // base under three characters
+  });
+
+  /**
+   * "-er" is not reliably a suffix, so the stemmer only accepts the forms that require a real
+   * spelling change (undoubled consonant, restored silent e). Without that restriction a
+   * search for "mother" would return moth listings.
+   */
+  it('does not treat a word merely ENDING in -er as an agent noun', () => {
+    expect(sharesInflectionalStem('mother', 'moth')).toBe(false);
+    expect(sharesInflectionalStem('corner', 'corn')).toBe(false);
+    expect(sharesInflectionalStem('water', 'wat')).toBe(false);
+    expect(sharesInflectionalStem('summer', 'summ')).toBe(false);
   });
 });
 
@@ -194,6 +219,37 @@ describe('search-prefix-match repro (registry round 97)', () => {
     });
   });
 
+  /**
+   * Found by independent QA against the first revision of this branch, NOT by the original
+   * report. "swimmer" lost every swim session (the stem tier did not know the agentive -er)
+   * and kept "Summer Reading Club" (the guard only looked at the common prefix, and
+   * swimmer/summer collide on their ENDING) — strictly worse than the pre-fix baseline for
+   * that query, and the same harm class this branch exists to remove.
+   */
+  describe('SUFFIX COLLISION — the regression QA caught', () => {
+    const SUMMER_LISTINGS = [
+      ...COLLISION_LISTINGS,
+      listing('l-summer', 'Summer Reading Club', 'storytime', 'Kitsilano Library', 'Read all summer.'),
+    ];
+
+    it('"swimmer" finds swim sessions', () => {
+      expect(idsFor('swimmer', SUMMER_LISTINGS)).toContain('l-swim');
+    });
+
+    it('"swimmer" does NOT find Summer Reading Club', () => {
+      expect(idsFor('swimmer', SUMMER_LISTINGS)).not.toContain('l-summer');
+    });
+
+    it('"swimmers" and "skaters" reach their activity through the stem tier', () => {
+      expect(idsFor('swimmers', SUMMER_LISTINGS)).toContain('l-swim');
+      expect(idsFor('swimmers', SUMMER_LISTINGS)).not.toContain('l-summer');
+    });
+
+    it('"summer" still finds the summer listing it actually belongs to', () => {
+      expect(idsFor('summer', SUMMER_LISTINGS)).toEqual(['l-summer']);
+    });
+  });
+
   describe('CONTROLS — already correct, must not regress', () => {
     it('"aswimb" returns nothing (token not leading)', () => {
       expect(idsFor('aswimb')).toEqual([]);
@@ -234,6 +290,34 @@ describe('WeightedTrigramMatcher', () => {
     const candidates = matcher.match(expanded, FIXTURE_LISTINGS);
     expect(candidates.length).toBe(FIXTURE_LISTINGS.length);
     expect(candidates.every((c) => c.relevance === 0)).toBe(true);
+  });
+
+  /**
+   * The infix tier exists because the whole-word edit bound would otherwise silently drop
+   * substring matches that were working before ("ball" is six edits from "basketball").
+   * It is one-directional — the TOKEN must contain the QUERY — which is what keeps it from
+   * becoming the "swimxyz contains swim" hole in reverse.
+   */
+  describe('infix tier', () => {
+    const SPORT_LISTINGS = [
+      listing('l-basketball', 'Youth Basketball', 'class_program', 'Britannia Centre', 'Drop-in hoops.'),
+      listing('l-swim', 'Public Swim', 'public_swim', 'Hillcrest Pool', 'Family swim session.'),
+    ];
+
+    it('finds a term buried inside a longer token', () => {
+      expect(idsFor('ball', SPORT_LISTINGS)).toEqual(['l-basketball']);
+    });
+
+    it('does NOT match when the QUERY contains the token instead', () => {
+      expect(idsFor('swimxyz', SPORT_LISTINGS)).toEqual([]);
+      expect(idsFor('basketballxyz', SPORT_LISTINGS)).toEqual([]);
+    });
+
+    it('ranks an infix hit below a leading match for the same token', () => {
+      const infix = matcher.match(resolver.expand(['ball']), SPORT_LISTINGS)[0].relevance;
+      const prefix = matcher.match(resolver.expand(['bask']), SPORT_LISTINGS)[0].relevance;
+      expect(prefix).toBeGreaterThan(infix);
+    });
   });
 
   it('scores an exact hit above an inflection, and an inflection above a thin prefix', () => {
