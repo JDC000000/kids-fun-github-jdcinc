@@ -46,6 +46,25 @@ export const DEFAULT_CADENCE_SECONDS = 24 * 60 * 60;
 /** Default rolling window for success-rate / parse-yield stats. */
 export const HEALTH_WINDOW_DAYS = 7;
 
+/**
+ * SQL predicate for a CLEAN successful run — one that both completed AND carried no health
+ * verdict (source_check_run.health_alert_code IS NULL).
+ *
+ * F-11, and the reason this constant exists at all: this used to be a bare
+ * `status IN ('success','partial')`. An adapter that raised shape_drift or a
+ * phone-rejection spike still upserts its occurrences, so its run lands as 'partial' and was
+ * counted BOTH as a success in the ratio below AND as the source's last successful check —
+ * i.e. a run that raised a real alarm actively made the headline SLA number look healthier
+ * than the truth. A run nobody can trust is not a success.
+ *
+ * Assumes the source_check_run table is aliased `cr`.
+ *
+ * MUST STAY BYTE-IDENTICAL to lib/admin/dashboard.ts CLEAN_SUCCESS_RUN_SQL, for the same
+ * reason SLA_CADENCE_GRACE must equal its admin-side twin: the Next app cannot import from
+ * worker/, so these are two deliberate copies. tests/health/sla-consistency.test.ts pins them.
+ */
+export const CLEAN_SUCCESS_RUN_SQL = "cr.status IN ('success', 'partial') AND cr.health_alert_code IS NULL";
+
 /** The health_state labels — mirrors the source.health_state CHECK set (0003_core_places.sql). */
 export type HealthState = 'healthy' | 'degraded' | 'stale' | 'failing' | 'unknown';
 
@@ -129,6 +148,13 @@ export function isFullyAdherent(adherence: number): boolean {
  * is. tests/health/adherence-continuous.test.ts pins it against the original formula.
  * This is the SAME formula as lib/admin/data-health.ts isCadenceAdherent (guard-tested
  * for parity, along with adherenceFactor itself).
+ *
+ * F-11 note on what "successful check" MEANS here. This function is unchanged, but the
+ * `lastSuccessAtMs` fed to it is not: it now comes from CLEAN_SUCCESS_RUN_SQL, i.e. the last
+ * run that both completed AND raised no health verdict. So a source whose recent runs all
+ * alerted presents an OLDER lastSuccessAt than it used to, and is scored later than it used
+ * to be. The two changes compose deliberately — this one decides how harshly lateness is
+ * scored, F-11 decides which runs are allowed to reset the clock.
  */
 export function cadenceAdherent(
   input: CadenceInput,
@@ -138,12 +164,24 @@ export function cadenceAdherent(
   return isFullyAdherent(adherenceFactor(input, nowMs, grace));
 }
 
+/**
+ * Run tallies over a window. The only invariant the pure helpers below rely on is
+ * withRecords ≤ succeeded ≤ attempted; WHICH runs count as "succeeded" is the caller's
+ * choice, and the two callers deliberately differ today:
+ *   • computeHealthSla (this file) counts only CLEAN successes — see CLEAN_SUCCESS_RUN_SQL.
+ *     An alerted run stays in `attempted` and drops out of `succeeded`, so raising an alarm
+ *     lowers the board's number instead of raising it (F-11).
+ *   • worker/core/confidence.ts's loadSourceConfidenceContext still counts every
+ *     success/partial, alerted or not. That is a KNOWN, deliberate inconsistency, not an
+ *     oversight — see the note there for why it was not changed in the same breath.
+ */
 export interface RunCounts {
   /** Completed runs (success + partial + failed) in the window. Excludes still-'running'. */
   attempted: number;
-  /** success + partial. */
+  /** Runs the caller counts as successful. */
   succeeded: number;
-  /** success/partial runs that actually parsed ≥1 record. */
+  /** Of those, the ones that actually parsed ≥1 record. Must use the same basis as
+   *  `succeeded`, so parseYieldRate can never exceed 1. */
   withRecords: number;
 }
 
@@ -314,14 +352,14 @@ export async function computeHealthSla(
      LEFT JOIN LATERAL (
        SELECT max(started_at) AS last_success_at
        FROM source_check_run cr
-       WHERE cr.source_id = s.id AND cr.status IN ('success', 'partial')
+       WHERE cr.source_id = s.id AND ${CLEAN_SUCCESS_RUN_SQL}
      ) success ON true
      LEFT JOIN LATERAL (
        SELECT
          count(*) FILTER (WHERE cr.status IN ('success', 'partial', 'failed'))::int AS attempted,
-         count(*) FILTER (WHERE cr.status IN ('success', 'partial'))::int            AS succeeded,
-         count(*) FILTER (WHERE cr.status IN ('success', 'partial')
-                            AND COALESCE(cr.records_found, 0) > 0)::int               AS with_records
+         count(*) FILTER (WHERE ${CLEAN_SUCCESS_RUN_SQL})::int                      AS succeeded,
+         count(*) FILTER (WHERE ${CLEAN_SUCCESS_RUN_SQL}
+                            AND COALESCE(cr.records_found, 0) > 0)::int             AS with_records
        FROM source_check_run cr
        WHERE cr.source_id = s.id
          AND cr.started_at >= now() - ($1::int * interval '1 day')

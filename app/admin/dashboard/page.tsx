@@ -25,7 +25,7 @@ import {
   STALE_CADENCE_GRACE,
   type IngestionSourceHealth,
   type RecentCorrection,
-  type RecentFailure,
+  type RunNeedingAttention,
   type StaleSource,
 } from '@/lib/admin/dashboard';
 import { formatAge, formatCadence, formatCount, formatDurationMs, formatTimestampUtc } from '@/lib/admin/format';
@@ -107,7 +107,10 @@ function StaleRow({ s, nowMs }: { s: StaleSource; nowMs: number }) {
   );
 }
 
-function FailureRow({ f, nowMs }: { f: RecentFailure; nowMs: number }) {
+function AttentionRow({ f, nowMs }: { f: RunNeedingAttention; nowMs: number }) {
+  // An alert-only row's real message is the verdict, not the generic first-error string —
+  // show the code alongside the status so `shape_drift` vs `phone_rejection_spike` is scannable.
+  const message = f.healthAlertDetail ?? f.errorSummary;
   return (
     <tr>
       <td>
@@ -118,9 +121,18 @@ function FailureRow({ f, nowMs }: { f: RecentFailure; nowMs: number }) {
         <div>{formatAge(f.startedAt, nowMs)}</div>
         <div className="dim mono">{formatTimestampUtc(f.startedAt)}</div>
       </td>
+      <td>
+        <span className={`badge ${statusClass(f.status)}`}>{f.status}</span>
+        {f.healthAlertCode && (
+          <>
+            {' '}
+            <span className="badge bad mono">{f.healthAlertCode}</span>
+          </>
+        )}
+      </td>
       <td className="mono">{formatDurationMs(f.durationMs)}</td>
       <td className="err-cell">
-        {f.errorSummary ? <span className="mono err-text">{f.errorSummary}</span> : <span className="dim">(no message)</span>}
+        {message ? <span className="mono err-text">{message}</span> : <span className="dim">(no message)</span>}
         {f.errorCount != null && f.errorCount > 1 && <span className="dim"> · +{f.errorCount - 1} more</span>}
       </td>
     </tr>
@@ -181,7 +193,7 @@ export default async function AdminDashboardPage({
   const [data, kpis] = await Promise.all([getAdminDashboardData(), getProductHealthKpis()]);
   const nowMs = Date.parse(data.generatedAt);
   const { registry, ingestion, analytics, alerts, corrections } = data;
-  const allHealthy = alerts.staleSources.length === 0 && alerts.recentFailures.length === 0;
+  const allHealthy = alerts.staleSources.length === 0 && alerts.runsNeedingAttention.length === 0;
   const totalSeries = ingestion.reduce((sum, s) => sum + s.seriesCount, 0);
   const totalOccurrences = ingestion.reduce((sum, s) => sum + s.occurrenceCount, 0);
   const peakDay = analytics.last7Days.reduce((max, d) => Math.max(max, d.count), 0);
@@ -232,16 +244,19 @@ export default async function AdminDashboardPage({
       <section className="adm-section">
         <h2>Health alerts</h2>
         <p className="adm-hint">
-          Operational problems only — enabled sources with a failed ingest run in the last{' '}
-          {formatCount(alerts.windowDays)} day(s), or that haven&apos;t had a successful check within{' '}
-          {STALE_CADENCE_GRACE}× their configured cadence. Derived live from{' '}
+          Operational problems only — enabled sources whose ingest run in the last{' '}
+          {formatCount(alerts.windowDays)} day(s) either FAILED outright or raised a health verdict (
+          <span className="mono">shape_drift</span>, <span className="mono">phone_rejection_spike</span>, …), or that
+          haven&apos;t had a clean successful check within {STALE_CADENCE_GRACE}× their configured cadence. A
+          verdict-raising run usually still ingests its records, so it shows as <span className="mono">partial</span> —
+          that is exactly the case this panel used to miss. Derived live from{' '}
           <span className="mono">source_check_run</span>. Visibility only — no email/Slack alerting is wired (deferred;
           this surface is for a human watching the board).
         </p>
         {allHealthy ? (
           <p className="ok-note">
-            ✓ All {formatCount(registry.enabledSources)} enabled source(s) healthy — no failed runs in the last{' '}
-            {formatCount(alerts.windowDays)} day(s) and none stale.
+            ✓ All {formatCount(registry.enabledSources)} enabled source(s) healthy — no failed or alerting runs in the
+            last {formatCount(alerts.windowDays)} day(s) and none stale.
           </p>
         ) : (
           <>
@@ -266,25 +281,27 @@ export default async function AdminDashboardPage({
                 </table>
               </>
             )}
-            {alerts.recentFailures.length > 0 && (
+            {alerts.runsNeedingAttention.length > 0 && (
               <>
-                <h3>Recent failed runs ({formatCount(alerts.recentFailures.length)})</h3>
+                <h3>Runs needing attention ({formatCount(alerts.runsNeedingAttention.length)})</h3>
                 <p className="adm-hint">
-                  Failed <span className="mono">source_check_run</span> rows from the last {formatCount(alerts.windowDays)}{' '}
-                  day(s), newest first (max {formatCount(alerts.recentFailures.length)} shown).
+                  Failed or health-verdict <span className="mono">source_check_run</span> rows from the last{' '}
+                  {formatCount(alerts.windowDays)} day(s), newest first (max{' '}
+                  {formatCount(alerts.runsNeedingAttention.length)} shown).
                 </p>
                 <table className="grid">
                   <thead>
                     <tr>
                       <th>Source</th>
                       <th>When</th>
+                      <th>Run / verdict</th>
                       <th>Duration</th>
-                      <th>Error</th>
+                      <th>What happened</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {alerts.recentFailures.map((f) => (
-                      <FailureRow key={f.checkRunId} f={f} nowMs={nowMs} />
+                    {alerts.runsNeedingAttention.map((f) => (
+                      <AttentionRow key={f.checkRunId} f={f} nowMs={nowMs} />
                     ))}
                   </tbody>
                 </table>

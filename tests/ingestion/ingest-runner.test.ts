@@ -330,4 +330,79 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     expect(Number(row.lng)).toBeCloseTo(-123.1783832, 5);
     expect(row.location_url).toContain('4320%20Moncton');
   });
+
+  // ── F-11: assessRun's verdict must land somewhere queryable ───────────────────────────
+  // Previously the verdict existed only as prose inside the errors array, so nothing —
+  // dashboard, SLA, alerting — could find it. These two pin the plumbing end to end:
+  // ingestSource → finishCheckRun → source_check_run.health_alert_code.
+  function alertingAdapter(diagnostics: { code: string; alert: boolean; detail: string } | null): Adapter {
+    const record: StructuredRecord = {
+      sourceRecordId: `assessrun-${crypto.randomUUID()}`,
+      title: 'Drop-in Family Swim',
+      startDatetimeUtc: '2026-09-24T18:00:00.000Z',
+      costStatus: 'free',
+      sourceUrl: 'https://example.org/assessrun',
+    };
+    return {
+      family: 'noop',
+      fetch: async () => [record],
+      extract: (raw) => raw as StructuredRecord[],
+      assessRun: () => diagnostics,
+      dedupKeys: () => ({ key: `assessrun::${record.sourceRecordId}` }),
+    };
+  }
+
+  it('persists an alerting assessRun verdict to health_alert_code, on a run that still ingested', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      [`AssessRun Alert Source ${crypto.randomUUID()}`]
+    );
+
+    const summary = await ingestSource(
+      pool,
+      alertingAdapter({ code: 'shape_drift', alert: true, detail: 'unrecognised payload keys for burnaby: sessionKind' }),
+      source.id
+    );
+
+    expect(summary.healthAlert).toEqual({
+      code: 'shape_drift',
+      detail: 'unrecognised payload keys for burnaby: sessionKind',
+    });
+
+    const [run] = await query<{ status: string; health_alert_code: string | null; health_alert_detail: string | null }>(
+      `SELECT status, health_alert_code, health_alert_detail FROM source_check_run WHERE id = $1`,
+      [summary.checkRunId]
+    );
+    // The run ingested its record perfectly well — this is exactly the shape that used to
+    // vanish: a 'partial' with a real alarm on it.
+    expect(run.status).toBe('partial');
+    expect(summary.occurrencesUpserted).toBe(1);
+    expect(run.health_alert_code).toBe('shape_drift');
+    expect(run.health_alert_detail).toBe('unrecognised payload keys for burnaby: sessionKind');
+  });
+
+  it('leaves health_alert_code NULL when assessRun returns ok / no verdict', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      [`AssessRun Quiet Source ${crypto.randomUUID()}`]
+    );
+
+    const summary = await ingestSource(
+      pool,
+      alertingAdapter({ code: 'ok', alert: false, detail: 'nothing to report' }),
+      source.id
+    );
+
+    expect(summary.healthAlert).toBeNull();
+    const [run] = await query<{ status: string; health_alert_code: string | null }>(
+      `SELECT status, health_alert_code FROM source_check_run WHERE id = $1`,
+      [summary.checkRunId]
+    );
+    // alert=false must not degrade the run OR write a code — a non-alerting verdict is not
+    // an alert, and the column is the alert predicate.
+    expect(run.status).toBe('success');
+    expect(run.health_alert_code).toBeNull();
+  });
 });

@@ -10,6 +10,7 @@ import {
   adherenceFactor as workerAdherenceFactor,
   isFullyAdherent as workerIsFullyAdherent,
   SLA_CADENCE_GRACE as WORKER_GRACE,
+  CLEAN_SUCCESS_RUN_SQL as WORKER_CLEAN_SUCCESS_SQL,
 } from '../../worker/health/sla';
 import {
   isCadenceAdherent,
@@ -17,6 +18,7 @@ import {
   isFullyAdherent as adminIsFullyAdherent,
   SLA_CADENCE_GRACE as ADMIN_GRACE,
 } from '../../lib/admin/data-health';
+import { CLEAN_SUCCESS_RUN_SQL as ADMIN_CLEAN_SUCCESS_SQL } from '../../lib/admin/dashboard';
 
 const NOW = Date.parse('2026-07-20T12:00:00Z');
 const DAY = 86_400;
@@ -124,5 +126,24 @@ describe('worker vs admin cadence-adherence parity', () => {
     for (const v of [0, 0.5, 0.9999, 1, 1.0001, 2]) {
       expect(workerIsFullyAdherent(v)).toBe(adminIsFullyAdherent(v));
     }
+  });
+});
+
+// F-11. The grace parity above pins the PURE predicate, but both sides feed that predicate a
+// `lastSuccessAtMs` computed by their own SQL — and that SQL was where the two could (and did)
+// silently mean different things. "Last successful check" must mean the same thing on the
+// worker's health board and on /admin/data-health: a run that COMPLETED and raised NO health
+// verdict. Same duplication rationale as the grace constant (the Next app cannot import from
+// worker/), so it gets the same treatment: two copies, pinned byte-for-byte here.
+describe('worker vs admin clean-successful-run SQL parity', () => {
+  it('the two predicates are byte-identical', () => {
+    expect(WORKER_CLEAN_SUCCESS_SQL).toBe(ADMIN_CLEAN_SUCCESS_SQL);
+  });
+
+  it('the predicate excludes alerted runs and assumes the `cr` alias', () => {
+    // Pinned explicitly, not just against each other: two copies edited in lock-step to
+    // something wrong (e.g. dropping the alert clause) would still satisfy the test above.
+    expect(WORKER_CLEAN_SUCCESS_SQL).toContain('health_alert_code IS NULL');
+    expect(WORKER_CLEAN_SUCCESS_SQL).toContain("cr.status IN ('success', 'partial')");
   });
 });

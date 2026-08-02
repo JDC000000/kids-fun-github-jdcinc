@@ -315,6 +315,15 @@ export async function loadSourceConfidenceContext(
        stats.succeeded,
        stats.with_records
      FROM source s
+     -- DELIBERATELY NOT worker/health/sla.ts's CLEAN_SUCCESS_RUN_SQL, which excludes runs
+     -- carrying a health verdict (F-11). The argument for matching it is real — a run nobody
+     -- trusts arguably should discount the records it produced. It was not done here because
+     -- this healthScore multiplies into computeConfidence's volatility factor, which drives
+     -- the confirmed/needs_review gate: changing it would reclassify live, user-visible
+     -- occurrences off the site as a side effect of a dashboard-visibility fix. That deserves
+     -- its own round with its own measurement (the 2026-08-01 grace incident documented in
+     -- sla.ts is what a health-score shift of this size actually costs), not a bolt-on.
+     -- Registered as a follow-up; the divergence is intentional until then.
      LEFT JOIN LATERAL (
        SELECT max(started_at) AS last_success_at
        FROM source_check_run cr

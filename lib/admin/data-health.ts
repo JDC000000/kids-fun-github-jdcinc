@@ -25,6 +25,7 @@
 // builders so the SLA % and coverage/gap logic are testable on known inputs.
 import { query } from '@/lib/db/client';
 import {
+  CLEAN_SUCCESS_RUN_SQL,
   DEFAULT_CADENCE_SECONDS,
   ENABLED_TERMS_STATUS,
   getHealthAlerts,
@@ -182,9 +183,10 @@ export function isFullyAdherent(adherence: number): boolean {
 }
 
 /**
- * Is a source SLA-adherent (meeting its cadence)? True iff it has a successful check
- * within grace × its effective cadence. A source that has NEVER succeeded is NOT
- * adherent (it isn't delivering fresh data), regardless of whether it has run.
+ * Is a source SLA-adherent (meeting its cadence)? True iff it has a CLEAN successful check
+ * (completed and alert-free — see CLEAN_SUCCESS_RUN_SQL in lib/admin/dashboard.ts) within
+ * grace × its effective cadence. A source that has NEVER succeeded is NOT adherent (it isn't
+ * delivering fresh data), regardless of whether it has run.
  *
  * Now derived from adherenceFactor so the boundary is defined in exactly one place, but
  * the pass/fail behaviour is UNCHANGED — this board, its ≥95% target and its counts all
@@ -278,7 +280,7 @@ export async function getSourceFreshnessSla(nowMs: number = Date.now()): Promise
     LEFT JOIN LATERAL (
       SELECT max(started_at) AS last_success_at
       FROM source_check_run cr
-      WHERE cr.source_id = s.id AND cr.status IN ('success', 'partial')
+      WHERE cr.source_id = s.id AND ${CLEAN_SUCCESS_RUN_SQL}
     ) success ON true
     WHERE s.terms_status = $1
     ORDER BY s.name

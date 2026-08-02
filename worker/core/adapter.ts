@@ -67,10 +67,40 @@ export interface DedupKey {
  * municipality. Only the adapter knows enough to spot that, so it reports it and the
  * ingest runner folds it into the check-run status.
  */
+/**
+ * An adapter's verdict on the run it just performed.
+ *
+ * NO `status` FIELD, DELIBERATELY (F-11 decision, 2026-08-02 — read before adding one).
+ * Adapters' own verdict types (ActiveNetHealthVerdict, PerfectMindHealthVerdict, …) do carry
+ * a `status`, and it is dropped here on purpose rather than by oversight:
+ *
+ *   1. A run status cannot carry this signal even if we plumbed it through. ingestSource
+ *      already derives 'partial' from "some records errored but at least one upserted" — a
+ *      cause with nothing to do with health. An adapter-supplied 'partial' would land in the
+ *      same bucket as "3 of 900 records had a bad date", so no reader could tell a deliberate
+ *      degrade from ordinary per-record noise. Adding a second producer of an ambiguous value
+ *      does not create a discriminator.
+ *   2. `status` is a DB CHECK enum ('running','success','partial','failed') read by roughly
+ *      eight queries across worker/ and lib/ (baseline sampling, last-success laterals, SLA
+ *      counts, dashboard laterals, the last_check_at stamp). Widening it is a large blast
+ *      radius for no added signal.
+ *   3. `alert` is ALREADY the exact boolean an operator needs — "a human should look at this
+ *      run" — and every code that fires computes it correctly. Its only defect was that it
+ *      was flattened into prose inside the generic `errors` array, unreachable from SQL.
+ *
+ * So the fix was to persist `alert` as a first-class fact (source_check_run.health_alert_code,
+ * migration 0026), not to give adapters a status vocabulary. If a future adapter genuinely
+ * needs to force a run to 'failed', that is a separate, deliberate change to ingestSource's
+ * status derivation — not a field quietly re-added here.
+ */
 export interface AdapterRunDiagnostics {
   /** Machine-readable code, e.g. 'ok' | 'yield_collapse' | 'shape_drift'. */
   code: string;
-  /** True when this must fail/degrade the run rather than pass quietly. */
+  /**
+   * True when a human must look at this run rather than let it pass quietly. Persisted to
+   * source_check_run.health_alert_code, which is what the admin attention panel and both
+   * SLA success-ratio paths key off.
+   */
   alert: boolean;
   /** One line, human-readable, for the health board. */
   detail: string;

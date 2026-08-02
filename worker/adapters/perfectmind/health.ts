@@ -295,6 +295,11 @@ export async function recordPerfectMindCheckRun(
     status: verdict.status,
     recordsFound: verdict.occurrences,
     errors,
+    // F-11: this path writes a check run WITHOUT going through ingestSource, so it has to
+    // persist the verdict itself. Miss this and an alert recorded here is invisible on the
+    // attention panel for every code whose status is 'partial' rather than 'failed' —
+    // i.e. exactly the codes F-11 was about.
+    healthAlert: verdict.alert ? { code: verdict.code, detail: verdict.detail } : null,
     startedAt,
   });
   return id;

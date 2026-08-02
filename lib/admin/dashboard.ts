@@ -14,7 +14,7 @@ export interface IngestionSourceHealth {
   healthState: string;
   /** source.last_check_at — set by the worker; may lag behind actual runs. */
   lastCheckAt: string | null;
-  /** Ground truth: most recent success/partial run from source_check_run. */
+  /** Ground truth: most recent CLEAN success/partial run (no health verdict) from source_check_run. */
   lastSuccessfulCheckAt: string | null;
   latestRunStatus: string | null;
   latestRunRecordsFound: number | null;
@@ -29,14 +29,33 @@ export interface SourceRegistrySummary {
   enabledSources: number;
 }
 
-/** One failed ingest attempt, for the dashboard "Recent failed runs" list. */
-export interface RecentFailure {
+/**
+ * One ingest run an operator needs to look at, for the dashboard's "Runs needing attention"
+ * list. TWO kinds qualify (F-11):
+ *   • the run FAILED outright (status = 'failed'), and
+ *   • the run's adapter raised a health verdict (health_alert_code IS NOT NULL) — shape_drift,
+ *     phone_rejection_spike, coverage_shortfall, … — regardless of the run's status.
+ *
+ * That second kind is why this is no longer "recent failures". An alerting run typically
+ * upserts occurrences perfectly well and lands as 'partial' or even 'success', so a panel
+ * keyed on status alone showed none of them and every health verdict this project raises
+ * reached nobody. It is keyed on the ALERT, not on a widened status set, precisely so an
+ * ordinary partial run (a handful of bad records) does not flood the panel — see the
+ * decision note on AdapterRunDiagnostics in worker/core/adapter.ts.
+ */
+export interface RunNeedingAttention {
   checkRunId: string;
   sourceId: string;
   sourceName: string;
   family: string;
   startedAt: string | null;
   durationMs: number | null;
+  /** The run's own status — 'failed', or 'partial'/'success' for an alert-only row. */
+  status: string;
+  /** AdapterRunDiagnostics.code when this run raised a health verdict; null for a plain failure. */
+  healthAlertCode: string | null;
+  /** AdapterRunDiagnostics.detail for that verdict; null when there is no alert. */
+  healthAlertDetail: string | null;
   /** First error string from source_check_run.errors (a jsonb string[]); null if none captured. */
   errorSummary: string | null;
   /** Total errors recorded on that run (array length), or null if errors isn't an array. */
@@ -57,9 +76,9 @@ export interface StaleSource {
 
 /** Operational problems only — the "something is wrong" view the healthy-count tiles don't show. */
 export interface HealthAlerts {
-  recentFailures: RecentFailure[];
+  runsNeedingAttention: RunNeedingAttention[];
   staleSources: StaleSource[];
-  /** How many days back the recent-failures window spans (for the UI copy). */
+  /** How many days back the attention-runs window spans (for the UI copy). */
   windowDays: number;
 }
 
@@ -105,10 +124,27 @@ export interface AdminDashboardData {
 /** "Enabled/live" source = terms reviewed and allowed (terms_status = 'allowed'). */
 export const ENABLED_TERMS_STATUS = 'allowed';
 
-/** How far back the "recent failed runs" list looks. */
-export const RECENT_FAILURE_WINDOW_DAYS = 7;
-/** Cap on rows in the recent-failures list (dashboard is a scan, not a log viewer). */
-export const RECENT_FAILURE_LIMIT = 20;
+/** How far back the "runs needing attention" list looks. */
+export const ATTENTION_RUN_WINDOW_DAYS = 7;
+/** Cap on rows in the attention-runs list (dashboard is a scan, not a log viewer). */
+export const ATTENTION_RUN_LIMIT = 20;
+
+/**
+ * SQL predicate for a CLEAN successful run — one that both completed AND carried no health
+ * verdict. This is what "last successful check" and every success ratio must mean (F-11):
+ * a run whose adapter raised shape_drift or phone_rejection_spike did NOT deliver a
+ * trustworthy refresh, so counting it as a success made the board report better numbers than
+ * the data deserved.
+ *
+ * Assumes the source_check_run table is aliased `cr`.
+ *
+ * MUST STAY BYTE-IDENTICAL to worker/health/sla.ts CLEAN_SUCCESS_RUN_SQL. The Next app cannot
+ * import from worker/ (tsconfig excludes it, eslint ignores it), so the two read paths are
+ * deliberately separate copies — exactly like SLA_CADENCE_GRACE / isCadenceAdherent above
+ * them. tests/health/sla-consistency.test.ts pins both, so neither the grace constant nor
+ * this predicate can drift without going red.
+ */
+export const CLEAN_SUCCESS_RUN_SQL = "cr.status IN ('success', 'partial') AND cr.health_alert_code IS NULL";
 /** A source is "stale" once its last successful check is older than grace × its cadence.
  *  2 = one full missed cycle is tolerated (could be transient); two missed = a real problem. */
 export const STALE_CADENCE_GRACE = 2;
@@ -192,7 +228,7 @@ export async function getIngestionHealth(): Promise<IngestionSourceHealth[]> {
     LEFT JOIN LATERAL (
       SELECT max(started_at) AS last_success_at
       FROM source_check_run cr
-      WHERE cr.source_id = s.id AND cr.status IN ('success', 'partial')
+      WHERE cr.source_id = s.id AND ${CLEAN_SUCCESS_RUN_SQL}
     ) success ON true
     WHERE s.terms_status = $1
     ORDER BY s.name
@@ -379,17 +415,26 @@ export function isSourceStale(
 /**
  * Failure / staleness visibility for the dashboard, all derived from source_check_run
  * (ground truth — source.last_check_at/health_state aren't actively maintained yet).
- * Recent failed runs come straight from the table; staleness is computed in TS via
+ * Attention-worthy runs come straight from the table; staleness is computed in TS via
  * isSourceStale so it's unit-testable. This is VISIBILITY ONLY — no email/Slack alerting.
  */
 export async function getHealthAlerts(nowMs: number = Date.now()): Promise<HealthAlerts> {
-  const failureRows = await query<{
+  // F-11: `status = 'failed' OR health_alert_code IS NOT NULL`. The second disjunct is the
+  // whole fix — an adapter that detects shape_drift or a phone-rejection spike still upserts
+  // its occurrences, so its run is 'partial' and the old status-only filter hid it. Note what
+  // this is NOT: `status IN ('failed','partial')`. Widening to all partials would surface
+  // every run that merely had a few bad records, burying the deliberate verdicts in noise and
+  // teaching operators to ignore the panel.
+  const attentionRows = await query<{
     id: string;
     source_id: string;
     name: string;
     family: string;
     started_at: Date | null;
     duration_ms: number | null;
+    status: string;
+    health_alert_code: string | null;
+    health_alert_detail: string | null;
     error_summary: string | null;
     error_count: number | null;
   }>(
@@ -401,6 +446,9 @@ export async function getHealthAlerts(nowMs: number = Date.now()): Promise<Healt
       s.family,
       cr.started_at,
       cr.duration_ms,
+      cr.status,
+      cr.health_alert_code,
+      left(cr.health_alert_detail, 300) AS health_alert_detail,
       left(
         coalesce(cr.errors #>> '{0}', cr.errors ->> 'message', cr.errors #>> '{}', cr.errors::text),
         300
@@ -408,13 +456,13 @@ export async function getHealthAlerts(nowMs: number = Date.now()): Promise<Healt
       CASE WHEN jsonb_typeof(cr.errors) = 'array' THEN jsonb_array_length(cr.errors) ELSE NULL END AS error_count
     FROM source_check_run cr
     JOIN source s ON s.id = cr.source_id
-    WHERE cr.status = 'failed'
+    WHERE (cr.status = 'failed' OR cr.health_alert_code IS NOT NULL)
       AND s.terms_status = $3
       AND cr.started_at >= now() - ($1::int * interval '1 day')
     ORDER BY cr.started_at DESC
     LIMIT $2::int
     `,
-    [RECENT_FAILURE_WINDOW_DAYS, RECENT_FAILURE_LIMIT, ENABLED_TERMS_STATUS]
+    [ATTENTION_RUN_WINDOW_DAYS, ATTENTION_RUN_LIMIT, ENABLED_TERMS_STATUS]
   );
 
   const cadenceRows = await query<{
@@ -439,7 +487,7 @@ export async function getHealthAlerts(nowMs: number = Date.now()): Promise<Healt
     LEFT JOIN LATERAL (
       SELECT max(started_at) AS last_success_at
       FROM source_check_run cr
-      WHERE cr.source_id = s.id AND cr.status IN ('success', 'partial')
+      WHERE cr.source_id = s.id AND ${CLEAN_SUCCESS_RUN_SQL}
     ) success ON true
     LEFT JOIN LATERAL (
       SELECT started_at AS last_run_at, status AS last_run_status
@@ -476,18 +524,21 @@ export async function getHealthAlerts(nowMs: number = Date.now()): Promise<Healt
     );
 
   return {
-    recentFailures: failureRows.map((r) => ({
+    runsNeedingAttention: attentionRows.map((r) => ({
       checkRunId: r.id,
       sourceId: r.source_id,
       sourceName: r.name,
       family: r.family,
       startedAt: toIso(r.started_at),
       durationMs: r.duration_ms,
+      status: r.status,
+      healthAlertCode: r.health_alert_code,
+      healthAlertDetail: r.health_alert_detail,
       errorSummary: r.error_summary,
       errorCount: r.error_count,
     })),
     staleSources,
-    windowDays: RECENT_FAILURE_WINDOW_DAYS,
+    windowDays: ATTENTION_RUN_WINDOW_DAYS,
   };
 }
 
