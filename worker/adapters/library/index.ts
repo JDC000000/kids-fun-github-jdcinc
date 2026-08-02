@@ -47,10 +47,14 @@ interface BiblioEvent {
    * once the boolean is in hand there is no way left to tell a structured vendor flag from a
    * regex over prose, and they are not the same claim.
    *
-   *   'registration-info'  — BiblioCommons' structured `registrationInfo` block was PRESENT.
-   *                          Authoritative in BOTH directions: this IS the library's own
-   *                          booking system, so a present-but-empty block ("no methods
-   *                          enabled") genuinely means turn up.
+   *   'registration-info'  — the block was PRESENT and carried real BOOKING evidence (an
+   *                          enabled method, a login requirement, or the affirmative absence
+   *                          of both). Authoritative in BOTH directions: this IS the
+   *                          library's own booking system, so a present-and-genuinely-empty
+   *                          block means turn up.
+   *   'capacity-only'      — the block was present but said NOTHING about booking: only
+   *                          `maxSeats`/`cap`, which is how many people the room holds. No
+   *                          evidence in either direction.
    *   'description-prose'  — /registration required/i over the RSS description. Authoritative
    *                          only when it MATCHES. A miss means the prose did not mention it,
    *                          which is silence, not a drop-in claim.
@@ -66,7 +70,7 @@ interface BiblioEvent {
    * prevent, in the one direction nothing was watching. Distinguishing absent from
    * present-but-empty is what makes both honest: the second is a real fact, the first is not.
    */
-  registrationSignal: 'registration-info' | 'description-prose' | 'absent';
+  registrationSignal: 'registration-info' | 'description-prose' | 'capacity-only' | 'absent';
   descriptionText?: string;
   categoryHint?: string;
   location?: LibraryBranchLocation;
@@ -138,42 +142,52 @@ function categoryHint(title: string, typeNames: string[] = []): string | undefin
 }
 
 /**
- * Does BiblioCommons' own booking system say you must register to attend?
+ * The gateway's registration verdict AND its provenance, derived TOGETHER in one place.
  *
- * NARROWED 2026-08-02 (QA round 139, F-16) — `maxSeats` and `cap` were dropped as
- * triggers, and the reason is stronger than the "unmeasured breadth" this was originally
- * flagged for. It was INTERNALLY INCOHERENT.
+ * COMPUTED AS A PAIR DELIBERATELY, and this is the root-cause fix rather than a third patch.
+ * The boolean and the provenance label used to be produced at two separate sites — the
+ * derivation function here and a ternary at the map site — and they fell out of sync TWICE,
+ * in opposite directions, each time publishing an over-claim:
+ *   • QA F5   — block ABSENT: boolean was `false` but provenance said 'registration-info',
+ *               so silence was published as an authoritative DROP-IN claim.
+ *   • QA F-16 — block present with ONLY a seat cap: after narrowing the boolean to
+ *               `loginToRegister || enabledMethods`, it became `false` while provenance
+ *               still said 'registration-info' — flipping a row that used to be (correctly)
+ *               treated as registration-shaped into an authoritative DROP-IN claim instead.
+ *               Strictly worse than the original breadth, because it also DISABLES the title
+ *               heuristic for that row. My narrowing moved the error from one pole to the
+ *               other rather than to the middle.
+ * Returning both from one rule makes that whole class of divergence unrepresentable.
  *
- * `enabledMethods` is the set of registration methods the vendor has enabled, and
- * `loginToRegister` is whether one of them needs an account. If BOTH are empty/false, the
- * event offers NO WAY TO REGISTER AT ALL. `maxSeats`/`cap` alone therefore made this
- * function assert "you must register" for an event the vendor provides no mechanism to
- * register for — a claim that cannot be true whether or not anyone measures it. What those
- * two fields actually mean is "the room holds N people", which is true of nearly every
- * genuinely walk-in library storytime.
+ * THE THREE-WAY TABLE. The middle row is the one both bugs above were missing:
+ *   loginToRegister OR enabledMethods.length > 0   → TRUE      the vendor says you must book
+ *   block present, neither, and no cap/maxSeats    → FALSE     a genuine drop-in claim
+ *   block present, ONLY cap/maxSeats               → UNDEFINED a room size is not a booking fact
+ *   block absent entirely                          → UNDEFINED silence
  *
- * That mattered because this feeds `StructuredRecord.registrationRequired`, which now
- * EVICTS content from the default view (lib/search/filters/registration.ts). Wrongly
- * evicting real drop-in storytimes is the expensive direction of error the whole design is
- * built to avoid, so shipping the broad form behind a "known risk" comment — which is what
- * the first version of this branch did — was not sufficient.
- *
- * MEASURED BLAST RADIUS OF THIS NARROWING: zero live rows. No configured library system
- * sets `gatewayEventsUrl` (VPL and RPL both migrated to `rssEventsUrl` in Task 8), so this
- * gateway path is retained generic capability and is not on any production run today. Which
- * also means QA's suggested alternative — ship broad, then measure precision against live
- * RPL data — was NOT EXECUTABLE as described: RPL never calls this function. There is no
- * live gateway traffic to measure, so the choice had to be made on the logic, not deferred
- * to data that cannot arrive.
- *
- * Deliberately kept as ONE function feeding both `bookingUrl` and the persisted boolean
- * rather than forked into a broad-for-links / narrow-for-facts pair. An event you cannot
- * register for has no booking page worth flagging either, and nothing is lost by dropping
- * the url: `sourceUrl` already carries the identical link.
+ * The two UNDEFINED rows fall through to the unchanged, conservative title heuristic in
+ * lib/search/filters/registration.ts — which is exactly what the tri-state contract in
+ * ../../core/adapter.ts is for. `maxSeats`/`cap` genuinely say nothing about booking in
+ * EITHER direction: nearly every walk-in library storytime has a room capacity, and so does
+ * every registered course.
  */
-function registrationRequired(event: BiblioCommonsGatewayEvent): boolean {
+export function gatewayRegistrationVerdict(event: BiblioCommonsGatewayEvent): {
+  registrationRequired: boolean;
+  registrationSignal: BiblioEvent['registrationSignal'];
+} {
   const info = event.definition?.registrationInfo;
-  return Boolean(info?.loginToRegister || (info?.enabledMethods && info.enabledMethods.length > 0));
+  if (!info) return { registrationRequired: false, registrationSignal: 'absent' };
+
+  const mustBook = Boolean(info.loginToRegister || (info.enabledMethods && info.enabledMethods.length > 0));
+  if (mustBook) return { registrationRequired: true, registrationSignal: 'registration-info' };
+
+  // No booking evidence. A seat cap alone is a capacity statement, not a booking one, so it
+  // cannot support the affirmative "turn up" claim a `false` would publish.
+  const capacityOnly = info.maxSeats != null || info.cap != null;
+  return {
+    registrationRequired: false,
+    registrationSignal: capacityOnly ? 'capacity-only' : 'registration-info',
+  };
 }
 
 /**
@@ -196,9 +210,12 @@ function registrationRequired(event: BiblioCommonsGatewayEvent): boolean {
  * changing its meaning is a separate decision from persisting the fact alongside it.
  */
 export function registrationAssertion(event: BiblioEvent): boolean | undefined {
-  // No block at all — no evidence either way. Must NOT fall through to the boolean, which is
-  // `false` here only because there was nothing to read (QA round 139, F5).
-  if (event.registrationSignal === 'absent') return undefined;
+  // Both "nothing was said" (F5) and "only a room size was said" (F-16) are NO EVIDENCE, and
+  // neither may fall through to the boolean — which is `false` in both cases purely because
+  // there was no booking fact to read, not because the source claimed drop-in.
+  if (event.registrationSignal === 'absent' || event.registrationSignal === 'capacity-only') {
+    return undefined;
+  }
   if (event.registrationSignal === 'registration-info') return event.registrationRequired;
   return event.registrationRequired ? true : undefined;
 }
@@ -233,11 +250,9 @@ function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommon
         endsAt: zonedLocalToUtcIso(def.end),
         ages: ageText || audienceNames.join(', ') || 'See event details',
         url: detailUrl,
-        registrationRequired: registrationRequired(event),
-        // Recorded from the payload, NOT hardcoded: `registrationInfo` is optional on the
-        // vendor type, and claiming a structured reading of a block that was never there is
-        // what turned silence into a drop-in claim (F5).
-        registrationSignal: def.registrationInfo ? 'registration-info' : 'absent',
+        // Both halves from ONE rule — see gatewayRegistrationVerdict for why they can no
+        // longer be derived separately.
+        ...gatewayRegistrationVerdict(event),
         descriptionText,
         categoryHint: categoryHint(def.title, typeNames),
         location,

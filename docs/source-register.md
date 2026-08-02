@@ -1501,19 +1501,27 @@ heuristic, unchanged.
   watching. Fixed by recording absence as its own provenance (`'absent'`), which keeps the
   genuinely useful distinction between a block that is MISSING and one that is PRESENT AND
   EMPTY — the latter is a real drop-in fact from the library's own booking system.
-- **F-16 (low) — NARROWED, then still worth measuring.** The derivation was originally
-  `loginToRegister || enabledMethods.length || maxSeats || cap`. QA round 139 flagged the
-  breadth; on inspection the last two terms were not merely unmeasured but INCOHERENT — with
-  no enabled method and no login requirement the vendor offers no way to register at all,
-  while `maxSeats`/`cap` only state room capacity, which is true of nearly every walk-in
-  storytime. Since this field now evicts content from the default view, that would have
-  removed real drop-in programming. **Narrowed to `loginToRegister || enabledMethods.length
-  > 0`, at zero live cost** — no configured system uses the gateway path that produces it
-  (VPL and RPL both moved to `rssEventsUrl` in Task 8), which also means QA's suggested
-  alternative of measuring precision against live RPL data was not executable: RPL never
-  calls it. Residual breadth remains (an event with an enabled method may still admit
-  walk-ins) and is still unmeasured. **Measure before extending this signal to another
-  family.**
+- **F-16 — CORRECTED TWICE, now a THREE-WAY verdict.** The derivation was originally
+  `loginToRegister || enabledMethods.length || maxSeats || cap`. QA flagged the breadth; my
+  first fix narrowed it to the two booking terms — which was right about what `maxSeats`/`cap`
+  do NOT mean and wrong about what they DO mean. A seat cap falling to `false` publishes an
+  authoritative DROP-IN claim, pinning the row into the default view and disabling the title
+  heuristic for it: the error moved from one pole to the other rather than to the middle, and
+  the second position is arguably worse. The honest answer is UNKNOWN — a room capacity says
+  nothing about booking in either direction. Final table, in `gatewayRegistrationVerdict()`:
+
+  | gateway `registrationInfo` | verdict | provenance |
+  |---|---|---|
+  | `loginToRegister` or a non-empty `enabledMethods` | **true** | `registration-info` |
+  | present, neither of those, and no cap/maxSeats | **false** (a real drop-in claim) | `registration-info` |
+  | present, ONLY `cap`/`maxSeats` | **undefined** | `capacity-only` |
+  | absent entirely (F5) | **undefined** | `absent` |
+
+  ROOT CAUSE OF BOTH F5 AND THIS: the boolean and its provenance label were computed at two
+  separate sites and fell out of sync twice, in opposite directions. They are now returned as
+  a PAIR from one function, which makes that class of divergence unrepresentable rather than
+  merely fixed. Residual breadth (an enabled method may still admit walk-ins) is unmeasured;
+  measure before extending this signal to another family.
 
 ---
 

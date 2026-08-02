@@ -11,7 +11,12 @@
 // item whose description happens not to mention registration, i.e. manufacture drop-in
 // claims out of silence for the whole feed. That case is pinned below.
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { LibraryAdapter, loadLibraryAdapters, registrationAssertion } from '../../worker/adapters/library';
+import {
+  LibraryAdapter,
+  gatewayRegistrationVerdict,
+  loadLibraryAdapters,
+  registrationAssertion,
+} from '../../worker/adapters/library';
 import type { LibrarySystemConfig } from '../../worker/adapters/library/config';
 
 const gatewaySystem: LibrarySystemConfig = {
@@ -137,29 +142,29 @@ describe('library (BiblioCommons JSON gateway) — a structured flag, authoritat
     expect(record.bookingUrl).toBeUndefined();
   });
 
-  it('does NOT treat a bare seat cap as registration — there is no mechanism to register with', async () => {
-    // NARROWED in QA round 139 (F-16). An earlier version of this branch asserted `true`
-    // here, matching the adapter's pre-existing derivation. That was incoherent, not merely
-    // broad: enabledMethods is empty and loginToRegister is false, so the vendor offers NO
-    // WAY to register — while maxSeats/cap only say how many people the room holds, which is
-    // true of nearly every walk-in library storytime. Because this field now evicts content
-    // from the default view, the broad form would have removed real drop-in programming.
-    // ONE extractGateway call per test, deliberately: politeFetch enforces a ~3s per-source
-    // rate-limit floor, so two live-path fetches in a single `it` blow the 5s default
-    // timeout. `maxSeats` gets its own case below rather than being batched in here.
+  // ── THE CAP-ONLY CASE, corrected twice. Kept deliberately, not deleted. ──────────────
+  // History, because both wrong answers are instructive:
+  //   v1 asserted TRUE  — over-broad; a room capacity is not a booking requirement, and this
+  //                       would evict genuinely walk-in storytimes from the default view.
+  //   v2 asserted FALSE — my narrowing (QA F-16), and WORSE: `false` is an authoritative
+  //                       drop-in claim, so it pinned the row INTO the default view and
+  //                       disabled the title heuristic for it. I moved the error from one
+  //                       pole to the other instead of to the middle.
+  //   v3 asserts UNDEFINED — the honest answer. A seat cap says nothing about booking in
+  //                       EITHER direction, so the conservative title heuristic decides.
+  it('treats a CAP-ONLY block as UNKNOWN — neither registration nor a drop-in claim', async () => {
     const [capOnly] = await extractGateway([
       { id: 'evt-cap', title: 'Craft Session', registrationInfo: { enabledMethods: [], loginToRegister: false, maxSeats: null, cap: 12 } },
     ]);
-    expect(capOnly.registrationRequired).toBe(false);
+    expect(capOnly.registrationRequired).toBeUndefined();
     expect(capOnly.bookingUrl).toBeUndefined();
   });
 
-  it('does NOT treat a bare maxSeats as registration either', async () => {
+  it('treats a bare maxSeats the same way — UNKNOWN, not a drop-in claim', async () => {
     const [seatsOnly] = await extractGateway([
       { id: 'evt-seats', title: 'Baby Storytime', registrationInfo: { enabledMethods: [], loginToRegister: false, maxSeats: 30, cap: null } },
     ]);
-    expect(seatsOnly.registrationRequired).toBe(false);
-    expect(seatsOnly.bookingUrl).toBeUndefined();
+    expect(seatsOnly.registrationRequired).toBeUndefined();
   });
 
   it('still flags a capped event that DOES expose a registration method', () => {
@@ -185,10 +190,12 @@ describe('library (BiblioCommons JSON gateway) — a structured flag, authoritat
     expect(record.bookingUrl).toBeUndefined();
   });
 
-  it('still distinguishes an absent block from a PRESENT but empty one', async () => {
-    // The distinction the fix must preserve: present-and-empty is the library's own booking
-    // system saying "no registration configured" (a real drop-in fact), whereas absent is no
-    // evidence at all. Collapsing them either way loses a genuine signal.
+  it('still distinguishes an absent block from a PRESENT and genuinely empty one', async () => {
+    // The distinction the fix must preserve: a block that is present and carries NO booking
+    // fact AND no capacity is the library's own booking system saying "nothing to register
+    // for" — a real drop-in claim, and one of the few positive drop-in signals this project
+    // has. Absent (nothing said) and capacity-only (a room size) are both unknown instead.
+    // Collapsing any of the three into the others loses a genuine signal or invents one.
     const [present] = await extractGateway([
       { id: 'evt-empty-block', title: 'Baby Storytime', registrationInfo: { enabledMethods: [], loginToRegister: false } },
     ]);
@@ -258,6 +265,11 @@ describe('library — the shared assertion helper', () => {
     expect(registrationAssertion({ ...base, registrationRequired: false, registrationSignal: 'absent' })).toBeUndefined();
     expect(registrationAssertion({ ...base, registrationRequired: true, registrationSignal: 'absent' })).toBeUndefined();
   });
+
+  it('treats a CAPACITY-ONLY block as unknown regardless of the boolean beside it', () => {
+    expect(registrationAssertion({ ...base, registrationRequired: false, registrationSignal: 'capacity-only' })).toBeUndefined();
+    expect(registrationAssertion({ ...base, registrationRequired: true, registrationSignal: 'capacity-only' })).toBeUndefined();
+  });
 });
 
 describe('library — families with no registration signal stay silent', () => {
@@ -270,5 +282,42 @@ describe('library — families with no registration signal stay silent', () => {
     const silent = records.filter((r) => !/Baby Storytime/.test(r.title));
     expect(silent.length).toBeGreaterThan(0);
     expect(silent.every((r) => r.registrationRequired === undefined)).toBe(true);
+  });
+});
+
+// The verdict table in one place, asserted directly rather than only through the rate-limited
+// live path — so every row of it is cheap to run and impossible to lose by accident.
+describe('library — gatewayRegistrationVerdict, the whole three-way table', () => {
+  const ev = (registrationInfo?: unknown) => ({ id: 'e', definition: { registrationInfo } }) as never;
+
+  it.each([
+    ['login required', { loginToRegister: true }, true, 'registration-info'],
+    ['an enabled method', { enabledMethods: ['ONLINE'] }, true, 'registration-info'],
+    ['method AND a cap — booking evidence wins', { enabledMethods: ['ONLINE'], cap: 20 }, true, 'registration-info'],
+    ['present, genuinely empty', { enabledMethods: [], loginToRegister: false }, false, 'registration-info'],
+    ['cap only', { enabledMethods: [], loginToRegister: false, cap: 12 }, false, 'capacity-only'],
+    ['maxSeats only', { maxSeats: 30 }, false, 'capacity-only'],
+    ['cap of ZERO is still a capacity statement', { cap: 0 }, false, 'capacity-only'],
+    ['no block at all', undefined, false, 'absent'],
+  ])('%s', (_label, info, expectedBool, expectedSignal) => {
+    expect(gatewayRegistrationVerdict(ev(info))).toEqual({
+      registrationRequired: expectedBool,
+      registrationSignal: expectedSignal,
+    });
+  });
+
+  it('only ever publishes an ASSERTION for the two rows that carry booking evidence', () => {
+    const assertionFor = (info?: unknown) => {
+      const v = gatewayRegistrationVerdict(ev(info));
+      return registrationAssertion({
+        id: 'e', title: 't', branch: 'b', startsAt: '2026-09-24T18:00:00.000Z', ages: 'a', url: 'u',
+        ...v,
+      });
+    };
+    expect(assertionFor({ loginToRegister: true })).toBe(true);
+    expect(assertionFor({ enabledMethods: [], loginToRegister: false })).toBe(false);
+    // The two unknown rows — these are what fall through to the title heuristic.
+    expect(assertionFor({ cap: 12 })).toBeUndefined();
+    expect(assertionFor(undefined)).toBeUndefined();
   });
 });
