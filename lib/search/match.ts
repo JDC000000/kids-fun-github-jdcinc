@@ -6,13 +6,12 @@
 // matches open-gym). `CandidateMatcher` is the swap seam: this in-memory impl
 // mirrors what a SQL `tsquery @@ tsvector` + `similarity()` will do.
 //
-// A query term matches an index token through exactly one of six tiers, strongest first:
+// A query term matches an index token through exactly one of five tiers, strongest first:
 //
 //   exact     term === token                                            (weight × 1.00)
 //   stem      same word, different inflection: swimming ↔ swim          (weight × 0.80)
 //   prefix    token starts with the term: swi → swim                    (weight × 0.60 × coverage)
 //   compound  term is two tokens run together: opengym → open + gym     (weight × 0.50)
-//   infix     token contains the term: ball → basketball                (weight × 0.40 × coverage)
 //   typo      guarded trigram similarity: libary → library              (weight × 0.50 × similarity)
 //
 // WHY THE TIERS EXIST (relevance defect, registry round 97). Matching used to be trigram
@@ -32,8 +31,14 @@
 //     characters are an English inflection (stem tier) or a second real token (compound tier).
 //     "swimxyz" and "storytimezz" are neither, so they correctly return nothing and the
 //     empty-state broadening ladder gets to do its honest job.
-//   · a term genuinely buried inside a longer token (ball → basketball) gets the infix tier,
-//     which is a substring test in the safe direction only.
+//   · a term merely BURIED inside a longer token (ball in basketball) is deliberately NOT
+//     matched. An infix tier shipped here briefly and was removed on measurement against the
+//     UNCAPPED corpus: on the 500 rows actually served it bought two real rescues, and even
+//     its best possible tightening still carried ~11% coincidental matches. Since the whole
+//     point of this file is replacing coincidental matching with deliberate rules, a tier that
+//     is mostly coincidence cannot sit in it. Compounds are right-headed — basketball IS a
+//     ball — which is a LEXICAL fact, so it belongs in expand.ts aliases where it is stated
+//     deliberately, next to gymnast→gym for the same reason.
 // Genuine misspellings keep their trigram fallback, guarded by `typoSimilarity` so that only
 // pairs within a single edit can match on a ratio. That guard is stated over the whole word,
 // not over its opening: "swimmer" and "summer" collide on a shared ENDING and an opening-only
@@ -60,12 +65,6 @@ export const MIN_PREFIX_QUERY_LENGTH = 2;
 /** Shortest half of a run-together compound ("open" + "gym"). Below this it is a coincidence. */
 const MIN_COMPOUND_PART_LENGTH = 3;
 
-/**
- * Shortest term allowed to match inside a longer token ("ball" → basketball). Held at the
- * fuzzy floor: three characters would let "art" reach "department" on a fragment.
- */
-export const MIN_INFIX_QUERY_LENGTH = MIN_FUZZY_QUERY_LENGTH;
-
 export interface MatcherOptions {
   fieldWeights?: { A: number; B: number; C: number; D: number };
   trigramThreshold?: number;
@@ -77,8 +76,6 @@ export interface MatcherOptions {
   prefixPenalty?: number;
   /** Relevance multiplier for an inflectional variant ("swimming" → swim). */
   stemPenalty?: number;
-  /** Relevance multiplier for a term found inside a longer token ("ball" → basketball). */
-  infixPenalty?: number;
   /** Shortest query term eligible for trigram typo matching. */
   minFuzzyQueryLength?: number;
 }
@@ -117,7 +114,6 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
   private readonly synonymWeight: number;
   private readonly prefixPenalty: number;
   private readonly stemPenalty: number;
-  private readonly infixPenalty: number;
   private readonly minFuzzyQueryLength: number;
 
   constructor(opts: MatcherOptions = {}) {
@@ -127,7 +123,6 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
     this.synonymWeight = opts.synonymWeight ?? 0.6;
     this.prefixPenalty = opts.prefixPenalty ?? 0.6;
     this.stemPenalty = opts.stemPenalty ?? 0.8;
-    this.infixPenalty = opts.infixPenalty ?? 0.4;
     this.minFuzzyQueryLength = opts.minFuzzyQueryLength ?? MIN_FUZZY_QUERY_LENGTH;
   }
 
@@ -250,13 +245,6 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
       // Coverage-scaled: "swi" explains three quarters of "swim" but only a third of
       // "swimming", and the score should say so rather than treating both as equal evidence.
       best = Math.max(best, this.prefixPenalty * (term.length / token.length));
-    } else if (term.length >= MIN_INFIX_QUERY_LENGTH && token.includes(term)) {
-      // The unanchored twin of the prefix tier: "ball" really is inside "basketball" and
-      // "events" inside "biblioevents". ONE-DIRECTIONAL by construction — the token must
-      // contain the query, never the reverse — so it cannot become the "swimxyz contains
-      // swim" hole this file exists to close. Scored below a leading match because agreement
-      // in the middle of a word is weaker evidence than agreement at its start.
-      best = Math.max(best, this.infixPenalty * (term.length / token.length));
     }
     if (sharesInflectionalStem(term, token)) best = Math.max(best, this.stemPenalty);
     if (best > 0) return best;

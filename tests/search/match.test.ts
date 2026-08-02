@@ -347,30 +347,31 @@ describe('WeightedTrigramMatcher', () => {
   });
 
   /**
-   * The infix tier exists because the whole-word edit bound would otherwise silently drop
-   * substring matches that were working before ("ball" is six edits from "basketball").
-   * It is one-directional — the TOKEN must contain the QUERY — which is what keeps it from
-   * becoming the "swimxyz contains swim" hole in reverse.
+   * An infix tier (token.includes(term)) shipped here briefly and was REMOVED after QA
+   * measured it against the uncapped corpus: on the 500 rows actually served it produced ten
+   * pairs with only two genuine rescues, and even its best tightening still carried ~11%
+   * coincidental matches. A tier that is mostly coincidence cannot live in a file whose
+   * thesis is replacing coincidence with deliberate rules. These pin the absence, since the
+   * tier is easy to re-add on intuition and its cost is only visible on the full corpus.
    */
-  describe('infix tier', () => {
+  describe('unanchored substring matching stays out', () => {
     const SPORT_LISTINGS = [
       listing('l-basketball', 'Youth Basketball', 'class_program', 'Britannia Centre', 'Drop-in hoops.'),
       listing('l-swim', 'Public Swim', 'public_swim', 'Hillcrest Pool', 'Family swim session.'),
     ];
 
-    it('finds a term buried inside a longer token', () => {
-      expect(idsFor('ball', SPORT_LISTINGS)).toEqual(['l-basketball']);
+    it('does not match a term buried mid-token (belongs in expand.ts aliases)', () => {
+      expect(idsFor('ball', SPORT_LISTINGS)).toEqual([]);
     });
 
-    it('does NOT match when the QUERY contains the token instead', () => {
+    it('still refuses the reverse direction, which is the original defect', () => {
       expect(idsFor('swimxyz', SPORT_LISTINGS)).toEqual([]);
       expect(idsFor('basketballxyz', SPORT_LISTINGS)).toEqual([]);
     });
 
-    it('ranks an infix hit below a leading match for the same token', () => {
-      const infix = matcher.match(resolver.expand(['ball']), SPORT_LISTINGS)[0].relevance;
-      const prefix = matcher.match(resolver.expand(['bask']), SPORT_LISTINGS)[0].relevance;
-      expect(prefix).toBeGreaterThan(infix);
+    it('leading matches are unaffected', () => {
+      expect(idsFor('bask', SPORT_LISTINGS)).toEqual(['l-basketball']);
+      expect(idsFor('basketball', SPORT_LISTINGS)).toEqual(['l-basketball']);
     });
   });
 
