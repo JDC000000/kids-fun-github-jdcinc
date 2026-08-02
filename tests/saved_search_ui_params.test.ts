@@ -20,6 +20,7 @@ const RICH_STATE: SearchState = {
   q: 'family swim',
   sort: 'soonest',
   includeUnknownCost: false,
+  includeRegistration: true,
   regions: ['van', 'bby'],
   when: 'weekend',
   dateFrom: null,
@@ -43,6 +44,9 @@ describe('serializeStateToParams', () => {
       q: 'family swim',
       sort: 'soonest',
       includeUnknownCost: '0',
+      // Default-off widener, so it is only written when the parent turned it on — and it MUST be
+      // written, or re-running a saved course search would silently come back drop-in only.
+      reg: '1',
       region: 'van,bby',
       when: 'weekend',
       bookable: '1',

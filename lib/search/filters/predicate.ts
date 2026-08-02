@@ -18,6 +18,8 @@ import { matchesAge } from './age';
 import { matchesTimeOfDay, matchesDate } from './time';
 import { matchesCost } from './cost';
 import { matchesStatus, isPrimaryResult, isExpectedSection, isHidden } from './status';
+import { isAdultOrSeniorOnly } from './audience';
+import { isRegistrationShaped } from './registration';
 
 /** Which status class is being listed (TSD §5A.5). */
 export type ResultMode = 'primary' | 'expected';
@@ -45,6 +47,19 @@ export function passesAllFilters(
   const { ctx, origin, regionChipIds, mode } = selection;
 
   if (isHidden(listing)) return false;
+
+  // Adult-only / senior-only programming is not this product's content in any mode or section —
+  // a vendor's facility calendar carries it, a children's app does not show it. Unconditional:
+  // there is no view of a kids app where "Seniors Tai Chi" is the answer. Parent-and-child
+  // sessions are explicitly NOT caught by this (see filters/audience.ts).
+  if (isAdultOrSeniorOnly(listing)) return false;
+
+  // Registration-required courses are opt-in and OFF by default, in both the primary list and
+  // the expected section — a 12-week registered programme is no more "what's on today" for
+  // being seasonal. Nothing is deleted: flipping ctx.includeRegistration brings them all back,
+  // labelled, which is what keeps a misread listing reachable instead of lost.
+  if (!ctx.includeRegistration && isRegistrationShaped(listing)) return false;
+
   if (mode === 'primary' && !isPrimaryResult(listing)) return false;
   if (mode === 'expected' && !isExpectedSection(listing)) return false;
 

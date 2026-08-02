@@ -28,6 +28,7 @@ import {
   analyticsFilterTokens,
   apiQuery,
   hasActiveFilters,
+  hasClearableFilters,
   hasDateRange,
   hasNearMeCoords,
   hrefFor,
@@ -112,6 +113,9 @@ function filterSummary(state: SearchState, savedLocation: SavedLocationInfo | nu
   }
   if (state.bookableNow) parts.push('Bookable now');
   if (state.dropIn) parts.push('Drop-in');
+  // Stated in the summary because it changes what KIND of thing the list contains, and a parent
+  // should never wonder why courses appeared (or, by its absence, why they did not).
+  if (state.includeRegistration) parts.push('Including registration courses');
   if (state.rainyDay) parts.push('Rainy-day');
   if (state.free) parts.push('Free');
   if (state.costMaxCad != null) {
@@ -262,7 +266,11 @@ export default async function SearchPage({
   const sortSentence = SORT_OPTIONS.find((o) => o.key === state.sort)?.sentence ?? '';
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
   const activeFilters = filterSummary(state, savedLocation);
+  // Narrowing filters only — this gates the analytics "is this a search?" test and the empty-state
+  // prompt, both of which are about constraints the parent applied, not about wideners.
   const filtersActive = hasActiveFilters(state);
+  // Anything clearable, including the registration widener — gates the "Clear filters" affordances.
+  const clearableFilters = hasClearableFilters(state);
   // Custom date range (T26 / FR-04): when a range is active the confirmed results are grouped
   // by day (one dated subsection per day, open-hours attractions last). The day-by-id lookup is
   // built from the raw API items so grouping reflects each occurrence's true local date.
@@ -372,7 +380,7 @@ export default async function SearchPage({
               “gym”), or clear your search to browse everything on.
             </p>
             {emptyExplain && <p className="kf-browse__empty-explain">{emptyExplain}</p>}
-            {filtersActive && (
+            {clearableFilters && (
               <p className="kf-empty__body" style={{ margin: '10px 0 0' }}>
                 <Link className="kf-browse__clear" href={hrefFor(state, CLEARED_FILTERS)}>
                   Clear all filters

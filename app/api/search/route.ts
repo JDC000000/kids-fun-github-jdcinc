@@ -41,7 +41,7 @@ const fixtureBundle = makeFixtureEngine();
 
 export const GET = withObservedRoute(searchGet, { tags: { route: 'api/search' } });
 
-/** GET /api/search?q=open+gym&lat=..&lng=..&sort=..&region=van,bby&includeUnknownCost=1&limit=20 */
+/** GET /api/search?q=open+gym&lat=..&lng=..&sort=..&region=van,bby&includeUnknownCost=1&includeRegistration=1&limit=20 */
 async function searchGet(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const searchRequest = buildSearchRequest(url.searchParams);
@@ -155,6 +155,9 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   const origin = buildOriginRequest(p);
   const regionChipIds = (p.get('region') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const includeUnknownCost = isOn(p.get('includeUnknownCost'));
+  // Registration courses are OFF unless explicitly asked for. Structured, like includeUnknownCost:
+  // an inclusion policy the caller states, never something inferred from the text of `q`.
+  const includeRegistration = isOn(p.get('includeRegistration'));
   // Facet counts for the filter UI (`facets=1`). Deliberately part of THIS request rather
   // than a second endpoint: the counts are derived from the candidate set this search has
   // already loaded and matched, so asking for them here costs a few in-memory passes, while
@@ -172,6 +175,7 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
     regionChipIds,
     sort,
     includeUnknownCost,
+    includeRegistration,
     facets,
     ...(dateRange != null ? { dateRange } : {}),
     ...(limit != null ? { limit } : {}),

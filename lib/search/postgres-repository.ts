@@ -4,6 +4,7 @@
 // flag and falls back to fixtures on empty/error so the staging shell stays safe
 // while live-source coverage is still narrow.
 import type { Pool } from 'pg';
+import { HIDDEN_STATUSES } from './filters/status';
 import type { ConfidenceLabel, CostStatus, ListingRecord, StatusState } from './types';
 
 interface ListingRow {
@@ -52,19 +53,32 @@ export async function loadPostgresListings(
   options: LoadPostgresListingsOptions = {}
 ): Promise<ListingRecord[]> {
   const limit = Math.max(1, Math.min(options.limit ?? 500, 1000));
+  // The row cap is a hard budget, so the parent-visibility predicate has to be spent BEFORE it,
+  // not after. Filtering hidden statuses in memory meant the cap was largely consumed by rows the
+  // engine then dropped — on live staging, 330 of 500. Applying it here makes every fetched row a
+  // row that can actually be shown. Statuses come from HIDDEN_STATUSES so this can never disagree
+  // with the engine's own `isHidden`.
   const { rows } = await pool.query<ListingRow>(
     `${listingSelectSql()}
      WHERE ${visibleOccurrenceWhereSql()}
+       AND o.status_state::text <> ALL($2::text[])
      ${listingGroupBySql()}
      ORDER BY o.start_datetime_utc NULLS LAST, o.last_checked_at DESC NULLS LAST, o.created_at DESC
      LIMIT $1`,
-    [limit]
+    [limit, HIDDEN_STATUSES]
   );
 
   return rows.map(rowToListing);
 }
 
-/** Load one visible occurrence for the detail page without scanning the whole read model. */
+/**
+ * Load one visible occurrence for the detail page without scanning the whole read model.
+ *
+ * Deliberately does NOT apply the hidden-status predicate the list query above does. That filter
+ * exists to stop a capped page of results being wasted; a detail lookup has no cap to protect and
+ * is reached by an explicit id, so narrowing it here would only break already-shared links. The
+ * detail page renders each status with its own honest copy, so an unverified row stays truthful.
+ */
 export async function loadPostgresListingById(pool: Pool, id: string): Promise<ListingRecord | null> {
   if (!UUID_RE.test(id)) return null;
 
