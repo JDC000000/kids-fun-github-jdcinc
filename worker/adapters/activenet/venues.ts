@@ -363,16 +363,19 @@ export function applyVenues(
   // `phone_rejection_spike` is what actually leaves the process, via assessRun →
   // ingestSource's `errors.push` → `source_check_run.errors`.
   //
-  // AND IT STOPS THERE, WHICH IS NOT GOOD ENOUGH — register flag F-11, raised by the QA of
-  // this very change. An earlier version of this comment claimed the verdict reaches "the
-  // T15 board". It does not. ingestSource marks a run with occurrences `partial`
-  // (worker/core/ingest.ts), and the board's failures panel selects
-  // `WHERE cr.status = 'failed'` (lib/admin/dashboard.ts) while worker/health/sla.ts counts
-  // `partial` as SUCCEEDED. The alert text is durably persisted and queryable, which is a
-  // real improvement over a warning that evaporates — but no operator is shown it.
-  // This is a PRE-EXISTING platform gap, not one this change introduced: every `partial`
-  // alert code shares it, `shape_drift` included. F-8's build is what surfaced it.
-  // Do not "fix" it by returning `failed` from health.ts — see the note there.
+  // AND IT USED TO STOP THERE — register flag F-11, raised by the QA of this very change,
+  // CLOSED 2026-08-02. For two rounds this comment correctly warned that the verdict reached
+  // no operator: ingestSource marks a run with occurrences `partial`, the board's failures
+  // panel selected `WHERE cr.status = 'failed'`, and worker/health/sla.ts counted `partial`
+  // as SUCCEEDED — so the alert was durably persisted, queryable in principle, and shown to
+  // nobody. That gap is now fixed at the platform level, for all five codes riding this
+  // mechanism, not just this one: the verdict is persisted to
+  // source_check_run.health_alert_code (migration 0026), the dashboard panel selects
+  // `status = 'failed' OR health_alert_code IS NOT NULL`, and both SLA paths stop counting an
+  // alerted run as a clean success. `phone_rejection_spike` reaching a human is therefore now
+  // a property of the platform, not of anything this file does.
+  // Still do not "fix" anything by returning `failed` from health.ts — see the note there and
+  // the decision note on AdapterRunDiagnostics in worker/core/adapter.ts.
   const rejectedVenues = venues.filter((v) => v.venuePhoneRejected);
   const venuesWithRejectedPhone = rejectedVenues.map((v) => v.venueName).sort((a, b) => a.localeCompare(b));
   const phonesRejected = rejectedVenues.length;

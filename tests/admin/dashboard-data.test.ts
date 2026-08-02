@@ -5,8 +5,8 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import {
   ENABLED_TERMS_STATUS,
-  RECENT_FAILURE_LIMIT,
-  RECENT_FAILURE_WINDOW_DAYS,
+  ATTENTION_RUN_LIMIT,
+  ATTENTION_RUN_WINDOW_DAYS,
   getAdminDashboardData,
   getAnalyticsSummary,
   getHealthAlerts,
@@ -72,14 +72,18 @@ describe.skipIf(!hasDb)('admin dashboard data layer', () => {
 
   it('health alerts have a sane shape and respect the window/limit', async () => {
     const a = await getHealthAlerts();
-    expect(a.windowDays).toBe(RECENT_FAILURE_WINDOW_DAYS);
-    expect(a.recentFailures.length).toBeLessThanOrEqual(RECENT_FAILURE_LIMIT);
-    for (const f of a.recentFailures) {
+    expect(a.windowDays).toBe(ATTENTION_RUN_WINDOW_DAYS);
+    expect(a.runsNeedingAttention.length).toBeLessThanOrEqual(ATTENTION_RUN_LIMIT);
+    for (const f of a.runsNeedingAttention) {
       expect(typeof f.checkRunId).toBe('string');
       expect(typeof f.sourceName).toBe('string');
       expect(typeof f.family).toBe('string');
       if (f.errorSummary !== null) expect(typeof f.errorSummary).toBe('string');
       if (f.errorCount !== null) expect(f.errorCount).toBeGreaterThanOrEqual(1);
+      // F-11: every row is here for exactly one of two reasons — it failed, or it raised a
+      // health verdict. A row that is neither means the panel's filter has drifted.
+      expect(f.status === 'failed' || f.healthAlertCode !== null).toBe(true);
+      if (f.healthAlertCode !== null) expect(f.healthAlertCode.length).toBeGreaterThan(0);
     }
     for (const s of a.staleSources) {
       // Only enabled sources can be stale.
@@ -93,8 +97,8 @@ describe.skipIf(!hasDb)('admin dashboard data layer', () => {
     const data = await getAdminDashboardData();
     expect(Number.isNaN(Date.parse(data.generatedAt))).toBe(false);
     expect(data.registry.enabledSources).toBe(data.ingestion.length);
-    expect(data.alerts.windowDays).toBe(RECENT_FAILURE_WINDOW_DAYS);
-    expect(Array.isArray(data.alerts.recentFailures)).toBe(true);
+    expect(data.alerts.windowDays).toBe(ATTENTION_RUN_WINDOW_DAYS);
+    expect(Array.isArray(data.alerts.runsNeedingAttention)).toBe(true);
     expect(Array.isArray(data.alerts.staleSources)).toBe(true);
   });
 });

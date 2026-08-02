@@ -164,12 +164,17 @@ export function assessRunHealth(diag: ActiveNetRunDiagnostics): ActiveNetHealthV
   // drift canary's key list is a static const, so one benign new vendor key pins
   // `shape_drift` on forever and makes this check unreachable until someone updates it.
   //
-  // STATUS `partial`, AND IT CHANGES NOTHING TODAY. Stated honestly because the previous
-  // version of this comment reasoned carefully about a field nobody reads: `assessRun()`
+  // STATUS `partial` IS STILL INERT, AND THAT IS NOW DELIBERATE, NOT A GAP. `assessRun()`
   // returns only `{code, alert, detail}` (AdapterRunDiagnostics), so this `status` never
   // reaches ingestSource, which derives the run's own status from whether occurrences
-  // upserted. Returning `failed` here would therefore ALSO change nothing — see F-11 for
-  // where the signal actually dies, and do not chase it from this file.
+  // upserted. F-11 (2026-08-02) decided NOT to plumb it through: a run status cannot carry
+  // this signal, because ingestSource already produces 'partial' from unrelated per-record
+  // errors, so an adapter-supplied 'partial' would be indistinguishable from ordinary noise.
+  // What DOES leave this function and reach a human is `alert`, now persisted as
+  // source_check_run.health_alert_code (migration 0026) and read by the admin attention panel
+  // and both SLA success-ratio paths. Full reasoning: worker/core/adapter.ts's note on
+  // AdapterRunDiagnostics. `status` is kept here only because it documents this verdict's
+  // intended severity; do not chase it from this file.
   const offered = diag.phonesOffered ?? 0;
   const rejected = diag.phonesRejected ?? 0;
   if (
@@ -226,6 +231,11 @@ export async function recordActiveNetCheckRun(
     status: verdict.status,
     recordsFound: verdict.occurrences,
     errors,
+    // F-11: this path writes a check run WITHOUT going through ingestSource, so it has to
+    // persist the verdict itself. Miss this and an alert recorded here is invisible on the
+    // attention panel for every code whose status is 'partial' rather than 'failed' —
+    // i.e. exactly the codes F-11 was about.
+    healthAlert: verdict.alert ? { code: verdict.code, detail: verdict.detail } : null,
     startedAt,
   });
   return id;

@@ -55,10 +55,18 @@ export function SlaTile({ sla, nowMs }: { sla: SourceFreshnessSla; nowMs: number
     <section className={styles.section} aria-label="Source-freshness SLA">
       <h2 className={styles.sectionTitle}>Source-freshness SLA</h2>
       <p className={styles.hint}>
-        Share of enabled sources currently meeting their configured cadence — a successful{' '}
-        <span className={styles.mono}>source_check_run</span> within one cadence interval. Target is{' '}
+        Share of enabled sources currently meeting their configured cadence — a <strong>clean</strong> successful{' '}
+        <span className={styles.mono}>source_check_run</span> within grace × one cadence interval. Target is{' '}
         ≥{SLA_CADENCE_TARGET_PCT}% on-cadence. A source lagging one cadence still shows here before it becomes
         a hard staleness alert (below).
+      </p>
+      <p className={styles.hint}>
+        <strong>&ldquo;Clean&rdquo; means the run raised no health verdict.</strong> A run that completed but reported{' '}
+        <span className={styles.mono}>shape_drift</span>, <span className={styles.mono}>phone_rejection_spike</span> or
+        any other alert no longer counts as a successful refresh, because it was not one. This changed on 2026-08-02
+        (F-11): before then an alerting run counted as a success, so raising an alarm made this number go{' '}
+        <em>up</em>. If the figure dropped when that shipped, the SLA did not get worse — the measurement stopped
+        overstating it. Compare against the attention panel below, not against pre-2026-08-02 readings.
       </p>
 
       <div className={styles.tileRow}>

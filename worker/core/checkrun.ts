@@ -43,10 +43,27 @@ export async function loadRecordsFoundBaseline(
   return Math.round(counts.reduce((a, b) => a + b, 0) / counts.length);
 }
 
+/**
+ * A run-level health verdict raised by the adapter's own self-assessment
+ * (Adapter.assessRun → AdapterRunDiagnostics with alert=true).
+ *
+ * F-11: this used to exist ONLY as a prose line inside the `errors` array, which meant no
+ * query could distinguish "an adapter says a human must look at this run" from "three of
+ * nine hundred records had a bad date". Persisting it as its own column is what lets the
+ * dashboard's attention panel and both SLA success-ratio paths see the alert at all. See
+ * migration 0026 and the decision note on AdapterRunDiagnostics in worker/core/adapter.ts.
+ */
+export interface RunHealthAlert {
+  code: string;
+  detail: string;
+}
+
 export interface FinishCheckRunOptions {
   status: 'success' | 'partial' | 'failed';
   recordsFound?: number;
   errors?: unknown;
+  /** The run's health verdict, or null/absent when the adapter raised none. */
+  healthAlert?: RunHealthAlert | null;
   startedAt: Date;
 }
 
@@ -76,7 +93,9 @@ export async function finishCheckRun(
 ): Promise<void> {
   const durationMs = Date.now() - opts.startedAt.getTime();
   const { rows } = await pool.query<{ source_id: string }>(
-    `UPDATE source_check_run SET status = $2, records_found = $3, errors = $4, duration_ms = $5
+    `UPDATE source_check_run
+        SET status = $2, records_found = $3, errors = $4, duration_ms = $5,
+            health_alert_code = $6, health_alert_detail = $7
       WHERE id = $1
       RETURNING source_id`,
     [
@@ -85,6 +104,8 @@ export async function finishCheckRun(
       opts.recordsFound ?? null,
       opts.errors ? JSON.stringify(opts.errors) : null,
       durationMs,
+      opts.healthAlert?.code ?? null,
+      opts.healthAlert?.detail ?? null,
     ]
   );
 

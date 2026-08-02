@@ -328,7 +328,7 @@ describe.skipIf(!process.env.DATABASE_URL)('Launch-gate KPI validation — live-
         return finding(
           11,
           'met',
-          `board live: recentFailures=${alerts.recentFailures.length} staleSources=${alerts.staleSources.length} (window ${alerts.windowDays}d)`,
+          `board live: runsNeedingAttention=${alerts.runsNeedingAttention.length} staleSources=${alerts.staleSources.length} (window ${alerts.windowDays}d)`,
           'The T-33 data-health board exists and returns; it populates from live source_check_run. Deliverable is the board, which is present.'
         );
       })

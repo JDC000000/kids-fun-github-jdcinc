@@ -10,7 +10,7 @@
 // whole run — they surface via the check-run status/errors for the health board.
 import type { Pool } from 'pg';
 import type { Adapter, StructuredRecord } from './adapter';
-import { startCheckRun, finishCheckRun, loadRecordsFoundBaseline } from './checkrun';
+import { startCheckRun, finishCheckRun, loadRecordsFoundBaseline, type RunHealthAlert } from './checkrun';
 import { resolveSeries } from './series';
 import { resolveVenue } from './venue';
 import { upsertOccurrence } from './upsert';
@@ -47,6 +47,12 @@ export interface IngestSummary {
    * that confirmed nothing.
    */
   editorialCandidates: number;
+  /**
+   * F-11: the adapter's own health verdict for this run, or null if it raised none. Also
+   * persisted to source_check_run.health_alert_code/detail — that column, not this field,
+   * is what the dashboard and the SLA read.
+   */
+  healthAlert: RunHealthAlert | null;
   errors: string[];
 }
 
@@ -82,6 +88,7 @@ export async function ingestSource(
   let suitabilityTagsWritten = 0;
   let lowConfidenceFlagged = 0;
   let editorialCandidates = 0;
+  let healthAlert: RunHealthAlert | null = null;
 
   try {
     const raw = await adapter.fetch();
@@ -94,12 +101,23 @@ export async function ingestSource(
     // Adapter self-assessment (optional). A run over an undocumented, unversioned source
     // can complete without throwing and still be broken — the vendor moves a key, the
     // parser yields nothing, and the check run reports a cheerful green over an empty
-    // municipality. Adapters that implement assessRun() get to say so, and their verdict
-    // becomes a run error so the status below degrades and the T15 health board sees it.
+    // municipality. Adapters that implement assessRun() get to say so.
+    //
+    // The verdict travels TWO ways, and both are load-bearing (F-11):
+    //   • into `errors`, unchanged, as the human-readable line the panel renders — and,
+    //     as a side effect, as the thing that degrades this run's status to 'partial';
+    //   • into `healthAlert`, which finishCheckRun writes to its own column. This is the
+    //     one anything can query. Until it existed the alert was prose in a jsonb array,
+    //     so the dashboard's failed-runs panel (status = 'failed') and both SLA
+    //     success-ratio paths ('partial' counted as a success) sailed straight past it and
+    //     every alert this project raises reached nobody.
     if (adapter.assessRun) {
       const baseline = await loadRecordsFoundBaseline(pool, sourceId);
       const verdict = adapter.assessRun(baseline);
-      if (verdict?.alert) errors.push(`run health [${verdict.code}]: ${verdict.detail}`);
+      if (verdict?.alert) {
+        healthAlert = { code: verdict.code, detail: verdict.detail };
+        errors.push(`run health [${verdict.code}]: ${verdict.detail}`);
+      }
     }
 
     // Seeded age bands, loaded once per run for deterministic age normalisation.
@@ -242,6 +260,7 @@ export async function ingestSource(
     status,
     recordsFound,
     errors: errors.length > 0 ? errors : undefined,
+    healthAlert,
     startedAt,
   });
 
@@ -257,6 +276,7 @@ export async function ingestSource(
     suitabilityTagsWritten,
     lowConfidenceFlagged,
     editorialCandidates,
+    healthAlert,
     errors,
   };
 }

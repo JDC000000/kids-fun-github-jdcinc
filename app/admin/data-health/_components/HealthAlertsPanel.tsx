@@ -6,10 +6,10 @@
 import { Badge } from '@/components/ui';
 import { formatAge, formatCadence, formatCount, formatDurationMs, formatTimestampUtc } from '@/lib/admin/format';
 import {
-  RECENT_FAILURE_WINDOW_DAYS,
+  ATTENTION_RUN_WINDOW_DAYS,
   STALE_CADENCE_GRACE,
   type HealthAlerts,
-  type RecentFailure,
+  type RunNeedingAttention,
   type StaleSource,
 } from '@/lib/admin/dashboard';
 import styles from './DataHealth.module.css';
@@ -48,7 +48,10 @@ function StaleRow({ s, nowMs }: { s: StaleSource; nowMs: number }) {
   );
 }
 
-function FailureRow({ f, nowMs }: { f: RecentFailure; nowMs: number }) {
+function AttentionRow({ f, nowMs }: { f: RunNeedingAttention; nowMs: number }) {
+  // An alert-only row's real message is the verdict, not the generic first-error string —
+  // show the code as a badge so `shape_drift` vs `phone_rejection_spike` is scannable.
+  const message = f.healthAlertDetail ?? f.errorSummary;
   return (
     <tr>
       <td>
@@ -59,10 +62,19 @@ function FailureRow({ f, nowMs }: { f: RecentFailure; nowMs: number }) {
         <div>{formatAge(f.startedAt, nowMs)}</div>
         <div className={`${styles.dim} ${styles.mono}`}>{formatTimestampUtc(f.startedAt)}</div>
       </td>
+      <td>
+        <Badge variant={statusVariant(f.status)}>{f.status}</Badge>
+        {f.healthAlertCode && (
+          <>
+            {' '}
+            <Badge variant="cancelled">{f.healthAlertCode}</Badge>
+          </>
+        )}
+      </td>
       <td className={styles.mono}>{formatDurationMs(f.durationMs)}</td>
       <td>
-        {f.errorSummary ? (
-          <span className={`${styles.mono} ${styles.errText}`}>{f.errorSummary}</span>
+        {message ? (
+          <span className={`${styles.mono} ${styles.errText}`}>{message}</span>
         ) : (
           <span className={styles.dim}>(no message)</span>
         )}
@@ -73,20 +85,23 @@ function FailureRow({ f, nowMs }: { f: RecentFailure; nowMs: number }) {
 }
 
 export function HealthAlertsPanel({ alerts, nowMs }: { alerts: HealthAlerts; nowMs: number }) {
-  const allHealthy = alerts.staleSources.length === 0 && alerts.recentFailures.length === 0;
+  const allHealthy = alerts.staleSources.length === 0 && alerts.runsNeedingAttention.length === 0;
 
   return (
     <section className={styles.section} aria-label="Health alerts">
-      <h2 className={styles.sectionTitle}>Failed &amp; stale sources</h2>
+      <h2 className={styles.sectionTitle}>Runs needing attention &amp; stale sources</h2>
       <p className={styles.hint}>
-        Hard problems only — enabled sources with a failed ingest run in the last {formatCount(RECENT_FAILURE_WINDOW_DAYS)}{' '}
-        day(s), or with no successful check within {STALE_CADENCE_GRACE}× their cadence. Derived live from{' '}
-        <span className={styles.mono}>source_check_run</span> (reused from the ops dashboard). Visibility only — no
-        email/Slack alerting is wired.
+        Real problems only — enabled sources whose ingest run in the last{' '}
+        {formatCount(ATTENTION_RUN_WINDOW_DAYS)} day(s) either FAILED outright or raised a health verdict (
+        <span className={styles.mono}>shape_drift</span>, <span className={styles.mono}>phone_rejection_spike</span>, …),
+        or with no clean successful check within {STALE_CADENCE_GRACE}× their cadence. A verdict-raising run usually
+        still ingests its records, so it shows as <span className={styles.mono}>partial</span> — that is exactly the
+        case this panel used to miss. Derived live from <span className={styles.mono}>source_check_run</span> (reused
+        from the ops dashboard). Visibility only — no email/Slack alerting is wired.
       </p>
 
       {allHealthy ? (
-        <p className={styles.okNote}>✓ No failed runs and no stale sources.</p>
+        <p className={styles.okNote}>✓ No failed or alerting runs, and no stale sources.</p>
       ) : (
         <>
           {alerts.staleSources.length > 0 && (
@@ -109,21 +124,24 @@ export function HealthAlertsPanel({ alerts, nowMs }: { alerts: HealthAlerts; now
               </table>
             </>
           )}
-          {alerts.recentFailures.length > 0 && (
+          {alerts.runsNeedingAttention.length > 0 && (
             <>
-              <h3 className={styles.subhead}>Recent failed runs ({formatCount(alerts.recentFailures.length)})</h3>
+              <h3 className={styles.subhead}>
+                Runs needing attention ({formatCount(alerts.runsNeedingAttention.length)})
+              </h3>
               <table className={styles.table}>
                 <thead>
                   <tr>
                     <th>Source</th>
                     <th>When</th>
+                    <th>Run / verdict</th>
                     <th>Duration</th>
-                    <th>Error</th>
+                    <th>What happened</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {alerts.recentFailures.map((f) => (
-                    <FailureRow key={f.checkRunId} f={f} nowMs={nowMs} />
+                  {alerts.runsNeedingAttention.map((f) => (
+                    <AttentionRow key={f.checkRunId} f={f} nowMs={nowMs} />
                   ))}
                 </tbody>
               </table>
