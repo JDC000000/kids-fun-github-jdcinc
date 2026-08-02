@@ -15,10 +15,31 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui';
 import { CategoryTile } from './CategoryTile';
 import { FreshnessStamp } from './FreshnessStamp';
-import { bookingTag, confidenceMeta, formatAges, formatCost, formatDistance, formatWhen, statusMeta } from '../_data/format';
+import {
+  REGISTRATION_REQUIRED_TAG,
+  bookingTag,
+  confidenceMeta,
+  formatAges,
+  formatCost,
+  formatDistance,
+  formatSlotSummary,
+  formatWhen,
+  statusMeta,
+} from '../_data/format';
 import type { Activity } from '../_data/types';
 
+/**
+ * The booking affordance, or — for a registration-required course — an explicit label saying so.
+ *
+ * Registration content is excluded from results by default and only appears when a parent turned
+ * the filter on; when it does appear it must be unmistakable, never quietly mixed in with drop-in
+ * cards. The explicit tag supersedes the generic booking tag rather than sitting beside it, so the
+ * card never shows two near-identical pills.
+ */
 function BookingTag({ activity }: { activity: Activity }) {
+  if (activity.registrationRequired) {
+    return <span className="kf-tag kf-tag--reg">{REGISTRATION_REQUIRED_TAG}</span>;
+  }
   const label = bookingTag(activity.booking);
   if (!label) return null;
   const cls =
@@ -32,6 +53,10 @@ function BookingTag({ activity }: { activity: Activity }) {
 
 export function ActivityCard({ activity }: { activity: Activity }) {
   const when = formatWhen(activity.startIso, activity.endIso);
+  // One card can stand for several same-day slots of the same series; when it does, the when-line
+  // becomes "15 slots, 3:15 PM–7:30 PM" instead of fifteen near-identical cards (search/collapse.ts).
+  const slotSummary = formatSlotSummary(activity);
+  const whenTime = slotSummary ?? when.time;
   const meta = statusMeta(activity.status, activity.seasonLabel);
   // Source-authority read (BR-13) — surfaced on the card face so "source confidence" is
   // visible with a text label + tone (never colour-only), G-T22-2.
@@ -44,7 +69,17 @@ export function ActivityCard({ activity }: { activity: Activity }) {
   // predictable destination (G-T22-1 "source CTA"; Blueprint screen-2 item 9).
   const external = Boolean(activity.detailUrl);
   const ctaLabel = external ? `View on ${activity.sourceName} ↗` : 'See details →';
-  const label = `${activity.activityName} at ${activity.venue}, ${when.day} ${when.time}, ${formatAges(activity.ageMin, activity.ageMax)}, ${meta.label}, ${conf.label}`;
+  const label = [
+    `${activity.activityName} at ${activity.venue}`,
+    `${when.day} ${whenTime}`,
+    formatAges(activity.ageMin, activity.ageMax),
+    meta.label,
+    conf.label,
+    // Screen-reader parity with the visible tag — a course must never read as a drop-in.
+    activity.registrationRequired ? REGISTRATION_REQUIRED_TAG : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
   const body = (
     <>
       <CategoryTile category={activity.category} />
@@ -53,7 +88,7 @@ export function ActivityCard({ activity }: { activity: Activity }) {
         <h3 className="kf-card__title">{activity.venue}</h3>
         <div className="kf-card__meta">
           <span>
-            <b>{when.day}</b> · {when.time}
+            <b>{when.day}</b> · {whenTime}
           </span>
           <span>
             {formatAges(activity.ageMin, activity.ageMax)} · {formatCost(activity)}

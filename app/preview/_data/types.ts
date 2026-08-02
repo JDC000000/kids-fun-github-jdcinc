@@ -89,6 +89,20 @@ export interface Activity {
    */
   venuePhone?: string;
   lastCheckedIso: string; // freshness stamp source of truth
+  /**
+   * How many same-series-same-day occurrences this ONE card now stands for (lib/search/collapse.ts).
+   * 1 (or absent) is an ordinary single-slot card; >1 renders as "15 slots, 3:15 PM–7:30 PM" instead
+   * of fifteen near-identical cards.
+   */
+  slotCount?: number;
+  /** End of the LAST slot, when this card covers several — the closing edge of the displayed span. */
+  slotEndIso?: string;
+  /**
+   * This listing needs registering/booking in advance; it is not something to turn up to today.
+   * Only ever true on cards a parent asked to see (the registration filter is off by default), and
+   * it exists so the card can say so plainly rather than sitting silently among drop-in results.
+   */
+  registrationRequired?: boolean;
   seasonLabel?: string; // for seasonal_out_of_season copy
   indoor: boolean;
   rainyDay: boolean; // good option when it's raining

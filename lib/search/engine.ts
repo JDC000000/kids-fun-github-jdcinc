@@ -24,8 +24,11 @@ import { matchesAge } from './filters/age';
 import { matchesTimeOfDay, matchesDate } from './filters/time';
 import { matchesCost } from './filters/cost';
 import { matchesStatus, isPrimaryResult, isExpectedSection, isHidden } from './filters/status';
+import { isAdultOrSeniorOnly } from './filters/audience';
+import { isRegistrationShaped } from './filters/registration';
 import { rankCandidates } from './rank';
 import { applySort } from './sort';
+import { collapseSameDaySeries, slotSpanEnd, type CollapsedListing, type OccurrenceSlot } from './collapse';
 import {
   buildBroadeningLadder,
   explainEmptyState,
@@ -53,6 +56,12 @@ export interface SearchRequest {
   sort?: SortKey;
   includeUnknownCost?: boolean;
   /**
+   * Opt into registration-required courses/camps/lessons. Off by default — the default result set
+   * answers "what can we do today" and excludes registered programmes entirely; a parent turns
+   * this on to see them, and every listing it adds is labelled as registration content.
+   */
+  includeRegistration?: boolean;
+  /**
    * Explicit custom date RANGE from the UI (T26 / FR-04), YYYY-MM-DD America/Vancouver
    * local dates. A structured param (like region / lat-lng), NOT text composed into `q`:
    * the query parser can't reliably read an ISO date because normalize() strips its
@@ -70,6 +79,20 @@ export interface SearchResultItem {
   distanceKm: number | null;
   components: ScoredListing['components'];
   matchedAliases: string[];
+  /**
+   * Every same-series-same-day occurrence this one result now stands for, ascending by start
+   * (see lib/search/collapse.ts). Always at least the listing itself, so consumers can read
+   * `slots.length` uniformly rather than special-casing the uncollapsed card.
+   */
+  slots: OccurrenceSlot[];
+  /** End of the LAST slot — the closing edge of a collapsed card's "3:15 PM–7:30 PM" span. */
+  slotSpanEndUtc: string | null;
+  /**
+   * True when this listing reads as a registration-required course. Only ever present in results
+   * when the caller opted in, and it exists so the card can SAY SO rather than blending a course
+   * in silently among drop-in results.
+   */
+  registrationRequired: boolean;
 }
 
 export interface SearchResponse {
@@ -110,6 +133,7 @@ export class SearchEngine {
       now,
       sort: req.sort,
       includeUnknownCost: req.includeUnknownCost,
+      includeRegistration: req.includeRegistration,
     });
 
     // Structured custom date range (T26 / FR-04): an explicit start+end from the UI is
@@ -175,17 +199,24 @@ export class SearchEngine {
     };
   }
 
-  /** parse-expanded context → matched, filtered, ranked, sorted PRIMARY listings. */
-  private runPrimary(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): ScoredListing[] {
+  /**
+   * parse-expanded context → matched, filtered, ranked, sorted, collapsed PRIMARY listings.
+   *
+   * Collapsing is the LAST step, after ranking and sorting, so a card lands wherever its
+   * best-ranked slot ranked. It is inside this method rather than applied once at the end because
+   * everything downstream — the result limit, `total`, and the broadening ladder's "are there
+   * enough results?" test — should count CARDS a parent sees, not repeated slots of one activity.
+   */
+  private runPrimary(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): CollapsedListing[] {
     const candidates = this.matchAndFilter(ctx, origin, chips, 'primary');
     const scored = rankCandidates(candidates, this.rankContext(ctx, origin, now));
-    return applySort(scored, ctx.sort);
+    return collapseSameDaySeries(applySort(scored, ctx.sort));
   }
 
   /** Expected/seasonal/evergreen suggestions: relaxed status class, loose filters. */
-  private runExpected(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): ScoredListing[] {
+  private runExpected(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): CollapsedListing[] {
     const candidates = this.matchAndFilter(ctx, origin, chips, 'expected');
-    return rankCandidates(candidates, this.rankContext(ctx, origin, now));
+    return collapseSameDaySeries(rankCandidates(candidates, this.rankContext(ctx, origin, now)));
   }
 
   private matchAndFilter(
@@ -213,6 +244,19 @@ export class SearchEngine {
     mode: 'primary' | 'expected',
   ): boolean {
     if (isHidden(listing)) return false;
+
+    // Adult-only / senior-only programming is not this product's content in any mode or section —
+    // a vendor's facility calendar carries it, a children's app does not show it. Unconditional:
+    // there is no view of a kids app where "Seniors Tai Chi" is the answer. Parent-and-child
+    // sessions are explicitly NOT caught by this (see filters/audience.ts).
+    if (isAdultOrSeniorOnly(listing)) return false;
+
+    // Registration-required courses are opt-in and OFF by default, in both the primary list and
+    // the expected section — a 12-week registered programme is no more "what's on today" for
+    // being seasonal. Nothing is deleted: flipping ctx.includeRegistration brings them all back,
+    // labelled, which is what keeps a misread listing reachable instead of lost.
+    if (!ctx.includeRegistration && isRegistrationShaped(listing)) return false;
+
     if (mode === 'primary' && !isPrimaryResult(listing)) return false;
     if (mode === 'expected' && !isExpectedSection(listing)) return false;
 
@@ -264,7 +308,8 @@ function normalizeDateRange(range?: { from: string; to: string } | null): { from
   return from <= to ? { from, to } : { from: to, to: from };
 }
 
-function toItem(s: ScoredListing): SearchResultItem {
+function toItem(group: CollapsedListing): SearchResultItem {
+  const s = group.representative;
   const matchedAliases = (s.candidate as MatchCandidate & { _matchedAliases?: string[] })._matchedAliases ?? [];
   return {
     listing: s.candidate.listing,
@@ -272,5 +317,8 @@ function toItem(s: ScoredListing): SearchResultItem {
     distanceKm: s.distanceKm,
     components: s.components,
     matchedAliases,
+    slots: group.slots,
+    slotSpanEndUtc: slotSpanEnd(group.slots),
+    registrationRequired: isRegistrationShaped(s.candidate.listing),
   };
 }
