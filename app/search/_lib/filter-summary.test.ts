@@ -67,6 +67,14 @@ describe('activeFilterCount — the "⚙ N" badge on the sticky bar', () => {
     expect(activeFilterCount(state)).toBe(5);
   });
 
+  it('does not count the registration widener — the badge counts CONSTRAINTS', () => {
+    // Opting courses in makes the result set larger, not smaller. Counting it as a filter
+    // would tell a parent they had narrowed something when they had done the opposite (and
+    // would put activeFilterCount at odds with hasActiveFilters — see the invariant below).
+    // It is still STATED, as an applied token; it is just not a constraint.
+    expect(activeFilterCount(st({ includeRegistration: true }))).toBe(0);
+  });
+
   it('never disagrees with hasActiveFilters — a non-zero badge means filters ARE applied', async () => {
     const { hasActiveFilters } = await import('./params');
     const cases: Partial<SearchState>[] = [
@@ -218,6 +226,17 @@ describe('appliedFilterTokens — the query in words, each part removable', () =
     for (const state of cases) {
       expect(appliedFilterTokens(state, null).length > 0).toBe(activeFilterCount(state) > 0);
     }
+  });
+
+  it('states the registration widener — the ONE token that is not a counted constraint', () => {
+    // Deliberate, and the only asymmetry in this module: the badge counts constraints, and
+    // opting courses in is not one. But it changes WHAT KIND of thing the results contain,
+    // so a parent must be able to see it stated — and clear it — rather than wonder why
+    // 12-week programmes are in a "what's on today" list. Tokens state; the badge counts.
+    const state = st({ includeRegistration: true });
+    expect(labels(state)).toEqual(['Including registration courses']);
+    expect(activeFilterCount(state)).toBe(0);
+    expect(byKey(state, 'includeRegistration')?.clear).toEqual({ includeRegistration: false });
   });
 
   it('feeds the phone bar: otherFilterChips is exactly the "other" tokens, in the same order', () => {

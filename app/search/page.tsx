@@ -33,6 +33,7 @@ import {
   analyticsFilterTokens,
   apiQuery,
   hasActiveFilters,
+  hasClearableFilters,
   hasDateRange,
   hasNearMeCoords,
   hrefFor,
@@ -245,10 +246,14 @@ export default async function SearchPage({
   // so the phone and the desktop can never disagree about what is filtering.
   const appliedTokens = appliedFilterTokens(state, savedLocation);
   const activeFilters = appliedTokens.map((t) => t.label);
+  // Narrowing filters only — this gates the analytics "is this a search?" test and the empty-state
+  // prompt, both of which are about constraints the parent applied, not about wideners.
   const filtersActive = hasActiveFilters(state);
+  // Anything clearable, including the registration widener — gates the "Clear filters" affordances.
+  const clearableFilters = hasClearableFilters(state);
   // Live per-filter-value counts, when the search returned them. `null` is a supported state,
   // not an error: the rail then falls back to a fixed six-group set with no numerals rather
-  // than to the eight-group wall it replaced (see _lib/rail-groups.ts).
+  // than to the nine-group wall it replaced (see _lib/rail-groups.ts).
   const facets = result.body?.facets ?? null;
   const railPlan = planRailGroups(state, facets);
   // Custom date range (T26 / FR-04): when a range is active the confirmed results are grouped
@@ -323,7 +328,7 @@ export default async function SearchPage({
 
             `facets` + `plan` are the desktop rail's two additions: live counts on every chip,
             and a 5-6 group front set with the rest folded into a native <details>. A
-            persistent rail showing all eight groups would be the same crowding problem
+            persistent rail showing all nine groups would be the same crowding problem
             rotated ninety degrees — worse, because it never scrolls away. Both props are
             optional and the sheet's own behaviour is unchanged by them. */}
         <MobileFilterSheet
@@ -400,7 +405,7 @@ export default async function SearchPage({
               “gym”), or clear your search to browse everything on.
             </p>
             {emptyExplain && <p className="kf-browse__empty-explain">{emptyExplain}</p>}
-            {filtersActive && (
+            {clearableFilters && (
               <p className="kf-empty__body" style={{ margin: '10px 0 0' }}>
                 <Link className="kf-browse__clear" href={hrefFor(state, CLEARED_FILTERS)}>
                   Clear all filters

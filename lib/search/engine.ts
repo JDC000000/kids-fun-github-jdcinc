@@ -20,9 +20,13 @@ import { StaticRankConfig } from './rank-config';
 import { FixtureAliasResolver } from './expand';
 import { parseQuery } from './parse';
 import { passesAllFilters, type ResultMode } from './filters/predicate';
+// Filtering lives in predicate.ts (shared with the facet counter); this is the CARD LABEL —
+// a result that came back because the caller opted in has to say why it is there.
+import { isRegistrationShaped } from './filters/registration';
 import { computeFacetCounts, type FacetCounts } from './facets';
 import { rankCandidates } from './rank';
 import { applySort } from './sort';
+import { collapseSameDaySeries, slotSpanEnd, type CollapsedListing, type OccurrenceSlot } from './collapse';
 import {
   buildBroadeningLadder,
   explainEmptyState,
@@ -50,6 +54,12 @@ export interface SearchRequest {
   sort?: SortKey;
   includeUnknownCost?: boolean;
   /**
+   * Opt into registration-required courses/camps/lessons. Off by default — the default result set
+   * answers "what can we do today" and excludes registered programmes entirely; a parent turns
+   * this on to see them, and every listing it adds is labelled as registration content.
+   */
+  includeRegistration?: boolean;
+  /**
    * Explicit custom date RANGE from the UI (T26 / FR-04), YYYY-MM-DD America/Vancouver
    * local dates. A structured param (like region / lat-lng), NOT text composed into `q`:
    * the query parser can't reliably read an ISO date because normalize() strips its
@@ -74,6 +84,20 @@ export interface SearchResultItem {
   distanceKm: number | null;
   components: ScoredListing['components'];
   matchedAliases: string[];
+  /**
+   * Every same-series-same-day occurrence this one result now stands for, ascending by start
+   * (see lib/search/collapse.ts). Always at least the listing itself, so consumers can read
+   * `slots.length` uniformly rather than special-casing the uncollapsed card.
+   */
+  slots: OccurrenceSlot[];
+  /** End of the LAST slot — the closing edge of a collapsed card's "3:15 PM–7:30 PM" span. */
+  slotSpanEndUtc: string | null;
+  /**
+   * True when this listing reads as a registration-required course. Only ever present in results
+   * when the caller opted in, and it exists so the card can SAY SO rather than blending a course
+   * in silently among drop-in results.
+   */
+  registrationRequired: boolean;
 }
 
 export interface SearchResponse {
@@ -120,6 +144,7 @@ export class SearchEngine {
       now,
       sort: req.sort,
       includeUnknownCost: req.includeUnknownCost,
+      includeRegistration: req.includeRegistration,
     });
 
     // Structured custom date range (T26 / FR-04): an explicit start+end from the UI is
@@ -199,26 +224,33 @@ export class SearchEngine {
   }
 
   /**
-   * parse-expanded context → matched, filtered, ranked, sorted PRIMARY listings. Returns the
-   * matched candidate set alongside the scored results so facet counting can reuse it instead
-   * of paying for a second matcher pass over every listing.
+   * parse-expanded context → matched, filtered, ranked, sorted, collapsed PRIMARY listings.
+   *
+   * Collapsing is the LAST step, after ranking and sorting, so a card lands wherever its
+   * best-ranked slot ranked. It is inside this method rather than applied once at the end because
+   * everything downstream — the result limit, `total`, and the broadening ladder's "are there
+   * enough results?" test — should count CARDS a parent sees, not repeated slots of one activity.
+   *
+   * Also returns the matched candidate set, so facet counting can reuse it instead of paying for
+   * a second matcher pass over every listing. (Facets do their own collapsing arithmetic — they
+   * need per-facet-value card counts, not this one collapsed list.)
    */
   private runPrimary(
     ctx: SearchContext,
     origin: ResolvedOrigin | null,
     chips: string[],
     now: Date,
-  ): { scored: ScoredListing[]; candidates: MatchCandidate[] } {
+  ): { scored: CollapsedListing[]; candidates: MatchCandidate[] } {
     const candidates = this.match(ctx);
     const filtered = candidates.filter((c) => this.passesFilters(c.listing, ctx, origin, chips, 'primary'));
     const scored = rankCandidates(filtered, this.rankContext(ctx, origin, now));
-    return { scored: applySort(scored, ctx.sort), candidates };
+    return { scored: collapseSameDaySeries(applySort(scored, ctx.sort)), candidates };
   }
 
   /** Expected/seasonal/evergreen suggestions: relaxed status class, loose filters. */
-  private runExpected(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): ScoredListing[] {
+  private runExpected(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): CollapsedListing[] {
     const candidates = this.match(ctx).filter((c) => this.passesFilters(c.listing, ctx, origin, chips, 'expected'));
-    return rankCandidates(candidates, this.rankContext(ctx, origin, now));
+    return collapseSameDaySeries(rankCandidates(candidates, this.rankContext(ctx, origin, now)));
   }
 
   /** Alias-expand + text-match the context into a candidate set (no filtering yet). */
@@ -269,7 +301,8 @@ function normalizeDateRange(range?: { from: string; to: string } | null): { from
   return from <= to ? { from, to } : { from: to, to: from };
 }
 
-function toItem(s: ScoredListing): SearchResultItem {
+function toItem(group: CollapsedListing): SearchResultItem {
+  const s = group.representative;
   const matchedAliases = (s.candidate as MatchCandidate & { _matchedAliases?: string[] })._matchedAliases ?? [];
   return {
     listing: s.candidate.listing,
@@ -277,5 +310,8 @@ function toItem(s: ScoredListing): SearchResultItem {
     distanceKm: s.distanceKm,
     components: s.components,
     matchedAliases,
+    slots: group.slots,
+    slotSpanEndUtc: slotSpanEnd(group.slots),
+    registrationRequired: isRegistrationShaped(s.candidate.listing),
   };
 }

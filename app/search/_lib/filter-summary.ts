@@ -190,6 +190,18 @@ export function appliedFilterTokens(state: SearchState, savedLocation: SummaryLo
     tokens.push({ key: 'bookableNow', label: 'Bookable now', scope: 'other', clear: { bookableNow: false } });
   }
   if (state.dropIn) tokens.push({ key: 'dropIn', label: 'Drop-in', scope: 'other', clear: { dropIn: false } });
+  // The one token here that is NOT a counted constraint (activeFilterCount excludes it, and
+  // must: it widens the result set rather than narrowing it). It is stated anyway because it
+  // changes what KIND of thing the list contains — a parent who opted courses in should never
+  // have to wonder why 12-week programmes appeared, or hunt for the control that removes them.
+  if (state.includeRegistration) {
+    tokens.push({
+      key: 'includeRegistration',
+      label: 'Including registration courses',
+      scope: 'other',
+      clear: { includeRegistration: false },
+    });
+  }
   if (state.rainyDay) tokens.push({ key: 'rainyDay', label: 'Rainy-day', scope: 'other', clear: { rainyDay: false } });
   if (state.free) tokens.push({ key: 'free', label: 'Free', scope: 'other', clear: { free: false } });
   if (state.costMaxCad != null) {

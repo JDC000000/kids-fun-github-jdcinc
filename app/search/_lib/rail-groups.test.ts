@@ -31,7 +31,23 @@ function facets(total: number, groups: FacetGroupCounts[]): FacetCounts {
   return { total, groups };
 }
 
-// The rail's whole viability rests on this file. A persistent sidebar showing all eight
+/**
+ * The registration group's real shape (lib/search/facets.ts). Unlike every other group it
+ * carries no "any" value and its second value is the LARGER one: `includeRegistration` is
+ * what the result set would become if courses were let back in.
+ */
+function registrationGroup(dropInOnly: number, includeRegistration: number): FacetGroupCounts {
+  return {
+    key: 'registration' as FacetGroupCounts['key'],
+    selection: 'single',
+    values: [
+      { value: 'dropInOnly', count: dropInOnly, selected: true },
+      { value: 'includeRegistration', count: includeRegistration, selected: false },
+    ],
+  };
+}
+
+// The rail's whole viability rests on this file. A persistent sidebar showing all nine
 // groups is the "relocates 46 controls without reducing them" failure the audit named —
 // so the reduction has to be pinned, not merely intended.
 
@@ -48,6 +64,14 @@ describe('pinnedGroups — a filter the parent applied is never folded away', ()
     expect(pinnedGroups(st({ regions: ['van'] }))).toEqual(['areas']);
     expect(pinnedGroups(st({ costMaxCad: 20 }))).toEqual(['costMax']);
     expect(pinnedGroups(st({ lat: 49.2, lng: -123.1 }))).toEqual(['nearMe']);
+  });
+
+  it('pins Courses once a parent has opted registration content IN', () => {
+    // It widens rather than narrows, but the rule is the same and matters more here: a parent
+    // who turned courses on and cannot see the control has no way to turn them back off, and
+    // no explanation for why 12-week programmes are suddenly in their "what's on today" list.
+    expect(pinnedGroups(st({ includeRegistration: true }))).toEqual(['courses']);
+    expect(pinnedGroups(st({ includeRegistration: false }))).toEqual([]);
   });
 
   it('pins "quick filters" once, whichever of the four independent toggles is on', () => {
@@ -85,10 +109,21 @@ describe('discriminationScore — can this group actually narrow the query?', ()
     };
     expect(discriminationScore(quick, 12)).toBe(1);
   });
+
+  it('scores the registration group on the GAP, because it is the one group that widens', () => {
+    // Its two values are "drop-in only" (the default, narrower) and "include registration"
+    // (wider). Neither is ever smaller than the other by narrowing, so the generic
+    // reachable-and-narrowing rule would score it zero forever and fold it away permanently.
+    // What actually matters is whether this search is holding any course content back.
+    const withCourses = registrationGroup(12, 31);
+    const withoutCourses = registrationGroup(12, 12);
+    expect(discriminationScore(withCourses, 12)).toBe(1);
+    expect(discriminationScore(withoutCourses, 12)).toBe(0);
+  });
 });
 
-describe('planRailGroups — the 8 → 5-6 reduction that makes the rail viable', () => {
-  it('never shows all eight groups up front on an untouched search', () => {
+describe('planRailGroups — the 9 → 5-6 reduction that makes the rail viable', () => {
+  it('never shows all nine groups up front on an untouched search', () => {
     const plan = planRailGroups(DEFAULT_STATE, null);
     expect(plan.primary.length).toBeLessThanOrEqual(MAX_PRIMARY_GROUPS);
     expect(plan.secondary.length).toBeGreaterThan(0);
@@ -123,6 +158,7 @@ describe('planRailGroups — the 8 → 5-6 reduction that makes the rail viable'
       ages: ['5-9'],
       regions: ['van'],
       free: true,
+      includeRegistration: true,
       costMaxCad: 20,
       lat: 49.2,
       lng: -123.1,
@@ -180,14 +216,31 @@ describe('planRailGroups — the 8 → 5-6 reduction that makes the rail viable'
       ]),
     );
     expect(plan.primary).toEqual(['timeOfDay', 'ages', 'areas', 'quick', 'costMax', 'nearMe']);
-    expect(plan.secondary).toEqual(['when', 'dates']);
+    expect(plan.secondary).toEqual(['when', 'dates', 'courses']);
   });
 
-  it('degrades to a FIXED 6-group set — not to all eight — when counts are unavailable', () => {
+  it('degrades to a FIXED 6-group set — not to all nine — when counts are unavailable', () => {
     const plan = planRailGroups(DEFAULT_STATE, null);
     expect(plan.adaptive).toBe(false);
     expect(plan.primary).toEqual(['when', 'ages', 'areas', 'quick', 'costMax', 'nearMe']);
-    expect(plan.secondary).toEqual(['dates', 'timeOfDay']);
+    expect(plan.secondary).toEqual(['dates', 'timeOfDay', 'courses']);
+  });
+
+  it('offers Courses up front only when this search is actually holding course content back', () => {
+    // A skating search where every result is a drop-in session has nothing to opt into, so the
+    // control is dead weight in a 200px rail. A swim search sitting on 19 hidden lesson courses
+    // is exactly where a parent should be offered the choice without hunting for it.
+    const nothingHeldBack = planRailGroups(
+      DEFAULT_STATE,
+      facets(12, [registrationGroup(12, 12), group('when', 12, [2, 3])]),
+    );
+    expect(nothingHeldBack.secondary).toContain('courses');
+
+    const coursesHeldBack = planRailGroups(
+      DEFAULT_STATE,
+      facets(12, [registrationGroup(12, 31), group('when', 12, [2, 3])]),
+    );
+    expect(coursesHeldBack.primary).toContain('courses');
   });
 
   it('reports whether the selection was count-driven, so the UI can say so honestly', () => {

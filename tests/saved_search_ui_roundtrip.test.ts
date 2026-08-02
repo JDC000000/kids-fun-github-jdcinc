@@ -26,6 +26,7 @@ const RICH_STATE: SearchState = {
   q: 'family swim',
   sort: 'soonest',
   includeUnknownCost: false,
+  includeRegistration: true,
   regions: ['van', 'bby'],
   when: 'weekend',
   dateFrom: null,

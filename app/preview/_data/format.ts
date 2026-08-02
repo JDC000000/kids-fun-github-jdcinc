@@ -339,6 +339,25 @@ export function telHref(phone: string): string | null {
   return `tel:${plus}${digits}${extension ? `;ext=${extension[1]}` : ''}`;
 }
 
+/**
+ * "15 slots, 3:15 PM–7:30 PM" — the when-line for a card that stands for several same-day slots
+ * of one series. Returns null for an ordinary single-slot card, whose caller keeps `formatWhen`.
+ *
+ * The span runs from the first slot's start to the LAST slot's end, so it describes the window a
+ * parent can actually arrive in. Collapsing is same-day only, so this can never straddle a date.
+ */
+export function formatSlotSummary(
+  activity: Pick<Activity, 'slotCount' | 'startIso' | 'slotEndIso' | 'endIso'>,
+): string | null {
+  const count = activity.slotCount ?? 1;
+  if (count < 2) return null;
+  const span = formatWhen(activity.startIso, activity.slotEndIso ?? activity.endIso);
+  return `${count} slots, ${span.time}`;
+}
+
+/** The registration-required card tag. One phrase, used everywhere, so the label never drifts. */
+export const REGISTRATION_REQUIRED_TAG = 'Registration required';
+
 /** Short booking/registration tag copy (empty string when nothing to book). */
 export function bookingTag(booking: Activity['booking']): string {
   switch (booking) {

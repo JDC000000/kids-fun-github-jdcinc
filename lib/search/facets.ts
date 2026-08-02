@@ -31,9 +31,19 @@ import type { AgeBandKey, DayPart, ListingRecord, SearchContext } from './types'
 import type { ResolvedOrigin } from '../geo/origin';
 import type { RegionHierarchy } from '../geo/region';
 import { passesAllFilters, withContext, type FilterDeps, type FilterSelection } from './filters/predicate';
+import { collapseKey } from './collapse';
 import { parseQuery } from './parse';
 
-export type FacetGroupKey = 'when' | 'timeOfDay' | 'ages' | 'areas' | 'quick' | 'costMax' | 'radius' | 'category';
+export type FacetGroupKey =
+  | 'when'
+  | 'timeOfDay'
+  | 'ages'
+  | 'areas'
+  | 'quick'
+  | 'costMax'
+  | 'radius'
+  | 'registration'
+  | 'category';
 
 /**
  * How the group behaves when a value is picked — the UI needs this to render the right
@@ -154,9 +164,7 @@ export function computeFacetCounts(listings: ListingRecord[], request: FacetRequ
       return set;
     },
     count(set, selection) {
-      let n = 0;
-      for (const listing of set) if (passesAllFilters(listing, selection, deps)) n += 1;
-      return n;
+      return countCards(set.filter((listing) => passesAllFilters(listing, selection, deps)));
     },
   };
 
@@ -168,10 +176,31 @@ export function computeFacetCounts(listings: ListingRecord[], request: FacetRequ
     quickGroup(ctx),
     costMaxGroup(ctx),
     ...(applied.origin ? [radiusGroup(ctx)] : []),
+    registrationGroup(ctx),
     categoryGroup(ctx),
   ];
 
-  return { total: ctx.base(applied).length, groups };
+  return { total: countCards(ctx.base(applied)), groups };
+}
+
+/**
+ * How many CARDS a set of listings renders as — the unit the result list is in.
+ *
+ * Results are collapsed to one card per series per local day (lib/search/collapse.ts), so
+ * counting raw occurrences would overstate every facet: on the staging catalogue 1000
+ * occurrences render as 661 cards. A rail that said "Vancouver 47" above a list of 31 cards
+ * would be exactly the kind of lie these counts exist to prevent. Listings that belong to no
+ * single day (open-hours, undated) are never collapsed and each count as their own card.
+ */
+function countCards(listings: ListingRecord[]): number {
+  let uncollapsable = 0;
+  const keys = new Set<string>();
+  for (const listing of listings) {
+    const key = collapseKey(listing);
+    if (key == null) uncollapsable += 1;
+    else keys.add(key);
+  }
+  return keys.size + uncollapsable;
 }
 
 /** Look up one group's counts. Returns undefined for a group this selection doesn't expose. */
@@ -208,7 +237,7 @@ function whenGroup(c: CountContext): FacetGroupCounts {
   const values: FacetValueCount[] = [
     // A custom date range, an explicit date or a weekday all leave the quick-pick unset —
     // exactly how the /search URL reads them (params.ts).
-    { value: ANY, count: set.length, selected: kind == null || !WHEN_KINDS.has(kind) },
+    { value: ANY, count: countCards(set), selected: kind == null || !WHEN_KINDS.has(kind) },
   ];
   for (const { value, phrase } of WHEN_VALUES) {
     // Resolve the date through the real parser so a count can never disagree with what the
@@ -227,7 +256,7 @@ function timeOfDayGroup(c: CountContext): FacetGroupCounts {
   const dropped = withContext(c.applied, { timeOfDay: null });
   const set = c.base(dropped);
   const current = c.applied.ctx.timeOfDay;
-  const values: FacetValueCount[] = [{ value: ANY, count: set.length, selected: current == null }];
+  const values: FacetValueCount[] = [{ value: ANY, count: countCards(set), selected: current == null }];
   for (const part of DAY_PART_VALUES) {
     values.push({
       value: part,
@@ -242,7 +271,7 @@ function agesGroup(c: CountContext): FacetGroupCounts {
   const dropped = withContext(c.applied, { ageBands: [] });
   const set = c.base(dropped);
   const current = c.applied.ctx.ageBands;
-  const values: FacetValueCount[] = [{ value: ANY, count: set.length, selected: current.length === 0 }];
+  const values: FacetValueCount[] = [{ value: ANY, count: countCards(set), selected: current.length === 0 }];
   for (const band of AGE_BAND_VALUES) {
     values.push({
       value: band,
@@ -257,7 +286,7 @@ function areasGroup(c: CountContext): FacetGroupCounts {
   const dropped = withChips(c.applied, []);
   const set = c.base(dropped);
   const current = c.applied.regionChipIds;
-  const values: FacetValueCount[] = [{ value: ANY, count: set.length, selected: current.length === 0 }];
+  const values: FacetValueCount[] = [{ value: ANY, count: countCards(set), selected: current.length === 0 }];
   // Data-driven from the region hierarchy rather than a hard-coded chip list, so the rail's
   // area options can finally be served by the backend (the follow-up params.ts flags) — which
   // also matters in database mode, where real region ids are UUIDs the UI's hard-coded
@@ -294,7 +323,7 @@ function costMaxGroup(c: CountContext): FacetGroupCounts {
   const dropped = withContext(c.applied, { costMaxCad: null });
   const set = c.base(dropped);
   const current = c.applied.ctx.costMaxCad;
-  const values: FacetValueCount[] = [{ value: ANY, count: set.length, selected: current == null }];
+  const values: FacetValueCount[] = [{ value: ANY, count: countCards(set), selected: current == null }];
   for (const ceiling of COST_CEILINGS_CAD) {
     values.push({
       value: String(ceiling),
@@ -318,16 +347,44 @@ function radiusGroup(c: CountContext): FacetGroupCounts {
   return { key: 'radius', selection: 'single', values };
 }
 
+function registrationGroup(c: CountContext): FacetGroupCounts {
+  // The "Courses" control (FilterRail): registration-required courses are excluded by default and
+  // a parent opts in. Unlike every other group this one WIDENS — so `includeRegistration` is always
+  // the larger number, and the gap between the two values is exactly "how much course content this
+  // search is holding back". That gap is the honest way for the UI to decide whether the control is
+  // worth showing at all: no gap, nothing to opt into.
+  const dropped = withContext(c.applied, { includeRegistration: true });
+  const set = c.base(dropped);
+  return {
+    key: 'registration',
+    selection: 'single',
+    values: [
+      {
+        value: 'dropInOnly',
+        count: c.count(set, withContext(dropped, { includeRegistration: false })),
+        selected: !c.applied.ctx.includeRegistration,
+      },
+      {
+        value: 'includeRegistration',
+        count: countCards(set),
+        selected: c.applied.ctx.includeRegistration,
+      },
+    ],
+  };
+}
+
 function categoryGroup(c: CountContext): FacetGroupCounts {
   // A breakdown of the CURRENT result set — nothing is dropped, because no category control
   // exists yet for a parent to have selected. Ordered biggest-first so a UI can show the
   // handful that actually carry the results and fold the tail away.
-  const counts = new Map<string, number>();
+  const byCategory = new Map<string, ListingRecord[]>();
   for (const listing of c.base(c.applied)) {
-    counts.set(listing.primaryCategoryKey, (counts.get(listing.primaryCategoryKey) ?? 0) + 1);
+    const bucket = byCategory.get(listing.primaryCategoryKey);
+    if (bucket) bucket.push(listing);
+    else byCategory.set(listing.primaryCategoryKey, [listing]);
   }
-  const values = [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([value, count]) => ({ value, count, selected: false }));
+  const values = [...byCategory.entries()]
+    .map(([value, bucket]) => ({ value, count: countCards(bucket), selected: false }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
   return { key: 'category', selection: 'breakdown', values };
 }

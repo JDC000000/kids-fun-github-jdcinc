@@ -12,7 +12,7 @@ import {
   TIME_OF_DAY_OPTIONS,
   WHEN_OPTIONS,
   dateRangeFormFields,
-  hasActiveFilters,
+  hasClearableFilters,
   hasDateRange,
   hasNearMeCoords,
   hrefFor,
@@ -47,14 +47,14 @@ export interface SavedLocationInfo {
 // ── TWO OPTIONAL EXTENSIONS (Round 31, desktop rail) ────────────────────────────────────
 // `facets` and `plan` are both optional and both default to OFF, so a caller that passes
 // neither — today's inline rail, and the mobile bottom sheet that wraps it — gets exactly
-// the markup it got before: all eight groups, in order, with no counts. The desktop rail
+// the markup it got before: all nine groups, in order, with no counts. The desktop rail
 // passes both:
 //   • `facets` puts a live result count on each chip (lib/search/facets.ts drop-one counts),
 //     so a parent can see that "Morning" leaves 5 and "Evening" leaves 0 before spending a
 //     click, and dead ends are visibly dead rather than discovered by trying them;
 //   • `plan` splits the groups into an up-front set and a folded "More filters" set
 //     (app/search/_lib/rail-groups.ts). This is what stops a persistent sidebar from being
-//     the same eight-group wall in a narrower column.
+//     the same nine-group wall in a narrower column.
 // Folded groups are still RENDERED, inside a native <details> — every chip stays in the DOM
 // as a real <Link>, so the deep-link/back-button architecture and JS-off operability are
 // untouched, and a filter the parent has already applied is never folded.
@@ -67,6 +67,7 @@ const FACET_GROUP_FOR: Record<RailGroupId, string | null> = {
   ages: 'ages',
   areas: 'areas',
   quick: 'quick',
+  courses: 'registration',
   costMax: 'costMax',
   nearMe: 'radius',
 };
@@ -224,7 +225,7 @@ export interface FilterRailProps {
   facets?: FacetCounts | null;
   /**
    * Which groups sit up front and which fold into "More filters"
-   * (app/search/_lib/rail-groups.ts). Omit to render all eight in canonical order.
+   * (app/search/_lib/rail-groups.ts). Omit to render all nine in canonical order.
    */
   plan?: RailPlan | null;
 }
@@ -370,12 +371,45 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
       </Group>
     ),
 
+    /* Courses — the one control that changes WHAT KIND of thing results contain, so it is its
+       own group with its default state spelled out rather than a lone toggle buried in the quick
+       filters (those all narrow; this one widens). Registered courses, camps and lesson programmes
+       are left out of results unless a parent asks for them: this product answers "what can we do
+       today", and a 12-week programme with a registration deadline is a different question. The
+       left chip is the default and is checkmarked on a bare /search, so the exclusion is stated on
+       the page instead of being invisible. Nothing is unreachable — turning the right chip on
+       brings every course back, each card labelled "Registration required".
+
+       Its counts are the one pair in the rail where the RIGHT-hand number is the larger one:
+       every other group narrows, this one widens. The gap between the two is exactly how much
+       course content this search is holding back, which is also how rail-groups.ts decides
+       whether the control is worth showing up front at all (no gap → nothing to opt into). */
+    courses: (
+      <Group label="Courses" id="kf-fg-courses" key="courses">
+        <Chip
+          href={hrefFor(state, { includeRegistration: false })}
+          active={!state.includeRegistration}
+          count={countFor('courses', 'dropInOnly')}
+        >
+          Drop-in only
+        </Chip>
+        <Chip
+          href={hrefFor(state, { includeRegistration: true })}
+          active={state.includeRegistration}
+          count={countFor('courses', 'includeRegistration')}
+        >
+          Include registration courses
+        </Chip>
+      </Group>
+    ),
+
     /* Max price — cost ceiling (radio-like: one at a time). Sits alongside the binary
        "Free" quick-filter so "cost range / free" is fully exposed (G-T21-4). Already leads
        with an "Any price" default pill (costMaxCad null), so it needs no separate label — the
        "Any X" pill is its unset-is-everything signal, consistent with When/Time/Ages/Areas. */
     costMax: (
       <Group label="Max price" id="kf-fg-cost" key="costMax">
+
         {COST_MAX_OPTIONS.map((opt) => (
           <Chip
             key={opt.key}
@@ -453,7 +487,7 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
         </details>
       )}
 
-      {hasActiveFilters(state) && (
+      {hasClearableFilters(state) && (
         <div className="kf-filters__foot">
           <Link className="kf-filters__clear" href={hrefFor(state, CLEARED_FILTERS)}>
             Clear filters

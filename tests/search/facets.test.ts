@@ -10,9 +10,14 @@
 
 import { describe, it, expect } from 'vitest';
 import { makeFixtureEngine, FIXTURE_NOW } from '../../lib/search/__fixtures__/engine';
+import { makeListing } from '../../lib/search/__fixtures__/factory';
+import { REGIONS } from '../../lib/search/__fixtures__/regions';
+import { RegionHierarchy } from '../../lib/geo/region';
+import { InMemoryListingRepository } from '../../lib/search/repository';
+import { FixtureAliasResolver } from '../../lib/search/expand';
 import { computeFacetCounts, facetGroup, facetCount } from '../../lib/search/facets';
 import type { FacetCounts } from '../../lib/search/facets';
-import type { SearchRequest } from '../../lib/search/engine';
+import { SearchEngine, type SearchRequest } from '../../lib/search/engine';
 import {
   AGE_OPTIONS,
   COST_MAX_OPTIONS,
@@ -227,6 +232,156 @@ describe('facet counts — group-specific behaviour', () => {
     const res = engine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, facets: true });
     expect(res.expected.length).toBeGreaterThanOrEqual(0);
     expect(res.facets?.total).toBe(res.results.length);
+  });
+});
+
+describe('facet counts are in CARDS, like the list they sit next to', () => {
+  // Results are collapsed to one card per series per local day (lib/search/collapse.ts). Counting
+  // raw occurrences would overstate every facet — on staging, 1000 occurrences render as 661
+  // cards, so a rail would sit "Vancouver 47" on top of a list of 31.
+  //
+  // NOTE this needs its own catalogue: no listing in FIXTURE_LISTINGS shares a seriesId with
+  // another, so nothing there ever collapses and the parity suite above would pass either way.
+  // The bug is only reachable with genuine repeats, so the fixture has to contain them.
+  const HOUR = 3_600_000;
+  const slotAt = (hoursAfter9am: number) =>
+    new Date(Date.UTC(2026, 6, 13, 16, 0, 0) + hoursAfter9am * HOUR).toISOString();
+
+  const REPEATED_SERIES = 'series-forte-piano';
+  const catalogue = [
+    // One series, four slots, ONE day, one venue → one card.
+    ...[0, 1, 2, 3].map((i) =>
+      makeListing({
+        id: `slot-${i}`,
+        seriesId: REPEATED_SERIES,
+        activityName: 'Forte Piano Open Play',
+        primaryCategoryKey: 'indoor_play',
+        venueName: 'Killarney',
+        startDatetimeUtc: slotAt(i),
+        endDatetimeUtc: slotAt(i + 1),
+        costStatus: 'free',
+        statusState: 'confirmed',
+        ageBandMatches: ['5-9'],
+        municipalityId: 'van',
+      }),
+    ),
+    // Same series, NEXT day → a second, separate card (a day boundary is never collapsed across).
+    makeListing({
+      id: 'slot-nextday',
+      seriesId: REPEATED_SERIES,
+      activityName: 'Forte Piano Open Play',
+      primaryCategoryKey: 'indoor_play',
+      venueName: 'Killarney',
+      startDatetimeUtc: slotAt(24),
+      endDatetimeUtc: slotAt(25),
+      costStatus: 'free',
+      statusState: 'confirmed',
+      ageBandMatches: ['5-9'],
+      municipalityId: 'van',
+    }),
+    // An unrelated single-slot listing in another municipality → its own card.
+    makeListing({
+      id: 'solo-bby',
+      activityName: 'Open Gym Drop-In',
+      primaryCategoryKey: 'open_gym',
+      venueName: 'Burnaby Centre',
+      startDatetimeUtc: slotAt(2),
+      endDatetimeUtc: slotAt(3),
+      costStatus: 'free',
+      statusState: 'confirmed',
+      ageBandMatches: ['5-9'],
+      municipalityId: 'bby',
+    }),
+  ];
+
+  const collapsingEngine = new SearchEngine({
+    repository: new InMemoryListingRepository(catalogue),
+    aliasResolver: new FixtureAliasResolver(),
+    regionHierarchy: new RegionHierarchy(REGIONS),
+    fixtureBacked: false,
+  });
+
+  const run = (req: Partial<SearchRequest> = {}) =>
+    collapsingEngine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, ...req });
+
+  it('counts a repeated series as one card per day, not one per time slot', () => {
+    const res = run({ facets: true });
+    // 6 occurrences → 3 cards: the 4-slot day, the next day, and the solo listing.
+    expect(catalogue.length).toBe(6);
+    expect(res.total).toBe(3);
+    expect(res.facets?.total).toBe(3);
+  });
+
+  it('counts every individual facet value in cards too, not just the total', () => {
+    const facets = run({ facets: true }).facets!;
+    // Vancouver holds 5 occurrences but only 2 cards.
+    expect(facetCount(facets, 'areas', 'van')).toBe(2);
+    expect(facetCount(facets, 'areas', 'bby')).toBe(1);
+    expect(facetCount(facets, 'ages', '5-9')).toBe(3);
+    // The 4 collapsed slots are all in the morning; they are still ONE card.
+    expect(facetCount(facets, 'category', 'indoor_play')).toBe(2);
+    expect(facetCount(facets, 'quick', 'free')).toBe(3);
+  });
+
+  it('keeps every facet value equal to what applying it actually returns', () => {
+    // The same parity guarantee as the main suite, but over a catalogue that really collapses.
+    const facets = run({ facets: true }).facets!;
+    expect(facetCount(facets, 'areas', 'van')).toBe(run({ regionChipIds: ['van'] }).total);
+    expect(facetCount(facets, 'areas', 'bby')).toBe(run({ regionChipIds: ['bby'] }).total);
+    expect(facetCount(facets, 'quick', 'free')).toBe(run({ q: 'free' }).total);
+    expect(facetCount(facets, 'ages', '5-9')).toBe(run({ q: 'kids' }).total);
+  });
+});
+
+describe('registration ("Courses") facet', () => {
+  it('reports what opting into course content would add, and what the default holds back', () => {
+    const facets = facetsFor();
+    const group = facetGroup(facets, 'registration')!;
+    expect(group.values.map((v) => v.value)).toEqual(['dropInOnly', 'includeRegistration']);
+    // Default is drop-in only, and it is the selected value.
+    expect(group.values.find((v) => v.value === 'dropInOnly')?.selected).toBe(true);
+    // Opting in can only ever ADD, never remove — it is a widener, not a narrowing chip.
+    const dropInOnly = facetCount(facets, 'registration', 'dropInOnly')!;
+    const included = facetCount(facets, 'registration', 'includeRegistration')!;
+    expect(included).toBeGreaterThanOrEqual(dropInOnly);
+    // Both counts match what actually applying that choice returns.
+    expect(dropInOnly).toBe(search().total);
+    expect(included).toBe(search({ includeRegistration: true }).total);
+  });
+
+  it('shows a real gap when the catalogue is holding course content back', () => {
+    const catalogue = [
+      makeListing({
+        id: 'course-1',
+        activityName: 'Learn to Skate — Level 2',
+        primaryCategoryKey: 'skate',
+        startDatetimeUtc: '2026-07-13T18:00:00Z',
+        endDatetimeUtc: '2026-07-13T19:00:00Z',
+        statusState: 'confirmed',
+        costStatus: 'free',
+        municipalityId: 'van',
+      }),
+      makeListing({
+        id: 'dropin-1',
+        activityName: 'Public Skate',
+        primaryCategoryKey: 'skate',
+        startDatetimeUtc: '2026-07-13T18:00:00Z',
+        endDatetimeUtc: '2026-07-13T19:00:00Z',
+        statusState: 'confirmed',
+        costStatus: 'free',
+        municipalityId: 'van',
+      }),
+    ];
+    const engine = new SearchEngine({
+      repository: new InMemoryListingRepository(catalogue),
+      aliasResolver: new FixtureAliasResolver(),
+      regionHierarchy: new RegionHierarchy(REGIONS),
+      fixtureBacked: false,
+    });
+    const res = engine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, facets: true });
+    expect(res.total).toBe(1); // the course is excluded by default
+    expect(facetCount(res.facets!, 'registration', 'dropInOnly')).toBe(1);
+    expect(facetCount(res.facets!, 'registration', 'includeRegistration')).toBe(2);
   });
 });
 

@@ -129,18 +129,48 @@ describe('FilterRail — optional facet counts (Proposal C)', () => {
   });
 });
 
-describe('FilterRail — optional group plan (the 8 → 5-6 reduction)', () => {
+describe('FilterRail — optional group plan (the 9 → 5-6 reduction)', () => {
   const planned = (state: SearchState, facets: FacetCounts | null = FACETS) =>
     renderToStaticMarkup(
       <FilterRail state={state} savedLocation={null} facets={facets} plan={planRailGroups(state, facets)} />,
     );
 
-  it('renders all eight groups with no disclosure when no plan is given', () => {
+  it('renders all nine groups with no disclosure when no plan is given', () => {
     const html = render(DEFAULT_STATE);
     expect(html).not.toContain('kf-filters__more');
-    for (const id of ['kf-fg-when', 'kf-fg-daterange', 'kf-fg-time', 'kf-fg-ages', 'kf-fg-areas', 'kf-fg-quick', 'kf-fg-cost', 'kf-fg-near']) {
-      expect(html).toContain(`id="${id}"`);
-    }
+    const ids = [
+      'kf-fg-when',
+      'kf-fg-daterange',
+      'kf-fg-time',
+      'kf-fg-ages',
+      'kf-fg-areas',
+      'kf-fg-quick',
+      'kf-fg-courses',
+      'kf-fg-cost',
+      'kf-fg-near',
+    ];
+    for (const id of ids) expect(html).toContain(`id="${id}"`);
+    // Count them too: a group silently dropped from the record would still pass the loop above.
+    expect(html.match(/class="kf-fgroup"/g)).toHaveLength(ids.length);
+  });
+
+  it('offers Courses up front only when this search is holding course content back', () => {
+    // The gap between the two counts IS the reason to show it — see rail-groups.ts.
+    const held = planned(DEFAULT_STATE, {
+      ...FACETS,
+      groups: [
+        ...FACETS.groups,
+        {
+          key: 'registration',
+          selection: 'single',
+          values: [
+            { value: 'dropInOnly', count: 12, selected: true },
+            { value: 'includeRegistration', count: 31, selected: false },
+          ],
+        },
+      ],
+    });
+    expect(held.slice(0, held.indexOf('<details'))).toContain('id="kf-fg-courses"');
   });
 
   it('folds the rest behind a native <details> — no JavaScript needed to reach them', () => {

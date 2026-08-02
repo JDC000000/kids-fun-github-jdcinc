@@ -1280,7 +1280,7 @@
  *   rail  = 200px               ← measured break-even. 240 and 280 both make cards
  *                                 SMALLER at 1440 than they are today; 200 makes them
  *                                 slightly larger. It is comfortable only because the
- *                                 rail carries 5-6 adaptive groups, not all eight.
+ *                                 rail carries 5-6 adaptive groups, not all nine.
  *   gap   = 24px between rail and results
  *   results grid gap = 12px     ← measured on the live build (NOT 24)
  *   gutter = the existing --kf-gutter (64px at >=1280), inside the results column

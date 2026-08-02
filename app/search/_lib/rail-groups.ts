@@ -6,11 +6,11 @@ import { hasDateRange, hasOrigin, type SearchState } from './params';
  * desktop design (Proposal C in the 1 Aug desktop-scope decision).
  *
  * WHY THIS EXISTS AT ALL
- * A persistent sidebar that statically lists all eight groups is the same crowding
+ * A persistent sidebar that statically lists all nine groups is the same crowding
  * problem rotated ninety degrees, and worse: the mobile sheet at least scrolls away.
- * The measured desktop filter block is 400px tall with eight groups permanently
+ * The measured desktop filter block is 400px tall with its groups permanently
  * expanded, which is the single largest contributor to results starting below the
- * fold. Relocating those eight groups into a rail without REDUCING them was the
+ * fold. Relocating those groups into a rail without REDUCING them was the
  * failure mode the audit named ("A relocates 46 controls without reducing them"),
  * so reduction is not a nice-to-have here — it is the thing that makes the rail
  * viable. The target is 5-6 groups up front, the rest one disclosure away.
@@ -34,12 +34,21 @@ import { hasDateRange, hasOrigin, type SearchState } from './params';
  * DEGRADATION
  * `facets` is optional by design. If the counts are unavailable (older API response,
  * a failed search, `facets=1` not requested) the plan falls back to a FIXED 6-group
- * primary set rather than to all eight — the fallback is still a reduction, just not a
+ * primary set rather than to all nine — the fallback is still a reduction, just not a
  * query-aware one. The decision document flagged "if facet counts slip, the fallback is
  * a static rail" as the plan's weakest link; this is the answer to that.
  */
 
-export type RailGroupId = 'when' | 'dates' | 'timeOfDay' | 'ages' | 'areas' | 'quick' | 'costMax' | 'nearMe';
+export type RailGroupId =
+  | 'when'
+  | 'dates'
+  | 'timeOfDay'
+  | 'ages'
+  | 'areas'
+  | 'quick'
+  | 'courses'
+  | 'costMax'
+  | 'nearMe';
 
 /** Canonical render order. The plan re-sorts into this, so the rail never reshuffles. */
 export const RAIL_GROUP_ORDER: RailGroupId[] = [
@@ -49,6 +58,7 @@ export const RAIL_GROUP_ORDER: RailGroupId[] = [
   'ages',
   'areas',
   'quick',
+  'courses',
   'costMax',
   'nearMe',
 ];
@@ -81,6 +91,7 @@ const FACET_KEY_FOR: Partial<Record<RailGroupId, string>> = {
   ages: 'ages',
   areas: 'areas',
   quick: 'quick',
+  courses: 'registration',
   costMax: 'costMax',
   nearMe: 'radius',
 };
@@ -106,6 +117,10 @@ export function pinnedGroups(state: SearchState): RailGroupId[] {
   if (state.ages.length > 0) pinned.push('ages');
   if (state.regions.length > 0) pinned.push('areas');
   if (state.bookableNow || state.dropIn || state.rainyDay || state.free) pinned.push('quick');
+  // Courses widens rather than narrows, but the pin matters MORE for it, not less: a parent who
+  // opted registration content in and cannot see the control has no way to opt back out, and no
+  // explanation for why 12-week programmes appeared in a "what's on today" list.
+  if (state.includeRegistration) pinned.push('courses');
   if (state.costMaxCad != null) pinned.push('costMax');
   if (hasOrigin(state)) pinned.push('nearMe');
   return pinned;
@@ -120,6 +135,16 @@ export function pinnedGroups(state: SearchState): RailGroupId[] {
  * query at all, which is exactly the group worth folding away.
  */
 export function discriminationScore(group: FacetGroupCounts, facetTotal: number): number {
+  // The registration group is the one group in the payload that WIDENS: its two values are
+  // "drop-in only" (today's set) and "include registration courses" (a larger set). Nothing in
+  // it is ever narrowing, so the generic rule below would score it zero for every query and
+  // fold it away permanently. The question worth asking of it is different: is this search
+  // holding any course content back? If the two counts agree, there is nothing to opt into.
+  if (group.key === 'registration') {
+    const dropIn = group.values.find((v) => v.value === 'dropInOnly')?.count ?? 0;
+    const included = group.values.find((v) => v.value === 'includeRegistration')?.count ?? 0;
+    return included > dropIn ? 1 : 0;
+  }
   const any = group.values.find((v) => v.value === 'any');
   const reference = any ? any.count : facetTotal;
   let n = 0;
