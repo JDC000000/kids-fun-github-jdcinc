@@ -54,8 +54,13 @@ export function AccountNav() {
         <span className="kf-account__who" title={label}>
           Signed in as <strong>{label}</strong>
         </span>
+        {/* Saved searches were one of the three destinations the desktop nav had no route
+            to (Round 31). /account is where they live, alongside the profile, so the label
+            names what a parent is actually looking for. It stays in the signed-in branch
+            only: /account redirects anonymous visitors to sign-in, and a global nav entry
+            that leads to a wall is not navigation. */}
         <a className="kf-account__link" href="/account">
-          Account
+          Saved &amp; profile
         </a>
         {/* Sign-out is a state change → POST, not a GET link (CSRF hardening,
             security-review F-3). A same-site <form> submit reaches the POST-only

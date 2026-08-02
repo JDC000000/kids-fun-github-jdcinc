@@ -12,7 +12,15 @@ import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { SearchBar } from './_components/SearchBar';
 import { FilterRail, type SavedLocationInfo } from './_components/FilterRail';
 import { MobileFilterSheet } from './_components/MobileFilterSheet';
-import { activeFilterCount, otherFilterChips, whenChipLabel, whereChipLabel } from './_lib/filter-summary';
+import {
+  activeFilterCount,
+  appliedFilterTokens,
+  otherFilterChips,
+  whenChipLabel,
+  whereChipLabel,
+} from './_lib/filter-summary';
+import { planRailGroups } from './_lib/rail-groups';
+import { QuerySummary } from './_components/QuerySummary';
 import { SearchResultsView } from './_components/SearchResultsView';
 import { SaveSearchButton } from './_components/SaveSearchButton';
 import { ResumeSearch } from './_components/ResumeSearch';
@@ -20,13 +28,8 @@ import { buildMarkers, geoIndex } from './_lib/markers';
 import { groupActivitiesByDay, formatRangeLabel, type DayGroup } from './_lib/day-groups';
 import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
-  AGE_OPTIONS,
   CLEARED_FILTERS,
-  COST_MAX_OPTIONS,
-  REGION_CHIPS,
   SORT_OPTIONS,
-  TIME_OF_DAY_OPTIONS,
-  WHEN_OPTIONS,
   analyticsFilterTokens,
   apiQuery,
   hasActiveFilters,
@@ -76,7 +79,11 @@ interface FetchResult {
 
 async function runSearch(state: SearchState, savedOrigin: SavedOrigin | null): Promise<FetchResult> {
   try {
-    const res = await fetch(`${baseUrl()}/api/search?${apiQuery(state, savedOrigin)}`, {
+    // `facets: true` asks the same request for per-filter-value counts. They cost a few
+    // in-memory passes over the candidate set this search already built (no second query —
+    // see lib/search/facets.ts), and they are what lets the desktop rail show live counts
+    // AND fold away the groups that cannot narrow this query.
+    const res = await fetch(`${baseUrl()}/api/search?${apiQuery(state, savedOrigin, { facets: true })}`, {
       cache: 'no-store',
       headers: { accept: 'application/json' },
     });
@@ -95,35 +102,6 @@ function sourceNote(body: SearchApiResponse): string {
     return `Fixture fallback — ${body.meta.fallbackReason}.`;
   }
   return 'Fixture-backed search preview.';
-}
-
-/** Human-readable list of the active filters, for the "in words" results summary (Screen 2). */
-function filterSummary(state: SearchState, savedLocation: SavedLocationInfo | null): string[] {
-  const parts: string[] = [];
-  if (state.when !== 'any') parts.push(WHEN_OPTIONS.find((w) => w.key === state.when)?.label ?? '');
-  if (hasDateRange(state) && state.dateFrom && state.dateTo) {
-    parts.push(formatRangeLabel(state.dateFrom, state.dateTo));
-  }
-  if (state.timeOfDay !== 'any') parts.push(TIME_OF_DAY_OPTIONS.find((t) => t.key === state.timeOfDay)?.label ?? '');
-  if (state.ages.length) {
-    const labels = state.ages.map((band) => AGE_OPTIONS.find((a) => a.key === band)?.label ?? band);
-    parts.push(`Ages ${labels.join(' & ')}`);
-  }
-  if (state.regions.length) {
-    parts.push(state.regions.map((id) => REGION_CHIPS.find((r) => r.id === id)?.label ?? id).join(' + '));
-  }
-  if (state.bookableNow) parts.push('Bookable now');
-  if (state.dropIn) parts.push('Drop-in');
-  if (state.rainyDay) parts.push('Rainy-day');
-  if (state.free) parts.push('Free');
-  if (state.costMaxCad != null) {
-    parts.push(COST_MAX_OPTIONS.find((c) => c.maxCad === state.costMaxCad)?.label ?? `Under $${state.costMaxCad}`);
-  }
-  if (hasNearMeCoords(state)) parts.push(`within ${state.radiusKm} km of you`);
-  else if (state.useSavedLocation && savedLocation) {
-    parts.push(`within ${state.radiusKm} km of ${savedLocation.areaLabel}`);
-  }
-  return parts.filter(Boolean);
 }
 
 /**
@@ -261,10 +239,18 @@ export default async function SearchPage({
   const geo = geoIndex(result.body ? [...result.body.results, ...result.body.expected] : []);
   const markers = buildMarkers(confirmed, expected, geo);
   const mapToken = (process.env.NEXT_PUBLIC_MAP_KEY ?? process.env.GEOCODING_API_KEY ?? '').trim();
-  const sortSentence = SORT_OPTIONS.find((o) => o.key === state.sort)?.sentence ?? '';
+  const sortLabel = SORT_OPTIONS.find((o) => o.key === state.sort)?.label ?? '';
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
-  const activeFilters = filterSummary(state, savedLocation);
+  // The applied query in plain language. One derivation shared with the mobile sticky bar,
+  // so the phone and the desktop can never disagree about what is filtering.
+  const appliedTokens = appliedFilterTokens(state, savedLocation);
+  const activeFilters = appliedTokens.map((t) => t.label);
   const filtersActive = hasActiveFilters(state);
+  // Live per-filter-value counts, when the search returned them. `null` is a supported state,
+  // not an error: the rail then falls back to a fixed six-group set with no numerals rather
+  // than to the eight-group wall it replaced (see _lib/rail-groups.ts).
+  const facets = result.body?.facets ?? null;
+  const railPlan = planRailGroups(state, facets);
   // Custom date range (T26 / FR-04): when a range is active the confirmed results are grouped
   // by day (one dated subsection per day, open-hours attractions last). The day-by-id lookup is
   // built from the raw API items so grouping reflects each occurrence's true local date.
@@ -315,56 +301,80 @@ export default async function SearchPage({
 
   return (
     <>
-      <header className="kf-hero">
-        <p className="kf-hero__wordmark">KIDS FUN</p>
-        <h1 className="kf-hero__title">See what&apos;s on for your kids.</h1>
-        <p className="kf-hero__sub">
-          Search by activity, and check the source and last-checked date on every result before you go.
-        </p>
-      </header>
+      {/* The /search hero band is GONE (audit Quick Win #7). It was a 193px duplicate of the
+          home page's hero, restating the value proposition to a parent who has already
+          arrived and typed a query, and it was the single largest block of chrome between
+          the top of the page and the first result. Its <h1> moved to QuerySummary, where the
+          heading states the parent's own query instead of the product's pitch.
+          The wordmark it also carried is now a real home link in the global nav. */}
 
-      <SearchBar state={state} />
+      {/* Desktop: a two-column shell — persistent filter rail beside the results. Below the
+          rail breakpoint BOTH wrappers are `display: contents`, so the DOM order a phone
+          renders (search bar → sticky filter bar → results) is byte-for-byte what it was
+          before this grid existed. Above it, CSS grid places the rail beside the results
+          from that SAME order — no duplicated markup, nothing reordered in the DOM. */}
+      <div className="kf-srch">
+        <SearchBar state={state} />
+        {/* Filters (Blueprint §04 / Screen 5). ONE rail, relocated by viewport: a persistent
+            left rail at >=1043px, the inline column it has always been at 768-1042px, and a
+            sticky summary bar + bottom sheet at <=767px. MobileFilterSheet is a client island
+            that WRAPS the server-rendered rail rather than replacing it, so every chip stays a
+            real URL <Link> and the deep-link/back-button/quick-start architecture is unchanged.
 
-      {/* Filters (Blueprint §04 / Screen 5). ONE rail, relocated by viewport: the inline
-          column it has always been at >=768px, and a sticky summary bar + bottom sheet at
-          <=767px, where the permanently-expanded stack put ~1.7 viewport-heights of chrome
-          above the first result. MobileFilterSheet is a client island that WRAPS the
-          server-rendered rail rather than replacing it, so every chip stays a real URL
-          <Link> and the deep-link/back-button/quick-start architecture is unchanged. */}
-      <MobileFilterSheet
-        whenLabel={whenChipLabel(state)}
-        whereLabel={whereChipLabel(state, savedLocation)}
-        activeCount={activeFilterCount(state)}
-        otherChips={otherFilterChips(state)}
-        clearHref={hrefFor(state, CLEARED_FILTERS)}
-        resultCount={total}
-      >
-        <FilterRail state={state} savedLocation={savedLocation} />
-      </MobileFilterSheet>
+            `facets` + `plan` are the desktop rail's two additions: live counts on every chip,
+            and a 5-6 group front set with the rest folded into a native <details>. A
+            persistent rail showing all eight groups would be the same crowding problem
+            rotated ninety degrees — worse, because it never scrolls away. Both props are
+            optional and the sheet's own behaviour is unchanged by them. */}
+        <MobileFilterSheet
+          whenLabel={whenChipLabel(state)}
+          whereLabel={whereChipLabel(state, savedLocation)}
+          activeCount={activeFilterCount(state)}
+          otherChips={otherFilterChips(state)}
+          clearHref={hrefFor(state, CLEARED_FILTERS)}
+          resultCount={total}
+        >
+          <FilterRail state={state} savedLocation={savedLocation} facets={facets} plan={railPlan} />
+        </MobileFilterSheet>
 
-      {/* Anon memory (T26): on an active search this quietly refreshes the on-device "last
-          search"; on a bare landing it offers an explicit, dismissible resume of it. Rendered
-          unconditionally so the memory write still happens while searching; it renders no UI
-          unless a bare-landing resume is being offered. Coordinates are never persisted. */}
-      <ResumeSearch
-        currentParams={saveParams}
-        currentLabel={suggestedName}
-        hasActiveState={state.q.trim().length > 0 || filtersActive}
-      />
+        <div className="kf-srch__main">
+          {/* Anon memory (T26): on an active search this quietly refreshes the on-device "last
+              search"; on a bare landing it offers an explicit, dismissible resume of it. Rendered
+              unconditionally so the memory write still happens while searching; it renders no UI
+              unless a bare-landing resume is being offered. Coordinates are never persisted. */}
+          <ResumeSearch
+            currentParams={saveParams}
+            currentLabel={suggestedName}
+            hasActiveState={state.q.trim().length > 0 || filtersActive}
+          />
 
-      {showSave && (
-        <SaveSearchButton
-          key={savedKey}
-          params={saveParams}
-          defaultName={suggestedName}
-          isSignedIn={user != null}
-          signInHref={signInHref}
-          accountHref="/account"
-          initialSaved={savedKeys.has(savedKey)}
-        />
-      )}
+          {showSave && (
+            <SaveSearchButton
+              key={savedKey}
+              params={saveParams}
+              defaultName={suggestedName}
+              isSignedIn={user != null}
+              signInHref={signInHref}
+              accountHref="/account"
+              initialSaved={savedKeys.has(savedKey)}
+            />
+          )}
 
-      <div className="kf-results">
+          {/* The query, in words — and the page's <h1>. Rendered OUTSIDE the results branch
+              on purpose: an empty or failed search still needs a heading and still needs to
+              state what was asked for, which is exactly when a parent most needs to see that
+              they have four filters applied rather than concluding "there is nothing on". */}
+          <QuerySummary
+            state={state}
+            tokens={appliedTokens}
+            confirmed={confirmed.length}
+            expected={expected.length}
+            sortLabel={sortLabel}
+            clearHref={hrefFor(state, CLEARED_FILTERS)}
+            countsKnown={result.ok}
+          />
+
+          <div className="kf-results">
         {!result.ok ? (
           <div className="kf-empty" role="alert">
             <div className="kf-empty__glyph" aria-hidden="true">
@@ -401,31 +411,9 @@ export default async function SearchPage({
           </div>
         ) : (
           <>
-            <div className="kf-browse__summary">
-              <p className="kf-browse__count">
-                {confirmed.length} confirmed
-                {expected.length > 0 ? ` · ${expected.length} expected` : ''}
-              </p>
-              <p className="kf-browse__query">
-                {state.q ? (
-                  <>
-                    for <b>“{state.q}”</b> across Metro Vancouver
-                  </>
-                ) : (
-                  <>on now across Metro Vancouver</>
-                )}
-              </p>
-              <p className="kf-browse__sortline">Sorted by {sortSentence}.</p>
-              {activeFilters.length > 0 && (
-                <p className="kf-browse__filterline">
-                  Filtered by {activeFilters.join(' · ')}.{' '}
-                  <Link className="kf-browse__clear" href={hrefFor(state, CLEARED_FILTERS)}>
-                    Clear filters
-                  </Link>
-                </p>
-              )}
-            </div>
-
+            {/* The count / query / sort / applied-filter lines that used to live here are now
+                one QuerySummary line above the results (see the component's own note). Only
+                the provenance line stays: it is about the DATA, not the query. */}
             {result.body && <p className="kf-section__note">Source: {sourceNote(result.body)}</p>}
 
             <SearchResultsView markers={markers} token={mapToken} totalResults={total}>
@@ -442,6 +430,8 @@ export default async function SearchPage({
             </SearchResultsView>
           </>
         )}
+          </div>
+        </div>
       </div>
     </>
   );

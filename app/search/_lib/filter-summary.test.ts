@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_STATE, type SearchState } from './params';
-import { activeFilterCount, whenChipLabel, whereChipLabel } from './filter-summary';
+import { DEFAULT_RADIUS, DEFAULT_STATE, type SearchState } from './params';
+import {
+  activeFilterCount,
+  appliedFilterTokens,
+  otherFilterChips,
+  whenChipLabel,
+  whereChipLabel,
+  type SummaryLocation,
+} from './filter-summary';
 
 function st(overrides: Partial<SearchState> = {}): SearchState {
   return { ...DEFAULT_STATE, ...overrides };
@@ -139,5 +146,84 @@ describe('whereChipLabel — the [ Where ▾ ] control on the sticky bar', () =>
         areaLabel: 'North Vancouver',
       }),
     ).toBe('Near you · 10 km');
+  });
+});
+
+// The desktop query summary line ("swim · Saturday · Ages 5-9 · North Van") is the same
+// derivation the phone bar uses, so the two surfaces can never disagree about what is
+// applied. Each token also carries the patch that removes JUST itself — the line doubles
+// as the applied-filter row, which is the one idea worth keeping from Proposal B.
+
+describe('appliedFilterTokens — the query in words, each part removable', () => {
+  const labels = (s: SearchState, loc: SummaryLocation | null = null) =>
+    appliedFilterTokens(s, loc).map((t) => t.label);
+  const byKey = (s: SearchState, key: string, loc: SummaryLocation | null = null) =>
+    appliedFilterTokens(s, loc).find((t) => t.key === key);
+
+  it('is empty for an untouched search — there is no query to state', () => {
+    expect(appliedFilterTokens(DEFAULT_STATE, null)).toEqual([]);
+  });
+
+  it('reads date, then place, then the rest — the rail’s own order', () => {
+    const state = st({ when: 'weekend', regions: ['nvan'], ages: ['5-9'], free: true });
+    expect(labels(state)).toEqual(['This weekend', 'North Van', 'Ages 5–9', 'Free']);
+  });
+
+  it('states a custom range instead of the quick-pick — the range is what actually filters', () => {
+    const state = st({ when: 'today', dateFrom: '2026-07-13', dateTo: '2026-07-15' });
+    expect(appliedFilterTokens(state, null).filter((t) => t.scope === 'when')).toHaveLength(1);
+  });
+
+  it('clears BOTH halves of the date intent, so removing it cannot leave the other filtering', () => {
+    expect(byKey(st({ when: 'today' }), 'when')?.clear).toEqual({ when: 'any', dateFrom: null, dateTo: null });
+    expect(byKey(st({ dateFrom: '2026-07-13', dateTo: '2026-07-15' }), 'dates')?.clear).toEqual({
+      dateFrom: null,
+      dateTo: null,
+    });
+  });
+
+  it('makes each area independently removable — dropping Richmond must keep Vancouver', () => {
+    const state = st({ regions: ['van', 'rmd'] });
+    expect(byKey(state, 'area:rmd')?.clear).toEqual({ regions: ['van'] });
+    expect(byKey(state, 'area:van')?.clear).toEqual({ regions: ['rmd'] });
+  });
+
+  it('drops the radius with the origin — a radius with nothing to measure from is not a filter', () => {
+    expect(byKey(st({ lat: 49.27, lng: -123.07, radiusKm: 5 }), 'origin')?.clear).toEqual({
+      lat: null,
+      lng: null,
+      radiusKm: DEFAULT_RADIUS,
+    });
+    expect(byKey(st({ useSavedLocation: true, radiusKm: 20 }), 'origin', { areaLabel: 'North Vancouver' })?.clear).toEqual(
+      { useSavedLocation: false, radiusKm: DEFAULT_RADIUS },
+    );
+  });
+
+  it('never claims a saved location the search could not resolve', () => {
+    expect(labels(st({ useSavedLocation: true }), null)).toEqual([]);
+  });
+
+  it('keeps the age bands as ONE answer to "who is this for", not one token per band', () => {
+    expect(labels(st({ ages: ['5-9', '10-14'] }))).toEqual(['Ages 5–9 & 10–14']);
+  });
+
+  it('agrees with activeFilterCount about whether anything is applied at all', () => {
+    const cases: SearchState[] = [
+      DEFAULT_STATE,
+      st({ q: 'swim' }),
+      st({ free: true }),
+      st({ when: 'today', ages: ['2-4'], regions: ['van'], costMaxCad: 20 }),
+      st({ lat: 49.2, lng: -123.1 }),
+    ];
+    for (const state of cases) {
+      expect(appliedFilterTokens(state, null).length > 0).toBe(activeFilterCount(state) > 0);
+    }
+  });
+
+  it('feeds the phone bar: otherFilterChips is exactly the "other" tokens, in the same order', () => {
+    const state = st({ when: 'today', regions: ['van'], timeOfDay: 'morning', ages: ['5-9'], free: true, costMaxCad: 20 });
+    expect(otherFilterChips(state)).toEqual(
+      appliedFilterTokens(state, null).filter((t) => t.scope === 'other').map((t) => t.label),
+    );
   });
 });

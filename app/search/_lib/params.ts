@@ -533,11 +533,24 @@ export interface SavedOrigin {
  * saved location" and the page resolved their saved postal (`savedOrigin`), forward it as
  * the saved-home origin (`postal` + `signedIn=1`). Near-me coords always take precedence.
  */
-export function apiQuery(state: SearchState, savedOrigin?: SavedOrigin | null): string {
+export function apiQuery(
+  state: SearchState,
+  savedOrigin?: SavedOrigin | null,
+  options?: {
+    /**
+     * Ask for per-filter-value result counts (`&facets=1`, lib/search/facets.ts). Free to
+     * request — the counts are computed from the candidate set this same search already
+     * loaded and matched, so there is no extra query behind them. Off by default so no
+     * caller pays for a payload it does not render.
+     */
+    facets?: boolean;
+  },
+): string {
   const q = [state.q, ...intentPhrases(state)].filter(Boolean).join(' ').trim();
 
   const params = new URLSearchParams();
   params.set('q', q);
+  if (options?.facets) params.set('facets', '1');
   params.set('sort', state.sort);
   params.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
   if (state.regions.length) params.set('region', state.regions.join(','));
