@@ -333,6 +333,84 @@ describe('facet counts are in CARDS, like the list they sit next to', () => {
   });
 });
 
+describe('facet counts — category breakdown is in CARDS (F4)', () => {
+  // The catalogue above collapses, but every slot of its repeated series carries the same
+  // primaryCategoryKey, so the breakdown can never disagree with the total there. This bug needs
+  // BOTH conditions at once: a card that collapses AND whose slots carry different categories.
+  //
+  // That is reachable because primary_category_id lives on activity_occurrence, not
+  // activity_series (lib/search/postgres-repository.ts) — categorisation is per-occurrence, so
+  // two slots of one series on one day can legitimately land in different categories.
+  const HOUR = 3_600_000;
+  const slotAt = (hoursAfter9am: number) =>
+    new Date(Date.UTC(2026, 6, 13, 16, 0, 0) + hoursAfter9am * HOUR).toISOString();
+
+  /** One series, one day, several slots — but the slots disagree about their category. */
+  const MIXED_SERIES = 'series-mixed-category';
+  const catalogue = [
+    ...[
+      { i: 0, category: 'indoor_play' },
+      { i: 1, category: 'open_gym' },
+      { i: 2, category: 'public_swim' },
+      { i: 3, category: 'public_swim' },
+    ].map(({ i, category }) =>
+      makeListing({
+        id: `mixed-slot-${i}`,
+        seriesId: MIXED_SERIES,
+        activityName: 'Community Centre Open Time',
+        primaryCategoryKey: category,
+        venueName: 'Killarney',
+        startDatetimeUtc: slotAt(i),
+        endDatetimeUtc: slotAt(i + 1),
+        costStatus: 'free',
+        statusState: 'confirmed',
+        ageBandMatches: ['5-9'],
+        municipalityId: 'van',
+      }),
+    ),
+  ];
+
+  const mixedCategoryEngine = new SearchEngine({
+    repository: new InMemoryListingRepository(catalogue),
+    aliasResolver: new FixtureAliasResolver(),
+    regionHierarchy: new RegionHierarchy(REGIONS),
+    fixtureBacked: false,
+  });
+
+  const run = (req: Partial<SearchRequest> = {}) =>
+    mixedCategoryEngine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, ...req });
+
+  it('collapses four mixed-category slots of one series on one day into ONE card', () => {
+    const res = run({ facets: true });
+    expect(catalogue.length).toBe(4);
+    expect(res.total).toBe(1);
+    expect(res.facets?.total).toBe(1);
+  });
+
+  it('does not count that one card once per category it happens to touch', () => {
+    const facets = run({ facets: true }).facets!;
+    const category = facetGroup(facets, 'category')!;
+    const sum = category.values.reduce((acc, v) => acc + v.count, 0);
+
+    // The existing "sums to the total" guarantee, on a catalogue that can actually break it.
+    // Pre-fix this is 3 (indoor_play:1 open_gym:1 public_swim:1) against a total of 1.
+    expect(sum).toBe(facets.total);
+
+    // And no single value may exceed the whole result set.
+    for (const value of category.values) {
+      expect(value.count).toBeLessThanOrEqual(facets.total);
+    }
+  });
+
+  it('keeps the other groups card-counted, so the bug is scoped to the breakdown', () => {
+    const facets = run({ facets: true }).facets!;
+    const ages = facetGroup(facets, 'ages')!;
+    const areas = facetGroup(facets, 'areas')!;
+    expect(ages.values.find((v) => v.value === 'any')!.count).toBe(1);
+    expect(areas.values.find((v) => v.value === 'van')!.count).toBe(1);
+  });
+});
+
 describe('registration ("Courses") facet', () => {
   it('reports what opting into course content would add, and what the default holds back', () => {
     const facets = facetsFor();
