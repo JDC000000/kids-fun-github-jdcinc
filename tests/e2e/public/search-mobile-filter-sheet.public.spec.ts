@@ -108,10 +108,19 @@ test.describe('mobile /search — the sheet is a real dialog', () => {
       true,
     );
 
-    // The full filter set is now reachable — all eleven groups, not a subset.
+    // The full filter set is now reachable — every group, not a subset.
+    //
+    // This is the assertion the original review signed off, restored. The desktop-rail work
+    // briefly made it an IDENTITY check because the adaptive plan folded some groups behind a
+    // disclosure at every breakpoint; that behaviour is gated off (QA round 96 / F1 — see
+    // ADAPTIVE_RAIL_ENABLED in app/search/page.tsx), so the sheet is once again the full static
+    // stack and visibility is the right thing to assert. If the flag is ever flipped back on,
+    // this is one of the tests that must be revisited, not quietly relaxed.
     for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price', 'Near me']) {
       await expect(dialog.getByRole('group', { name })).toHaveCount(1);
     }
+    // Nothing is folded away: the disclosure does not exist while the plan is gated.
+    await expect(dialog.locator('.kf-filters__more')).toHaveCount(0);
   });
 
   test('Esc closes it and returns focus to the exact control that opened it', async ({ page }) => {
@@ -170,6 +179,50 @@ test.describe('mobile /search — the sheet is a real dialog', () => {
       );
       expect(inside, `focus left the dialog after ${i + 1} Shift+Tab presses`).toBe(true);
     }
+  });
+
+  // SKIPPED WHILE THE ADAPTIVE PLAN IS GATED (QA round 96 / F1). There is no disclosure in
+  // the sheet to expand, so this asserts nothing today — but it is kept rather than deleted
+  // because it is exactly the test the F1 fix needs to turn green again, and re-deriving it
+  // later from a changelog entry would be worse than carrying a skipped one. Un-skip together
+  // with ADAPTIVE_RAIL_ENABLED in app/search/page.tsx.
+  test.skip('still traps focus once "More filters" is EXPANDED inside the dialog', async ({ page }) => {
+    // Added by the desktop-rail work (Round 31), which put a new interactive element type —
+    // a native <details> disclosure — inside this focus trap for the first time. That is
+    // worth its own case rather than trusting the closed-state test above, for two specific
+    // reasons found by reading the trap rather than assuming it:
+    //
+    //   1. The trap re-queries the panel on EVERY Tab and filters by offsetParent, so chips
+    //      revealed by expanding the disclosure are picked up immediately and chips still
+    //      folded are correctly excluded. That is the behaviour this test pins — a trap that
+    //      snapshotted its focusables at open time would strand every newly-revealed chip.
+    //   2. <summary> is natively focusable but is NOT matched by the trap's FOCUSABLE
+    //      selector. It happens to be harmless today because the sheet's own footer renders
+    //      after the rail, so the summary can never be the last element and the wrap-around
+    //      never hinges on it. If the footer ever moves above the rail, this test is what
+    //      catches it.
+    await page.goto('/search');
+    await filtersTrigger(page).click();
+    await expect(panel(page)).toBeVisible();
+
+    const more = panel(page).locator('.kf-filters__more > summary');
+    await more.click();
+    await expect(panel(page).locator('.kf-filters__more[open]')).toHaveCount(1);
+
+    // Every chip inside the disclosure is now real, visible and reachable.
+    const revealed = panel(page).locator('.kf-filters__more[open] a[href^="/search"]');
+    expect(await revealed.count()).toBeGreaterThan(0);
+
+    for (let i = 0; i < 60; i++) {
+      await page.keyboard.press('Tab');
+      const inside = await page.evaluate(() =>
+        document.querySelector('#kf-msheet-panel')!.contains(document.activeElement),
+      );
+      expect(inside, `focus left the dialog after ${i + 1} Tab presses with the disclosure open`).toBe(true);
+    }
+    // Escape must still close from inside the newly-revealed region.
+    await page.keyboard.press('Escape');
+    await expect(panel(page)).toBeHidden();
   });
 
   test('locks the page behind it, and gives the parent their place back on close', async ({ page }) => {
@@ -320,11 +373,12 @@ test.describe('mobile /search — the sheet does not break URL-driven filter sta
 test.describe('desktop /search — untouched by the mobile work', () => {
   test.use({ viewport: DESKTOP });
 
-  test('keeps the inline filter rail, with no sticky bar and no dialog anywhere', async ({ page }) => {
+  test('keeps a persistent filter rail, with no sticky bar and no dialog anywhere', async ({ page }) => {
     await page.goto('/search');
 
-    // The rail that fix/desktop-responsive-shell laid out is still inline and visible.
+    // Still the same single FilterRail instance, still server-rendered, still visible.
     await expect(page.locator('.kf-filters')).toBeVisible();
+    // Every group is visible at this width again, with the adaptive plan gated (F1).
     for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price']) {
       await expect(page.getByRole('group', { name })).toHaveCount(1);
     }
@@ -334,11 +388,13 @@ test.describe('desktop /search — untouched by the mobile work', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Close filters' })).toBeHidden();
 
-    // …and the multi-column desktop grid still applies to the rail itself (proving the
-    // wrapper really is display:contents and not a new box in the cascade).
-    const columns = await page.evaluate(
-      () => getComputedStyle(document.querySelector('.kf-filters')!).gridTemplateColumns,
-    );
-    expect(columns.split(' ').length, `expected the 1280px 3-column filter grid, got "${columns}"`).toBe(3);
+    // …and the rail is a real sidebar beside the results rather than a block above them.
+    // (Superseded assertion: this used to check the inline rail's own 3-column chip grid,
+    // which was the pre-rail desktop layout. Round 31 replaced that layout; the geometry
+    // that matters now — 200px sidebar, results to its right — is pinned in the desktop
+    // rail spec, and re-asserted in one line here so this file cannot silently pass while
+    // the rail has collapsed back into the content column.)
+    const box = await page.locator('.kf-filters').boundingBox();
+    expect(box?.width).toBeLessThanOrEqual(240);
   });
 });

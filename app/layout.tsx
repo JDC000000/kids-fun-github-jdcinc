@@ -3,7 +3,7 @@
 import './design-tokens.css';
 import './preview/preview.css';
 import type { ReactNode } from 'react';
-import { AccountNav } from './_components/AccountNav';
+import { SiteNav } from './_components/SiteNav';
 import { SiteFooter } from './_components/SiteFooter';
 
 export const metadata = {
@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <AccountNav />
+        <SiteNav />
         {children}
         <SiteFooter />
       </body>

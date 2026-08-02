@@ -1066,3 +1066,405 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * QUERY SUMMARY — the applied query, in words (Round 31)
+ *
+ * Replaces four stacked lines (count / query / "Sorted by …" / "Filtered by …")
+ * with one. It also carries the page's <h1>, which used to live in the /search
+ * hero band — a 193px duplicate of the home page's hero that has been deleted.
+ * Each applied filter is a removable link, so the line states the query AND is
+ * the fastest way to undo part of it.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.kf-qsum {
+  padding: 12px 16px 8px;
+}
+
+.kf-qsum__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.kf-qsum__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+/* The default scope is true but not interesting; it reads as a quiet qualifier
+   rather than half the headline. Dropped entirely once an area or radius applies. */
+.kf-qsum__scope {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-secondary);
+  letter-spacing: 0;
+}
+
+.kf-qsum__tokens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A removable filter. Deliberately NOT the shared Chip primitive: a chip means
+   "apply this", and these mean the opposite. The ✕ and the muted fill are the
+   difference, so a parent never has to guess which way a control goes. */
+.kf-qsum__tok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* 30px tall + the surrounding line's gap keeps the pointer target comfortably
+     past WCAG 2.5.8 (24x24) without the 44px pill the phone sheet needs. */
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 9999px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.kf-qsum__tok:hover {
+  border-color: var(--leaf-hover);
+}
+
+.kf-qsum__tok-x {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink-secondary);
+}
+
+.kf-qsum__tok:hover .kf-qsum__tok-x {
+  color: var(--ink);
+}
+
+.kf-qsum__clear,
+.kf-filters__more-sum {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.kf-qsum__clear:hover {
+  color: var(--ink);
+}
+
+.kf-qsum__meta {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.kf-qsum__meta b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * FACET COUNTS ON CHIPS (Proposal C)
+ *
+ * The number is what turns a wall of controls into a navigable one: a parent can
+ * see that "Morning" leaves 5 and "Evening" leaves 0 before spending a click.
+ * A zero-count chip is muted but NEVER disabled or removed from the tab order —
+ * it is still a real destination, and hiding it would make the filter set change
+ * shape under the parent as they type.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.kf-fchip__n {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+}
+
+/* On a selected chip the numeral takes the chip's own foreground. NO opacity: the Chip
+   primitive's pairings are token-guarded for AA (components/ui/__tests__/contrast.test.ts),
+   and an opacity is precisely the thing that walks a guarded pair back under the threshold
+   without touching a single token. Verified with axe: 0.75 here failed on every selected
+   chip in both schemes. The numeral is already distinguished by size and weight. */
+[aria-current='true'] .kf-fchip__n {
+  color: inherit;
+}
+
+/* A zero-count chip must read as "this leads nowhere" WITHOUT becoming unreadable — it is
+   still a real, focusable link, and a parent who tabs to it deserves to be able to read it.
+   Dimming the whole chip with opacity: 0.45 did exactly the wrong thing (axe: serious
+   colour-contrast failures on every empty chip, both schemes), so the muting is carried by
+   the border and surface instead, with the text left on its guarded token. */
+.kf-filters [data-empty='true'] {
+  border-style: dashed;
+  border-color: var(--neutral-300);
+  background: transparent;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * "MORE FILTERS" DISCLOSURE
+ *
+ * A native <details>: keyboard-operable, announces its own expanded state, and
+ * needs no JavaScript — so every folded chip stays reachable with scripting off,
+ * and stays in the DOM as a real <Link> so deep links into a folded group still
+ * resolve. Groups the parent has already applied are never folded in here
+ * (app/search/_lib/rail-groups.ts pins them to the front set).
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.kf-filters__more {
+  padding: 4px 16px 0;
+}
+
+.kf-filters__more-sum {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.kf-filters__more-sum::-webkit-details-marker {
+  display: none;
+}
+
+/* The caret is drawn here rather than left to the UA marker so it can carry the
+   open/closed state consistently across browsers. Decorative: the <details>
+   element already exposes the state to assistive tech. */
+.kf-filters__more-sum::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--ink-secondary);
+  transition: transform var(--motion);
+}
+
+.kf-filters__more[open] > .kf-filters__more-sum::before {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kf-filters__more-sum::before {
+    transition: none;
+  }
+}
+
+.kf-filters__more-n {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+}
+
+/* The query summary is a direct child of the results column and owns its gutter,
+   the same way .kf-filters__label and .kf-savebar do. */
+@media (min-width: 768px) {
+  .kf-qsum {
+    padding-left: var(--kf-gutter);
+    padding-right: var(--kf-gutter);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * DESKTOP FILTER RAIL — the persistent sidebar (Round 31)
+ *
+ * GEOMETRY (all figures from the desktop-scope decision's final ladder, 23:20Z,
+ * which is the last correction round and supersedes every earlier number in it —
+ * they were derived from a 24px results-grid gap and no gutter subtraction, and
+ * both were wrong against the live build):
+ *
+ *   shell = min(1504px, 100%)   ← NEVER a fixed width. A fixed 1504 (or the earlier
+ *                                 1384/1544 proposals) overflows a 1440px viewport
+ *                                 once .kf-page's 24px padding and the scrollbar are
+ *                                 accounted for, producing horizontal scroll at the
+ *                                 single most common desktop width.
+ *   rail  = 200px               ← measured break-even. 240 and 280 both make cards
+ *                                 SMALLER at 1440 than they are today; 200 makes them
+ *                                 slightly larger. It is comfortable only because the
+ *                                 rail carries 5-6 adaptive groups, not all nine.
+ *   gap   = 24px between rail and results
+ *   results grid gap = 12px     ← measured on the live build (NOT 24)
+ *   gutter = the existing --kf-gutter (64px at >=1280), inside the results column
+ *
+ * The rail sits OUTSIDE the approved 1120-1280px content measure: it is navigation
+ * chrome, not reading content, so the measure is preserved rather than reinterpreted.
+ * At >=1728px the results column resolves to the measure's 1280px upper bound.
+ *
+ * BREAKPOINTS
+ *   <1043  no rail. Below this a 200px rail plus its gap leaves 2-up cards under the
+ *          300px floor, so the filters stay the inline column (768-1042) or the
+ *          bottom sheet (<=767) they already are.
+ *   >=1043 rail appears, results run 2-up.
+ *   >=1400 results run 3-up. This MOVES the deployed 3-column switch, which was at
+ *          1280: subtracting the rail's 224px from a 1280px viewport yields 280px
+ *          cards, below the floor. Nobody had flagged this — it falls straight out of
+ *          the rail consuming width the old breakpoint maths never had to account for.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* Below the rail breakpoint both wrappers vanish from the box tree entirely, so the
+   phone and tablet layouts see exactly the DOM they saw before the grid existed. */
+.kf-srch,
+.kf-srch__main {
+  display: contents;
+}
+
+@media (min-width: 1043px) {
+  .kf .kf-app {
+    --kf-rail-w: 200px;
+    --kf-rail-gap: 24px;
+    /* min(), never a fixed width — see the overflow note above. */
+    max-width: min(1504px, 100%);
+  }
+
+  /* ── The two-column body ──
+     Explicit placement rather than DOM order: the rail has to render BEFORE the
+     results column on a phone (it is the sticky filter bar there) and BESIDE it here.
+     One DOM, two layouts, no duplicated markup and no reordering hacks. */
+  .kf .kf-srch {
+    display: grid;
+    grid-template-columns: var(--kf-rail-w) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    column-gap: var(--kf-rail-gap);
+    align-items: start;
+  }
+  .kf .kf-srch > .kf-sbar {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  /* `.kf-msheet` (and its `__body`) are `display: contents` at >=768px, so `.kf-filters`
+     IS the grid item even though it is not a DOM child of `.kf-srch`. That distinction is
+     the whole reason these rules use a descendant combinator: `display: contents` flattens
+     the BOX tree, never the DOM tree, so `.kf-srch > .kf-filters` matches nothing and the
+     rail silently auto-placed into row 1 — stretching it to the rail's full height and
+     pushing the results BELOW it. Do not "tidy" these back into child combinators. */
+  .kf .kf-srch .kf-filters {
+    grid-column: 1;
+    grid-row: 1 / 3;
+  }
+  .kf .kf-srch > .kf-srch__main {
+    display: block;
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
+  }
+
+  /* ── The search module, slimmed ──
+     It stops being sticky here. Two competing sticky elements is one too many, and
+     the rail is the one that earns it: a persistent rail is the whole point of this
+     layout, while the query field is a scroll-to-top away. Dropping the pin also
+     removes the tall sticky block that sat over the results. Field and sort chips
+     share one row instead of stacking two. */
+  .kf .kf-sbar {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px 20px;
+    padding: 14px var(--kf-gutter) 12px;
+  }
+  .kf .kf-sbar__form {
+    flex: 1 1 420px;
+  }
+  .kf .kf-sbar__controls {
+    flex: 0 1 auto;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* ── The rail itself ──
+     One column (it is 200px wide; the 2- and 3-up filter grids from the inline layout
+     make no sense here), sticky so it stays reachable through a long result list —
+     "persistent" is the requirement, and a rail that scrolls away is just a relocated
+     header. It scrolls internally only if it has to; with 5-6 groups it usually does not. */
+  .kf .kf-srch .kf-filters {
+    box-sizing: border-box;
+    display: block;
+    width: var(--kf-rail-w);
+    padding: 14px 8px 20px 16px;
+    border-right: 1px solid var(--hairline);
+    position: sticky;
+    top: 12px;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .kf .kf-srch .kf-filters > .kf-fgroup,
+  .kf .kf-srch .kf-filters .kf-filters__more {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .kf .kf-srch .kf-filters .kf-fgroup {
+    margin-bottom: 10px;
+  }
+  .kf .kf-srch .kf-filters .kf-fgroup__rail {
+    gap: 5px;
+    padding: 0;
+  }
+
+  /* ── Rail chip density — a deliberate, flagged judgement call ──
+     The chip primitive is content-box, so its 40px rail min-height renders as a 58px
+     box and its `sm` size as 44px. At 200px wide that puts ONE chip per row and makes
+     the rail ~1,400px tall: a "persistent" sidebar a parent has to scroll through is
+     the same wall of controls, stood on its end.
+
+     36px border-box fits two chips per row for the short labels and roughly halves the
+     rail. On the target: 44px is the Visual Blueprint's own house rule, which the audit
+     records as a QUALITY choice in WCAG 2.5.5 AAA territory — the AA requirement (2.5.8)
+     is 24x24, which 36px clears by half again. This rule is scoped to >=1043px, a
+     viewport reached by mouse and trackpad; the phone sheet and the 768-1042px inline
+     rail keep the full 44px, untouched. Worth a design/QA ruling rather than a silent
+     shrink — raised explicitly in the handover. */
+  .kf .kf-srch .kf-filters .kf-fgroup__rail > * {
+    box-sizing: border-box;
+    min-height: 36px;
+    padding: 4px 8px;
+    gap: 4px;
+    font-size: 11.75px;
+    letter-spacing: 0.005em;
+  }
+  .kf .kf-srch .kf-filters .kf-fchip__n {
+    margin-left: 3px;
+    font-size: 10.5px;
+  }
+  .kf .kf-srch .kf-filters .kf-fgroup__label {
+    padding: 0;
+    margin-bottom: 5px;
+  }
+
+  /* The date-range form is the one non-chip control; in a 168px column its two native
+     date inputs stack rather than sharing a row. */
+  .kf .kf-srch .kf-filters .kf-daterange {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .kf .kf-srch .kf-filters .kf-daterange__field {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  /* ── Results: 2-up until the 3-up threshold below ── */
+  .kf .kf-results section,
+  .kf .kf-daygroup {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 3 columns start here, NOT at the deployed 1280: with the rail present, 1280 yields
+   280px cards — below the 300px floor the card's own content needs. */
+@media (min-width: 1400px) {
+  .kf .kf-results section,
+  .kf .kf-daygroup {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

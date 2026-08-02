@@ -1,0 +1,129 @@
+/* site-nav.css — the global navigation bar (Round 31).
+ *
+ * Self-contained and NOT scoped under `.kf`, matching account-nav.css: this bar renders on
+ * every route, including ones that never load the preview/search stylesheets. Colours come
+ * from the canonical global --kf-* tokens (app/design-tokens.css) so it stays in step with
+ * the rest of the chrome without restating any hex.
+ *
+ * The bar it replaces was 50px of a single Sign-in button. This one carries a home link, a
+ * row of real destinations and the same account control — in the same vertical budget, so
+ * the nav costs the results no additional space above the fold. */
+
+.kf-nav {
+  background: var(--kf-warm-paper);
+  border-bottom: 1px solid var(--kf-neutral-200);
+  font-family: var(--kf-font-ui);
+}
+
+.kf-nav__inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  /* Aligned to the widest shell any route uses (see search.css --kf-shell-max), so the
+     wordmark sits over the content column rather than floating at the window edge. */
+  max-width: min(1504px, 100%);
+  margin: 0 auto;
+  padding: 0 24px;
+  min-height: 50px;
+  box-sizing: border-box;
+}
+
+/* ── Wordmark → home. The product had no route back to its own front door. ── */
+.kf-nav__word {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--kf-evergreen);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.kf-nav__word-b {
+  margin-left: 0.35em;
+  color: var(--kf-park-moss-text);
+}
+
+.kf-nav__word:hover {
+  color: var(--kf-forest-ink);
+}
+
+/* ── Destinations. Scrolls rather than wraps on a phone: a wrapping nav would push the
+   whole page down, and this bar's height budget is the thing paying for results above
+   the fold. The scrollbar is hidden (it is a thumb-swipe affordance, not a control). ── */
+.kf-nav__primary {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.kf-nav__list {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.kf-nav__list::-webkit-scrollbar {
+  display: none;
+}
+
+.kf-nav__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 9999px;
+  font-size: 13.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--kf-park-moss-text);
+  text-decoration: none;
+}
+
+.kf-nav__link:hover {
+  background: var(--kf-white);
+  color: var(--kf-evergreen);
+}
+
+.kf-nav__link--strong {
+  font-weight: 600;
+  color: var(--kf-evergreen);
+}
+
+/* Current page is weight + an underline rule, never colour alone (D10 / WCAG 1.4.1). */
+.kf-nav__link[aria-current='page'],
+.kf-nav__word[aria-current='page'] {
+  font-weight: 700;
+  color: var(--kf-evergreen);
+  box-shadow: inset 0 -2px 0 var(--kf-park-moss);
+}
+
+.kf-nav :focus-visible {
+  outline: 3px solid var(--kf-park-moss);
+  outline-offset: 2px;
+}
+
+/* The account control keeps its own landmark and styling; it only loses the border it used
+   to draw as the whole bar, which this container now owns. */
+.kf-nav .kf-account {
+  flex: 0 0 auto;
+  padding: 0.4rem 0;
+  background: transparent;
+  border-bottom: 0;
+  min-height: 0;
+}
+
+/* A phone has no room for a session email beside six destinations; the account controls
+   themselves stay, so signing in/out is never more than the same one tap it was. */
+@media (max-width: 767px) {
+  .kf-nav__inner {
+    gap: 10px;
+    padding: 0 12px;
+  }
+  .kf-nav .kf-account__who {
+    display: none;
+  }
+}

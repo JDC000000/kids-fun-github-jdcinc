@@ -1,6 +1,7 @@
 import {
   AGE_OPTIONS,
   COST_MAX_OPTIONS,
+  DEFAULT_RADIUS,
   REGION_CHIPS,
   TIME_OF_DAY_OPTIONS,
   WHEN_OPTIONS,
@@ -90,25 +91,141 @@ export function whereChipLabel(state: SearchState, savedLocation: SummaryLocatio
 }
 
 /**
+ * ── The applied query, as one plain-language list ────────────────────────────────
+ *
+ * Every constraint the search is actually running under, each with the state patch that
+ * REMOVES just that one. This is the derivation behind two surfaces:
+ *   • the mobile sticky bar's summary text (`otherFilterChips`, unchanged output), and
+ *   • the desktop query summary line ("swim · Saturday · Ages 5-9 · North Van"), where
+ *     each token is a removable chip and the line doubles as the applied-filter row.
+ *
+ * One derivation, deliberately: the summary line was designed for the phone (it is the
+ * only place a parent can see their whole query once the groups are behind a sheet) and
+ * ADOPTED by desktop. Two implementations of the same idea would drift on the first copy
+ * change, and the phone one would lose — it is the surface nobody looks at on a laptop.
+ *
+ * `clear` is a state patch, not a URL: this module stays pure display logic and never
+ * builds hrefs. The caller pairs it with `hrefFor(state, token.clear)`.
+ */
+export interface AppliedFilterToken {
+  /** Stable identity for React keys and tests. */
+  key: string;
+  /** What a parent reads, e.g. "Ages 5-9". */
+  label: string;
+  /** Which rail group this came from — `otherFilterChips` shows only the 'other' ones. */
+  scope: 'when' | 'where' | 'other';
+  /** State override that removes exactly this constraint and nothing else. */
+  clear: Partial<SearchState>;
+}
+
+/**
+ * Applied constraints in reading order: date intent, then place, then everything else.
+ *
+ * The order inside 'other' is the rail's own group order, so the summary reads as an
+ * index of the filter rail rather than an arbitrary list.
+ */
+export function appliedFilterTokens(state: SearchState, savedLocation: SummaryLocation | null): AppliedFilterToken[] {
+  const tokens: AppliedFilterToken[] = [];
+
+  // Date intent — the quick-pick and the custom range are one constraint to a parent, and
+  // clearing either has to clear both halves or the URL keeps filtering by the other.
+  if (hasDateRange(state) && state.dateFrom && state.dateTo) {
+    tokens.push({
+      key: 'dates',
+      label: formatRangeLabel(state.dateFrom, state.dateTo),
+      scope: 'when',
+      clear: { dateFrom: null, dateTo: null },
+    });
+  } else if (state.when !== 'any') {
+    tokens.push({
+      key: 'when',
+      label: WHEN_OPTIONS.find((w) => w.key === state.when)?.label ?? state.when,
+      scope: 'when',
+      clear: { when: 'any', dateFrom: null, dateTo: null },
+    });
+  }
+
+  // Place. An origin carries the radius (meaningless without it), so they clear together.
+  if (hasNearMeCoords(state)) {
+    tokens.push({
+      key: 'origin',
+      label: `Near you · ${state.radiusKm} km`,
+      scope: 'where',
+      clear: { lat: null, lng: null, radiusKm: DEFAULT_RADIUS },
+    });
+  } else if (state.useSavedLocation && savedLocation) {
+    tokens.push({
+      key: 'origin',
+      label: `${savedLocation.areaLabel} · ${state.radiusKm} km`,
+      scope: 'where',
+      clear: { useSavedLocation: false, radiusKm: DEFAULT_RADIUS },
+    });
+  }
+  // Areas are a multi-select union: each chip is its own removable token, so a parent can
+  // drop "Richmond" without losing "Vancouver".
+  for (const id of state.regions) {
+    tokens.push({
+      key: `area:${id}`,
+      label: REGION_CHIPS.find((r) => r.id === id)?.label ?? id,
+      scope: 'where',
+      clear: { regions: state.regions.filter((r) => r !== id) },
+    });
+  }
+
+  if (state.timeOfDay !== 'any') {
+    tokens.push({
+      key: 'timeOfDay',
+      label: TIME_OF_DAY_OPTIONS.find((t) => t.key === state.timeOfDay)?.label ?? state.timeOfDay,
+      scope: 'other',
+      clear: { timeOfDay: 'any' },
+    });
+  }
+  if (state.ages.length > 0) {
+    // Ages read as ONE phrase ("Ages 5-9 & 10-14") rather than one token per band: the
+    // bands are an either-or set a parent picked as a single "who is this for" answer.
+    const labels = state.ages.map((band) => AGE_OPTIONS.find((a) => a.key === band)?.label ?? band);
+    tokens.push({ key: 'ages', label: `Ages ${labels.join(' & ')}`, scope: 'other', clear: { ages: [] } });
+  }
+  if (state.bookableNow) {
+    tokens.push({ key: 'bookableNow', label: 'Bookable now', scope: 'other', clear: { bookableNow: false } });
+  }
+  if (state.dropIn) tokens.push({ key: 'dropIn', label: 'Drop-in', scope: 'other', clear: { dropIn: false } });
+  // The one token here that is NOT a counted constraint (activeFilterCount excludes it, and
+  // must: it widens the result set rather than narrowing it). It is stated anyway because it
+  // changes what KIND of thing the list contains — a parent who opted courses in should never
+  // have to wonder why 12-week programmes appeared, or hunt for the control that removes them.
+  if (state.includeRegistration) {
+    tokens.push({
+      key: 'includeRegistration',
+      label: 'Including registration courses',
+      scope: 'other',
+      clear: { includeRegistration: false },
+    });
+  }
+  if (state.rainyDay) tokens.push({ key: 'rainyDay', label: 'Rainy-day', scope: 'other', clear: { rainyDay: false } });
+  if (state.free) tokens.push({ key: 'free', label: 'Free', scope: 'other', clear: { free: false } });
+  if (state.costMaxCad != null) {
+    tokens.push({
+      key: 'costMax',
+      label: COST_MAX_OPTIONS.find((c) => c.maxCad === state.costMaxCad)?.label ?? `Under $${state.costMaxCad}`,
+      scope: 'other',
+      clear: { costMaxCad: null },
+    });
+  }
+
+  return tokens;
+}
+
+/**
  * Short, parent-readable chips for everything the two named controls above do NOT cover,
  * so the sticky bar can show the rest of the applied state instead of only counting it.
  * Order mirrors the sheet's group order, so the bar reads as an index of the sheet.
+ *
+ * A projection of `appliedFilterTokens`, not a second derivation — the phone bar and the
+ * desktop summary line must never be able to disagree about what is applied.
  */
 export function otherFilterChips(state: SearchState): string[] {
-  const chips: string[] = [];
-  if (state.timeOfDay !== 'any') {
-    chips.push(TIME_OF_DAY_OPTIONS.find((t) => t.key === state.timeOfDay)?.label ?? '');
-  }
-  if (state.ages.length > 0) {
-    const labels = state.ages.map((band) => AGE_OPTIONS.find((a) => a.key === band)?.label ?? band);
-    chips.push(`Ages ${labels.join(' & ')}`);
-  }
-  if (state.bookableNow) chips.push('Bookable now');
-  if (state.dropIn) chips.push('Drop-in');
-  if (state.rainyDay) chips.push('Rainy-day');
-  if (state.free) chips.push('Free');
-  if (state.costMaxCad != null) {
-    chips.push(COST_MAX_OPTIONS.find((c) => c.maxCad === state.costMaxCad)?.label ?? `Under $${state.costMaxCad}`);
-  }
-  return chips.filter(Boolean);
+  return appliedFilterTokens(state, null)
+    .filter((token) => token.scope === 'other')
+    .map((token) => token.label);
 }
