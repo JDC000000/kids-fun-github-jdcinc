@@ -348,7 +348,7 @@ describe('WeightedTrigramMatcher', () => {
 
   /**
    * An infix tier (token.includes(term)) shipped here briefly and was REMOVED after QA
-   * measured it against the uncapped corpus: on the 500 rows actually served it produced ten
+   * measured it against the live corpus: on the old 500-row capped page it produced ten
    * pairs with only two genuine rescues, and even its best tightening still carried ~11%
    * coincidental matches. A tier that is mostly coincidence cannot live in a file whose
    * thesis is replacing coincidence with deliberate rules. These pin the absence, since the

@@ -179,12 +179,11 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
     });
   });
 
-  // The list query is hard-capped, so a hidden-status row that survives into the result set has
-  // consumed a slot a showable row could have had — on live staging that was two thirds of every
-  // page fetched. Filtering in SQL is what makes the cap buy 500 usable rows instead of ~170.
-  // Asserted against a REAL query rather than the in-memory predicate, because the in-memory one
-  // would have gone on passing while the budget quietly leaked.
-  it('never loads hidden-status rows into the capped list, but still resolves them by id', async () => {
+  // When the repository is asked for a bounded diagnostic page, a hidden-status row that survives
+  // into the result set has consumed a slot a showable row could have had. Filtering in SQL is what
+  // makes any explicit cap buy usable rows. Asserted against a REAL query rather than the in-memory
+  // predicate, because the in-memory one would have gone on passing while the budget quietly leaked.
+  it('never loads hidden-status rows into an explicitly capped list, but still resolves them by id', async () => {
     const suffix = crypto.randomUUID();
     const [source] = await query<{ id: string }>(
       `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,

@@ -33,7 +33,7 @@
 //     empty-state broadening ladder gets to do its honest job.
 //   · a term merely BURIED inside a longer token (ball in basketball) is deliberately NOT
 //     matched. An infix tier shipped here briefly and was removed on measurement against the
-//     UNCAPPED corpus: on the 500 rows actually served it bought two real rescues, and even
+//     live corpus: on the old 500-row capped page it bought two real rescues, and even
 //     its best possible tightening still carried ~11% coincidental matches. Since the whole
 //     point of this file is replacing coincidental matching with deliberate rules, a tier that
 //     is mostly coincidence cannot sit in it. Compounds are right-headed — basketball IS a

@@ -1,8 +1,7 @@
 // lib/search/postgres-repository.ts — DB-backed listing read model for /api/search.
 // Loads a denormalised activity_occurrence read model from Postgres into the
 // existing search engine shape. The route keeps this behind an explicit backend
-// flag and falls back to fixtures on empty/error so the staging shell stays safe
-// while live-source coverage is still narrow.
+// flag; fixture/default mode is a separate local/demo path.
 import type { Pool } from 'pg';
 import { HIDDEN_STATUSES } from './filters/status';
 import type { ConfidenceLabel, CostStatus, ListingRecord, StatusState } from './types';
@@ -43,6 +42,10 @@ interface ListingRow {
 }
 
 export interface LoadPostgresListingsOptions {
+  /**
+   * Optional test/operator guard. The production search route must omit this so text and filter
+   * matching see the complete visible catalogue; a pre-search SQL cap hides rows from every query.
+   */
   limit?: number;
 }
 
@@ -52,20 +55,18 @@ export async function loadPostgresListings(
   pool: Pool,
   options: LoadPostgresListingsOptions = {}
 ): Promise<ListingRecord[]> {
-  const limit = Math.max(1, Math.min(options.limit ?? 500, 1000));
-  // The row cap is a hard budget, so the parent-visibility predicate has to be spent BEFORE it,
-  // not after. Filtering hidden statuses in memory meant the cap was largely consumed by rows the
-  // engine then dropped — on live staging, 330 of 500. Applying it here makes every fetched row a
-  // row that can actually be shown. Statuses come from HIDDEN_STATUSES so this can never disagree
-  // with the engine's own `isHidden`.
+  const limit = normalizeLimit(options.limit);
+  const limitSql = limit == null ? '' : '\n     LIMIT $2';
+  // Hidden-status filtering belongs in SQL so the read model never feeds unrenderable rows into
+  // the engine, and so any explicitly requested diagnostic cap is spent only on parent-visible
+  // content. Statuses come from HIDDEN_STATUSES so this cannot drift from the engine's `isHidden`.
   const { rows } = await pool.query<ListingRow>(
     `${listingSelectSql()}
      WHERE ${visibleOccurrenceWhereSql()}
-       AND o.status_state::text <> ALL($2::text[])
+       AND o.status_state::text <> ALL($1::text[])
      ${listingGroupBySql()}
-     ORDER BY o.start_datetime_utc NULLS LAST, o.last_checked_at DESC NULLS LAST, o.created_at DESC
-     LIMIT $1`,
-    [limit, HIDDEN_STATUSES]
+     ORDER BY o.start_datetime_utc NULLS LAST, o.last_checked_at DESC NULLS LAST, o.created_at DESC${limitSql}`,
+    limit == null ? [HIDDEN_STATUSES] : [HIDDEN_STATUSES, limit]
   );
 
   return rows.map(rowToListing);
@@ -74,10 +75,10 @@ export async function loadPostgresListings(
 /**
  * Load one visible occurrence for the detail page without scanning the whole read model.
  *
- * Deliberately does NOT apply the hidden-status predicate the list query above does. That filter
- * exists to stop a capped page of results being wasted; a detail lookup has no cap to protect and
- * is reached by an explicit id, so narrowing it here would only break already-shared links. The
- * detail page renders each status with its own honest copy, so an unverified row stays truthful.
+ * Deliberately does NOT apply the hidden-status predicate the list query above does. The list path
+ * is broad catalogue discovery; a detail lookup is reached by an explicit id, so narrowing it here
+ * would only break already-shared links. The detail page renders each status with its own honest
+ * copy, so an unverified row stays truthful.
  */
 export async function loadPostgresListingById(pool: Pool, id: string): Promise<ListingRecord | null> {
   if (!UUID_RE.test(id)) return null;
@@ -138,6 +139,11 @@ function listingSelectSql(): string {
      LEFT JOIN occurrence_age oa ON oa.occurrence_id = o.id
      LEFT JOIN LATERAL unnest(oa.age_band_matches) AS band_id(id) ON true
      LEFT JOIN age_band ab ON ab.id = band_id.id`;
+}
+
+function normalizeLimit(value: number | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.max(1, Math.min(Math.trunc(value), 1000));
 }
 
 function visibleOccurrenceWhereSql(): string {

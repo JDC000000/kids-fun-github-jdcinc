@@ -35,12 +35,11 @@ export const STATUS_CLASS: Record<StatusState, StatusClass> = {
 /**
  * The statuses parents are never shown, derived from STATUS_CLASS so the two can never drift.
  *
- * Exported because the DB read model now applies this same set in SQL: the repository loads a
- * hard-capped page of rows, so filtering these out AFTER the load spent the cap on rows that
- * could never be rendered — on live staging that was 330 of every 500 rows fetched. Pushing the
- * predicate into the WHERE clause spends the whole budget on showable content. `isHidden` below
- * still runs in the engine: it is the only guard for the fixture backend, and it keeps the
- * in-memory pipeline correct on its own terms rather than trusting the query that fed it.
+ * Exported because the DB read model applies this same set in SQL: hidden rows are never useful
+ * to catalogue discovery, and if a caller explicitly asks the repository for a bounded diagnostic
+ * page, that budget must be spent on showable content. `isHidden` below still runs in the engine:
+ * it is the only guard for the fixture backend, and it keeps the in-memory pipeline correct on its
+ * own terms rather than trusting the query that fed it.
  */
 export const HIDDEN_STATUSES: StatusState[] = (Object.keys(STATUS_CLASS) as StatusState[]).filter(
   (state) => STATUS_CLASS[state] === 'hidden',

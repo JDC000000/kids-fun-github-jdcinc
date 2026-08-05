@@ -103,7 +103,7 @@ describe('facet counting cost', () => {
     const at5000 = facetCost(large);
 
     // 10x the data should cost ~10x, not ~100x. Generous headroom for a noisy shared runner:
-    // measured ~9x and ~55ms on a 4-core box (~5ms at the 500-listing page the loader caps at).
+    // measured ~9x and ~55ms on a 4-core box (~5ms at a 500-listing reference catalogue).
     expect(at5000 / at500).toBeLessThan(30);
     expect(at5000).toBeLessThan(200);
   });
