@@ -1431,6 +1431,100 @@ implemented**, not open.
 
 ---
 
+### 6.9 `registration_required` — persisting the drop-in/registration fact two adapters already computed (Option A, first slice, 2026-08-02)
+
+Same shape as §6.3.6's venue-phone fix, one day later and one column over: a value that was
+fetched on every run, used briefly, and then discarded because `StructuredRecord` had no
+field to carry it and `activity_occurrence` had no column to hold it.
+
+**Why it mattered.** The pipeline was deliberately built drop-in-only — every adapter
+filters to the vendor's drop-in feed and the registered-course endpoints are explicitly
+blocked (`perfectmind/client.ts:80`). But that filtering happens at FETCH time and left no
+trace on any persisted row, and the vendors publish registration content into their own
+drop-in calendars anyway. So the database could not tell a same-day public swim from a
+12-week course, and the read side had to guess from the title. Full measurement:
+`docs/kids-fun-dropin-vs-registration-investigation.md`.
+
+**What now populates it.** Two families, both wiring through an ALREADY-COMPUTED value — no
+new extraction logic, no new network requests:
+
+| family | signal | direction | notes |
+|---|---|---|---|
+| `library` (BiblioCommons **JSON gateway**) | structured `registrationInfo` (`loginToRegister` / `enabledMethods` / `maxSeats` / `cap`) | **both** — a `false` is a real drop-in claim | this is the library's own booking system |
+| `library` (BiblioCommons **RSS**) | `/registration required/i` over the description | **true only** — a miss is silence, stored as NULL | a regex miss over prose is not evidence of drop-in |
+| `perfectmind` | drop-in category name **+** `BookingType === 2`, with a per-record `BookButtonText: "REGISTER"` override | **both** | the strongest signal any family has |
+
+Everything else — `activenet`, `citycalendar`, `eventbrite`, `venue`, `seasonal`, and
+library's `generic_rss` path — writes NULL, deliberately. Pre-existing rows are NOT
+backfilled. All of them keep falling through to `lib/search/filters/registration.ts`'s title
+heuristic, unchanged.
+
+**Two measured decisions worth not re-deriving:**
+
+1. **`BookButtonDescription` is NOT a registration signal**, despite looking like the richer
+   field. `"Add to $3 Open Gym 8yrs+ JBCC Friday 6:15-9:15am waitlist"` sits on NVRC's real
+   Open Gym DROP-IN calendar (`nvrc.classes.open-gym.page1.json`), with `Spots: ""` and
+   `BookButtonText: "More Info"`. Reading "waitlist" from it would have flipped a genuine $3
+   open gym out of the default view.
+2. **`NumberOfSessions` is not a course-span signal**, contrary to the investigation's
+   reading of it. On the captured NVRC drop-in calendar it carries 1, 2, 5 and 6 — the count
+   of occurrences of a recurring DROP-IN in the fetched window, not the length of a course.
+   Not wired, and should not be wired on that premise.
+
+#### Explicit follow-ups — logged, not attempted
+
+- **F-14 (medium) — ActiveNet is not wired, and it is 78% of the visible corpus.** It has no
+  structured registration field at all (checked across every key in the captured fixtures).
+  Its two candidate signals are the **calendar name** (`"**Public Swimming"` /
+  `"*Open Gym Times"` vs `"Fitness: …"` / `"Art & Culture: …"`) and the **description prose**,
+  which is already fetched and already parsed for cost, then dropped. That is genuinely new
+  extraction logic, not a wire-through, and the calendar-name signal's precision has never
+  been measured because the field was never stored. **Recommended order: store the calendar
+  name first, measure its precision against the title heuristic, then decide.**
+- **F-15 (medium) — capacity (`full` / `waitlist`) is deliberately NOT in this slice.** The
+  reasoning is recorded in full in
+  `supabase/migrations/0027_occurrence_registration_required.sql`. Short version: (a)
+  `status_state` is doing double duty as both the availability state AND the
+  parent-visibility gate, so writing `full` onto a row would silently bypass the BR-05
+  confidence gate — both `full` and `waitlist` are classified `'primary'`; (b) the
+  confidence-scoring drain is live and unresolved; (c) Jon's approved "full as of <date>"
+  display requires the venue phone, which only `activenet` populates while only `perfectmind`
+  carries a capacity signal; (d) `Spots` is empty on 17 of 18 records on the real drop-in
+  calendar. **This needs its own column or an explicit precedence rule — a design decision,
+  not wiring.**
+- **F5 (was a live contract violation, FIXED 2026-08-02).** `registrationInfo` is optional on
+  the BiblioCommons gateway type. With the block absent the derivation computed
+  `Boolean(undefined || undefined)` = `false`, while the map site hardcoded
+  `registrationSignal: 'registration-info'` — so silence was published as an AUTHORITATIVE
+  drop-in claim, pinning the row into the default view AND disabling the title heuristic for
+  it. The exact failure the tri-state contract exists to prevent, in the direction nothing was
+  watching. Fixed by recording absence as its own provenance (`'absent'`), which keeps the
+  genuinely useful distinction between a block that is MISSING and one that is PRESENT AND
+  EMPTY — the latter is a real drop-in fact from the library's own booking system.
+- **F-16 — CORRECTED TWICE, now a THREE-WAY verdict.** The derivation was originally
+  `loginToRegister || enabledMethods.length || maxSeats || cap`. QA flagged the breadth; my
+  first fix narrowed it to the two booking terms — which was right about what `maxSeats`/`cap`
+  do NOT mean and wrong about what they DO mean. A seat cap falling to `false` publishes an
+  authoritative DROP-IN claim, pinning the row into the default view and disabling the title
+  heuristic for it: the error moved from one pole to the other rather than to the middle, and
+  the second position is arguably worse. The honest answer is UNKNOWN — a room capacity says
+  nothing about booking in either direction. Final table, in `gatewayRegistrationVerdict()`:
+
+  | gateway `registrationInfo` | verdict | provenance |
+  |---|---|---|
+  | `loginToRegister` or a non-empty `enabledMethods` | **true** | `registration-info` |
+  | present, neither of those, and no cap/maxSeats | **false** (a real drop-in claim) | `registration-info` |
+  | present, ONLY `cap`/`maxSeats` | **undefined** | `capacity-only` |
+  | absent entirely (F5) | **undefined** | `absent` |
+
+  ROOT CAUSE OF BOTH F5 AND THIS: the boolean and its provenance label were computed at two
+  separate sites and fell out of sync twice, in opposite directions. They are now returned as
+  a PAIR from one function, which makes that class of divergence unrepresentable rather than
+  merely fixed. Residual breadth (an enabled method may still admit walk-ins) is unmeasured;
+  measure before extending this signal to another family.
+
+---
+
 ## 7. Flags for human review (‹L3› — not silently decided)
 
 - **F-1 (medium) — Politeness primitives not wired into the live adapter fetch path.**

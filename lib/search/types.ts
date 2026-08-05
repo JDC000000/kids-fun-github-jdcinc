@@ -100,6 +100,16 @@ export interface ListingRecord {
    */
   venuePhone: string | null;
 
+  /**
+   * `activity_occurrence.registration_required` — the SOURCE's own answer to "must you book
+   * in advance?", when it gave one. TRI-STATE and the null matters:
+   *   true  → the source says yes.   false → the source says no (a positive drop-in claim).
+   *   null  → the source said nothing; fall back to the title heuristic.
+   * Sparse: only the library (BiblioCommons) and perfectmind families populate it, so
+   * consumers MUST treat null as normal. See supabase/migrations/0027.
+   */
+  registrationRequired: boolean | null;
+
   // Links (surfaced by UX, not indexed).
   sourceUrl: string | null;
   bookingUrl: string | null;

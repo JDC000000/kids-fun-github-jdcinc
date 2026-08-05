@@ -51,6 +51,32 @@ export interface StructuredRecord {
   sourceUrl: string;
   bookingUrl?: string;
   locationUrl?: string;
+  /**
+   * Does the SOURCE say a parent must register/book in advance to attend?
+   *
+   * DELIBERATELY TRI-STATE, and the third state is the whole point:
+   *   `true`      — the source asserts registration/booking is required.
+   *   `false`     — the source asserts it is NOT: turn up, no booking. A POSITIVE claim.
+   *   `undefined` — the source says nothing. Not "drop-in", not "course" — unknown.
+   *
+   * A boolean defaulting to `false` would have manufactured a drop-in assertion for the
+   * five families that publish no registration signal at all, which is the exact failure
+   * docs/kids-fun-dropin-vs-registration-investigation.md was written about: the pipeline
+   * believed it had ingested 100% drop-in content while the vendors' own drop-in calendars
+   * carried courses. Silence has to stay legible as silence, so `false` is only ever
+   * emitted where the source really does distinguish the two.
+   *
+   * Populated today by `library` (BiblioCommons' structured registrationInfo) and
+   * `perfectmind` (drop-in category + BookingType, with a per-record REGISTER override).
+   * Sparse by design; consumers MUST treat `undefined` as normal and fall back to
+   * lib/search/filters/registration.ts's title heuristic, which is what a row without this
+   * field still gets.
+   *
+   * NOT a capacity signal — this says whether booking is REQUIRED, never whether a spot is
+   * left. See supabase/migrations/0027_occurrence_registration_required.sql for why
+   * full/waitlist is deliberately a separate, later change.
+   */
+  registrationRequired?: boolean;
   /** Captured payload slice for contract-test fixtures + breakage debugging. */
   raw?: unknown;
 }

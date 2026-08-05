@@ -285,7 +285,13 @@ export interface BookMe4Class {
   Address?: BookMe4Address | null;
   OrgName?: string | null;
   Spots?: string | null;
+  /** The vendor's own call-to-action for THIS record — "More Info" or "REGISTER". Read by
+   *  parse.ts as a per-record override on the calendar-level drop-in assertion. */
   BookButtonText?: string | null;
+  /** Longer form of the same button. Declared for completeness and DELIBERATELY NOT used as
+   *  a registration signal — see recordAssertsRegistration() in parse.ts for the measured
+   *  counter-example that rules it out. */
+  BookButtonDescription?: string | null;
   [k: string]: unknown;
 }
 
@@ -301,6 +307,12 @@ export interface CalendarFetchResult {
   calendarId: string;
   calendarName?: string;
   categoryName?: string;
+  /** The vendor's `BookingTypeInfo.BookingType` for this calendar, carried forward VERBATIM.
+   *  Half of the drop-in determination rests on it (2 = the Classes surface, 3 = registered
+   *  Courses) and it was previously consumed and discarded inside selectDropInCalendars.
+   *  parse.ts needs it to assert drop-in on the record rather than assume it from the fact
+   *  that the calendar was fetched at all. */
+  bookingType?: number;
   classes: BookMe4Class[];
   occurrenceCount: number;
   /** Total requests spent on this calendar, across all strides. */
@@ -550,6 +562,14 @@ export interface DiscoveredCalendar {
   calendarId: string;
   calendarName: string;
   categoryName: string;
+  /** The `BookingTypeInfo.BookingType` this calendar was selected on. Recorded, not
+   *  re-derived downstream — see CalendarFetchResult.bookingType.
+   *
+   *  OPTIONAL, and it fails CLOSED: selectDropInCalendars (the only production producer)
+   *  always sets it, but a hand-built calendar that omits it yields records marked
+   *  registration-UNKNOWN rather than falsely drop-in, and the omission is visible in
+   *  ParseResult.stats.registrationUnknown rather than silently absorbed. */
+  bookingType?: number;
 }
 
 export async function fetchCategoryTree(
@@ -608,7 +628,12 @@ export function selectDropInCalendars(
       if (!cal.BookingLink) {
         warnings.push(`category "${name}": calendar "${cal.Name ?? cal.Id}" has an empty BookingLink — expect zero yield`);
       }
-      calendars.push({ calendarId: cal.Id, calendarName: cal.Name ?? cal.Id, categoryName: name });
+      calendars.push({
+        calendarId: cal.Id,
+        calendarName: cal.Name ?? cal.Id,
+        categoryName: name,
+        bookingType,
+      });
     }
   }
 
@@ -682,6 +707,7 @@ export async function fetchCalendar(
     calendarId: calendar.calendarId,
     calendarName: calendar.calendarName,
     categoryName: calendar.categoryName,
+    bookingType: calendar.bookingType,
     classes: [],
     occurrenceCount: 0,
     pagesFetched: 0,
@@ -830,6 +856,7 @@ export async function fetchTenant(
         calendarId: calendar.calendarId,
         calendarName: calendar.calendarName,
         categoryName: calendar.categoryName,
+        bookingType: calendar.bookingType,
         classes: [],
         occurrenceCount: 0,
         pagesFetched: 0,
