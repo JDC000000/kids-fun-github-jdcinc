@@ -115,6 +115,8 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
   private readonly prefixPenalty: number;
   private readonly stemPenalty: number;
   private readonly minFuzzyQueryLength: number;
+  /** Per-listing token index, memoised for this matcher's lifetime. See `buildTokenWeights`. */
+  private readonly tokenWeightCache = new WeakMap<ListingRecord, TokenWeights>();
 
   constructor(opts: MatcherOptions = {}) {
     this.weights = opts.fieldWeights ?? { ...DEFAULT_FIELD_WEIGHTS };
@@ -191,8 +193,42 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
     ];
   }
 
-  /** Collapse the four weighted fields to one token → strongest-weight map for this listing. */
+  /**
+   * Collapse the four weighted fields to one token → strongest-weight map for this listing,
+   * memoised per listing for this matcher's lifetime.
+   *
+   * ── WHY (this is the other half of removing the row cap) ─────────────────────────────────
+   * The map is a PURE function of the listing and this matcher's field weights: same listing
+   * object in, same map out, no request state involved. But it was rebuilt from scratch — four
+   * `tokenize()` calls and four `Set` constructions per listing — on every `match()` call, and
+   * one search request makes many. `SearchEngine.search` runs the matcher once for the primary
+   * pass, once per active constraint `explainEmptyState` probes (up to 10), once per broadening
+   * rung the ladder climbs (up to 6), and once more for the expected/seasonal section.
+   *
+   * Under the old 500-row cap that waste was invisible. Removing the cap (commit d6b2341) made
+   * it the dominant cost, because it is the product of two things that both just grew: rows ×
+   * passes. Measured against live staging at 4,967 rows, back to back on the same catalogue:
+   *
+   *     capped 500 rows   264ms load + 28ms match  = 292ms per request
+   *     uncapped, as-is   428ms load + 132ms match = 560ms per request   ← 1.9x slower
+   *
+   * The catalogue keeps growing and the match term is linear in it, so this is not a fixed cost
+   * — it widens with every source added. Memoising here removes the ×passes factor entirely.
+   *
+   * Keyed on the listing OBJECT (WeakMap), which gives three properties worth having: entries
+   * die with the listing, so a refreshed read model cannot serve a stale index; a rebuilt
+   * listing is a new object and so correctly misses; and two matchers with different field
+   * weights never share an entry, since the cache is per-matcher.
+   *
+   * SAFETY PRECONDITION, stated because the cache silently depends on it: `ListingRecord`s are
+   * built once in `rowToListing` and never mutated afterwards. The engine does mutate the
+   * MatchCandidate wrapper (`Object.assign(c, {_matchedAliases})` in SearchEngine.match) — that
+   * is a different object and does not touch the listing.
+   */
   private buildTokenWeights(listing: ListingRecord): TokenWeights {
+    const cached = this.tokenWeightCache.get(listing);
+    if (cached !== undefined) return cached;
+
     const out: TokenWeights = new Map();
     for (const field of this.buildFields(listing)) {
       for (const token of field.tokens) {
@@ -200,6 +236,7 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
         if (current === undefined || field.weight > current) out.set(token, field.weight);
       }
     }
+    this.tokenWeightCache.set(listing, out);
     return out;
   }
 

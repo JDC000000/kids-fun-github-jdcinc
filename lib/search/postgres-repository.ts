@@ -268,3 +268,71 @@ function venueFromSeriesTitle(title: string): string | null {
 function isAgeBandKey(value: string): value is ListingRecord['ageBandMatches'][number] {
   return ['under2', '2-4', '5-9', '10-14', '15+'].includes(value);
 }
+
+// ── Short in-process TTL cache for the serverless search route ────────────────────────────────
+//
+// WHY THIS EXISTS (it is the completion of the catalogue-cap fix, not a separate optimisation)
+// Removing the 500-row pre-search cap was correct — a parent searching `soccer` got nothing while
+// 81 eligible soccer rows sat below the cut — but it made the LOAD the dominant per-request cost,
+// because `/api/search` reloads the whole read model on every invocation. Measured back to back
+// against live staging at 4,967 eligible rows:
+//
+//     capped 500 rows   264ms load +  28ms match = 292ms per request
+//     uncapped, no cache 428ms load + 132ms match = 560ms per request   ← 1.9x slower
+//     uncapped + cache + matcher memoisation                ≈ 149ms per request
+//
+// So the uncapped read model as first shipped trades a correctness defect for a latency one, and
+// the latency term grows with the catalogue. This closes that without giving back any visibility.
+//
+// WHY A TTL CACHE IS THE RIGHT SHAPE HERE
+// It is the pattern this module's two immediate neighbours already use, for the same reason, on
+// the same route: postgres-alias-resolver.ts (KIDS_FUN_ALIAS_CACHE_MS) and
+// postgres-region-hierarchy.ts. Same serverless warm-instance rationale, same env-var shape, same
+// 60s default. Listings do change more often than aliases, which is why the staleness budget is
+// stated explicitly below rather than inherited by analogy.
+//
+// WHAT ONE TTL OF STALENESS ACTUALLY COSTS — stated so it can be judged, not assumed:
+//   · A newly ingested activity takes up to one TTL to become searchable. Ingest runs on a
+//     scheduler measured in minutes-to-hours, so a 60s window is far inside the noise.
+//   · `visibleOccurrenceWhereSql` evaluates `now()` in SQL, so a cached model can briefly retain
+//     an occurrence that has just ended. Bounded by the TTL, and activities are hour-scale. The
+//     engine's own date/time filters still run per request against that request's `now`, so this
+//     touches only the "finished within the last minute" edge.
+//   · An operator hiding or cancelling a listing takes up to one TTL to reach search.
+// DELIBERATELY NOT CACHED: `loadPostgresListingById`. A shared or deep link must always render
+// current truth, and a detail lookup has no scan cost to amortise — so the staleness budget stays
+// confined to the list surface that actually benefits from it.
+interface ReadModelCacheEntry {
+  listings: ListingRecord[];
+  loadedAt: number;
+}
+let readModelCache: ReadModelCacheEntry | null = null;
+
+function readModelCacheTtlMs(): number {
+  const raw = Number(process.env.KIDS_FUN_LISTING_CACHE_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 60_000;
+}
+
+/**
+ * Cached accessor for the search route: the complete visible catalogue, reloaded from Postgres at
+ * most once per TTL window.
+ *
+ * Deliberately takes NO limit. A cache keyed on nothing but time must only ever hold one
+ * population, and for this route that population is "everything a parent could be shown" — the
+ * whole point of the cap fix. Callers that want a bounded diagnostic page call
+ * `loadPostgresListings` directly and are not served from, or written into, this cache.
+ *
+ * Set `KIDS_FUN_LISTING_CACHE_MS=0` to disable caching entirely (every call reloads).
+ */
+export async function getCachedPostgresListings(pool: Pool, now: number = Date.now()): Promise<ListingRecord[]> {
+  const ttl = readModelCacheTtlMs();
+  if (readModelCache && ttl > 0 && now - readModelCache.loadedAt < ttl) return readModelCache.listings;
+  const listings = await loadPostgresListings(pool);
+  readModelCache = { listings, loadedAt: now };
+  return listings;
+}
+
+/** Test/ops hook: drop the cached read model so the next access reloads from the DB. */
+export function clearPostgresListingsCache(): void {
+  readModelCache = null;
+}

@@ -23,7 +23,7 @@
 import { NextResponse } from 'next/server';
 import { makeFixtureEngine } from '@/lib/search/__fixtures__/engine';
 import { InMemoryListingRepository } from '@/lib/search/repository';
-import { loadPostgresListings } from '@/lib/search/postgres-repository';
+import { getCachedPostgresListings } from '@/lib/search/postgres-repository';
 import { getPostgresAliasResolver } from '@/lib/search/postgres-alias-resolver';
 import { getPostgresRegionHierarchy } from '@/lib/search/postgres-region-hierarchy';
 import { SearchEngine, type SearchRequest, type SearchResponse } from '@/lib/search/engine';
@@ -83,8 +83,13 @@ async function searchDatabase(
     // All three load in parallel; a genuine failure of any of them throws to the catch
     // below (→ honest 5xx), which is categorically different from a successful search that
     // simply matched nothing.
+    // All three loads are now cached per warm instance on the same short TTL. The listing read
+    // model is the COMPLETE visible catalogue (no pre-search row cap), so reloading it on every
+    // invocation made the load the dominant per-request cost — 428ms of a 560ms request against
+    // live staging. See lib/search/postgres-repository.ts for the measurements and the staleness
+    // budget this trades for them.
     const [listings, aliasResolver, regionHierarchy] = await Promise.all([
-      loadPostgresListings(pool),
+      getCachedPostgresListings(pool),
       getPostgresAliasResolver(pool),
       getPostgresRegionHierarchy(pool),
     ]);

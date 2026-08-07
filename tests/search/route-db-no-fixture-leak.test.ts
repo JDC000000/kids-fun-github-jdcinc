@@ -70,12 +70,23 @@ vi.mock('@/lib/search/postgres-repository', async () => {
       startDatetimeUtc: '2026-07-21T17:00:00Z', endDatetimeUtc: '2026-07-21T19:00:00Z',
     }),
   ];
+  const load = async () => {
+    if (db.mode === 'error') throw new Error('db connection refused'); // genuine outage
+    if (db.mode === 'empty') return []; // reachable but empty table
+    return LIVE;
+  };
   return {
-    loadPostgresListings: async () => {
-      if (db.mode === 'error') throw new Error('db connection refused'); // genuine outage
-      if (db.mode === 'empty') return []; // reachable but empty table
-      return LIVE;
-    },
+    loadPostgresListings: load,
+    // The route reads the catalogue through the CACHED accessor. It is stubbed to the same loader
+    // rather than to a canned array on purpose: every assertion in this file is about the route's
+    // honesty when the database is empty or unreachable, and that only holds if the accessor the
+    // route actually calls can still be empty or still throw. A double that always returned rows
+    // would turn the outage tests green without exercising anything.
+    //
+    // Deliberately NOT delegating to the real cache: it would hold `db.mode`'s rows past the
+    // per-test reset below and silently answer a later test from an earlier one's world.
+    getCachedPostgresListings: load,
+    clearPostgresListingsCache: () => {},
     loadPostgresListingById: async (_pool: unknown, id: string) => {
       if (db.mode === 'error') throw new Error('db connection refused');
       if (db.mode === 'empty') return null;
