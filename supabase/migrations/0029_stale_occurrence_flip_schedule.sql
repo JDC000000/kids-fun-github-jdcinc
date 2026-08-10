@@ -27,11 +27,47 @@
 -- source.baseline_cadence is NOT NULL DEFAULT '1 day' (migration 0003), so the effective
 -- threshold for a source that has never had a cadence configured is 2 days.
 --
--- The effect on a flipped row is a DEMOTION, not a deletion and not a hide: lib/search/rank.ts
--- scores 'stale' lowest of any status and lib/search/filters/status.ts still classes it
--- 'primary' (shown). So the failure mode of running this job is "listings rank lower than they
--- should", and the failure mode of NOT running it is "listings nobody has re-checked keep
--- ranking as if they were fresh". Both are quality outcomes; neither destroys data.
+-- The effect on a flipped row is a DEMOTION, not a deletion and not a hide — but "demotion"
+-- understates what a parent actually sees, so here it is exactly, measured at
+-- 23466ad2ff6fc5766dd874507069ab6f349c3f5d:
+--
+--   RANK. lib/search/rank.ts scores 'stale' 0.15 — the lowest of any SHOWN status, not the
+--   lowest of any status. Three score lower (suspended 0.1, needs_review 0.1, cancelled 0.05)
+--   and those three are exactly the ones lib/search/filters/status.ts classes 'hidden', so
+--   they never reach a parent at all. Among everything that IS shown, 'stale' is last.
+--
+--   VISIBILITY. Still shown. 'stale' is not in HIDDEN_STATUSES, so the repository returns it
+--   and the search response carries it.
+--
+--   SECTION — the part the word "demotion" hides. app/search/page.tsx does not keep the
+--   primary/expected split the search response arrives with: it merges `results` and
+--   `expected` (mapSearchResponseToActivities) and re-partitions the whole set with
+--   partitionSections (app/preview/_data/filter.ts), which asks statusMeta
+--   (app/preview/_data/format.ts) for a section — and statusMeta puts ONLY 'confirmed' and
+--   'bookable_open' in the confirmed section. So a row flipped FROM one of those two LEAVES
+--   the confirmed list and reappears below it in the expected section, relabelled "May be
+--   stale" with the copy "Last check is a few days old — may be out of date". Rows flipped
+--   from the other four members of STALE_DEMOTE_FROM (not_yet_bookable,
+--   schedule_not_published, inferred_recurring, seasonal_active) were already in the expected
+--   section; for those the flip changes the label, the copy and the rank, but not the section.
+--
+--   THAT SECTION MOVE IS INTENDED DESIGN, NOT AN ARTEFACT OF THE RENDER PATH. statusMeta's
+--   header states it as an honesty invariant and cites UXR-06 / T-07 / Appendix D — "never
+--   show stale/expected/seasonal as confirmed" — and applies it to all 16 statuses. The
+--   mechanism is doing what it was specified to do.
+--
+-- WHICH IS WHY THE REAL QUESTION HERE IS A PRODUCT ONE, NOT A TECHNICAL ONE. That rule was
+-- written for INGESTED listings, where "nothing has re-checked this lately" is both true and
+-- self-correcting: the next successful ingest restores last_checked_at and status_state
+-- together, and the caveat lifts itself. A hand-curated listing is subject to the identical
+-- rule with no re-ingest path back (see below), so for those rows the caveat is permanent
+-- until a human returns to it. Whether manual listings belong inside a rule designed for
+-- ingested ones is the decision the `enabled` flag is reserving.
+--
+-- Neither running nor not running this job destroys data. The failure mode of running it is
+-- "listings a human curated get caveated and pushed below the confirmed list"; the failure
+-- mode of NOT running it is "listings nobody has re-checked keep presenting as confirmed",
+-- which is that same honesty invariant being quietly false.
 --
 -- THE ONE CONSEQUENCE THAT IS NOT OBVIOUS FROM THE NAME. The predicate says "nothing has
 -- re-checked this row lately". It does not say "the row's source went dark" — and for rows
