@@ -82,14 +82,34 @@ export interface GlobalScheduleHealthSnapshot {
    *     `127.0.0.1:55999` -> "connect ECONNREFUSED 127.0.0.1:55999"   host + port NAMED
    *     `localhost:55999` -> ""                                        nothing named
    *     `[::1]:55999`     -> "getaddrinfo ENOTFOUND [::1]"             host named, no port
-   *   A SINGLE-ADDRESS HOST — a literal IP, a Fly `.internal` name, a single-A-record
-   *   database host, i.e. THE PRODUCTION SHAPE — therefore DOES put host and port in here.
+   *   A GENUINELY SINGLE-ADDRESS HOST, such as a literal IP, therefore puts host and port in
+   *   here; a multi-address one puts nothing.
    *
-   *   An earlier version of this comment said host and port "did not reproduce at all". That
-   *   was measured only against `localhost` on a dual-stack box and generalised to an
-   *   absolute — the same class of error as reasoning without measuring, and it understated
-   *   how sensitive this field is. When a measurement can depend on the environment (DNS,
-   *   dual-stack, platform), say which environment it was taken in, as above.
+   *   WHAT THAT MEANS IN PRODUCTION IS NOT SOMETHING THIS REPO CAN SEE, AND THIS COMMENT NO
+   *   LONGER GUESSES. What it can CITE: both manifests say DATABASE_URL is a Fly secret
+   *   holding a Supabase SESSION POOLER in ca-central-1 (worker/fly.toml:16,
+   *   worker/fly.production.toml:15). So the production database is a pooler hostname — not a
+   *   literal IP, and not a Fly `.internal` name (the only `.internal` in this runtime is
+   *   `host.docker.internal`, in worker/src/db.ts:13's local-dev SSL regex). Pooler hostnames
+   *   commonly resolve to several addresses, which by the mechanism above is the EMPTY-message
+   *   case — so a connect failure in production most likely names NOTHING. THAT IS A
+   *   LIKELIHOOD, NOT A FACT. What would settle it is resolving the pooler hostname FROM
+   *   INSIDE THE APP; that is where the answer lives and it is not something this file can do.
+   *
+   *   THE UNCERTAINTY IS TOLERABLE BECAUSE IT CHANGES NOTHING. The role, the database and
+   *   table names are reported by the other fault classes above with no DNS involvement at
+   *   all, so this field is sensitive either way and stays off the wire either way.
+   *
+   *   ── WHY THIS PARAGRAPH IS HEDGED WHEN THE ONES ABOVE ARE NOT ───────────────────────────
+   *   Three attempts at this sentence, three different failures, each harder to spot than the
+   *   last: (1) an unmeasured claim inherited from an older comment; (2) a correct measurement
+   *   over-generalised into an absolute from a single `localhost` test; (3) a correct
+   *   measurement applied to the WRONG SUBJECT — asserting a production host shape the repo
+   *   cannot observe, and naming Fly `.internal` when the manifests say pooler. The rule that
+   *   stops it recurring is not "measure more": A COMMENT IN THIS REPO MUST NOT ASSERT A FACT
+   *   ABOUT PRODUCTION DNS OR INFRASTRUCTURE THAT THE REPO CANNOT SEE. Cite a manifest, state
+   *   a mechanism, name the check that would settle it — and stop there. That is also what
+   *   keeps this true if the project moves off the pooler to a direct connection.
    * It reached the public unauthenticated endpoint for as long as
    * worker/src/healthz.ts spread this object onto the wire, and NESTING is why no key-set
    * guard saw it: every one of them inspected flat top-level keys.
@@ -271,14 +291,34 @@ export interface SchedulerMetrics {
    *     `127.0.0.1:55999` -> "connect ECONNREFUSED 127.0.0.1:55999"   host + port NAMED
    *     `localhost:55999` -> ""                                        nothing named
    *     `[::1]:55999`     -> "getaddrinfo ENOTFOUND [::1]"             host named, no port
-   *   A SINGLE-ADDRESS HOST — a literal IP, a Fly `.internal` name, a single-A-record
-   *   database host, i.e. THE PRODUCTION SHAPE — therefore DOES put host and port in here.
+   *   A GENUINELY SINGLE-ADDRESS HOST, such as a literal IP, therefore puts host and port in
+   *   here; a multi-address one puts nothing.
    *
-   *   An earlier version of this comment said host and port "did not reproduce at all". That
-   *   was measured only against `localhost` on a dual-stack box and generalised to an
-   *   absolute — the same class of error as reasoning without measuring, and it understated
-   *   how sensitive this field is. When a measurement can depend on the environment (DNS,
-   *   dual-stack, platform), say which environment it was taken in, as above.
+   *   WHAT THAT MEANS IN PRODUCTION IS NOT SOMETHING THIS REPO CAN SEE, AND THIS COMMENT NO
+   *   LONGER GUESSES. What it can CITE: both manifests say DATABASE_URL is a Fly secret
+   *   holding a Supabase SESSION POOLER in ca-central-1 (worker/fly.toml:16,
+   *   worker/fly.production.toml:15). So the production database is a pooler hostname — not a
+   *   literal IP, and not a Fly `.internal` name (the only `.internal` in this runtime is
+   *   `host.docker.internal`, in worker/src/db.ts:13's local-dev SSL regex). Pooler hostnames
+   *   commonly resolve to several addresses, which by the mechanism above is the EMPTY-message
+   *   case — so a connect failure in production most likely names NOTHING. THAT IS A
+   *   LIKELIHOOD, NOT A FACT. What would settle it is resolving the pooler hostname FROM
+   *   INSIDE THE APP; that is where the answer lives and it is not something this file can do.
+   *
+   *   THE UNCERTAINTY IS TOLERABLE BECAUSE IT CHANGES NOTHING. The role, the database and
+   *   table names are reported by the other fault classes above with no DNS involvement at
+   *   all, so this field is sensitive either way and stays off the wire either way.
+   *
+   *   ── WHY THIS PARAGRAPH IS HEDGED WHEN THE ONES ABOVE ARE NOT ───────────────────────────
+   *   Three attempts at this sentence, three different failures, each harder to spot than the
+   *   last: (1) an unmeasured claim inherited from an older comment; (2) a correct measurement
+   *   over-generalised into an absolute from a single `localhost` test; (3) a correct
+   *   measurement applied to the WRONG SUBJECT — asserting a production host shape the repo
+   *   cannot observe, and naming Fly `.internal` when the manifests say pooler. The rule that
+   *   stops it recurring is not "measure more": A COMMENT IN THIS REPO MUST NOT ASSERT A FACT
+   *   ABOUT PRODUCTION DNS OR INFRASTRUCTURE THAT THE REPO CANNOT SEE. Cite a manifest, state
+   *   a mechanism, name the check that would settle it — and stop there. That is also what
+   *   keeps this true if the project moves off the pooler to a direct connection.
    *
    * Written by noteError()
    * at the seven sites below, formatted `${lane}: ${message}` (and `job ${uuid}: ${message}`

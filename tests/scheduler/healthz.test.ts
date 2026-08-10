@@ -260,8 +260,13 @@ describe('/healthz — an ABSENT scheduler is not a DISABLED one (D-A)', () => {
     // wraps a connect failure in an AggregateError, whose own `.message` is `""`, ONLY when
     // the host resolves to MULTIPLE addresses and all fail. Measured on this box (Linux,
     // dual-stack): a literal `127.0.0.1` names host and port, `localhost` (-> ::1 AND
-    // 127.0.0.1) names nothing, `[::1]` names the host. So a SINGLE-ADDRESS host — a literal
-    // IP, a Fly `.internal` name, i.e. the PRODUCTION shape — does name both.
+    // 127.0.0.1) names nothing, `[::1]` names the host. A genuinely single-address host names
+    // both; a multi-address one names nothing.
+    // WHAT PRODUCTION DOES IS NOT ASSERTED HERE — this repo cannot see it. The manifests say
+    // the database is a Supabase session pooler (worker/fly.toml:16, fly.production.toml:15),
+    // pooler hostnames commonly resolve to several addresses, and resolving one FROM INSIDE
+    // THE APP is what would settle it. It changes nothing either way: the role, the database
+    // and table names are named by other fault classes with no DNS involvement at all.
     // The original comment here said "host, port, database and user" and was missing table
     // names; a later correction of mine over-corrected to "host and port did not reproduce",
     // having measured only `localhost`. Both are fixed above, with the environment stated.
