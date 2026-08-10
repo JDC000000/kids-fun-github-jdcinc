@@ -309,7 +309,12 @@ describe.skipIf(!hasDb)('Option D — deterministic dedup routed to review (real
       expect(run.records_considered).toBe(result.considered);
     });
 
-    it('is idempotent: a second run re-routes nothing (the pair has left the pool)', async () => {
+    // NOTE the scope of this: it holds while the row sits UNADJUDICATED as a
+    // manual_candidate, which the detector's left side excludes. It does NOT hold after a
+    // human rejects the pair — rejectDedupPair sets 'confirmed', which the left side
+    // accepts, so the next run re-routes it (measured; see runDedupDetectOnlyUseCase's
+    // docstring). Nothing marks a pair as adjudicated.
+    it('is idempotent while unadjudicated: a second run re-routes nothing', async () => {
       const before = await archivedCount();
       const second = await runDedupDetectOnlyUseCase();
       expect(second.autoMerged).toBe(0);

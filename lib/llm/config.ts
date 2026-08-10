@@ -40,9 +40,22 @@ export const DEDUP_AUTO_MERGE_MIN_CONFIDENCE = 0.9;
 
 /**
  * Deterministic corroboration required for an auto-merge: the title trigram similarity
- * (lib/search/text/trigram.ts, pg_trgm-compatible) must also clear this. Defense in
- * depth — we never auto-merge on the model's word alone; a cheap, transparent signal
- * must agree. Below it (but above the blocking floor) the pair still goes to review.
+ * (lib/search/text/trigram.ts) must also clear this. Defense in depth — we never
+ * auto-merge on the model's word alone; a cheap, transparent signal must agree. Below it
+ * (but above the blocking floor) the pair still goes to review.
+ *
+ * >>> PRE-ENABLEMENT WARNING — THIS GATE IS VACUOUS FOR NON-LATIN TITLES. <<< The score it
+ * checks comes from lib/search/text/trigram.ts, which normalises first, and normalize()
+ * DELETES every non-Latin character. When both titles erase to empty the score is not low,
+ * it is 1.0 — the maximum. Measured: "Сказки для малышей" vs "Песни для малышей" (fairy
+ * tales vs SONGS) scores pg_trgm 0.4800, so the blocker DETECTS it, and JS 1.0, so this
+ * bar is cleared perfectly. For any such pair the only remaining gate is
+ * DEDUP_AUTO_MERGE_MIN_CONFIDENCE — i.e. exactly the "merge on the model's word alone"
+ * this constant exists to prevent. Richmond and Vancouver Public Library run multilingual
+ * storytimes, so this is the operating population, not a curiosity. Nothing reachable
+ * today can act on it (Option D's decider cannot return auto_merge, and the LLM path is
+ * flag-gated), but this must be resolved BEFORE auto-merge is enabled. See
+ * DEDUP_REVIEW_MIN_SIMILARITY below for the full measurement.
  */
 export const DEDUP_AUTO_MERGE_MIN_SIMILARITY = 0.55;
 
@@ -59,12 +72,38 @@ export const DEDUP_BLOCKING_MIN_SIMILARITY = 0.4;
  * (the auto-merge thresholds have the same problem — see DEDUP_AUTO_MERGE_MIN_*, which
  * this path never consults). The knob exists so the floor is one named, testable constant
  * rather than a literal buried in the decider; raising it is a deliberate act, not a
- * default. NOTE the two scores are not the same function: the blocker's floor is applied
- * by pg_trgm to RAW titles inside Postgres, while this one is applied to the JS
- * reimplementation's NORMALISED score (lib/search/text/trigram.ts strips diacritics and
- * punctuation, so it reads systematically HIGHER). At equal values that asymmetry is inert
- * — the JS score of a pair that cleared the SQL floor also clears this one — which is a
- * further reason not to set them apart without evidence.
+ * default.
+ *
+ * THE TWO FLOORS ARE NOT THE SAME FUNCTION, AND EQUAL VALUES DO NOT MAKE THEM AGREE. The
+ * blocker's floor is applied by pg_trgm to RAW titles inside Postgres; this one is applied
+ * to the JS reimplementation's NORMALISED score. Measured against real pg_trgm (an earlier
+ * version of this comment asserted the JS score "reads systematically higher" and that at
+ * equal floors anything clearing the SQL floor also clears this one — BOTH ARE FALSE, and
+ * the second is the dangerous one):
+ *
+ *   • The two metrics disagree in BOTH directions. Over 20 realistic titles QA measured
+ *     JS-higher 11, equal 5, JS-LOWER 4; a pair pg_trgm scored 0.5000 and DETECTED was
+ *     scored 0.2667 by JS and skipped. So a pair is selected by one metric and judged by
+ *     another. Equal floors BOUND that divergence; they do not eliminate it.
+ *   • The cause is normalize() (lib/search/text/normalize.ts): `replace(/[^a-z0-9]+/g,' ')`
+ *     DELETES every non-Latin character, which pg_trgm keeps. CJK, Cyrillic, Hangul,
+ *     Gurmukhi and Kana are erased outright.
+ *   • THE WORST CASE IS NOT UNDER-DETECTION. When both titles erase to the empty string,
+ *     the JS score is not low — it is 1.0, the MAXIMUM. Measured here:
+ *         "Сказки для малышей" vs "Песни для малышей"  (fairy tales vs SONGS)
+ *              pg_trgm 0.4800 → detected;  JS 1.00000000000000000
+ *         "おはなし会" vs "よみきかせ"      (two different Japanese words)
+ *              pg_trgm 0.0000;             JS 1.00000000000000000
+ *     i.e. for non-Latin titles the JS score reports a perfect match on strings it deleted,
+ *     so DEDUP_AUTO_MERGE_MIN_SIMILARITY is VACUOUS for them — the "deterministic
+ *     corroboration" that is supposed to stop a merge on the model's word alone contributes
+ *     nothing exactly where RPL and VPL run their multilingual storytimes.
+ *
+ * NONE OF THAT CAN CAUSE A MERGE ON THIS PATH — decideDedupDeterministic cannot return
+ * auto_merge at all. It is recorded here because it is a live precondition for Option B,
+ * and because the review floor is the constant a future reader will reach for first.
+ * Deliberately NOT fixed here: changing the normalizer or the floors is a design decision
+ * (it moves detection and scoring for every locale), not a comment correction.
  */
 export const DEDUP_REVIEW_MIN_SIMILARITY = DEDUP_BLOCKING_MIN_SIMILARITY;
 

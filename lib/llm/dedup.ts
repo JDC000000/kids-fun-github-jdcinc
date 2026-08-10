@@ -61,7 +61,15 @@ export interface DedupCandidate {
   left: OccurrenceSide;
   right: OccurrenceSide;
   startUtc: string | null;
-  /** Deterministic title trigram similarity (lib/search/text/trigram; pg_trgm-compatible). */
+  /**
+   * Deterministic title trigram similarity (lib/search/text/trigram).
+   *
+   * NOT pg_trgm-compatible, despite that module's header — measured, not assumed. It
+   * normalises first, which deletes every non-Latin character, so it disagrees with the
+   * pg_trgm score that SELECTED the pair in both directions, and returns 1.0 (the maximum)
+   * whenever both titles erase to empty. See DEDUP_REVIEW_MIN_SIMILARITY in ./config for the
+   * measurements and what it does and does not put at risk.
+   */
   deterministicScore: number;
   /** Stable custom_id for the batch request (order-independent pair key). */
   customId: string;
@@ -274,13 +282,40 @@ export interface DedupDetectOnlyRunOptions {
  * no prompt — a live API call is not merely disabled here, it is unrepresentable.
  *
  * Shares JOB_NAMES.dedup's watermark with the LLM runner deliberately: this is the same job
- * with a different adjudicator, and the routed rows leave the candidate pool anyway (the
- * detector's left side excludes status_state='manual_candidate'), so a later LLM run would
- * not re-litigate what a human already owns. `last_status` is stamped distinctly so the run
- * is attributable in llm_batch_run.
+ * with a different adjudicator. `last_status` is stamped distinctly so the run is
+ * attributable in llm_batch_run.
  *
- * The only state change it can cause is status_state → 'manual_candidate', which the QA
- * queue's existing reject action reverses. Nothing here archives a record.
+ * WHAT THIS RUN ACTUALLY CHANGES — corrected against the columns, because the first version
+ * of this comment ("the only state change is status_state → manual_candidate, which the
+ * reject action reverses") was wrong on BOTH halves:
+ *
+ *   1. It writes status_state='manual_candidate' AND OVERWRITES last_checked_at. The prior
+ *      value is lost; there is no history column. That matters beyond bookkeeping:
+ *      last_checked_at IS THE INPUT TO THE STALE FLIP (worker/health/stale.ts flips rows
+ *      whose last_checked_at is older than grace × cadence), so routing a pair for review
+ *      silently RESETS ITS STALENESS CLOCK.
+ *   2. Reject does NOT restore the prior state — rejectDedupPair sets 'confirmed'. Via
+ *      STATUS_CLASS (lib/search/filters/status.ts) that is a visibility RATCHET, not a
+ *      round trip: needs_review is 'hidden' (filtered out of results entirely),
+ *      manual_candidate is 'expected', confirmed is 'primary'. So a row can go from not
+ *      shown at all → shown in the expected section → fully promoted, purely by being
+ *      routed and then judged "not a duplicate".
+ *
+ * Both are recoverable states, and nothing here archives a record, stamps a dedup_key or
+ * moves provenance — the irreversible actions remain unreachable. But "nothing changes
+ * except a reversible status flag" was not true, and is not claimed here.
+ *
+ * A SECOND CORRECTION, MEASURED: the claim that routed rows "leave the candidate pool" is
+ * only true of the detector's LEFT side. detectDedupCandidates excludes
+ * status_state='manual_candidate' when choosing fresh rows, but the right-side JOIN has no
+ * status predicate at all (nor a dedup_key one), so a routed row can still be returned as
+ * another row's match. And the exclusion does not survive adjudication: a human answering
+ * "not a duplicate" sets 'confirmed', which the left side ACCEPTS, while the reject's own
+ * last_checked_at bump clears the watermark — so the very next run RE-ROUTES the pair the
+ * human just dismissed. Measured on a seeded pair: run 1 routed it, reject returned ok and
+ * set 'confirmed', run 2 flagged it manual_candidate again. Nothing marks a pair as
+ * adjudicated, so a rejection is not durable. Escalated rather than patched here — the fix
+ * is a design decision about where "already judged" is recorded, not a comment.
  */
 export async function runDedupDetectOnlyUseCase(
   opts: DedupDetectOnlyRunOptions = {}
