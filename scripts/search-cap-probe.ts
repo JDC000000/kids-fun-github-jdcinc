@@ -383,16 +383,23 @@ async function main(): Promise<void> {
 // failure mode a diagnostic has, and the same class of defect (a probe misreporting its own
 // behaviour) that this guard was added to fix in the first place. Hence the `else` as well:
 // declining to run is now audible on stderr instead of looking like a clean, empty success.
-function toRealPath(candidate: string): string | null {
+// The argument is a THUNK so that deriving the path is inside the guard too, not just resolving
+// it. `fileURLToPath` throws on any non-`file:` URL, and `import.meta.url` is only a `file:` URL
+// when the module was loaded from disk — under a `data:`/`http:` loader, a bundler that inlines
+// it, or a worker built from source, it is not. Evaluating it outside this try would throw at
+// MODULE LOAD and take down every importer, which is strictly worse than the silent decline this
+// guard exists to replace. Latent in this repo today; cheap to make impossible.
+function toRealPath(derive: () => string): string | null {
   try {
-    return realpathSync(candidate);
+    return realpathSync(derive());
   } catch {
     return null; // deleted, unreadable, or not a path at all — treat as "not us"
   }
 }
 
-const modulePath = toRealPath(fileURLToPath(import.meta.url));
-const invokedPath = process.argv[1] ? toRealPath(process.argv[1]) : null;
+const invoked = process.argv[1];
+const modulePath = toRealPath(() => fileURLToPath(import.meta.url));
+const invokedPath = invoked ? toRealPath(() => invoked) : null;
 
 if (modulePath !== null && modulePath === invokedPath) {
   main().catch((err) => {
@@ -402,7 +409,9 @@ if (modulePath !== null && modulePath === invokedPath) {
 } else {
   console.error(
     `search-cap-probe: loaded, but not as the process entrypoint — main() did NOT run ` +
-      `(module=${modulePath ?? fileURLToPath(import.meta.url)}, argv[1]=${invokedPath ?? process.argv[1] ?? '<none>'}). ` +
+      // Fall back to the RAW url, never to fileURLToPath again — the whole reason modulePath can
+      // be null is that converting it threw, so re-running it here would throw in the diagnostic.
+      `(module=${modulePath ?? import.meta.url}, argv[1]=${invokedPath ?? invoked ?? '<none>'}). ` +
       `Expected when something imports buildPoolConfig; if you meant to probe, run: bash scripts/search-cap-probe.sh`,
   );
 }
