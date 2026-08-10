@@ -10,16 +10,26 @@
 // max-batches backstop, injectable now), so both are thin wrappers over the shared
 // lib/db/retention-purge.ts — one tested implementation, no forked batching loop.
 //
-// Scheduling: driven by the platform `schedule` skill hitting the secret-guarded
-// POST /api/corrections/retention/run — the same recurring-job pattern as the
-// analytics retention sweep and the weekly digest email. NO pg_cron / no new infra.
+// Callers: POST /api/corrections/retention/run (Vercel, secret-guarded) AND the Fly
+// worker's `corrections_retention` queue job (worker/core/corrections-retention.ts),
+// which imports THIS module directly rather than fetching the route — see that file
+// for why. Both runtimes therefore share one purge implementation and one window; the
+// public privacy page's automatic-deletion promise depends on that staying true.
 //
 // Server-only: touches `pg` via the shared pool.
+//
+// RELATIVE import, not '@/lib/db/retention-purge', and that is load-bearing: the worker
+// compiles this file with plain `tsc` and runs the emitted CommonJS under bare node.
+// `@/*` is a BUNDLER alias (next.config/webpack, vitest.config.ts resolve.alias, the root
+// tsconfig `paths`) — tsc type-checks it but emits `require("@/lib/db/retention-purge")`
+// verbatim, which node cannot resolve. Under Next/Vitest the two spellings are identical;
+// under the worker only this one works. tests/scheduler/worker-image-closure.test.ts fails
+// if a '@/' specifier reappears anywhere in the worker's module closure.
 import {
   purgeExpiredByRetainedUntil,
   type RetentionPurgeOptions,
   type RetentionPurgeResult,
-} from '@/lib/db/retention-purge';
+} from '../db/retention-purge';
 import { correctionRetentionDays } from './retention-config';
 
 export type CorrectionPurgeOptions = RetentionPurgeOptions;

@@ -1,4 +1,30 @@
 {
+  // ── WHY rootDir IS "..", NOT "." ─────────────────────────────────────────────────────
+  // worker/core/corrections-retention.ts imports lib/corrections/retention.ts directly, so
+  // the worker's `corrections_retention` job and the Vercel route run ONE purge
+  // implementation and ONE retention window. A copy of either inside worker/ could drift,
+  // and the privacy page's automatic-deletion promise is a compliance claim that depends on
+  // the two runtimes agreeing — so a copy is not an option.
+  //
+  // That pulls files from OUTSIDE worker/ into this compilation, and tsc requires every
+  // input file to sit under rootDir; with rootDir "." the build failed with TS6059 ("is not
+  // under 'rootDir'"). Raising rootDir to the repo root is the deliberate fix. Its
+  // unavoidable consequence is that every output gains one path segment:
+  //     worker/dist/worker/src/index.js        (was worker/dist/src/index.js)
+  //     worker/dist/lib/corrections/retention.js
+  // which is why package.json's main/start/smoke/ingest:once and the Dockerfile CMD all say
+  // dist/worker/src/*. tests/scheduler/worker-image-closure.test.ts asserts they agree.
+  //
+  // `include` stays worker-only ON PURPOSE: lib/ is not globbed in, because most of it is
+  // Next-only (next/headers, @supabase/ssr, React) and would not compile under this
+  // Node-only config. The compiler adds only the lib modules actually reachable from the
+  // worker's imports, which keeps the shared surface narrow and makes an accidental
+  // widening a build failure rather than a silent new dependency.
+  //
+  // There is deliberately NO `@/*` path alias: tsc type-checks a path alias but emits the
+  // specifier verbatim, so `require("@/lib/...")` would blow up under bare node in the
+  // container. Everything in the worker's module closure uses relative specifiers, and
+  // tests/scheduler/worker-image-closure.test.ts fails if a "@/" specifier reappears.
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
@@ -7,7 +33,7 @@
       "ES2022"
     ],
     "outDir": "dist",
-    "rootDir": ".",
+    "rootDir": "..",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

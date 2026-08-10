@@ -7,13 +7,13 @@
     "node": ">=20 <23"
   },
   "type": "commonjs",
-  "main": "dist/src/index.js",
+  "main": "dist/worker/src/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/src/index.js",
+    "start": "node dist/worker/src/index.js",
     "dev": "node --loader ts-node/esm src/index.ts",
-    "smoke": "node dist/src/chromium-smoke.js",
-    "ingest:once": "node dist/src/ingest-once.js"
+    "smoke": "node dist/worker/src/chromium-smoke.js",
+    "ingest:once": "node dist/worker/src/ingest-once.js"
   },
   "dependencies": {
     "@sentry/node": "^10.66.0",

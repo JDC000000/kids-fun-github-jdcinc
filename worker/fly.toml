@@ -1,6 +1,16 @@
 # KIDS FUN ingestion worker — Fly.io app manifest (approved runtime: Fly.io, Jon 2026-07-13).
+#
+# ⚠ DEPLOY FROM THE REPO ROOT, NOT FROM worker/:
+#     fly deploy . --config worker/fly.toml --dockerfile worker/Dockerfile
+# The Docker build context is now the repo root because the image also ships lib/corrections
+# + lib/db (see worker/Dockerfile for why). flyctl uses the deploy working directory as the
+# build context; `dockerfile = "Dockerfile"` below stays relative to THIS file, and the
+# explicit --dockerfile flag above makes that independent of how flyctl resolves it.
+# Deploying from worker/ would give the old, too-small context and the build would fail on
+# `COPY lib/corrections` — loudly, not silently.
+#
 # Region `yyz` (Toronto) aligns with the approved ca-central-1 data-residency gate.
-# Chromium needs ~1GB. The entrypoint (dist/src/index.js) runs the cadence-driven
+# Chromium needs ~1GB. The entrypoint (dist/worker/src/index.js) runs the cadence-driven
 # scheduler continuously: a tiered enqueue tick (source.baseline_cadence /
 # near_date_cadence) plus the durable job-queue poll loop that runs terms-gated
 # ingest. DATABASE_URL is injected as a Fly secret (Supabase session pooler,

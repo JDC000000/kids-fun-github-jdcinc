@@ -1,0 +1,43 @@
+# Repo-root .dockerignore — for `docker build -f worker/Dockerfile .` (the ingestion
+# worker image; see worker/Dockerfile for why its build context is the repo root and not
+# worker/). Vercel builds the Next app and does not use Docker, so this file affects the
+# worker image only.
+#
+# Keep this an EXCLUDE list, never an allowlist: an allowlist that forgets a directory
+# turns into a missing-file build error, but a stale exclude here would silently ship
+# stale code. Everything the image actually needs is enumerated by the Dockerfile's COPY
+# lines; this file only stops the context from carrying things nothing copies.
+
+# Dependency trees — reinstalled inside the image from the lockfile.
+node_modules
+**/node_modules
+
+# Build output (host artefacts must never leak into the image).
+.next
+dist
+worker/dist
+*.tsbuildinfo
+out
+coverage
+playwright-report
+test-results
+
+# VCS / tooling / editor state.
+.git
+.github
+.vscode
+.idea
+
+# Local environment + anything secret-shaped. The worker gets its configuration from Fly
+# secrets at runtime, never from a file baked into the image.
+.env
+.env.*
+!.env.example
+
+# Not used by the worker runtime.
+.scratch
+docs
+evals
+tests
+supabase/local-dev
+playwright.config.ts

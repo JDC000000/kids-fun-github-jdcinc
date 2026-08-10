@@ -1,8 +1,15 @@
 # KIDS FUN ingestion worker — Fly.io app manifest for PRODUCTION (Round 28, 2026-07-21,
 # Jon's direct go-ahead relayed via operator: "APPROVED -- let's stand up production. Go to
 # work." Fly worker sizing explicitly approved to match staging).
+#
+# ⚠ DEPLOY FROM THE REPO ROOT, NOT FROM worker/:
+#     fly deploy . --config worker/fly.production.toml --dockerfile worker/Dockerfile
+# The Docker build context is now the repo root because the image also ships lib/corrections
+# + lib/db (see worker/Dockerfile). Deploying from worker/ gives the old, too-small context
+# and the build fails on `COPY lib/corrections` — loudly, not silently.
+#
 # Region `yyz` (Toronto) aligns with the approved ca-central-1 data-residency gate — same as
-# staging, unchanged. Chromium needs ~1GB. The entrypoint (dist/src/index.js) runs the
+# staging, unchanged. Chromium needs ~1GB. The entrypoint (dist/worker/src/index.js) runs the
 # cadence-driven scheduler continuously: a tiered enqueue tick (source.baseline_cadence /
 # near_date_cadence) plus the durable job-queue poll loop that runs terms-gated ingest.
 # DATABASE_URL is injected as a Fly secret (Supabase session pooler, ca-central-1) — never
