@@ -1,9 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type {
-  GlobalScheduleHealthSnapshot,
-  SchedulerErrorKind,
-  SchedulerMetrics,
-} from './scheduler';
+import type { GlobalScheduleHealthSnapshot, SchedulerErrorKind, SchedulerMetrics } from './scheduler';
+// The public shape is defined against the DOMAIN types, never by indexed access into the
+// producer (`SchedulerMetrics['environment']`). Indexed access reads as harmless and is the
+// same defect one level up: it makes the published TYPE whatever the producer happens to
+// hold, so widening a producer field to `string` would silently widen the public contract
+// with no edit to this file — which is exactly the shape of the bug this unit exists to fix.
+import type { Environment } from '../core/terms-gate';
+import type { GlobalJobScheduleStatus } from '../core/global-job-schedule';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
 // Liveness/readiness payload for the ingestion worker (G-T1-2 verify: curl /healthz → 200).
@@ -181,8 +184,8 @@ export type GlobalScheduleHealthStatus = 'unknown' | 'last_read_ok' | 'stale';
  * different and far smaller risk than echoing a driver. A deliberate, recorded trade.
  */
 export interface PublicGlobalScheduleSnapshot {
-  jobType: GlobalScheduleHealthSnapshot['jobType'];
-  status: GlobalScheduleHealthSnapshot['status'];
+  jobType: string;
+  status: GlobalJobScheduleStatus;
   enabled: boolean;
   missedRuns: number;
   consecutiveFailures: number;
@@ -210,7 +213,7 @@ export interface PublicGlobalScheduleSnapshot {
  */
 export interface PublicSchedulerMetrics {
   enabled: boolean;
-  environment: SchedulerMetrics['environment'];
+  environment: Environment;
   schedulerTickMs: number;
   pollIntervalMs: number;
   ticks: number;
@@ -278,22 +281,57 @@ export interface PublicSchedulerMetrics {
  * this endpoint any more.
  *
  * ── WHAT tests/scheduler/healthz.test.ts PINS, AND WHAT IT DOES NOT ───────────────────────
- * FOUR key sets, each a hard-coded literal a human has to edit:
+ * FIVE pins, each against a hard-coded literal a human has to edit:
  *   1. the six TOP-LEVEL keys of the body;
  *   2. the keys this file ADDS on top of the metrics, AND the metrics keys it DROPS;
  *   3. the FULL key set of the `known: true` arm;
  *   4. the FULL key set of a `globalSchedules[]` ELEMENT — the nested set that no guard
  *      used to inspect, which is precisely how `breakerReason` sat on a public endpoint
- *      with three green guards over it.
- * Pin (3) is not redundant with pin (2): (2) is computed as a DIFFERENCE against a metrics
- * fixture, so a key present on both sides disappears from it BY CONSTRUCTION; and (1)
- * cannot see it either, because it arrives INSIDE `scheduler`.
+ *      with three green guards over it;
+ *   5. THE ALLOW-LIST PROBE — it attaches an own property this file has never heard of to a
+ *      metrics object at runtime and requires the published key set to be UNCHANGED.
  *
- * NONE of the four pins VALUES. Keys-not-values is a deliberate stopping point, not an
+ * ── WHAT PIN (3) IS FOR NOW, WHICH IS NOT WHAT IT USED TO BE ─────────────────────────────
+ * READ THIS BEFORE REASONING ABOUT THE GUARDS, because the old explanation survived a
+ * change that invalidated it and would send you the wrong way. When this arm was
+ * `{ ...metrics }`, pin (3) was the LAST LINE against a producer field reaching the public
+ * edge: (2) is a DIFFERENCE against a metrics fixture, so a key on both sides vanishes from
+ * it by construction, and (1) only sees the top level while a producer field arrived INSIDE
+ * `scheduler`. Pin (3) was the only one that could see it.
+ *
+ * A PRODUCER FIELD CANNOT ARRIVE INSIDE `scheduler` ANY MORE. PublicSchedulerMetrics is an
+ * enumerated allow-list and schedulerReport() names every key it publishes, so a field added
+ * to SchedulerMetrics is simply not published. PIN (3) THEREFORE NO LONGER CATCHES
+ * PRODUCER-SIDE ADDITIONS — there is nothing for it to catch, and claiming otherwise would
+ * describe a guard doing work the type system already did. What it catches now:
+ *   • a key added to or removed from schedulerReport()'s literal / PublicSchedulerMetrics,
+ *     i.e. a deliberate change to what the public is told — fails BY NAME;
+ *   • a SPREAD revert — `{ ...metrics }` re-publishes `lastError` and
+ *     `globalScheduleHealthError`, which are not in the literal, so it fails immediately.
+ *
+ * IT DOES NOT CATCH A BLOCKLIST, AND THAT IS WHY PIN (5) EXISTS. MEASURED: replacing this
+ * projection with `const { lastError: _a, globalScheduleHealthError: _b, ...rest } = metrics`
+ * — or the equivalent `Omit<SchedulerMetrics, 'lastError' | 'globalScheduleHealthError'>` —
+ * produces EXACTLY today's key set and ran GREEN on every assertion in that file. A
+ * blocklist and an allow-list are indistinguishable by output until a new producer field
+ * exists, at which point the blocklist publishes it and the guards are still green. Pin (5)
+ * is the only one that separates them, because it brings its own unknown field.
+ * Pins (1), (2) and (4) are unchanged in character. (2) additionally pins the DROPPED set,
+ * which is the only assertion that states this unit's outcome as a contract.
+ *
+ * ── AND WHAT NONE OF THEM DOES ───────────────────────────────────────────────────────────
+ * None of the four pins VALUES. Keys-not-values is a deliberate stopping point, not an
  * oversight: on the day a guard catches a real leak, a value comparison would copy the
- * leaked value into the CI log. The one assertion in that file that looks at content uses a
- * SENTINEL THE TEST ITSELF AUTHORED and asserts its ABSENCE, which cannot print anything
- * the test did not already contain.
+ * leaked value into the CI log. TWO assertions in that file do look at content, and neither
+ * can print anything from the object under test: one checks the ABSENCE of sentinels the
+ * test file itself declares, and one walks the whole body requiring every string to belong
+ * to a closed, code-owned set and reports the PATH of an offender rather than its value.
+ * That second one is the only guard that would notice free text arriving through a key that
+ * is already on the allow-list.
+ *
+ * Nothing here is a COMPILE-TIME check that PublicSchedulerMetrics stays a subset of
+ * anything, and none of these pins is one. That is a separate unit, deliberately sequenced
+ * after this one.
  */
 export type SchedulerReport = { known: false } | SchedulerReportedArm;
 

@@ -477,6 +477,50 @@ describe('/healthz — a sweep that found NOTHING is not a sweep that never RAN 
   });
 });
 
+/**
+ * THE PUBLISHED KEY SET OF THE `known: true` ARM — A HARD-CODED LITERAL. KEEP IT ONE.
+ *
+ * Do NOT rewrite it as `Object.keys(metrics())`, `Object.keys(m)`, or anything read from a
+ * runtime value, including anything derived from the projection itself. A derived list
+ * enters the expectation in the same instant as the key it is meant to question, and the
+ * guard is then green forever while the field sails onto the public edge. Editing this by
+ * hand is the deliberate act the guard exists to require.
+ *
+ * Shared by the two guards that pin it — the full-key-set pin and the allow-list probe —
+ * so a hand edit cannot satisfy one and quietly leave the other describing a different
+ * contract. See those tests for what each one can and cannot catch.
+ */
+const REPORTED_ARM_KEYS = [
+  'enabled',
+  'environment',
+  'errorCount',
+  'globalBreakersTripped',
+  'globalScheduleHealthAt',
+  'globalScheduleHealthReadFailed',
+  'globalScheduleHealthStatus',
+  'globalSchedules',
+  'jobsFailed',
+  'jobsProcessed',
+  'jobsSucceeded',
+  'known',
+  'lastEnqueueCount',
+  'lastErrorAt',
+  'lastErrorKind',
+  'lastGlobalEnqueueCount',
+  'lastJobAt',
+  'lastReconcileAt',
+  'lastReconcileAttemptAt',
+  'lastTickAt',
+  'pollIntervalMs',
+  'reconcileAttempts',
+  'schedulerTickMs',
+  'ticks',
+  'totalEnqueued',
+  'totalGlobalEnqueued',
+  'totalGlobalSlotsSkipped',
+  'totalReconciled',
+];
+
 describe('/healthz — the fields other guards poll are still on the wire', () => {
   // tests/scheduler/global-jobs-db.test.ts's awaitDurableHealth and
   // tests/scheduler/__fixtures__/restarted-worker.cjs both poll this body over a real socket
@@ -567,9 +611,20 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     // DIFFERENT THING THAN IT USED TO — it pins the PROJECTION, i.e. the deliberate decision
     // about what the public is told. What it catches now:
     //   • a key added to or removed from schedulerReport()'s object literal — fails BY NAME;
-    //   • schedulerReport() being "simplified" back to a spread — fails immediately and
+    //   • schedulerReport() being "simplified" back to a SPREAD — fails immediately and
     //     loudly, because `lastError` and `globalScheduleHealthError` reappear in the key set
-    //     and this literal does not contain them. THAT IS THIS GUARD'S PRIMARY JOB NOW.
+    //     and this literal does not contain them.
+    //
+    // WHAT IT DOES *NOT* CATCH, AND THIS WAS MEASURED RATHER THAN ASSUMED: A BLOCKLIST.
+    // Rewriting the projection as
+    //     const { lastError: _a, globalScheduleHealthError: _b, ...rest } = scheduler;
+    // — or the equivalent `Omit<SchedulerMetrics, 'lastError' | 'globalScheduleHealthError'>`
+    // — produces EXACTLY today's key set, and ran GREEN on all 36 assertions in this file
+    // when tried. A blocklist and an allow-list are indistinguishable by their output UNTIL
+    // a new producer field exists, at which point the blocklist publishes it and every guard
+    // here is still green. That is the original mechanism, re-armed.
+    // THE ALLOW-LIST PROBE ABOVE IS THE GUARD THAT SEPARATES THEM, because it brings its own
+    // unknown producer field. Do not read this assertion as covering that case.
     //
     // ── THE LIST IS A HARD-CODED LITERAL AND MUST STAY ONE ───────────────────────────────
     // Do NOT rewrite it as `Object.keys(metrics())`, `Object.keys(m)`, or anything else read
@@ -646,36 +701,6 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     // fixture was filled in. Step 2 held again: vitest was green on the un-updated fixture.
     // If you are here because step 1 or step 3 just failed at you: that is this guard doing
     // its job. Add the key to the list deliberately. Do not derive the list; do not cast.
-    const REPORTED_ARM_KEYS = [
-      'enabled',
-      'environment',
-      'errorCount',
-      'globalBreakersTripped',
-      'globalScheduleHealthAt',
-      'globalScheduleHealthReadFailed',
-      'globalScheduleHealthStatus',
-      'globalSchedules',
-      'jobsFailed',
-      'jobsProcessed',
-      'jobsSucceeded',
-      'known',
-      'lastEnqueueCount',
-      'lastErrorAt',
-      'lastErrorKind',
-      'lastGlobalEnqueueCount',
-      'lastJobAt',
-      'lastReconcileAt',
-      'lastReconcileAttemptAt',
-      'lastTickAt',
-      'pollIntervalMs',
-      'reconcileAttempts',
-      'schedulerTickMs',
-      'ticks',
-      'totalEnqueued',
-      'totalGlobalEnqueued',
-      'totalGlobalSlotsSkipped',
-      'totalReconciled',
-    ];
     // Every state that reaches the reported arm, so a key present in only one of them is
     // caught as well. `known: true` is asserted first so a state that quietly stopped
     // reaching this arm fails as itself rather than as a key-set mismatch.
@@ -709,6 +734,50 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
           'removed from SchedulerMetrics and is now on a public, unauthenticated endpoint',
       ).toEqual(REPORTED_ARM_KEYS);
     }
+  });
+
+  it('THE ALLOW-LIST ITSELF: an unknown producer field does not reach the wire', async () => {
+    // ── WHY THIS EXISTS, AND WHY THE OTHER PINS CANNOT DO ITS JOB ────────────────────────
+    // Every other guard in this file compares the PUBLISHED key set against a literal. That
+    // catches a spread — `{ ...metrics }` re-publishes `lastError` and
+    // `globalScheduleHealthError`, which are not in the literal. IT DOES NOT CATCH A
+    // BLOCKLIST. `const { lastError: _a, globalScheduleHealthError: _b, ...rest } = metrics`
+    // (or `Omit<SchedulerMetrics, 'lastError' | 'globalScheduleHealthError'>`) produces
+    // EXACTLY today's correct key set, so every assertion here stays green — and then
+    // publishes the NEXT field somebody adds to SchedulerMetrics, which is precisely the
+    // mechanism that put raw pg driver text on this endpoint in the first place.
+    //
+    // MEASURED, not argued: the rest-destructure above was applied to schedulerReport() and
+    // all 36 tests in this file passed. A blocklist and an allow-list are indistinguishable
+    // by their output UNTIL a new producer field exists — at which point the guard is green
+    // and the field is live. So the guard has to bring its own new producer field.
+    //
+    // It adds one at RUNTIME rather than to `SchedulerMetrics`, deliberately: the type is
+    // what a future author edits, and this must fail for them BEFORE they have touched a
+    // type, on the strength of the construction alone. Under an allow-list the probe is not
+    // published and the key set is unchanged; under a spread OR a blocklist it appears and
+    // this fails BY NAME. Keys only — the probe's VALUE is never compared, only its key.
+    const withUnknownField = (): SchedulerMetrics => {
+      const m = metrics({ globalScheduleHealthAt: '2026-01-01T00:00:00.000Z' });
+      // An own enumerable property no line of worker/src/healthz.ts knows about — exactly
+      // what a field added to the producer looks like to the projection.
+      Object.assign(m, { fieldTheProjectionHasNeverHeardOf: 'PROBE_not_in_the_public_list' });
+      return m;
+    };
+
+    const probed = withUnknownField();
+    expect(
+      Object.hasOwn(probed, 'fieldTheProjectionHasNeverHeardOf'),
+      'the probe did not attach — this guard would pass vacuously',
+    ).toBe(true);
+
+    const scheduler = (await get(state(probed))).body.scheduler as Record<string, unknown>;
+    expect(
+      Object.keys(scheduler).sort(),
+      'worker/src/healthz.ts is publishing a field it does not name — schedulerReport() has ' +
+        'become a SPREAD or a BLOCKLIST (rest-destructure / Omit) instead of an enumerated ' +
+        'allow-list, so the next field added to SchedulerMetrics ships to the public edge',
+    ).toEqual(REPORTED_ARM_KEYS);
   });
 
   it('a globalSchedules ELEMENT is a fixed key set — the nested route is no longer unwatched', async () => {
