@@ -84,26 +84,49 @@ describe.skipIf(!hasDb)('worker queue: job_type dispatch against real Postgres',
   let seriesId = '';
   let sourceId = '';
   let blockedSourceId = '';
+  let manualSourceId = '';
+  let manualSeriesId = '';
   let tag = '';
 
   beforeAll(async () => {
+    // ingestion_method='auto', NOT 'manual'. ACCEPTANCE D below asserts that the flip
+    // really demotes rows under this source, and worker/health/stale.ts exempts
+    // operator-fed sources — so with 'manual' here every demotion assertion in section D
+    // would be asserting the exemption instead, and the "it really ran" evidence would be
+    // gone. Safe to auto-crawl: this file runs the scheduler with `immediate: false` and a
+    // 10-minute tick (see runSchedulerUntilSettled), so the tiered producer never fires and
+    // no ingest job is ever enqueued for it.
     const [src] = await query<{ id: string }>(
       `INSERT INTO source (family, name, terms_status, robots_status, authority_tier, ingestion_method)
-         VALUES ('test_job_dispatch', $1, 'allowed', 'allowed', 'official', 'manual') RETURNING id`,
+         VALUES ('test_job_dispatch', $1, 'allowed', 'allowed', 'official', 'auto') RETURNING id`,
       [`Job Dispatch Test Source ${randomUUID().slice(0, 8)}`]
     );
     sourceId = src.id;
     const [blocked] = await query<{ id: string }>(
       `INSERT INTO source (family, name, terms_status, robots_status, authority_tier, ingestion_method)
-         VALUES ('test_job_dispatch', $1, 'blocked', 'allowed', 'official', 'manual') RETURNING id`,
+         VALUES ('test_job_dispatch', $1, 'blocked', 'allowed', 'official', 'auto') RETURNING id`,
       [`Job Dispatch Blocked Source ${randomUUID().slice(0, 8)}`]
     );
     blockedSourceId = blocked.id;
+    // The operator-fed counterpart, used ONLY by section D's exemption case. Kept separate
+    // from `sourceId` so the positive and negative halves of that assertion differ in
+    // exactly one column.
+    const [manual] = await query<{ id: string }>(
+      `INSERT INTO source (family, name, terms_status, robots_status, authority_tier, ingestion_method)
+         VALUES ('test_job_dispatch', $1, 'allowed', 'allowed', 'manual', 'manual') RETURNING id`,
+      [`Job Dispatch Manual Source ${randomUUID().slice(0, 8)}`]
+    );
+    manualSourceId = manual.id;
     const [ser] = await query<{ id: string }>(
       `INSERT INTO activity_series (canonical_title, source_id) VALUES ('Job Dispatch Series', $1) RETURNING id`,
       [sourceId]
     );
     seriesId = ser.id;
+    const [manualSer] = await query<{ id: string }>(
+      `INSERT INTO activity_series (canonical_title, source_id) VALUES ('Job Dispatch Manual Series', $1) RETURNING id`,
+      [manualSourceId]
+    );
+    manualSeriesId = manualSer.id;
     const [occ] = await query<{ id: string }>(
       `INSERT INTO activity_occurrence (series_id, activity_name, start_datetime_utc, status_state, confidence_label)
          VALUES ($1, 'Job Dispatch Listing', '2026-12-01T18:00:00Z', 'needs_review', 'unscored') RETURNING id`,
@@ -137,8 +160,10 @@ describe.skipIf(!hasDb)('worker queue: job_type dispatch against real Postgres',
       if (occurrenceId) await query(`DELETE FROM correction_report WHERE occurrence_id = $1`, [occurrenceId]);
       if (occurrenceId) await query(`DELETE FROM activity_occurrence WHERE id = $1`, [occurrenceId]);
       if (seriesId) await query(`DELETE FROM activity_series WHERE id = $1`, [seriesId]);
+      if (manualSeriesId) await query(`DELETE FROM activity_series WHERE id = $1`, [manualSeriesId]);
       if (sourceId) await query(`DELETE FROM source WHERE id = $1`, [sourceId]);
       if (blockedSourceId) await query(`DELETE FROM source WHERE id = $1`, [blockedSourceId]);
+      if (manualSourceId) await query(`DELETE FROM source WHERE id = $1`, [manualSourceId]);
     } finally {
       await closePool();
     }
@@ -258,7 +283,8 @@ describe.skipIf(!hasDb)('worker queue: job_type dispatch against real Postgres',
     async function mkOccurrence(
       label: string,
       status: string,
-      daysAgo: number | null
+      daysAgo: number | null,
+      targetSeriesId?: string
     ): Promise<string> {
       const [row] = await query<{ id: string }>(
         `INSERT INTO activity_occurrence
@@ -267,7 +293,7 @@ describe.skipIf(!hasDb)('worker queue: job_type dispatch against real Postgres',
                  CASE WHEN $4::float8 IS NULL THEN NULL
                       ELSE now() - make_interval(secs => $4::float8 * 86400) END)
          RETURNING id`,
-        [seriesId, `${tag} ${label}`, status, daysAgo]
+        [targetSeriesId ?? seriesId, `${tag} ${label}`, status, daysAgo]
       );
       return row.id;
     }
@@ -344,6 +370,30 @@ describe.skipIf(!hasDb)('worker queue: job_type dispatch against real Postgres',
       expect(await statusOf(crossedRecently)).toBe('stale');
       expect(await statusOf(crossedWeeksAgo)).toBe('stale');
       expect(await statusOf(crossedLongAgo)).toBe('stale');
+    });
+
+    // ── THE OPERATOR-FED EXEMPTION, THROUGH THE REAL DISPATCH PATH ──────────────────────
+    // tests/health/stale.test.ts pins this at the function. This pins it where it actually
+    // has to hold: a real job_queue row, claimed and dispatched by the real scheduler, with
+    // the handler running the real UPDATE. A predicate change that never reached the
+    // registered handler would pass the function-level test and fail here.
+    it('a hand-curated listing is NOT demoted, while an ingested one of the same age IS', async () => {
+      // Identical in every respect the predicate reads — same 'confirmed' status, same
+      // 1-day baseline_cadence, same 3-day overdue age — except the owning source's
+      // ingestion_method. One column is the whole difference between these two rows.
+      const ingested = await mkOccurrence('ingested-3d', 'confirmed', 3);
+      const handCurated = await mkOccurrence('manual-3d', 'confirmed', 3, manualSeriesId);
+
+      const row = await runSchedulerUntilSettled(await enqueueOneShot('stale_occurrence_flip', null));
+      expect(row.last_error).toBeNull();
+      expect(row.status).toBe('done');
+
+      // ── TEETH ──────────────────────────────────────────────────────────────────────
+      // The pair is the point. Drop the ingestion_method clause from the flip's SQL and the
+      // second assertion goes red; break the flip so it demotes nothing and the FIRST one
+      // does. Neither line alone can tell those two failures apart.
+      expect(await statusOf(ingested)).toBe('stale');
+      expect(await statusOf(handCurated)).toBe('confirmed');
     });
   });
 });

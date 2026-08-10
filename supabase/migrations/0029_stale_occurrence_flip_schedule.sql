@@ -15,13 +15,16 @@
 -- only non-test hits were its own definition and a comment in vitest.workspace.ts.)
 --
 -- ── BLAST RADIUS. READ THIS BEFORE ENABLING. ────────────────────────────────────────────────
--- The statement is an UPDATE over activity_occurrence scoped by PREDICATE, not by source, not
--- by batch and not by time window. Every run can touch every row that satisfies:
+-- The statement is an UPDATE over activity_occurrence scoped by PREDICATE — not by batch, not
+-- by time window, and not by any particular source id. It DOES exclude one CLASS of source
+-- (operator-fed; see below), but there is no id list and no LIMIT: every run can touch every
+-- row that satisfies:
 --     archived_at IS NULL
 --   AND last_checked_at IS NOT NULL
 --   AND status_state ∈ STALE_DEMOTE_FROM   (the six "live" states in worker/health/stale.ts;
 --                                           human/terminal and already-low states are excluded
 --                                           so staleness never overwrites a specific decision)
+--   AND source.ingestion_method ∉ STALE_FLIP_EXCLUDED_INGESTION_METHODS   (= {'manual'})
 --   AND last_checked_at < now() - STALE_CADENCE_GRACE × COALESCE(near_date_cadence,
 --                                                                baseline_cadence)
 -- source.baseline_cadence is NOT NULL DEFAULT '1 day' (migration 0003), so the effective
@@ -56,35 +59,52 @@
 --   show stale/expected/seasonal as confirmed" — and applies it to all 16 statuses. The
 --   mechanism is doing what it was specified to do.
 --
--- WHICH IS WHY THE REAL QUESTION HERE IS A PRODUCT ONE, NOT A TECHNICAL ONE. That rule was
--- written for INGESTED listings, where "nothing has re-checked this lately" is both true and
--- self-correcting: the next successful ingest restores last_checked_at and status_state
--- together, and the caveat lifts itself. A hand-curated listing is subject to the identical
--- rule with no re-ingest path back (see below), so for those rows the caveat is permanent
--- until a human returns to it. Whether manual listings belong inside a rule designed for
--- ingested ones is the decision the `enabled` flag is reserving.
+-- WHY THE PREDICATE EXEMPTS OPERATOR-FED SOURCES, AND WHAT THAT CHANGED SINCE THIS MIGRATION
+-- WAS FIRST WRITTEN. The staleness rule was written for INGESTED listings, where "nothing has
+-- re-checked this lately" is both true and SELF-CORRECTING: the next successful ingest restores
+-- last_checked_at and status_state together (worker/core/upsert.ts), and the caveat lifts
+-- itself. A hand-curated listing used to sit inside the identical rule with nothing to lift it,
+-- so its caveat was permanent until a human returned to it.
+--
+-- >>> THAT IS NO LONGER TRUE, AND THIS PARAGRAPH IS THE CORRECTION. <<< The flip's predicate
+-- now carries `AND source.ingestion_method <> 'manual'`
+-- (STALE_FLIP_EXCLUDED_INGESTION_METHODS in worker/health/stale.ts). Occurrences under an
+-- operator-fed source are NOT demoted, at any age. Earlier revisions of this header told the
+-- person flipping `enabled` that hand-curated listings WOULD be demoted with no automatic
+-- recovery, and told them to expect a large family='manual' row in the dry run below. Both
+-- statements were accurate when written and are now false; the dry-run query has been
+-- corrected to match, and it can no longer return a manual row at all.
+--
+-- WHY `ingestion_method` AND NOT `authority_tier`, since both columns have a 'manual' value and
+-- app/admin/listings/_lib/data.ts's getOrCreateManualSource sets BOTH (plus family='manual') on
+-- the one canonical row: `authority_tier` is a TRUST claim about the data, whereas
+-- `ingestion_method` is the column that decides whether anything ever fetches the source again —
+-- it is the exact column worker/scheduler/tiered.ts's candidate predicate uses to refuse to
+-- enqueue. "Has no re-ingest path" is a statement about that column by construction. (Earlier
+-- revisions of this header said "source family 'manual'". That was loose language for
+-- ingestion_method, not a third rule.)
 --
 -- Neither running nor not running this job destroys data. The failure mode of running it is
--- "listings a human curated get caveated and pushed below the confirmed list"; the failure
--- mode of NOT running it is "listings nobody has re-checked keep presenting as confirmed",
--- which is that same honesty invariant being quietly false.
+-- "INGESTED listings whose source went quiet get caveated and pushed below the confirmed list",
+-- which is the intended behaviour; the failure mode of NOT running it is "listings nobody has
+-- re-checked keep presenting as confirmed", which is the honesty invariant above being quietly
+-- false. The hand-curated-collateral failure mode that used to sit on the "running it" side of
+-- that trade is now excluded by the predicate rather than reserved by the flag.
 --
--- THE ONE CONSEQUENCE THAT IS NOT OBVIOUS FROM THE NAME. The predicate says "nothing has
--- re-checked this row lately". It does not say "the row's source went dark" — and for rows
--- that NO producer refreshes, those are different statements. A hand-curated listing created
--- through app/admin/listings (source family 'manual', which takes the default 1-day cadence)
--- is stamped last_checked_at = now() at creation and is then never re-ingested by anything, so
--- 2 days later it satisfies the predicate and is demoted. Measured, not reasoned: against a
--- 0029-era schema, a 'confirmed' manual listing whose last_checked_at was 3 days old flipped to
--- 'stale' on one run of the statement above.
+-- WHAT THE EXEMPTION COSTS, STATED PLAINLY SO THE FLAG-FLIPPER OWNS IT: a hand-curated listing
+-- that has genuinely gone out of date will now keep presenting as 'confirmed' indefinitely.
+-- The exemption does not make manual listings fresh — it makes this job silent about them, and
+-- moves that problem to whatever surfaces manual curation for human review.
 --
--- There is no automatic path back. status_state is restored only by a write that re-stamps it:
--- worker/core/upsert.ts on a real re-ingest (which cannot happen for a manual source), the
--- admin QA queue's approve, or resolving a correction. Whether a human-curated listing SHOULD
--- decay to lowest rank after two days is a product decision, and it is exactly the decision the
--- `enabled` flag below is reserving. Nothing about that behaviour was changed by this
--- migration — it has been flipStaleOccurrences()'s semantics all along; it has simply never had
--- a caller to make it real.
+-- ROUTES OUT OF 'stale', re-derived at this file's revision rather than carried forward: a
+-- demoted row is restored only by a write that re-stamps status_state — worker/core/upsert.ts
+-- on a real re-ingest, the admin QA queue's approve (app/admin/qa-queue/_lib/data.ts), or
+-- resolving a correction (app/admin/corrections/_lib/data.ts). One more EXISTS IN THE CODE and
+-- is worth knowing about precisely because it is invisible from any of those: worker/health/
+-- season.ts lists 'stale' in SEASON_INHERITABLE_FROM and inheritOccurrenceStatus() would move
+-- such a row to 'seasonal_active' for an in_season source. It is NOT a live path — that module
+-- has no non-test importer anywhere in the repo, the same condition flipStaleOccurrences() was
+-- in before this migration gave it one. Give season.ts a caller and it becomes a fourth route.
 --
 -- ── WHY THE PRODUCER'S SLOT-SKIPPING IS SAFE FOR THIS JOB ──────────────────────────────────
 -- worker/scheduler/global-jobs.ts advances next_run_at to the first slot in the FUTURE, so an
@@ -136,8 +156,10 @@ ON CONFLICT (job_type) DO NOTHING;
 --   UPDATE global_job_schedule SET enabled = true WHERE job_type = 'stale_occurrence_flip';
 --
 -- DRY RUN THE PREDICATE FIRST — how many rows the next run would touch, and where they live.
--- This is a SELECT; it changes nothing:
---   SELECT s.family, s.name, count(*) AS would_flip
+-- This is a SELECT; it changes nothing. It mirrors worker/health/stale.ts's UPDATE clause for
+-- clause, INCLUDING the operator-fed exemption, so its count is what the next run would really
+-- demote:
+--   SELECT s.family, s.ingestion_method, s.name, count(*) AS would_flip
 --     FROM activity_occurrence o
 --     JOIN activity_series ser ON ser.id = o.series_id
 --     JOIN source s ON s.id = ser.source_id
@@ -146,10 +168,19 @@ ON CONFLICT (job_type) DO NOTHING;
 --      AND o.status_state::text = ANY (ARRAY['confirmed','bookable_open','not_yet_bookable',
 --                                            'schedule_not_published','inferred_recurring',
 --                                            'seasonal_active'])
+--      AND s.ingestion_method <> 'manual'
 --      AND o.last_checked_at < now() - make_interval(
 --            secs => extract(epoch FROM COALESCE(s.near_date_cadence, s.baseline_cadence)) * 2)
---    GROUP BY 1, 2 ORDER BY would_flip DESC;
---   -- A large count under family='manual' is the caveat above showing up in your data.
+--    GROUP BY 1, 2, 3 ORDER BY would_flip DESC;
+--   -- ingestion_method is SELECTed so the exemption is visible in the output rather than
+--   -- implied by its absence: every row returned is non-manual BY CONSTRUCTION, and a
+--   -- 'manual' row appearing here would mean the code and this query have drifted apart.
+--
+-- TO SEE WHAT THE EXEMPTION IS SPARING — the hand-curated listings that WOULD have been
+-- demoted before it existed, i.e. the listings now carrying no staleness caveat however old
+-- they are. This is the review queue the exemption creates, and it is also read-only. Run the
+-- query above with the `<>` flipped to `=`:
+--      ...  AND s.ingestion_method = 'manual'  ...
 --
 -- RESET a tripped breaker (explicit recovery; there is no automatic path) — as 0028.
 

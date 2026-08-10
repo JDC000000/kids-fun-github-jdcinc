@@ -68,20 +68,27 @@ import {
   UNKNOWN_JOB_TYPE_ERROR_PREFIX,
 } from '../../worker/core/job-handlers';
 import type { Job } from '../../worker/core/queue';
+import { STALE_FLIP_EXCLUDED_INGESTION_METHODS } from '../../worker/health/stale';
 
 /** A pg Pool stand-in that records every statement and returns whatever `rows` is set to. */
 function stubPool(rows: Record<string, unknown>[] = []): {
   pool: never;
   queries: string[];
+  /** Bind parameters per captured statement, positionally aligned with `queries`. Captured
+   *  because some predicates are only half-visible in the SQL text: a clause written as
+   *  `= ANY($n)` says nothing about WHICH set it tests, and the set is the behaviour. */
+  params: unknown[][];
 } {
   const queries: string[] = [];
+  const params: unknown[][] = [];
   const pool = {
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       queries.push(sql.replace(/\s+/g, ' ').trim());
+      params.push(values ?? []);
       return { rows };
     },
   };
-  return { pool: pool as never, queries };
+  return { pool: pool as never, queries, params };
 }
 
 /** A pg Pool stand-in whose every statement fails — a database that is simply not there. */
@@ -254,7 +261,7 @@ describe("job_type 'stale_occurrence_flip' — the flip finally has a caller", (
     // dispatcher called the thing it was told to call. The statement below is one nothing
     // else in the process emits, so seeing it on THIS stub proves both that the real
     // implementation ran and that it ran on the worker's pool rather than opening its own.
-    const { pool, queries } = stubPool();
+    const { pool, queries, params } = stubPool();
     await expect(
       makeJobDispatcher(pool, 'staging')(job({ jobType: FLIP, sourceId: null }))
     ).resolves.toBeUndefined();
@@ -263,11 +270,21 @@ describe("job_type 'stale_occurrence_flip' — the flip finally has a caller", (
     const sql = queries[0];
     expect(sql).toContain('UPDATE activity_occurrence');
     expect(sql).toContain("SET status_state = 'stale'");
-    // The predicate's three exclusions, which are what keep the blast radius to "rows
-    // nothing has re-checked lately" rather than "every row".
+    // The predicate's four exclusions, which are what keep the blast radius to "rows
+    // nothing has re-checked lately, that anything is actually re-checking" rather than
+    // "every row".
     expect(sql).toContain('o.archived_at IS NULL');
     expect(sql).toContain('o.last_checked_at IS NOT NULL');
     expect(sql).toContain('o.status_state::text = ANY');
+    expect(sql).toContain('NOT (s.ingestion_method::text = ANY');
+
+    // ── AND THE SET IT TESTS AGAINST IS THE EXPORTED CONSTANT, NOT A COPY ──────────────
+    // This is the assertion that makes the SQL and the pure predicate unable to drift.
+    // `= ANY($4)` above proves only that SOME set is excluded; re-typing the values as a
+    // SQL literal, or binding a different array, would leave every line above green while
+    // isStaleFlipEligibleSource() went on describing the old rule. Identity, not equality:
+    // a structurally-equal copy is exactly the second source of truth this pins against.
+    expect(params[0]).toContain(STALE_FLIP_EXCLUDED_INGESTION_METHODS);
     expect(shared.purgeCalls).toHaveLength(0); // and it is not the retention job in disguise
   });
 

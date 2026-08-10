@@ -1,8 +1,9 @@
 // worker/health/stale.ts — G-T15-4: OCCURRENCE-level stale detection (TSD §7.2, §5A.3).
-// A past-cadence occurrence flips status_state → 'stale', which (per
-// lib/search/filters/status.ts + lib/search/rank.ts) keeps it shown but ranks it lowest
+// A past-cadence occurrence WHOSE SOURCE IS AUTO-CRAWLED flips status_state → 'stale', which
+// (per lib/search/filters/status.ts + lib/search/rank.ts) keeps it shown but ranks it lowest
 // (0.15) — i.e. de-prioritised and dropped out of the "confirmed" high-actionability band —
-// and makes it countable for the data-health surface.
+// and makes it countable for the data-health surface. Occurrences under an OPERATOR-FED
+// source are exempt; see STALE_FLIP_EXCLUDED_INGESTION_METHODS below for why.
 //
 // Reconciliation with lib/admin/dashboard.ts isSourceStale: that predicate is SOURCE-level
 // and READ-ONLY (it decides whether to LIST a whole source as stale on the admin dashboard).
@@ -36,9 +37,67 @@ export const STALE_DEMOTE_FROM: readonly string[] = [
 ];
 
 /**
+ * source.ingestion_method values the flip must NOT demote — the sources with NO RE-INGEST
+ * PATH BACK.
+ *
+ * WHY THIS EXCLUSION EXISTS, and it is not a special case bolted onto a general rule. The
+ * staleness rule is "nothing has re-checked this row lately". For an INGESTED source that
+ * is both true and SELF-CORRECTING: worker/core/upsert.ts re-stamps last_checked_at and
+ * status_state together on the next successful ingest, so the caveat lifts itself. A source
+ * that is never crawled sits inside the identical rule with nothing to lift it, so its
+ * occurrences decay to the lowest shown rank ~2 days after a human curated them and STAY
+ * there until a human returns (the only writes that restore status_state are a real
+ * re-ingest, an admin QA approve, or resolving a correction). The rule was written for
+ * ingested listings; this is the clause that says so.
+ *
+ * WHY `ingestion_method` AND NOT `authority_tier`. Both columns have a 'manual' value and
+ * app/admin/listings/_lib/data.ts's getOrCreateManualSource sets BOTH, so on that one row
+ * they are indistinguishable — but they answer different questions. `authority_tier` is a
+ * TRUST claim about the data; `ingestion_method` is the column that decides whether anything
+ * ever fetches the source again, and it is the exact column worker/scheduler/tiered.ts's
+ * candidate predicate uses to refuse to enqueue (`AND s.ingestion_method <> 'manual'`).
+ * "Has no re-ingest path" is therefore a statement about THIS column, by construction.
+ *
+ * SAME SET, SAME MEANING as worker/scheduler/cadence.ts's MANUAL_INGESTION_METHODS — the
+ * sources that producer refuses to schedule are exactly the ones this flip must not punish
+ * for not having been scheduled. Deliberately NOT imported from there: that module is the
+ * scheduler's tier policy and this is a data-health predicate, and coupling them would mean
+ * a future scheduling change silently moved which listings get caveated. If the two sets
+ * ever need to diverge they can; today they agree, and that agreement is the point.
+ *
+ * NOTE 'semi' IS NOT HERE, deliberately. Only 'manual' means never-crawled; cadence.ts
+ * schedules 'semi', 'auto' and 'partner' alike, so their occurrences do get re-checked and
+ * the self-correcting argument above holds for them.
+ */
+export const STALE_FLIP_EXCLUDED_INGESTION_METHODS: readonly string[] = ['manual'];
+
+/**
+ * Pure mirror of the flip's ingestion_method clause: may occurrences under a source with
+ * this ingestion_method be demoted by staleness?
+ *
+ * This function and flipStaleOccurrences()'s SQL cannot drift, because they are not two
+ * statements of the same rule — they READ THE SAME ARRAY. The SQL passes
+ * STALE_FLIP_EXCLUDED_INGESTION_METHODS as a bind parameter exactly as it already does with
+ * STALE_DEMOTE_FROM, so editing the constant moves both at once and editing one without the
+ * other is not expressible.
+ *
+ * `ingestionMethod` is typed non-null because source.ingestion_method is NOT NULL
+ * (supabase/migrations/0003_core_places.sql).
+ */
+export function isStaleFlipEligibleSource(ingestionMethod: string): boolean {
+  return !STALE_FLIP_EXCLUDED_INGESTION_METHODS.includes(ingestionMethod);
+}
+
+/**
  * Pure staleness predicate for one occurrence: stale iff it was last refreshed longer than
  * grace × its effective cadence ago. A never-checked occurrence (null last_checked_at) is not
  * stale (no freshness signal yet). Exported so the flip logic is unit-testable without a DB.
+ *
+ * THIS IS THE FRESHNESS CLAUSE ONLY, and deliberately still answers "is this row overdue?"
+ * rather than "will the flip touch this row?" — an ancient manual listing IS stale by this
+ * measure, and saying otherwise here would make the function's name a lie. Whether the flip
+ * may ACT on it is a separate question, answered by isStaleFlipEligibleSource() and
+ * STALE_DEMOTE_FROM. The SQL below is the only place all three are composed.
  */
 export function isOccurrenceStale(
   input: { lastCheckedAtMs: number | null; cadenceSeconds: number | null },
@@ -58,11 +117,15 @@ export interface StaleFlipResult {
 }
 
 /**
- * Flip every past-cadence, live-status, non-archived occurrence to status_state='stale'.
+ * Flip every past-cadence, live-status, non-archived occurrence UNDER AN AUTO-CRAWLED SOURCE
+ * to status_state='stale'.
  * Effective cadence is the owning source's COALESCE(near_date_cadence, baseline_cadence);
  * freshness is the occurrence's own last_checked_at (stamped by worker/core/upsert.ts on
- * every ingest). Threshold and eligible-status set match isOccurrenceStale / STALE_DEMOTE_FROM
- * so the DB behaviour and the pure predicate agree. Returns the ids it changed.
+ * every ingest). Threshold, eligible-status set and eligible-source set match
+ * isOccurrenceStale / STALE_DEMOTE_FROM / STALE_FLIP_EXCLUDED_INGESTION_METHODS so the DB
+ * behaviour and the pure predicates agree — each of the two set clauses is BOUND FROM THE
+ * EXPORTED CONSTANT rather than restated as a SQL literal, so they cannot drift apart.
+ * Returns the ids it changed.
  */
 export async function flipStaleOccurrences(
   pool: Pool,
@@ -78,11 +141,12 @@ export async function flipStaleOccurrences(
         AND o.archived_at IS NULL
         AND o.last_checked_at IS NOT NULL
         AND o.status_state::text = ANY($1::text[])
+        AND NOT (s.ingestion_method::text = ANY($4::text[]))
         AND o.last_checked_at < now() - make_interval(
               secs => COALESCE(extract(epoch FROM COALESCE(s.near_date_cadence, s.baseline_cadence)), $2::float8) * $3::float8
             )
       RETURNING o.id`,
-    [STALE_DEMOTE_FROM, DEFAULT_CADENCE_SECONDS, grace]
+    [STALE_DEMOTE_FROM, DEFAULT_CADENCE_SECONDS, grace, STALE_FLIP_EXCLUDED_INGESTION_METHODS]
   );
   return { flipped: rows.map((r) => r.id), count: rows.length };
 }

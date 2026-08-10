@@ -220,9 +220,17 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
         }
       : null;
 
+    // ingestion_method='auto' IS LOAD-BEARING. The stale_occurrence_flip case below proves a
+    // DISABLED schedule demotes nothing, and it proves it by showing a row that the flip
+    // WOULD otherwise have demoted survive. worker/health/stale.ts exempts operator-fed
+    // sources, so under 'manual' that row would survive for a second, unrelated reason: the
+    // assertion would still pass with `enabled` flipped to true, and the guard it documents
+    // would be silently gone. 'auto' keeps `enabled` the only thing sparing it.
+    // (Safe: parkDueTieredSources() below parks every due source before the one child
+    // process that runs a real boot tick, and asserts lastEnqueueCount === 0.)
     const [src] = await query<{ id: string }>(
       `INSERT INTO source (family, name, terms_status, robots_status, authority_tier, ingestion_method)
-         VALUES ('test_global_sched', $1, 'allowed', 'allowed', 'official', 'manual') RETURNING id`,
+         VALUES ('test_global_sched', $1, 'allowed', 'allowed', 'official', 'auto') RETURNING id`,
       [`Global Schedule Test Source ${randomUUID().slice(0, 8)}`]
     );
     sourceId = src.id;
@@ -1298,7 +1306,9 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
         [schedule.id]
       );
       // A row the flip WOULD demote: this file's source takes baseline_cadence's 1-day
-      // default (migration 0003) and STALE_CADENCE_GRACE is 2, so 3 days is past threshold.
+      // default (migration 0003) and STALE_CADENCE_GRACE is 2, so 3 days is past threshold —
+      // and its ingestion_method is 'auto', so the operator-fed exemption does not spare it
+      // either. `enabled = false` is the only thing standing between this row and 'stale'.
       const [victim] = await query<{ id: string }>(
         `INSERT INTO activity_occurrence
            (series_id, activity_name, start_datetime_utc, status_state, confidence_label, last_checked_at)
