@@ -220,12 +220,25 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
         }
       : null;
 
-    // ingestion_method='auto' IS LOAD-BEARING. The stale_occurrence_flip case below proves a
-    // DISABLED schedule demotes nothing, and it proves it by showing a row that the flip
-    // WOULD otherwise have demoted survive. worker/health/stale.ts exempts operator-fed
-    // sources, so under 'manual' that row would survive for a second, unrelated reason: the
-    // assertion would still pass with `enabled` flipped to true, and the guard it documents
-    // would be silently gone. 'auto' keeps `enabled` the only thing sparing it.
+    // ingestion_method='auto' rather than 'manual', so this fixture does not carry a silent
+    // exemption. worker/health/stale.ts exempts operator-fed sources, so under 'manual' the
+    // stale_occurrence_flip row below would be unflippable for a reason that has nothing to
+    // do with what that test is about.
+    //
+    // BUT DO NOT READ THIS AS "'auto' MAKES `enabled` THE ONLY THING SPARING THAT ROW" — it
+    // does not, and an earlier revision of this comment said so wrongly. TWO things spare it,
+    // and only one is the flag:
+    //   1. the schedule is disabled, so no job is produced; and
+    //   2. tickFor() calls enqueueDueGlobalJobs(), which only INSERTs into global_job_run and
+    //      job_queue — IT NEVER EXECUTES A HANDLER. Nothing in that path can demote a row
+    //      whatever `enabled` says.
+    // So flipping `enabled` reddens that test through its FIRST assertion (the job count going
+    // 0 → 1), never through its demotion assertion. The demotion check there is defence in
+    // depth, not teeth; the real teeth are in tests/scheduler/job-dispatch-db.test.ts, which
+    // runs the actual handler. Setting 'auto' here is still right — a fixture should not
+    // encode a second, invisible reason for its own result — it is just not what makes that
+    // test bite. (Predates the operator-fed exemption; not caused by it.)
+    //
     // (Safe: parkDueTieredSources() below parks every due source before the one child
     // process that runs a real boot tick, and asserts lastEnqueueCount === 0.)
     const [src] = await query<{ id: string }>(
@@ -1305,10 +1318,12 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
         `UPDATE global_job_schedule SET enabled = false, next_run_at = now() - interval '30 days' WHERE id = $1`,
         [schedule.id]
       );
-      // A row the flip WOULD demote: this file's source takes baseline_cadence's 1-day
-      // default (migration 0003) and STALE_CADENCE_GRACE is 2, so 3 days is past threshold —
-      // and its ingestion_method is 'auto', so the operator-fed exemption does not spare it
-      // either. `enabled = false` is the only thing standing between this row and 'stale'.
+      // A row the flip WOULD demote IF ANYTHING HERE RAN THE HANDLER: this file's source takes
+      // baseline_cadence's 1-day default (migration 0003) and STALE_CADENCE_GRACE is 2, so 3
+      // days is past threshold, and its ingestion_method is 'auto', so the operator-fed
+      // exemption does not spare it either. Nothing in this tick executes a handler, though —
+      // see the note on the source fixture above — so this row's survival is over-determined
+      // and the assertion below is defence in depth rather than the guard's teeth.
       const [victim] = await query<{ id: string }>(
         `INSERT INTO activity_occurrence
            (series_id, activity_name, start_datetime_utc, status_state, confidence_label, last_checked_at)

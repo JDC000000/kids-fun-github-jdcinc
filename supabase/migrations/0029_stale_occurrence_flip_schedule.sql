@@ -77,12 +77,26 @@
 --
 -- WHY `ingestion_method` AND NOT `authority_tier`, since both columns have a 'manual' value and
 -- app/admin/listings/_lib/data.ts's getOrCreateManualSource sets BOTH (plus family='manual') on
--- the one canonical row: `authority_tier` is a TRUST claim about the data, whereas
--- `ingestion_method` is the column that decides whether anything ever fetches the source again —
--- it is the exact column worker/scheduler/tiered.ts's candidate predicate uses to refuse to
--- enqueue. "Has no re-ingest path" is a statement about that column by construction. (Earlier
--- revisions of this header said "source family 'manual'". That was loose language for
--- ingestion_method, not a third rule.)
+-- the one canonical row: `authority_tier` is a TRUST claim about the data and gates no fetching
+-- at all, whereas `ingestion_method` is the column that decides whether anything ever fetches
+-- the source again AUTOMATICALLY — it is the exact column worker/scheduler/tiered.ts's candidate
+-- predicate uses to refuse to enqueue. (Earlier revisions of this header said "source family
+-- 'manual'". That was loose language for ingestion_method, not a third rule.)
+--
+-- >>> READ "AUTOMATICALLY" LITERALLY — AN EARLIER REVISION OF THIS PARAGRAPH OVERSTATED THE
+-- TRAP. <<< A manual source is not unreachable; it is only unreachable UNATTENDED.
+-- worker/src/ingest-once.ts selects a source by --source-id or --family/--name with NO
+-- ingestion_method filter, so an operator CAN deliberately re-ingest a manual source from the
+-- CLI, and that run does lift the caveat (it reaches worker/core/upsert.ts, which re-stamps
+-- last_checked_at and status_state together). What manual listings have no path back from is
+-- UNATTENDED recovery — which is the whole of the problem, since the caveat would otherwise be
+-- applied by a scheduled job and lifted only by a human who knew to go looking.
+--
+-- AND THE REASON THIS EXCLUSION CANNOT OVER-PROTECT, which is stronger than any row count:
+-- over-protecting would require a source that is 'manual' AND still automatically re-checked.
+-- No such source can exist, because ONE COLUMN GATES BOTH — the set excluded here is exactly
+-- the set tiered.ts refuses to enqueue. The exemption cannot strand a source that the scheduler
+-- would otherwise have kept fresh.
 --
 -- Neither running nor not running this job destroys data. The failure mode of running it is
 -- "INGESTED listings whose source went quiet get caveated and pushed below the confirmed list",
@@ -98,7 +112,9 @@
 --
 -- ROUTES OUT OF 'stale', re-derived at this file's revision rather than carried forward: a
 -- demoted row is restored only by a write that re-stamps status_state — worker/core/upsert.ts
--- on a real re-ingest, the admin QA queue's approve (app/admin/qa-queue/_lib/data.ts), or
+-- on a real re-ingest (reachable for a MANUAL source too, via a deliberate
+-- worker/src/ingest-once.ts CLI run; what manual sources lack is the AUTOMATIC trigger, not the
+-- write), the admin QA queue's approve (app/admin/qa-queue/_lib/data.ts), or
 -- resolving a correction (app/admin/corrections/_lib/data.ts). One more EXISTS IN THE CODE and
 -- is worth knowing about precisely because it is invisible from any of those: worker/health/
 -- season.ts lists 'stale' in SEASON_INHERITABLE_FROM and inheritOccurrenceStatus() would move

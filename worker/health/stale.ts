@@ -44,7 +44,8 @@ export const STALE_DEMOTE_FROM: readonly string[] = [
  * staleness rule is "nothing has re-checked this row lately". For an INGESTED source that
  * is both true and SELF-CORRECTING: worker/core/upsert.ts re-stamps last_checked_at and
  * status_state together on the next successful ingest, so the caveat lifts itself. A source
- * that is never crawled sits inside the identical rule with nothing to lift it, so its
+ * that is never crawled AUTOMATICALLY sits inside the identical rule with nothing routine to
+ * lift it, so its
  * occurrences decay to the lowest shown rank ~2 days after a human curated them and STAY
  * there until a human returns (the only writes that restore status_state are a real
  * re-ingest, an admin QA approve, or resolving a correction). The rule was written for
@@ -53,10 +54,24 @@ export const STALE_DEMOTE_FROM: readonly string[] = [
  * WHY `ingestion_method` AND NOT `authority_tier`. Both columns have a 'manual' value and
  * app/admin/listings/_lib/data.ts's getOrCreateManualSource sets BOTH, so on that one row
  * they are indistinguishable — but they answer different questions. `authority_tier` is a
- * TRUST claim about the data; `ingestion_method` is the column that decides whether anything
- * ever fetches the source again, and it is the exact column worker/scheduler/tiered.ts's
- * candidate predicate uses to refuse to enqueue (`AND s.ingestion_method <> 'manual'`).
- * "Has no re-ingest path" is therefore a statement about THIS column, by construction.
+ * TRUST claim about the data and gates no fetching at all; `ingestion_method` is the column
+ * that decides whether anything ever fetches the source again AUTOMATICALLY, and it is the
+ * exact column worker/scheduler/tiered.ts's candidate predicate uses to refuse to enqueue
+ * (`AND s.ingestion_method <> 'manual'`).
+ *
+ * "AUTOMATICALLY" IS LOAD-BEARING, NOT A HEDGE. worker/src/ingest-once.ts selects a source by
+ * --source-id or --family/--name with NO ingestion_method filter, so a human CAN deliberately
+ * re-ingest a manual source from the CLI, and that run really does lift the caveat (it reaches
+ * worker/core/upsert.ts, which re-stamps last_checked_at and status_state together). What a
+ * manual source has no path back from is UNATTENDED recovery — and that is the whole of the
+ * problem this exclusion exists for, because the caveat would otherwise be applied by a
+ * scheduled job and lifted only by a human who knows to go looking.
+ *
+ * THE EXCLUSION CANNOT OVER-PROTECT, and this is stronger than counting rows: over-protection
+ * would require a source that is 'manual' AND still automatically re-checked. No such source
+ * can exist, because ONE COLUMN GATES BOTH — the set excluded here is exactly the set
+ * tiered.ts refuses to enqueue. Exempting a source from the caveat therefore cannot strand a
+ * source the scheduler would otherwise have kept fresh.
  *
  * SAME SET, SAME MEANING as worker/scheduler/cadence.ts's MANUAL_INGESTION_METHODS — the
  * sources that producer refuses to schedule are exactly the ones this flip must not punish
