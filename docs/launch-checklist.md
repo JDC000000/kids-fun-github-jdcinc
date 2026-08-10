@@ -7,6 +7,19 @@
 > Vercel Hobby→Pro upgrade decision (G-T39-4) is tracked here, not actioned; do not treat
 > its presence in this file as approval to upgrade. See canonical capsule / live cycle
 > state memory for current status.
+>
+> **KNOWN-STALE CLAIMS, added 2026-08-10 (two caught the same day, same direction — this
+> file under-reports what has since actually been done; read it as a 2026-07-20 snapshot,
+> never as current state):**
+> 1. This file's headline describes production as an empty, partially-migrated shell with
+>    zero terms-approved sources. **False as of 2026-08-10** — `docs/infra.md`'s Round-28
+>    entry (2026-07-21) and independent Operator verification confirm 4 sources are live in
+>    production with real occurrence data (626 live occurrences at last check).
+> 2. This file records migration `0019_llm_batch_run` as applied to **neither** prod nor
+>    staging. **False as of 2026-08-10** — Operator-verified directly against both live
+>    databases: applied to both (prod head 0027, staging head 0028 at last check).
+> Do not treat either of the original claims below as current without re-verifying against
+> live infra; this file is not self-updating.
 
 **Task:** Round 27 / G-T39-1 — production coverage seeded + monitored (verify real launch
 sources are live in **production**, not just staging; confirm Sentry + monitoring dashboards
