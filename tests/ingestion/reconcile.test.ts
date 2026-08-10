@@ -128,7 +128,16 @@ describe.skipIf(!hasDb)('reconcileAbandonedRuns (H4)', () => {
     expect(first.jobsRequeued + first.checkRunsFailed).toBeGreaterThan(0);
 
     const second = await reconcileAbandonedRuns(getPool());
-    expect(second).toEqual({ jobsRequeued: 0, jobsDeadLettered: 0, checkRunsFailed: 0 });
+    // Exact shape on purpose: a new sweep target added to reconcileAbandonedRuns without a
+    // matching idempotence case would slip through a loose toMatchObject. global_job_run is
+    // the third target (migration 0028's run ledger); its own idempotence and abandonment
+    // cases live in tests/scheduler/global-jobs-db.test.ts.
+    expect(second).toEqual({
+      jobsRequeued: 0,
+      jobsDeadLettered: 0,
+      checkRunsFailed: 0,
+      globalJobRuns: { abandoned: 0, resolvedSuccessful: 0, breakersTripped: [] },
+    });
   });
 
   it('honours a custom threshold', async () => {

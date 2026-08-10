@@ -38,6 +38,7 @@ vi.mock('../../worker/core/queue', () => ({
   }),
   markDone: vi.fn(async () => undefined),
   markFailed: vi.fn(async () => undefined),
+  resolveWorkerId: vi.fn(() => 'test-worker'),
 }));
 
 vi.mock('../../worker/core/source-runner', () => ({
@@ -48,9 +49,21 @@ vi.mock('../../worker/core/source-runner', () => ({
 
 vi.mock('../../worker/scheduler/tiered', () => ({ enqueueDueJobs: vi.fn(async () => []) }));
 
+// The global (source-less) producer and its run ledger — no database in this file.
+vi.mock('../../worker/scheduler/global-jobs', () => ({ enqueueDueGlobalJobs: vi.fn(async () => []) }));
+vi.mock('../../worker/core/global-job-schedule', () => ({
+  claimGlobalJobRun: vi.fn(async () => false),
+  finishGlobalJobRun: vi.fn(async () => null),
+}));
+
 vi.mock('../../worker/core/reconcile', () => ({
   ABANDONED_RUN_THRESHOLD_MS: 30 * 60_000,
-  reconcileAbandonedRuns: vi.fn(async () => ({ jobsRequeued: 0, jobsDeadLettered: 0, checkRunsFailed: 0 })),
+  reconcileAbandonedRuns: vi.fn(async () => ({
+    jobsRequeued: 0,
+    jobsDeadLettered: 0,
+    checkRunsFailed: 0,
+    globalJobRuns: { abandoned: 0, resolvedSuccessful: 0, breakersTripped: [] },
+  })),
 }));
 
 vi.mock('../../worker/src/sentry', () => ({ captureWorkerException: vi.fn(async () => true) }));

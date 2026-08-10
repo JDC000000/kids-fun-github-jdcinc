@@ -1,7 +1,11 @@
 // worker/core/queue.ts — G-T5-2: Postgres job-queue + worker poll loop.
 // Durable enqueue/dequeue with retry/backoff (SELECT ... FOR UPDATE SKIP
 // LOCKED keeps multiple worker processes from double-claiming a job).
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
+
+/** Pool, or a client inside a transaction. The global-job producer claims its ledger row
+ *  and enqueues the job it carries in ONE transaction, so its enqueue arrives on a client. */
+type Queryable = Pick<Pool, 'query'> | Pick<PoolClient, 'query'>;
 
 export interface Job {
   id: string;
@@ -11,16 +15,57 @@ export interface Job {
   maxAttempts: number;
 }
 
+/**
+ * Identify THIS worker process in job_queue.locked_by and in the global-job run ledger's
+ * enqueued_by/claimed_by.
+ *
+ * "worker" — the previous hardcoded value — is useless the moment there is more than one
+ * machine, and the run ledger's whole job is to record WHICH worker held a run when it
+ * died. Fly exposes FLY_MACHINE_ID; WORKER_ID is the manual override; HOSTNAME is the
+ * container id under plain Docker. The old literal remains the last resort so nothing
+ * depends on any of them being set.
+ */
+export function resolveWorkerId(): string {
+  const candidates = [
+    process.env.WORKER_ID,
+    process.env.FLY_MACHINE_ID,
+    process.env.HOSTNAME,
+  ];
+  for (const c of candidates) {
+    if (c && c.trim() !== '') return c.trim();
+  }
+  return 'worker';
+}
+
+/**
+ * Insert a job.
+ *
+ * `maxAttempts` is normally left unset so the column DEFAULT (0011: 5) applies. The global
+ * SCHEDULE producer passes 1 deliberately — retry policy for a scheduled job belongs to its
+ * cadence + circuit breaker, not to the queue's blind backoff, and a queue-level retry
+ * would resurrect a job whose ledger run the reconcile sweep has already closed. See
+ * worker/scheduler/global-jobs.ts.
+ */
 export async function enqueue(
-  pool: Pool,
+  db: Queryable,
   sourceId: string | null,
   jobType = 'ingest',
-  scheduledFor: Date = new Date()
+  scheduledFor: Date = new Date(),
+  maxAttempts?: number
 ): Promise<string> {
-  const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO job_queue (source_id, job_type, scheduled_for) VALUES ($1, $2, $3) RETURNING id`,
-    [sourceId, jobType, scheduledFor]
-  );
+  // Two spellings rather than `COALESCE($4, 5)`: hardcoding the default here would let it
+  // drift from the column's, silently, the day the column changes.
+  const { rows } =
+    maxAttempts === undefined
+      ? await db.query<{ id: string }>(
+          `INSERT INTO job_queue (source_id, job_type, scheduled_for) VALUES ($1, $2, $3) RETURNING id`,
+          [sourceId, jobType, scheduledFor]
+        )
+      : await db.query<{ id: string }>(
+          `INSERT INTO job_queue (source_id, job_type, scheduled_for, max_attempts)
+             VALUES ($1, $2, $3, $4) RETURNING id`,
+          [sourceId, jobType, scheduledFor, maxAttempts]
+        );
   return rows[0].id;
 }
 

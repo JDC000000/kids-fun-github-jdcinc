@@ -1,7 +1,9 @@
 import type { Pool } from 'pg';
 import { enqueueDueJobs } from '../scheduler/tiered';
-import { dequeue, markDone, markFailed, type Job } from '../core/queue';
+import { enqueueDueGlobalJobs } from '../scheduler/global-jobs';
+import { dequeue, markDone, markFailed, resolveWorkerId, type Job } from '../core/queue';
 import { reconcileAbandonedRuns } from '../core/reconcile';
+import { claimGlobalJobRun, finishGlobalJobRun } from '../core/global-job-schedule';
 import { makeJobDispatcher } from '../core/job-handlers';
 import type { Environment } from '../core/terms-gate';
 import { captureWorkerException } from './sentry';
@@ -14,7 +16,11 @@ import { captureWorkerException } from './sentry';
 //      asks the tiered policy (source.baseline_cadence / near_date_cadence — the
 //      hot/warm/cold tiers live in DB config, not code) which sources are due and
 //      enqueues an ingest job for each. Idempotent per tick (skips sources with a
-//      pending/running job) and it stamps next_check_at forward per source.
+//      pending/running job) and it stamps next_check_at forward per source. The same
+//      tick then calls enqueueDueGlobalJobs() for the source-LESS schedules
+//      (global_job_schedule, migration 0028) — the producer for the job types Unit 1
+//      taught the dispatcher to run. The two producers are independent by design: a
+//      failure in either must not stop the other, so they have separate try/catch.
 //   2. poll loop  — every WORKER_POLL_INTERVAL_MS claims one due job
 //      (FOR UPDATE SKIP LOCKED) and runs the handler registered for its
 //      job_queue.job_type (core/job-handlers.ts): 'ingest' → the terms-gated
@@ -34,6 +40,15 @@ export interface SchedulerMetrics {
   lastTickAt: string | null;
   lastEnqueueCount: number;
   totalEnqueued: number;
+  /** Global (source-less) scheduled runs enqueued on the last tick / since boot. */
+  lastGlobalEnqueueCount: number;
+  totalGlobalEnqueued: number;
+  /**
+   * Job types whose circuit breaker this process has seen TRIP. Surfaced on /healthz
+   * because a tripped breaker is a state a human has to clear (there is no automatic
+   * recovery, by design) and an operator needs somewhere to see it that is not the logs.
+   */
+  globalBreakersTripped: string[];
   jobsProcessed: number;
   jobsSucceeded: number;
   jobsFailed: number;
@@ -147,6 +162,9 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     lastTickAt: null,
     lastEnqueueCount: 0,
     totalEnqueued: 0,
+    lastGlobalEnqueueCount: 0,
+    totalGlobalEnqueued: 0,
+    globalBreakersTripped: [],
     jobsProcessed: 0,
     jobsSucceeded: 0,
     jobsFailed: 0,
@@ -161,6 +179,54 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
   // e.g. job_type='corrections_retention') threw 'ingest job has no source_id', retried to
   // max_attempts and dead-lettered. See worker/core/job-handlers.ts.
   const dispatch = makeJobDispatcher(pool, environment);
+
+  // Identifies this process in job_queue.locked_by and in the global-job run ledger. The
+  // ledger's whole purpose includes recording WHICH worker held a run when it died, and
+  // the previous hardcoded 'worker' could not answer that with more than one machine.
+  const workerId = resolveWorkerId();
+
+  /** Record and shout about a breaker trip exactly once — the escalation, not a stream. */
+  function noteBreakerTrip(jobType: string, reason: string): void {
+    if (!metrics.globalBreakersTripped.includes(jobType)) {
+      metrics.globalBreakersTripped.push(jobType);
+    }
+    // eslint-disable-next-line no-console
+    console.error(
+      `[scheduler] CIRCUIT BREAKER OPEN for global job '${jobType}': ${reason}. ` +
+        `It will NOT be enqueued again until an operator clears it ` +
+        `(resetGlobalJobBreaker / see supabase/migrations/0028_global_job_schedule.sql).`
+    );
+  }
+
+  /**
+   * Close the run-ledger row this job carried, if it carried one.
+   *
+   * Never throws and never runs inside processOneJob's success/failure try: a ledger write
+   * that failed AFTER markDone would otherwise fall into the catch and call markFailed on
+   * an already-completed job, putting a finished purge back on the queue. A ledger row
+   * left open here is recovered by the reconcile sweep, which is what it is for.
+   */
+  async function finalizeGlobalRun(
+    job: Job,
+    outcome: 'success' | 'failure',
+    error: string | null
+  ): Promise<void> {
+    try {
+      const applied = await finishGlobalJobRun(pool, job.id, outcome, error);
+      if (!applied) return; // not a scheduled global run (e.g. an ordinary ingest job)
+      if (applied.breakerTrippedNow) {
+        noteBreakerTrip(
+          applied.jobType,
+          `${applied.consecutiveFailures} consecutive failures ` +
+            `(limit ${applied.maxConsecutiveFailures}); last error: ${error ?? 'unknown'}`
+        );
+      }
+    } catch (err) {
+      metrics.lastError = `global run ledger: ${errMsg(err)}`;
+      // eslint-disable-next-line no-console
+      console.error('[scheduler] global run ledger update failed:', errMsg(err));
+    }
+  }
 
   // H6 shutdown-ordering state.
   //   `inFlight`       — the jobs whose DB rows the shutdown path has to release.
@@ -211,18 +277,26 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
   // throwing) propagates to the loop, which records it and keeps the worker — and
   // therefore /healthz — alive instead of crashing the machine.
   async function processOneJob(): Promise<boolean> {
-    const job: Job | null = await dequeue(pool);
+    const job: Job | null = await dequeue(pool, workerId);
     if (!job) return false;
     metrics.jobsProcessed += 1;
     metrics.lastJobAt = new Date().toISOString();
     // Registered BEFORE the handler runs and cleared only after the job is finalised, so
     // the shutdown path's snapshot can never miss a job that is genuinely still held.
     inFlight.set(job.id, { jobId: job.id, sourceId: job.sourceId, claimedAt: new Date() });
+    let outcome: 'success' | 'failure' = 'failure';
+    let failure: string | null = null;
     try {
+      // Stamps started_at/claimed_by on the run ledger IF this job carries one; matches
+      // zero rows for an ingest job. Called unconditionally rather than branching on
+      // `sourceId === null`, which is a guess about what "global" means.
+      await claimGlobalJobRun(pool, job.id, workerId);
       await dispatch(job);
       await markDone(pool, job.id);
+      outcome = 'success';
       metrics.jobsSucceeded += 1;
     } catch (err) {
+      failure = errMsg(err);
       metrics.jobsFailed += 1;
       metrics.lastError = `job ${job.id}: ${errMsg(err)}`;
       // eslint-disable-next-line no-console
@@ -244,6 +318,9 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       await markFailed(pool, job.id, errMsg(err));
     } finally {
       inFlight.delete(job.id);
+      // In the finally so it runs on BOTH paths, and outside the try/catch above so a
+      // ledger failure can never be mistaken for a job failure. See finalizeGlobalRun.
+      await finalizeGlobalRun(job, outcome, failure);
     }
     return true;
   }
@@ -275,15 +352,21 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
   async function reconcileOnce(): Promise<void> {
     try {
       const r = await reconcileAbandonedRuns(pool);
-      const total = r.jobsRequeued + r.jobsDeadLettered + r.checkRunsFailed;
+      const g = r.globalJobRuns ?? { abandoned: 0, resolvedSuccessful: 0, breakersTripped: [] };
+      const total =
+        r.jobsRequeued + r.jobsDeadLettered + r.checkRunsFailed + g.abandoned + g.resolvedSuccessful;
       if (total > 0) {
         metrics.lastReconcileAt = new Date().toISOString();
         metrics.totalReconciled += total;
         // eslint-disable-next-line no-console
         console.warn(
           `[scheduler] reconciled abandoned rows: ${r.jobsRequeued} job(s) requeued, ` +
-            `${r.jobsDeadLettered} dead-lettered, ${r.checkRunsFailed} check run(s) failed`
+            `${r.jobsDeadLettered} dead-lettered, ${r.checkRunsFailed} check run(s) failed, ` +
+            `${g.abandoned} scheduled run(s) released, ${g.resolvedSuccessful} closed as done`
         );
+      }
+      for (const jobType of g.breakersTripped) {
+        noteBreakerTrip(jobType, 'a scheduled run was abandoned by a dying worker');
       }
     } catch (err) {
       // Never let the sweep take the tick down — enqueueing is the more important job.
@@ -318,6 +401,41 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       console.error('[scheduler] tick error:', errMsg(err));
       await captureWorkerException(err, {
         tags: { component: 'scheduler', operation: 'enqueue_tick', environment },
+      });
+    }
+    await enqueueDueGlobalJobsOnce();
+  }
+
+  /**
+   * The GLOBAL (source-less) producer, in its own try/catch.
+   *
+   * Separate from the tiered producer above on purpose: they read different tables and
+   * fail for different reasons, and a fault in one lane silently stopping the other is
+   * exactly the kind of coupled failure this project keeps finding. Runs AFTER
+   * reconcileOnce() for the same reason the tiered producer does — the sweep is what
+   * releases a run-ledger lock held by a dead worker, so a schedule stranded by a crash
+   * becomes enqueueable again on this very tick rather than the next one.
+   */
+  async function enqueueDueGlobalJobsOnce(): Promise<void> {
+    try {
+      const enqueuedGlobal = await enqueueDueGlobalJobs(pool, { workerId });
+      metrics.lastGlobalEnqueueCount = enqueuedGlobal.length;
+      metrics.totalGlobalEnqueued += enqueuedGlobal.length;
+      if (enqueuedGlobal.length > 0) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[scheduler] tick #${metrics.ticks} enqueued ${enqueuedGlobal.length} global job(s): ` +
+            enqueuedGlobal
+              .map((g) => `${g.jobType}@${g.scheduledFor.toISOString()}→job ${g.jobId}`)
+              .join(', ')
+        );
+      }
+    } catch (err) {
+      metrics.lastError = `global tick: ${errMsg(err)}`;
+      // eslint-disable-next-line no-console
+      console.error('[scheduler] global job tick error:', errMsg(err));
+      await captureWorkerException(err, {
+        tags: { component: 'scheduler', operation: 'enqueue_global_tick', environment },
       });
     }
   }

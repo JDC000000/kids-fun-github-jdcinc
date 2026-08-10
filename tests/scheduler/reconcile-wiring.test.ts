@@ -28,6 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const shared = vi.hoisted(() => ({
   calls: [] as string[],
   reconcileError: null as Error | null,
+  globalEnqueueError: null as Error | null,
 }));
 
 vi.mock('../../worker/core/reconcile', () => ({
@@ -35,7 +36,12 @@ vi.mock('../../worker/core/reconcile', () => ({
   reconcileAbandonedRuns: vi.fn(async () => {
     shared.calls.push('reconcile');
     if (shared.reconcileError) throw shared.reconcileError;
-    return { jobsRequeued: 0, jobsDeadLettered: 0, checkRunsFailed: 0 };
+    return {
+      jobsRequeued: 0,
+      jobsDeadLettered: 0,
+      checkRunsFailed: 0,
+      globalJobRuns: { abandoned: 0, resolvedSuccessful: 0, breakersTripped: [] },
+    };
   }),
 }));
 
@@ -46,16 +52,36 @@ vi.mock('../../worker/scheduler/tiered', () => ({
   }),
 }));
 
+// The GLOBAL (source-less) producer. Same drift-protection argument as enqueueDueJobs
+// below, and a sharper one: it is the only thing that ever enqueues the retention purge,
+// so if it were silently unwired the schedule would simply never run and no test — and no
+// log line — would say so.
+vi.mock('../../worker/scheduler/global-jobs', () => ({
+  enqueueDueGlobalJobs: vi.fn(async () => {
+    shared.calls.push('enqueue-global');
+    if (shared.globalEnqueueError) throw shared.globalEnqueueError;
+    return [];
+  }),
+}));
+
 // The queue is stubbed so the poll loop spins harmlessly without a database.
 vi.mock('../../worker/core/queue', () => ({
   dequeue: vi.fn(async () => null),
   markDone: vi.fn(async () => undefined),
   markFailed: vi.fn(async () => undefined),
+  resolveWorkerId: vi.fn(() => 'test-worker'),
+}));
+
+// The run ledger, likewise: no database in this file.
+vi.mock('../../worker/core/global-job-schedule', () => ({
+  claimGlobalJobRun: vi.fn(async () => false),
+  finishGlobalJobRun: vi.fn(async () => null),
 }));
 
 import { startScheduler } from '../../worker/src/scheduler';
 import { reconcileAbandonedRuns } from '../../worker/core/reconcile';
 import { enqueueDueJobs } from '../../worker/scheduler/tiered';
+import { enqueueDueGlobalJobs } from '../../worker/scheduler/global-jobs';
 
 /** Minimal pool stand-in — nothing in this test reaches SQL. */
 const stubPool = { query: vi.fn(async () => ({ rows: [] })) } as never;
@@ -85,8 +111,10 @@ async function runOneTick(): Promise<void> {
 beforeEach(() => {
   shared.calls.length = 0;
   shared.reconcileError = null;
+  shared.globalEnqueueError = null;
   vi.mocked(reconcileAbandonedRuns).mockClear();
   vi.mocked(enqueueDueJobs).mockClear();
+  vi.mocked(enqueueDueGlobalJobs).mockClear();
 });
 
 afterEach(() => {
@@ -124,6 +152,58 @@ describe('scheduler → reconcile wiring (H4-A drift protection)', () => {
   it('passes the real pool through to the sweep', async () => {
     await runOneTick();
     expect(reconcileAbandonedRuns).toHaveBeenCalledWith(stubPool);
+  });
+
+  it('runs the GLOBAL producer on the same tick — the retention purge has a producer at all', async () => {
+    // Unit 1 shipped a consumer with no producer. If enqueueDueGlobalJobs() were ever
+    // disconnected from tickOnce() the schedule would simply never fire, silently, and
+    // nothing else in the suite would notice.
+    await runOneTick();
+    expect(enqueueDueGlobalJobs).toHaveBeenCalled();
+    expect(shared.calls).toContain('enqueue-global');
+  });
+
+  it('sweeps BEFORE the global producer within the same tick', async () => {
+    // Same load-bearing ordering as the tiered producer, for a sharper reason: the sweep is
+    // what releases a global_job_run lock held by a dead worker, and that lock is the ONLY
+    // thing that stops the schedule being enqueued. Sweep after and a crash-stranded
+    // schedule waits an extra tick every tick.
+    await runOneTick();
+    const swept = shared.calls.indexOf('reconcile');
+    const enqueuedGlobal = shared.calls.indexOf('enqueue-global');
+    expect(swept).toBeGreaterThanOrEqual(0);
+    expect(enqueuedGlobal).toBeGreaterThanOrEqual(0);
+    expect(swept).toBeLessThan(enqueuedGlobal);
+  });
+
+  it('the two producers are independent — a failing tiered enqueue still runs the global one', async () => {
+    // They read different tables and fail for different reasons. One lane silently
+    // stopping the other is the coupled failure this project keeps finding.
+    vi.mocked(enqueueDueJobs).mockImplementationOnce(async () => {
+      shared.calls.push('enqueue');
+      throw new Error('tiered boom');
+    });
+    await runOneTick();
+    expect(shared.calls).toContain('enqueue-global');
+  });
+
+  it('a failing global producer is recorded and never crashes the tick', async () => {
+    shared.globalEnqueueError = new Error('global boom');
+    const controller = new AbortController();
+    const handle = startScheduler(stubPool, {
+      signal: controller.signal,
+      immediate: true,
+      schedulerTickMs: 600_000,
+      pollIntervalMs: 600_000,
+      environment: 'staging',
+    });
+    try {
+      await vi.waitFor(() => expect(shared.calls).toContain('enqueue-global'), { timeout: 5_000 });
+      await vi.waitFor(() => expect(handle.metrics.lastError).toMatch(/global/i), { timeout: 5_000 });
+    } finally {
+      controller.abort();
+      await handle.done;
+    }
   });
 
   it('a failing sweep still lets the tick enqueue — the sweep is never load-bearing', async () => {

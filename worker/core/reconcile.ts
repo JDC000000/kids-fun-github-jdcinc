@@ -8,6 +8,9 @@
 //   • source_check_run startCheckRun() inserts status='running'; finishCheckRun()
 //                      resolves it. ingestSource() always reaches finishCheckRun on any
 //                      code path — but not if the process is gone.
+//   • global_job_run   the global-job producer inserts the ledger row that IS the lock on
+//                      a scheduled run (migration 0028); finishGlobalJobRun() closes it.
+//                      An unclosed row blocks its schedule permanently — see below.
 //
 // This is the same missing-deadline failure the H4 fetch timeout fixes, one level up.
 // The Vancouver ActiveNet hang of 2026-07-30 left exactly this residue: a `running`
@@ -20,7 +23,18 @@
 // Deliberately a SWEEP, not a heartbeat/lease system: a lease requires every long
 // operation to remember to renew it, which is the same "an author has to remember"
 // weakness that produced the original bug. A time threshold needs nothing remembered.
+//
+// THE global_job_run CASE IS THE MOST DANGEROUS OF THE THREE. A stuck job_queue row
+// strands one source; a stuck ledger row strands a whole SCHEDULE, permanently and
+// silently, because the unfinished-run unique index is exactly what stops a second run
+// from being enqueued. Fly's default kill_timeout is 5 SECONDS, so a machine dying
+// mid-run is routine. Sweeping it here is a first-class requirement of the schedule
+// feature, not cleanup after it.
 import type { Pool } from 'pg';
+import {
+  reconcileAbandonedGlobalJobRuns,
+  type ReconcileGlobalRunsResult,
+} from './global-job-schedule';
 
 /**
  * How long a row may sit in 'running' before it is considered abandoned.
@@ -44,6 +58,8 @@ export interface ReconcileResult {
   jobsDeadLettered: number;
   /** Abandoned check runs closed out as failed so the health board stops showing green. */
   checkRunsFailed: number;
+  /** Global scheduled runs whose lock was released (see ReconcileGlobalRunsResult). */
+  globalJobRuns: ReconcileGlobalRunsResult;
 }
 
 export interface ReconcileOptions {
@@ -105,10 +121,18 @@ export async function reconcileAbandonedRuns(
     [thresholdSeconds, JSON.stringify(ABANDONED_CHECK_RUN_ERROR)]
   );
 
+  // Global scheduled runs LAST, and that order is load-bearing: the job sweep above has
+  // just moved each abandoned job_queue row to its terminal state, and this sweep reads
+  // that state to decide whether the run really failed or had already reached 'done'
+  // before the process died. Run it first and every abandoned run would be recorded as a
+  // failure, walking the circuit breaker toward tripping on work that actually succeeded.
+  const globalJobRuns = await reconcileAbandonedGlobalJobRuns(pool, thresholdSeconds);
+
   const rows = jobs.rows ?? [];
   return {
     jobsRequeued: rows.filter((r) => r.status === 'pending').length,
     jobsDeadLettered: rows.filter((r) => r.status === 'dead_letter').length,
     checkRunsFailed: (checkRuns.rows ?? []).length,
+    globalJobRuns,
   };
 }
