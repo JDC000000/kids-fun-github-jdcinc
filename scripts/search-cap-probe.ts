@@ -19,7 +19,9 @@
 //
 // GUARANTEES
 //   · Strictly read-only: SELECTs only, no DDL/DML, and the pool is opened read-only where the
-//     server supports it. Safe to point at staging or production.
+//     server supports it — on a single connection, so the guard covers every statement issued.
+//     Safe to point at staging or production.
+//   · TLS certificates are VERIFIED by default. Bypassing that is opt-in and warns loudly.
 //   · Reads its connection string from KF_PROBE_DATABASE_URL, deliberately NOT DATABASE_URL —
 //     lib/testing/local-db-guard.ts refuses non-local DATABASE_URLs, and this probe must never
 //     be the reason someone sets KIDS_FUN_ALLOW_NONLOCAL_DB=1 and leaves it set.
@@ -30,6 +32,10 @@
 //   --limit N   row cap to apply to the SERVED population (default 500, the pre-fix default)
 //   --env       label printed on every line (e.g. staging / production)
 //   --json      emit machine-readable JSON instead of the text report
+//
+//   KF_PROBE_ENV                    default for --env
+//   KF_PROBE_ALLOW_SELF_SIGNED_TLS  set to 1 ONLY for a self-signed staging cert; disables
+//                                   certificate verification for this run
 
 import { Pool } from 'pg';
 import { loadPostgresListings } from '../lib/search/postgres-repository';
@@ -143,14 +149,57 @@ interface Args {
   json: boolean;
 }
 
+/** Abort with a usage error rather than probing on with a misread argument. */
+function usageError(message: string): never {
+  console.error(`${message}\n\nUsage: KF_PROBE_DATABASE_URL=... bash scripts/search-cap-probe.sh [--limit N] [--env LABEL] [--json]`);
+  process.exit(2);
+}
+
 function parseArgs(argv: string[]): Args {
   const out: Args = { limit: 500, env: process.env.KF_PROBE_ENV ?? 'unlabelled', json: false };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--limit') out.limit = Number(argv[++i]);
-    else if (argv[i] === '--env') out.env = String(argv[++i]);
-    else if (argv[i] === '--json') out.json = true;
+    if (argv[i] === '--limit') {
+      // Validated, not coerced. `--limit` as the final token gave `Number(undefined)` = NaN, which
+      // `normalizeLimit` then dropped — so NO limit was sent and the "served" population came back
+      // byte-identical to "full" while the report still claimed two populations. That is precisely
+      // the served-vs-full confusion this probe exists to detect, produced by the probe itself.
+      const raw = argv[++i];
+      const value = raw === undefined ? Number.NaN : Number(raw);
+      if (!Number.isInteger(value) || value < 1) {
+        usageError(`--limit requires a positive integer (got ${raw === undefined ? '<missing>' : JSON.stringify(raw)}).`);
+      }
+      out.limit = value;
+    } else if (argv[i] === '--env') {
+      const raw = argv[++i];
+      if (raw === undefined) usageError('--env requires a label.');
+      out.env = raw;
+    } else if (argv[i] === '--json') {
+      out.json = true;
+    } else {
+      usageError(`Unknown argument ${JSON.stringify(argv[i])}.`);
+    }
   }
   return out;
+}
+
+/**
+ * TLS for the probe pool. Certificate verification is ON unless someone deliberately asks for it
+ * to be off — this script advertises itself as safe to point at production, and an unconditional
+ * `rejectUnauthorized: false` would have made every production run silently MITM-able.
+ *
+ * Set `KF_PROBE_ALLOW_SELF_SIGNED_TLS=1` to opt out, for a staging server with a self-signed cert.
+ * Without it, TLS is governed by the connection string's own `sslmode`, except that
+ * `require`/`verify-ca`/`verify-full` are made to actually verify (node-postgres treats a bare
+ * `sslmode=require` as "encrypt but do not check the certificate").
+ */
+function resolveSsl(connectionString: string): { rejectUnauthorized: boolean } | undefined {
+  if (process.env.KF_PROBE_ALLOW_SELF_SIGNED_TLS === '1') {
+    console.error('[probe] WARNING: KF_PROBE_ALLOW_SELF_SIGNED_TLS=1 — TLS certificate verification is DISABLED.');
+    return { rejectUnauthorized: false };
+  }
+  const mode = /[?&]sslmode=([^&]+)/i.exec(connectionString)?.[1]?.toLowerCase();
+  if (mode === 'require' || mode === 'verify-ca' || mode === 'verify-full') return { rejectUnauthorized: true };
+  return undefined;
 }
 
 /** Distinct index vocabulary over a listing set — the same four weighted fields the matcher builds. */
@@ -173,7 +222,14 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const pool = new Pool({ connectionString, max: 2, ssl: { rejectUnauthorized: false } });
+  const ssl = resolveSsl(connectionString);
+  // max: 1 is load-bearing, not a throughput choice. `SET default_transaction_read_only` without
+  // LOCAL is per-CONNECTION, and the `Promise.all` below opened a SECOND connection that never
+  // received the SET and then served the two heavy catalogue loads — i.e. the guard covered the
+  // one connection that did nothing and missed the ones that did the work. One connection means
+  // the SET provably covers every statement the probe issues. This is a diagnostic script; the
+  // serialisation costs nothing.
+  const pool = new Pool({ connectionString, max: 1, ...(ssl ? { ssl } : {}) });
   // Belt and braces on top of "this file only ever SELECTs": ask the server to reject any write
   // this probe could conceivably be edited into making. Older/pooled servers may not honour it,
   // which is why it is not the only safeguard.
