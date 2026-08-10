@@ -59,11 +59,79 @@ export interface GlobalScheduleHealthSnapshot {
   maxConsecutiveFailures: number;
   /** Non-null = the breaker is OPEN and only an operator can close it. */
   breakerTrippedAt: string | null;
+  /**
+   * The DATABASE's `global_job_schedule.breaker_reason` — RAW HANDLER ERROR TEXT.
+   *
+   * NOT ON /healthz, AND MUST NOT GO BACK ON IT. It is built by
+   * worker/core/global-job-schedule.ts's breakerReasonFor() as `${outcome}: ${detail}`
+   * where `detail` is the job handler's own error message, so for a database-level failure
+   * it carries whatever the pg driver said. WHAT A pg ERROR ACTUALLY NAMES, MEASURED ON A REAL POOL AT THIS COMMIT (not inherited):
+   *     • the DATABASE       — `database "no_such_db" does not exist`
+   *     • the DB ROLE/USER   — `password authentication failed for user "postgres"`
+   *     • an INTERNAL TABLE  — `relation "global_job_schedule" does not exist`
+   *   The long-standing comment in this repo said "host, port, database and user". Database
+   *   and user reproduce; TABLE NAMES were not in that list and are the most frequently
+   *   observed of the three. HOST AND PORT DID NOT REPRODUCE AT ALL: the connection-refused
+   *   path is the one case that would carry them and node-postgres aggregates it into an
+   *   EMPTY message, so `errMsg(err)` returned `""`. Corrected here rather than repeated,
+   *   because a comment claiming more than the code delivers is this chain's known defect.
+   * It reached the public unauthenticated endpoint for as long as
+   * worker/src/healthz.ts spread this object onto the wire, and NESTING is why no key-set
+   * guard saw it: every one of them inspected flat top-level keys.
+   *
+   * It survives here because the console escalation below and the durable-read proof in
+   * tests/scheduler/global-jobs-db.test.ts both need it, and neither is public. The wire
+   * carries the same fact structurally — `status: 'breaker_tripped'`, `breakerTrippedAt`,
+   * and consecutiveFailures/maxConsecutiveFailures — which is THAT, WHEN and WHAT CLASS
+   * without the sentence. worker/src/healthz.ts projects field by field and does not
+   * include this one; tests/scheduler/healthz.test.ts pins that element key set by name.
+   */
   breakerReason: string | null;
   nextRunAt: string;
   lastSuccessAt: string | null;
   inFlight: boolean;
 }
+
+/**
+ * WHICH LANE last recorded an error, as a closed set of constants.
+ *
+ * This is the CLASS half of the public error signal. It replaces reading the lane out of
+ * `lastError`'s prefix, which could only be done by parsing a string that also carried the
+ * driver's message — the thing that must not be public. Every value here is a literal in
+ * this file; nothing runtime can widen the set.
+ *
+ * One kind per site that records an error, matching the labels the log lines already used:
+ *   'poll'                    — dequeue/markDone/markFailed threw (connectivity, not a job
+ *                               failing: a job failure is retried by the queue and never
+ *                               reaches here).
+ *   'job'                     — a claimed job's handler threw.
+ *   'tick'                    — the TIERED producer (enqueueDueJobs) threw.
+ *   'global_tick'             — the GLOBAL producer (enqueueDueGlobalJobs) threw.
+ *   'reconcile'               — the abandoned-run sweep threw.
+ *   'global_schedule_health'  — the durable health SELECT threw. Also, and independently,
+ *                               reported by `globalScheduleHealthReadFailed` on the wire,
+ *                               which unlike this field is not overwritten by another lane.
+ *   'global_run_ledger'       — closing a global run's ledger row threw.
+ */
+export type SchedulerErrorKind =
+  | 'poll'
+  | 'job'
+  | 'tick'
+  | 'global_tick'
+  | 'reconcile'
+  | 'global_schedule_health'
+  | 'global_run_ledger';
+
+/** The human label each kind carries in the LOG line and in `lastError`. Log-side only. */
+const ERROR_KIND_LABEL: Record<SchedulerErrorKind, string> = {
+  poll: 'poll',
+  job: 'job',
+  tick: 'tick',
+  global_tick: 'global tick',
+  reconcile: 'reconcile',
+  global_schedule_health: 'global schedule health',
+  global_run_ledger: 'global run ledger',
+};
 
 export interface SchedulerMetrics {
   enabled: boolean;
@@ -109,7 +177,19 @@ export interface SchedulerMetrics {
   globalSchedules: GlobalScheduleHealthSnapshot[];
   /** When the durable read above last SUCCEEDED. Null = never — see above. */
   globalScheduleHealthAt: string | null;
-  /** Why the durable read last failed, or null if the last attempt succeeded. */
+  /**
+   * Why the durable read last failed, or null if the last attempt succeeded. RAW DRIVER
+   * TEXT — see `lastError` below for what a pg failure was MEASURED to name. Captured from
+   * this exact field on a real pool: `relation "global_job_schedule" does not exist`.
+   *
+   * NOT ON /healthz. It was, and it was observed on live staging serving a raw Postgres
+   * error naming an internal table to anyone who curled the endpoint. The wire now carries
+   * the same DISTINCTION with no text at all: `globalScheduleHealthReadFailed` is this
+   * field's null-ness as a boolean, and `globalScheduleHealthStatus` folds it together with
+   * `globalScheduleHealthAt` (worker/src/healthz.ts). Kept here because
+   * deriveGlobalScheduleHealthStatus reads it, the console escalation prints it, and
+   * tests/scheduler/reconcile-wiring.test.ts asserts on it — none of which is public.
+   */
   globalScheduleHealthError: string | null;
   jobsProcessed: number;
   jobsSucceeded: number;
@@ -158,7 +238,63 @@ export interface SchedulerMetrics {
    * tiered producer failing every tick while the process itself is perfectly alive.
    */
   reconcileAttempts: number;
+  /**
+   * The last error any lane recorded, WITH THE DRIVER'S OWN MESSAGE. WHAT A pg ERROR ACTUALLY NAMES, MEASURED ON A REAL POOL AT THIS COMMIT (not inherited):
+   *     • the DATABASE       — `database "no_such_db" does not exist`
+   *     • the DB ROLE/USER   — `password authentication failed for user "postgres"`
+   *     • an INTERNAL TABLE  — `relation "global_job_schedule" does not exist`
+   *   The long-standing comment in this repo said "host, port, database and user". Database
+   *   and user reproduce; TABLE NAMES were not in that list and are the most frequently
+   *   observed of the three. HOST AND PORT DID NOT REPRODUCE AT ALL: the connection-refused
+   *   path is the one case that would carry them and node-postgres aggregates it into an
+   *   EMPTY message, so `errMsg(err)` returned `""`. Corrected here rather than repeated,
+   *   because a comment claiming more than the code delivers is this chain's known defect.
+   *
+   * Written by noteError()
+   * at the seven sites below, formatted `${lane}: ${message}` (and `job ${uuid}: ${message}`
+   * for a job failure, which is why a real job UUID was observed on the wire).
+   *
+   * ── NOT ON /healthz, AND THIS IS THE FIELD THAT PUT THE PROJECT THERE ────────────────
+   * It is a SINCE-BOOT HIGH-WATER MARK, not current state: seven sites set it and NOTHING
+   * clears it on success (the initialiser below is the only `null` assignment), so whatever
+   * it last caught stayed on a public, unauthenticated endpoint until the machine restarted.
+   * Observed carrying a real job UUID, and after a migration a message naming an internal
+   * table. worker/src/healthz.ts no longer projects it.
+   *
+   * The wire says the same thing with structure: `lastErrorKind` (which lane), `lastErrorAt`
+   * (when — so the high-water mark can be recognised AS one instead of read as "now"), and
+   * `errorCount` (how many, so one blip is distinguishable from a storm). The message itself
+   * goes where it always also went and where it belongs: the console (`fly logs`) and Sentry,
+   * both of which are authenticated.
+   */
   lastError: string | null;
+  /**
+   * Which lane recorded `lastError`, as a closed enum — the PUBLIC half of it.
+   *
+   * Null means, and only means, that no lane has recorded an error since boot. Like
+   * `lastError` it is a high-water mark and is never cleared by a success; `lastErrorAt`
+   * is what makes that legible, and `errorCount` is what makes it countable.
+   */
+  lastErrorKind: SchedulerErrorKind | null;
+  /**
+   * When `lastErrorKind` was last set. Null = never.
+   *
+   * Judge it against YOUR OWN clock, not this process's — worker/fly.toml:32 sets
+   * `auto_stop_machines = "suspend"` and a resumed machine comes back with its heap intact,
+   * so this can hold an arbitrarily old instant. Same trap as `globalScheduleHealthAt` and
+   * `lastReconcileAttemptAt`.
+   */
+  lastErrorAt: string | null;
+  /**
+   * Errors recorded since boot, all lanes. Monotonic; never reset.
+   *
+   * WHAT IT DOES NOT SAY: which lane the count belongs to. `lastErrorKind` names only the
+   * MOST RECENT one, so a large count with kind 'poll' does not prove every one of them was
+   * a poll. That is the deliberate stopping point — a per-lane breakdown is a bigger object
+   * for a question the logs already answer — and it is written down here rather than left
+   * for a reader to assume the stronger reading.
+   */
+  errorCount: number;
 }
 
 export interface SchedulerOptions {
@@ -279,7 +415,35 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     lastReconcileAttemptAt: null,
     reconcileAttempts: 0,
     lastError: null,
+    lastErrorKind: null,
+    lastErrorAt: null,
+    errorCount: 0,
   };
+
+  /**
+   * Record one error in every form the system reports it: the private message, the public
+   * class, the public instant, the public count.
+   *
+   * ONE FUNCTION SO THE FOUR CANNOT DRIFT. Before this, seven sites each assigned
+   * `metrics.lastError` by hand and there was nothing else to keep in step; adding a
+   * public class/instant/count as three more hand-written assignments at seven sites is
+   * how a site ends up stamping a kind and not a time, or a time and not a count — and the
+   * failure would be invisible, because the endpoint would keep returning 200 with a
+   * plausible-looking body.
+   *
+   * `message` stays raw and stays PRIVATE: `lastError` is not projected onto /healthz
+   * (worker/src/healthz.ts), and the callers pass it on to console.error and Sentry, which
+   * are the authenticated places it belongs.
+   */
+  function noteError(kind: SchedulerErrorKind, message: string, subject?: string): void {
+    // Format unchanged from the seven assignments this replaces (`poll: …`,
+    // `job <uuid>: …`, `global schedule health: …`), so the log line and the existing
+    // assertions in tests/scheduler/reconcile-wiring.test.ts keep reading the same string.
+    metrics.lastError = `${ERROR_KIND_LABEL[kind]}${subject === undefined ? '' : ` ${subject}`}: ${message}`;
+    metrics.lastErrorKind = kind;
+    metrics.lastErrorAt = new Date().toISOString();
+    metrics.errorCount += 1;
+  }
 
   // Dispatch by job_queue.job_type. Until this existed the loop ran the terms-gated INGEST
   // handler for every claimed job regardless of type, so any global job (source_id=NULL,
@@ -370,7 +534,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       // Do NOT blank globalSchedules/globalBreakersTripped here: a stale alarm is useful,
       // an alarm silently replaced by an empty list is the false green all over again.
       metrics.globalScheduleHealthError = errMsg(err);
-      metrics.lastError = `global schedule health: ${errMsg(err)}`;
+      noteError('global_schedule_health', errMsg(err));
       // eslint-disable-next-line no-console
       console.error('[scheduler] global schedule health read failed:', errMsg(err));
       await captureWorkerException(err, {
@@ -416,7 +580,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
         );
       }
     } catch (err) {
-      metrics.lastError = `global run ledger: ${errMsg(err)}`;
+      noteError('global_run_ledger', errMsg(err));
       // eslint-disable-next-line no-console
       console.error('[scheduler] global run ledger update failed:', errMsg(err));
     }
@@ -492,7 +656,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     } catch (err) {
       failure = errMsg(err);
       metrics.jobsFailed += 1;
-      metrics.lastError = `job ${job.id}: ${errMsg(err)}`;
+      noteError('job', errMsg(err), job.id);
       // eslint-disable-next-line no-console
       console.error(`[scheduler] job ${job.id} failed:`, errMsg(err));
       await captureWorkerException(err, {
@@ -527,7 +691,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       } catch (err) {
         // dequeue / markDone / markFailed failed (e.g. DB unreachable). Record and
         // back off — never crash the process, so the health server survives.
-        metrics.lastError = `poll: ${errMsg(err)}`;
+        noteError('poll', errMsg(err));
         // eslint-disable-next-line no-console
         console.error('[scheduler] poll error:', errMsg(err));
         await captureWorkerException(err, {
@@ -564,7 +728,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       }
     } catch (err) {
       // Never let the sweep take the tick down — enqueueing is the more important job.
-      metrics.lastError = `reconcile: ${errMsg(err)}`;
+      noteError('reconcile', errMsg(err));
       // eslint-disable-next-line no-console
       console.error('[scheduler] reconcile error:', errMsg(err));
       await captureWorkerException(err, {
@@ -599,7 +763,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       }
     } catch (err) {
       // A transient DB error must not kill the worker — log, record, keep ticking.
-      metrics.lastError = `tick: ${errMsg(err)}`;
+      noteError('tick', errMsg(err));
       // eslint-disable-next-line no-console
       console.error('[scheduler] tick error:', errMsg(err));
       await captureWorkerException(err, {
@@ -671,7 +835,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
         }
       }
     } catch (err) {
-      metrics.lastError = `global tick: ${errMsg(err)}`;
+      noteError('global_tick', errMsg(err));
       // eslint-disable-next-line no-console
       console.error('[scheduler] global job tick error:', errMsg(err));
       await captureWorkerException(err, {

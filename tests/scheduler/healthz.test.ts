@@ -4,14 +4,20 @@
 // tests still hold" had been offered as reassurance more than once while meaning nothing at
 // all, and the endpoint is the only operator-facing signal the ingestion worker has.
 //
-// Four things are pinned here, in descending order of how expensive getting them wrong is:
+// Five things are pinned here, in descending order of how expensive getting them wrong is:
 //   1. the status code is 200 on EVERY path — see the Fly section on the first `it` below;
-//   2. an ABSENT scheduler is not reported as a DISABLED one;
-//   3. `globalSchedules: []` no longer means both "nothing scheduled" and "we are blind";
-//   4. `lastReconcileAt: null` no longer means both "the sweep found nothing to do" and "the
+//   2. the body carries NO FREE TEXT — the D-D block. This endpoint is public and
+//      unauthenticated (confirmed, not suspected), and it used to serve raw pg driver text
+//      through `lastError`, `globalScheduleHealthError` and the NESTED
+//      `globalSchedules[].breakerReason`;
+//   3. an ABSENT scheduler is not reported as a DISABLED one;
+//   4. `globalSchedules: []` no longer means both "nothing scheduled" and "we are blind";
+//   5. `lastReconcileAt: null` no longer means both "the sweep found nothing to do" and "the
 //      sweep has never run" — the D-C block.
-// (2), (3) and (4) are the same defect three times over: a benign-looking value standing in
+// (3), (4) and (5) are the same defect three times over: a benign-looking value standing in
 // for "I don't know", on an endpoint an operator reaches for when something is already wrong.
+// (2) is the mirror image of it — the endpoint saying far MORE than it should, to everyone —
+// and its fix is the same discipline: distinguish states with structure, never with prose.
 //
 // Requests go over a REAL socket rather than through a stubbed ServerResponse, because the
 // thing being pinned in (1) is precisely what Fly's prober sees on the wire — a stub whose
@@ -82,9 +88,39 @@ function metrics(overrides: Partial<SchedulerMetrics> = {}): SchedulerMetrics {
     lastReconcileAttemptAt: null,
     reconcileAttempts: 0,
     lastError: null,
+    lastErrorKind: null,
+    lastErrorAt: null,
+    errorCount: 0,
     ...overrides,
   };
 }
+
+/**
+ * A metrics object where EVERY producer-side free-text field carries a sentinel this file
+ * authored, including the one nested inside `globalSchedules`.
+ *
+ * Used only by the reduction block below. The strings are constants declared here, so an
+ * assertion that they are ABSENT from the body can never print anything the test did not
+ * already contain — which is the whole reason this is allowed to look at content at all
+ * while the four key-set pins stay `Object.keys(...).sort()` and never compare values.
+ */
+const SENTINEL = {
+  lastError: 'SENTINEL_LAST_ERROR_pg_host_db_user',
+  globalScheduleHealthError: 'SENTINEL_HEALTH_READ_ERROR_relation_does_not_exist',
+  breakerReason: 'SENTINEL_BREAKER_REASON_failure_detail',
+} as const;
+
+const poisoned = (): SchedulerMetrics =>
+  metrics({
+    lastError: SENTINEL.lastError,
+    lastErrorKind: 'poll',
+    lastErrorAt: '2026-01-01T00:07:00.000Z',
+    errorCount: 4,
+    globalScheduleHealthAt: '2026-01-01T00:00:00.000Z',
+    globalScheduleHealthError: SENTINEL.globalScheduleHealthError,
+    globalSchedules: [snapshot({ breakerReason: SENTINEL.breakerReason })],
+    globalBreakersTripped: ['corrections_retention'],
+  });
 
 function snapshot(overrides: Partial<GlobalScheduleHealthSnapshot> = {}): GlobalScheduleHealthSnapshot {
   return {
@@ -216,7 +252,13 @@ describe('/healthz — an ABSENT scheduler is not a DISABLED one (D-A)', () => {
     // The unknown arm therefore says what it means with a boolean and an absent key. It has
     // no `reason`, no message, no error, no string of any kind. That is not stylistic: a
     // free-text field on a possibly-public endpoint is where the next author interpolates
-    // `errMsg(err)`, and a pg driver error routinely names host, port, database and user.
+    // `errMsg(err)`. Measured on a real pool at this commit, a pg error names the DATABASE
+    // (`database "x" does not exist`), the ROLE (`password authentication failed for user
+    // "postgres"`) and INTERNAL TABLES (`relation "global_job_schedule" does not exist`).
+    // This comment used to say "host, port, database and user"; host and port did NOT
+    // reproduce — the connection-refused path that would carry them yields an EMPTY message
+    // from node-postgres — and table names, the most commonly observed of all, were missing
+    // from the list. Corrected from measurement rather than repeated.
     // If someone adds one, this fails and says so.
     for (const absent of [undefined, null]) {
       const scheduler = (await get(state(absent))).body.scheduler as Record<string, unknown>;
@@ -449,7 +491,10 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     const scheduler = res.body.scheduler as Record<string, unknown>;
     for (const key of [
       'globalScheduleHealthAt',
-      'globalScheduleHealthError',
+      // Was `globalScheduleHealthError`, which those guards read as `toBeNull()`. The raw
+      // string is no longer published; this boolean is exactly its null-ness, and
+      // expectDurableAlarm in global-jobs-db.test.ts was migrated onto it in the same change.
+      'globalScheduleHealthReadFailed',
       'globalSchedules',
       'globalBreakersTripped',
       'ticks',
@@ -460,133 +505,154 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     }
   });
 
-  it('adds ONLY structure on top of the metrics it already served — no new field slips in', async () => {
-    // The reported arm spreads SchedulerMetrics verbatim, which already carries `lastError`
-    // and `globalScheduleHealthError` — raw driver text that predates this unit and is not
-    // this unit's to change in either direction. What must not happen is a THIRD such
-    // channel appearing.
-    //
+  it('the wire ADDS only structure and DROPS exactly the free text — both directions pinned', async () => {
     // ── EXACTLY WHAT THIS ONE COVERS, WHICH IS LESS THAN IT USED TO CLAIM ────────────────
-    // It pins the keys /healthz ADDS ON TOP OF the metrics, and only those. `added` is a
-    // DIFFERENCE against `m`, so a field added to `SchedulerMetrics` itself is on both sides
-    // of the subtraction and is filtered out here BY CONSTRUCTION — this assertion can never
-    // report a producer-side addition, however it is tuned. That case is the next test's,
-    // and a field added NEXT TO `scheduler` rather than inside it is the one after that.
-    // The three are disjoint on purpose; none of them is redundant, and the header comment
-    // that used to describe this one as covering "any future addition to the body" was
-    // wrong in the exact direction that matters.
+    // It pins the keys /healthz ADDS ON TOP OF the metrics, and the keys it DROPS. Both are
+    // DIFFERENCES against `m`, so a field added to `SchedulerMetrics` AND published is on
+    // both sides of `added` and is filtered out here BY CONSTRUCTION — this assertion can
+    // never report a producer-side addition, however it is tuned. That case is the next
+    // test's, and a field added NEXT TO `scheduler` rather than inside it is the one after
+    // that. The three are disjoint on purpose; none of them is redundant, and the header
+    // comment that used to describe this one as covering "any future addition to the body"
+    // was wrong in the exact direction that matters.
+    //
+    // ── THE `dropped` HALF IS THIS UNIT'S WHOLE POINT, STATED AS A CONTRACT ──────────────
+    // Three free-text fields used to ride onto a public unauthenticated endpoint because
+    // schedulerReport() spread the metrics object. It now names every key it publishes, so
+    // these two are simply not written down (the third, `breakerReason`, is NESTED and is
+    // pinned separately below — a flat key set cannot see inside an array element, which is
+    // exactly how it stayed public with three green guards over it).
+    //
+    // If `dropped` shrinks, a raw-driver-text channel just came back. If it grows, a field
+    // stopped being published and some reader may be reading `undefined` — check the
+    // consumer list in worker/src/healthz.ts's header before accepting either.
     const m = metrics({ globalScheduleHealthAt: '2026-01-01T00:00:00.000Z' });
     const scheduler = (await get(state(m))).body.scheduler as Record<string, unknown>;
+
     const added = Object.keys(scheduler).filter((k) => !Object.hasOwn(m, k));
-    expect(added.sort()).toEqual(['globalScheduleHealthStatus', 'known']);
+    expect(added.sort()).toEqual([
+      'globalScheduleHealthReadFailed',
+      'globalScheduleHealthStatus',
+      'known',
+    ]);
     // …and the one added string is a closed enum of three constants, not runtime text.
     expect(['unknown', 'last_read_ok', 'stale']).toContain(scheduler.globalScheduleHealthStatus);
+    // …and the one added boolean is a boolean, not a message that happens to be truthy.
+    expect(typeof scheduler.globalScheduleHealthReadFailed).toBe('boolean');
+
+    const dropped = Object.keys(m).filter((k) => !Object.hasOwn(scheduler, k));
+    expect(dropped.sort()).toEqual(['globalScheduleHealthError', 'lastError']);
   });
 
   it('the REPORTED arm is a FIXED key set — a producer field cannot reach the wire unannounced', async () => {
     // ── WHY THIS EXISTS WHEN THE GUARD ABOVE LOOKS LIKE IT ALREADY COVERS IT ─────────────
     // That guard computes `Object.keys(scheduler).filter((k) => !Object.hasOwn(m, k))`: what
     // /healthz ADDS to the metrics. A new field on `SchedulerMetrics` (worker/src/scheduler.ts)
-    // is present in `m`, so the filter removes it — not because the threshold is wrong but
-    // because that is what the expression computes. The whole-body guard below is blind to it
-    // too: it pins the six TOP-LEVEL keys, and a producer field arrives INSIDE `scheduler`.
+    // that is ALSO published is present in `m`, so the filter removes it — not because the
+    // threshold is wrong but because that is what the expression computes. The whole-body
+    // guard below is blind to it too: it pins the six TOP-LEVEL keys, and a scheduler field
+    // arrives INSIDE `scheduler`. So this arm is the only place a published-key change fails.
     //
-    // So the producer path was the one route neither guard watched — and it is not a
-    // hypothetical route. It is how `lastError` and `globalScheduleHealthError` put raw pg
-    // driver text on this endpoint in the first place (worker/src/scheduler.ts:530 assigns
-    // `lastError` from `errMsg(err)` on any poll failure, and a pg error routinely names host,
-    // port, database and user). This endpoint is confirmed public and unauthenticated on both
-    // production and staging.
+    // ── WHAT CHANGED UNDER THIS GUARD, AND WHY MOST OF THE OLD TEXT NO LONGER APPLIES ────
+    // Until the /healthz body reduction, schedulerReport() built this arm as
+    // `{ ...scheduler, known: true, … }` — a SPREAD. That is how `lastError` and
+    // `globalScheduleHealthError` reached a public unauthenticated endpoint carrying raw pg
+    // driver text: a producer edit published a field with no edit to worker/src/healthz.ts
+    // and no reader of it involved. This literal was the ONLY thing standing in that path,
+    // and the three defeat vectors recorded below were all about getting past it.
+    //
+    // schedulerReport() now NAMES EVERY KEY IT PUBLISHES. The producer→wire route is closed
+    // by construction, not by this assertion: a field added to SchedulerMetrics and not
+    // written into that projection cannot reach the body at all. THIS GUARD THEREFORE PINS A
+    // DIFFERENT THING THAN IT USED TO — it pins the PROJECTION, i.e. the deliberate decision
+    // about what the public is told. What it catches now:
+    //   • a key added to or removed from schedulerReport()'s object literal — fails BY NAME;
+    //   • schedulerReport() being "simplified" back to a spread — fails immediately and
+    //     loudly, because `lastError` and `globalScheduleHealthError` reappear in the key set
+    //     and this literal does not contain them. THAT IS THIS GUARD'S PRIMARY JOB NOW.
     //
     // ── THE LIST IS A HARD-CODED LITERAL AND MUST STAY ONE ───────────────────────────────
     // Do NOT rewrite it as `Object.keys(metrics())`, `Object.keys(m)`, or anything else read
-    // from a runtime value. That reproduces the exact by-construction flaw above: a new
-    // producer key would enter the fixture and the expectation in the SAME INSTANT, and this
-    // guard would be green forever while the field sailed onto the public edge. It works
-    // precisely BECAUSE the `metrics()` fixture is declared `: SchedulerMetrics`, so tsc
-    // FORCES it to gain any new producer field, schedulerReport's spread carries that field
-    // onto this arm, and this literal then fails BY NAME. Editing the list is the deliberate
-    // human act the guard exists to require.
+    // from a runtime value — including anything derived from the projection itself. A
+    // derived list would enter the expectation in the same instant as the key it is meant to
+    // question, and this guard would be green forever while the field sailed onto the public
+    // edge. Editing the list is the deliberate human act the guard exists to require.
     //
     // ── KEYS ONLY. NEVER `toEqual` ON THE WHOLE OBJECT, NEVER COMPARE VALUES ─────────────
     // A value comparison reads as strictly stronger and is strictly worse here: on the day
     // this guard catches a real leak, it would copy the leaked value into the CI log, which
     // is the thing the guard exists to prevent. Standing project ruling — if you think you
-    // need a value compare here, stop and ask.
+    // need a value compare here, stop and ask. (The reduction block below does assert on
+    // content, and it is not an exception to this: it asserts the ABSENCE of sentinels the
+    // test file itself declares, so a failure prints a constant from this file and nothing
+    // from the object under test.)
     //
-    // WHAT THIS STILL DOES NOT PIN: values, and anything NESTED. `globalSchedules` entries
-    // carry their own keys, including `breakerReason: string | null`
-    // (worker/src/scheduler.ts:62) — free text already on the wire that nothing in this file
-    // looks inside.
+    // WHAT THIS STILL DOES NOT PIN: values, and anything NESTED. A flat key set cannot see
+    // inside `globalSchedules` entries — which is not a footnote, it is how
+    // `breakerReason: string | null` sat on a public endpoint with three green guards over
+    // it. That hole is closed by its own pin, in the next test.
     //
-    // ── THREE WAYS A FUTURE AUTHOR CAN DEFEAT THIS GUARD. ALL THREE MEASURED, NOT REASONED ──
-    // This guard reads the FIXTURE's key set, not the producer's. It catches producer drift
-    // only because tsc forces `metrics()` to mirror `SchedulerMetrics`. Break the mirror and
-    // the guard goes green while the field ships live on a public endpoint:
+    // ── THE THREE DEFEAT VECTORS, RE-MEASURED AT THIS COMMIT ─────────────────────────────
+    // The chain used to be: root tsc forces `metrics()` to mirror SchedulerMetrics → the
+    // spread carries every fixture key onto the wire → this literal fails by name. Two of
+    // the three ways to break that chain worked because of the MIDDLE link. There is no
+    // middle link any more, and re-measuring (rather than reasoning) changed the answers:
     //
-    //  1. AN OPTIONAL FIELD IS INVISIBLE TO IT. `foo?: string` on SchedulerMetrics never
-    //     forces the fixture to gain the key, so `Object.keys` never sees it here — while the
-    //     REAL producer object, which does set it, spreads it straight onto the wire through
-    //     schedulerReport. Measured: added an optional field + set it in the producer → tsc
-    //     SILENT, every test in this file GREEN. SchedulerMetrics has ZERO optional fields
-    //     today, and that is not cosmetic — it is the precondition that makes this guard
-    //     work. Keep it that way; a field that is genuinely sometimes-absent should be
-    //     `T | null`, which is required and therefore forced into the fixture.
+    //  1. AN OPTIONAL FIELD ON SchedulerMetrics — was: invisible here AND live on the wire.
+    //     NOW HARMLESS. `foo?: string` still never forces the fixture to gain the key, so
+    //     this key set still cannot see it — but the projection does not publish it either,
+    //     so there is nothing to see. Re-measured at this commit: added an optional field to
+    //     SchedulerMetrics and set it in the producer → tsc silent, this file green, AND THE
+    //     FIELD ABSENT FROM THE BODY. Prefer `T | null` anyway (it keeps the fixture honest
+    //     for the tests that read metrics directly), but it is no longer load-bearing for
+    //     disclosure.
     //
-    //  2. A CAST LAUNDERS ANYTHING PAST IT, AND THIS IS THE DANGEROUS ONE. Writing
-    //     `} as SchedulerMetrics;` at the end of the fixture silences tsc completely.
-    //     Measured: added a REQUIRED producer field with the cast in place → tsc SILENT,
-    //     every test in this file GREEN, field live. Do not introduce a cast here, and do
-    //     not "fix" a type error in this fixture by reaching for one — that error IS the
-    //     guard firing.
+    //  2. A CAST IN THE FIXTURE — was: the dangerous one; laundered a required producer
+    //     field straight onto the wire. NOW CAUGHT, AND CAUGHT HERE. `} as SchedulerMetrics`
+    //     still silences tsc, but a fixture missing a key the projection READS produces
+    //     `undefined` for that key, JSON.stringify drops it, and this literal fails by name.
+    //     Re-measured at this commit: cast the fixture and deleted `ticks` from it → tsc
+    //     silent, and this assertion FAILED with `- "ticks"`. The cast is still bad practice
+    //     — do not reach for one to quiet a type error, because that error IS the guard —
+    //     but it is no longer a silent bypass.
     //
-    //  3. LOOSENING THE RETURN-TYPE ANNOTATION degrades it but, measured, does NOT silently
-    //     defeat it: removing `: SchedulerMetrics` from `metrics()` still fails tsc, because
-    //     EVERY call site that passes the fixture where a `SchedulerMetrics` is expected
-    //     re-checks it structurally and reports its own error. WHICH tsc, though, is the part
-    //     that decides whether you ever see it: ROOT `tsc --noEmit` fails (26 such call sites,
-    //     measured at a576bd9); `tsc -p worker/tsconfig.json` STAYS CLEAN, because that
-    //     project's `include` is worker-only and this test file is not in it. An author who
-    //     builds only the worker sees green and concludes the guard is intact. The errors also
-    //     move to those call sites and misattribute (they lead with `environment` widening to
-    //     `string`), so the real failure is stated confusingly and an author is tempted into
-    //     (2) to make it quiet. Keep the annotation — not because it is the only check, but
-    //     because it is the one that fails HERE, legibly.
+    //  3. LOOSENING THE RETURN-TYPE ANNOTATION on `metrics()` — unchanged, and still does
+    //     NOT silently defeat anything: every call site that passes the fixture where a
+    //     `SchedulerMetrics` is expected re-checks it structurally and reports its own error.
+    //     WHICH tsc is still the part that decides whether you see it: ROOT `tsc --noEmit`
+    //     fails; `tsc -p worker/tsconfig.json` STAYS CLEAN, because that project's `include`
+    //     is worker-only and this test file is not in it. An author who builds only the
+    //     worker sees green and concludes the guard is intact. Keep the annotation.
     //
-    //     ── A COUNT IN A COMMENT MUST CARRY THE SHA IT WAS MEASURED AT, OR IT ROTS ────────
-    //     That "26" is stamped because the number is a property of a moment, not of the
-    //     mechanism, and a bare count reads as timeless. Demonstrated at this repo's expense:
-    //     it was honestly measured as 21 at 3958e22 and FALSIFIED BY THE VERY COMMIT THAT
-    //     WROTE IT DOWN — a576bd9's new D-C block added five more `metrics()` call sites, so
-    //     the comment shipped stale in the same diff that introduced it. Prefer the sentence
-    //     above, which stays true as call sites come and go; keep the number only as
-    //     corroboration, and re-stamp it if you re-measure. The error direction here is
-    //     CONSERVATIVE — more call sites fail than the old text claimed, so the guard was
-    //     always stronger than advertised — but a comment that is wrong in a safe direction
-    //     is still a comment a reader cannot trust.
+    // ── A COUNT IN A COMMENT MUST CARRY THE SHA IT WAS MEASURED AT, OR IT ROTS ───────────
+    // The previous text stamped "26 call sites, measured at a576bd9" after a bare count had
+    // already been falsified by the very commit that wrote it down. No count is quoted here
+    // at all: the sentence above ("every call site … reports its own error") stays true as
+    // call sites come and go, and that is the property worth writing down.
     //
-    // ── EXERCISED FOR REAL, 2026-08-10, BY `lastReconcileAttemptAt`/`reconcileAttempts` ──
-    // The first genuine producer-side addition since this list existed. It went exactly as
-    // described above, and the ORDER is worth recording because the middle step looks like
-    // the guard failing to work:
+    // ── EXERCISED FOR REAL, TWICE ────────────────────────────────────────────────────────
+    // 2026-08-10, `lastReconcileAttemptAt`/`reconcileAttempts` — the first genuine
+    // producer-side addition after this list existed. Order matters, because the middle step
+    // looks like the guard failing to work:
     //   1. fields added to SchedulerMetrics ONLY → root `tsc --noEmit` failed HERE, at the
     //      `metrics()` fixture, naming `lastReconcileAttemptAt`;
     //   2. with the producer already carrying both fields and the fixture not yet updated,
-    //      THIS FILE RAN GREEN END TO END. Vitest does not typecheck, so the fixture still built
-    //      the old key set. tsc is the FIRST link in this chain, not a formality beside it —
-    //      the runtime pin below cannot see a producer field until tsc has forced the fixture
-    //      to carry one. That is exactly why defeat vectors (1) and (2) work;
-    //   3. fixture updated → the assertion below failed by name, printing precisely
-    //      `+ "lastReconcileAttemptAt"` and `+ "reconcileAttempts"`, and the literal was then
-    //      edited by hand.
+    //      THIS FILE RAN GREEN END TO END. Vitest does not typecheck. tsc is the FIRST link
+    //      in this chain, not a formality beside it;
+    //   3. fixture updated → this assertion failed by name, and the literal was edited by hand.
+    // The /healthz body reduction — same sequence for `lastErrorKind`/`lastErrorAt`/
+    // `errorCount`: root tsc failed first at the fixture naming `lastErrorKind` (worker tsc
+    // stayed clean, exactly as vector 3 warns), then this literal failed by name once the
+    // fixture was filled in. Step 2 held again: vitest was green on the un-updated fixture.
     // If you are here because step 1 or step 3 just failed at you: that is this guard doing
     // its job. Add the key to the list deliberately. Do not derive the list; do not cast.
     const REPORTED_ARM_KEYS = [
       'enabled',
       'environment',
+      'errorCount',
       'globalBreakersTripped',
       'globalScheduleHealthAt',
-      'globalScheduleHealthError',
+      'globalScheduleHealthReadFailed',
       'globalScheduleHealthStatus',
       'globalSchedules',
       'jobsFailed',
@@ -594,7 +660,8 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
       'jobsSucceeded',
       'known',
       'lastEnqueueCount',
-      'lastError',
+      'lastErrorAt',
+      'lastErrorKind',
       'lastGlobalEnqueueCount',
       'lastJobAt',
       'lastReconcileAt',
@@ -644,6 +711,44 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     }
   });
 
+  it('a globalSchedules ELEMENT is a fixed key set — the nested route is no longer unwatched', async () => {
+    // ── THE HOLE EVERY OTHER GUARD IN THIS FILE ADMITS TO, CLOSED ────────────────────────
+    // The three key-set pins around this one are FLAT: they read `Object.keys` of the body
+    // and of `scheduler`. None of them can see inside an array element. That is not a
+    // theoretical gap — `breakerReason` is raw handler error text (built by
+    // worker/core/global-job-schedule.ts's breakerReasonFor as `${outcome}: ${detail}`,
+    // where `detail` is the failing handler's own message, so a database fault puts pg
+    // driver text in it), and it sat on a public unauthenticated endpoint, INSIDE this
+    // array, while every guard in this file was green. A guard set that is honest about
+    // where it does not look, and then never closes that place, is just a longer comment.
+    //
+    // The fixture deliberately supplies a snapshot whose `breakerReason` is populated, so
+    // this fails if the projection ever spreads the producer's snapshot instead of naming
+    // its fields (worker/src/healthz.ts's publicSnapshot).
+    const res = await get(
+      state(metrics({ globalScheduleHealthAt: '2026-01-01T00:00:00.000Z', globalSchedules: [snapshot()] })),
+    );
+    const scheduler = res.body.scheduler as Record<string, unknown>;
+    const entries = scheduler.globalSchedules as Array<Record<string, unknown>>;
+    expect(entries, 'the fixture stopped reaching the projection').toHaveLength(1);
+    expect(
+      Object.keys(entries[0]).sort(),
+      '/healthz globalSchedules[] changed shape — a key was added to or removed from ' +
+        'GlobalScheduleHealthSnapshot and is now nested on a public, unauthenticated endpoint',
+    ).toEqual([
+      'breakerTrippedAt',
+      'consecutiveFailures',
+      'enabled',
+      'inFlight',
+      'jobType',
+      'lastSuccessAt',
+      'maxConsecutiveFailures',
+      'missedRuns',
+      'nextRunAt',
+      'status',
+    ]);
+  });
+
   it('the WHOLE body is a fixed key set — nothing new reaches the public edge unnoticed', async () => {
     // The two guards above pin the `scheduler` sub-object — what /healthz adds to the metrics,
     // and the full key set of the reported arm. This pins the TOP LEVEL, which neither of them
@@ -673,5 +778,180 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     const res = await get({ chromiumReady: false, bootedAt: '2026-02-03T04:05:06.000Z', scheduler: null });
     expect(res.body.chromiumReady).toBe(false);
     expect(res.body.bootedAt).toBe('2026-02-03T04:05:06.000Z');
+  });
+});
+
+describe('/healthz — the body carries no free text (D-D: the public-disclosure reduction)', () => {
+  // ── WHAT THIS BLOCK IS FOR ───────────────────────────────────────────────────────────
+  // The endpoint is public and unauthenticated on both apps — confirmed by Fly's API and a
+  // direct curl of both default hostnames, not inferred. Three free-text channels rode the
+  // body, all three carrying text written by a pg driver or a failing job handler:
+  //   1. `lastError`, set at seven sites in worker/src/scheduler.ts and cleared on success
+  //      at NONE of them, so it was a since-boot HIGH-WATER MARK that stayed on the wire
+  //      until the machine restarted. Observed carrying a real job UUID and, after a
+  //      migration, a message naming an internal table.
+  //   2. `globalScheduleHealthError`, observed serving a raw Postgres error naming an
+  //      internal table on live staging.
+  //   3. `globalSchedules[].breakerReason`, NESTED — invisible to every flat key-set guard.
+  //
+  // Auth is not the lever: Fly's prober sends no credential and both manifests health-check
+  // this path every 30s, so a 401 crash-loops the worker exactly as a non-200 would. The
+  // only lever is WHAT THE BODY SAYS, so the body says it with structure — an enum, a
+  // boolean, a timestamp, a counter — and never with a sentence.
+  //
+  // ── WHY THESE ASSERTIONS MAY LOOK AT CONTENT WHEN THE KEY-SET PINS MAY NOT ───────────
+  // The standing ruling is that the key-set guards compare `Object.keys(...).sort()` and
+  // never values, because on the day one catches a real leak a value compare copies the
+  // leaked value into the CI log. Every sentinel below is a CONSTANT DECLARED IN THIS FILE
+  // and every assertion checks for its ABSENCE, so a failure here can only ever print a
+  // string this file already contains. The four key-set pins above are untouched.
+
+  it('NO free text reaches the body, even when every producer field is carrying some', async () => {
+    const body = JSON.stringify((await get(state(poisoned()))).body);
+    for (const [field, value] of Object.entries(SENTINEL)) {
+      expect(
+        body.includes(value),
+        `/healthz is publishing scheduler.${field} — raw driver/handler text on a public, ` +
+          'unauthenticated endpoint. See worker/src/healthz.ts schedulerReport/publicSnapshot.',
+      ).toBe(false);
+    }
+  });
+
+  it('and not one value anywhere in it is a string outside a closed, code-owned set', async () => {
+    // The generalisation of the test above: rather than hunting for known sentinels, walk
+    // the WHOLE body and require every string it contains to be one this codebase chose.
+    // A fourth free-text channel — a field nobody has thought of yet, at any depth — fails
+    // here without anyone having to predict its name.
+    //
+    // `jobType` is the one deliberate exception and it is listed by name rather than waved
+    // through by a predicate: `global_job_schedule.job_type` is `text NOT NULL UNIQUE` with
+    // no CHECK (migration 0028:63, measured), so it is operator/migration-authored config
+    // text. It is kept because it is the whole answer to "WHICH job is stopped", and it
+    // cannot receive driver output — nothing in the code path writes an error message, a
+    // UUID, a hostname or a SQL fragment into that column. Recorded as a trade, not missed.
+    const CLOSED_SETS: Record<string, readonly string[]> = {
+      status: ['ok', 'breaker_tripped', 'missed', 'running', 'due', 'disabled'],
+      service: ['kids-fun-worker'],
+      environment: ['staging', 'production'],
+      globalScheduleHealthStatus: ['unknown', 'last_read_ok', 'stale'],
+      lastErrorKind: [
+        'poll',
+        'job',
+        'tick',
+        'global_tick',
+        'reconcile',
+        'global_schedule_health',
+        'global_run_ledger',
+      ],
+    };
+    const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+    /** Keys whose string values are timestamps, and the one identifier kept on purpose. */
+    const TIMESTAMPS = ['bootedAt', 'lastTickAt', 'lastJobAt', 'lastReconcileAt',
+      'lastReconcileAttemptAt', 'lastErrorAt', 'globalScheduleHealthAt', 'breakerTrippedAt',
+      'nextRunAt', 'lastSuccessAt'];
+    const JOB_TYPE_KEYS = ['jobType', 'globalBreakersTripped'];
+
+    const offenders: string[] = [];
+    const walk = (node: unknown, path: string, key: string): void => {
+      if (typeof node === 'string') {
+        const closed = CLOSED_SETS[key];
+        if (closed?.includes(node)) return;
+        if (TIMESTAMPS.includes(key) && ISO.test(node)) return;
+        if (JOB_TYPE_KEYS.includes(key)) return;
+        // Deliberately reports the PATH, never the value — same reason the key-set pins
+        // compare keys: a real leak must not be copied into CI output by the guard.
+        offenders.push(path);
+        return;
+      }
+      if (Array.isArray(node)) {
+        node.forEach((v, i) => walk(v, `${path}[${i}]`, key));
+        return;
+      }
+      if (node !== null && typeof node === 'object') {
+        for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`, k);
+      }
+    };
+
+    // Every state that can reach the wire, including the one carrying free text everywhere.
+    for (const s of [state(undefined), state(null), state(metrics()), state(poisoned())]) {
+      walk((await get(s)).body, 'body', '');
+    }
+    expect(
+      offenders,
+      'a /healthz field is serving a string outside any closed set — if it is deliberate, ' +
+        'add it to CLOSED_SETS here and say why on the field in worker/src/healthz.ts',
+    ).toEqual([]);
+  });
+
+  it('a DB failure is still fully legible: THAT, WHEN, and WHAT CLASS — with no message', async () => {
+    // The replacement has to carry what an operator actually needs, or this unit traded a
+    // disclosure for a blind endpoint. Poll lane failed four times, most recently at :07.
+    const s = (await get(state(poisoned()))).body.scheduler as Record<string, unknown>;
+    expect(s.lastErrorKind).toBe('poll'); // WHAT CLASS
+    expect(s.lastErrorAt).toBe('2026-01-01T00:07:00.000Z'); // WHEN
+    expect(s.errorCount).toBe(4); // THAT, and how much of it
+    // …and the durable-health read is separately reported as failing, which `lastErrorKind`
+    // cannot be relied on for — any other lane's error overwrites it.
+    expect(s.globalScheduleHealthReadFailed).toBe(true);
+    expect(s.globalScheduleHealthStatus).toBe('stale');
+  });
+
+  it('no errors since boot is DISTINGUISHABLE from an error whose text is withheld', async () => {
+    // The failure mode of a reduction is a body that reads clean in both states. It does not.
+    const clean = (await get(state(metrics()))).body.scheduler as Record<string, unknown>;
+    expect(clean.lastErrorKind).toBeNull();
+    expect(clean.lastErrorAt).toBeNull();
+    expect(clean.errorCount).toBe(0);
+
+    const failed = (await get(state(poisoned()))).body.scheduler as Record<string, unknown>;
+    expect(failed.lastErrorKind).not.toBeNull();
+    expect(failed.lastErrorAt).not.toBeNull();
+    expect(failed.errorCount).toBeGreaterThan(0);
+  });
+
+  it('the error signal is a HIGH-WATER MARK and the timestamp is what makes that readable', async () => {
+    // worker/src/scheduler.ts sets these at seven sites and clears them at none, so a
+    // healthy worker that failed once an hour ago reports the same KIND as one failing now.
+    // That is deliberate — an error an hour ago is information — and it is only safe to
+    // read because `lastErrorAt` says which. Pinned so nobody later reads `lastErrorKind`
+    // as "currently broken", which is the same false-reading defect as `enabled: false` for
+    // an absent scheduler and `lastReconcileAt: null` for a sweep that found nothing.
+    const ancient = (await get(state(metrics({
+      lastErrorKind: 'reconcile', lastErrorAt: '1999-01-01T00:00:00.000Z', errorCount: 1,
+    })))).body.scheduler as Record<string, unknown>;
+    const recent = (await get(state(metrics({
+      lastErrorKind: 'reconcile', lastErrorAt: '2026-01-01T00:00:00.000Z', errorCount: 1,
+    })))).body.scheduler as Record<string, unknown>;
+    expect(ancient.lastErrorKind).toEqual(recent.lastErrorKind); // identical class…
+    expect(ancient.lastErrorAt).not.toEqual(recent.lastErrorAt); // …separable by the clock
+  });
+
+  it('THE BLIND-AT-BOOT CASE: "no read yet" and "the first read FAILED" stay distinguishable', async () => {
+    // `globalScheduleHealthStatus` collapses both into 'unknown' — deliberately, because the
+    // enum answers a different question. Dropping `globalScheduleHealthError` without
+    // replacing it would have made a worker that CANNOT REACH THE DATABASE AT ALL
+    // byte-identical to one that booted two seconds ago. The boolean is what separates them.
+    const booting = (await get(state(metrics({ globalScheduleHealthAt: null }))))
+      .body.scheduler as Record<string, unknown>;
+    const blind = (await get(state(metrics({
+      globalScheduleHealthAt: null, globalScheduleHealthError: 'connection terminated unexpectedly',
+    })))).body.scheduler as Record<string, unknown>;
+
+    expect(booting.globalScheduleHealthStatus).toBe('unknown');
+    expect(blind.globalScheduleHealthStatus).toBe('unknown'); // same enum value…
+    expect(booting.globalScheduleHealthReadFailed).toBe(false);
+    expect(blind.globalScheduleHealthReadFailed).toBe(true); // …different, legible meaning
+    expect(JSON.stringify(booting)).not.toBe(JSON.stringify(blind));
+  });
+
+  it('the unknown-scheduler arm is still PURE STRUCTURE — one boolean, nothing else', async () => {
+    // Unchanged by the reduction and re-asserted here so the whole no-free-text contract is
+    // stated in one place: the absent-scheduler arm has no reason, message or error of any
+    // kind, and `enabled` is ABSENT rather than false.
+    for (const absent of [undefined, null]) {
+      const scheduler = (await get(state(absent))).body.scheduler as Record<string, unknown>;
+      expect(Object.keys(scheduler)).toEqual(['known']);
+      expect(Object.hasOwn(scheduler, 'enabled')).toBe(false);
+    }
   });
 });

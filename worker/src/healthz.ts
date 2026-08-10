@@ -1,16 +1,31 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { SchedulerMetrics } from './scheduler';
+import type {
+  GlobalScheduleHealthSnapshot,
+  SchedulerErrorKind,
+  SchedulerMetrics,
+} from './scheduler';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
 // Liveness/readiness payload for the ingestion worker (G-T1-2 verify: curl /healthz → 200).
 //
+// ── WHO ACTUALLY READS THIS, MEASURED AT 72b9e19 ─────────────────────────────────────────
+// Two audiences, and only one of them reads the body at all:
+//   • Fly's prober — worker/fly.toml:36-41 and worker/fly.production.toml:36-41. A
+//     `[[http_service.checks]]` with method/path/interval/timeout/grace_period and NO body
+//     assertion of any kind: it reads the STATUS CODE and nothing else.
+//   • worker/Dockerfile:92-93's HEALTHCHECK — `curl -fsS … || exit 1`. `-f` turns a >=400
+//     into a non-zero exit and `-s` discards the body. STATUS CODE ONLY.
+//   • a human operator curling it, and the test guards standing in for one
+//     (tests/scheduler/healthz.test.ts; global-jobs-db.test.ts's awaitDurableHealth and
+//     healthzPayload, which poll a REAL socket on a REAL separate process).
+// Nothing else in the repo parses this body. So the body exists for ONE reader — a person
+// deciding whether to intervene — and it is sized for that reader and no other.
+//
 // ── WHY THIS ALWAYS RETURNS 200, AND WHY MAKING IT CONDITIONAL WOULD CRASH-LOOP PRODUCTION ─
-// worker/fly.toml:36-41 and worker/fly.production.toml:36-41 BOTH declare
-//     [[http_service.checks]] method="get" path="/healthz" interval="30s" timeout="5s"
-// alongside auto_stop_machines="suspend" and min_machines_running=1. Fly polls this exact
-// path every 30 seconds AS THE MACHINE'S LIVENESS PROBE. A non-200 here does not raise an
-// alert — it makes Fly REPLACE THE MACHINE. So a worker that is unhealthy *because the
-// database is unreachable* would be killed and rebooted every 30s for as long as the
+// Fly polls this exact path every 30 seconds AS THE MACHINE'S LIVENESS PROBE, on both apps,
+// alongside auto_stop_machines="suspend" and min_machines_running=1. A non-200 here does not
+// raise an alert — it makes Fly REPLACE THE MACHINE. So a worker that is unhealthy *because
+// the database is unreachable* would be killed and rebooted every 30s for as long as the
 // database stayed unreachable: a crash loop, in production, on the worker doing real
 // ingestion. Every unit test in this repo would stay green throughout, because nothing here
 // simulates Fly's prober.
@@ -21,13 +36,72 @@ import type { SchedulerMetrics } from './scheduler';
 // act on lives in the BODY. tests/scheduler/healthz.test.ts pins this deliberately, with
 // the reasoning above written into the test body — do not "fix" the 200.
 //
+// AUTHENTICATION IS THE SAME TRAP BY ANOTHER ROUTE. Fly's prober sends no credential, so a
+// 401 makes the machine unhealthy, which restarts it, forever. Gating this endpoint is
+// solvable only with check headers plus secrets across both manifests — a coordinated infra
+// change, not a code change. Until that exists, THE ONLY LEVER THIS FILE HAS IS WHAT IT SAYS.
+//
+// ── THIS RESPONSE IS PUBLIC. CONFIRMED, NOT SUSPECTED. ───────────────────────────────────
+// Fly's API and a direct curl of both default hostnames show production and staging each
+// holding a real public IP, with https://kids-fun-worker.fly.dev/healthz (and the staging
+// equivalent) returning HTTP 200 and this entire body to anyone, unauthenticated. It is
+// unauthenticated in code (worker/src/index.ts:54-57), bound to every interface
+// (index.ts:80 — `server.listen(PORT)` with no host), and published at Fly's edge by both
+// manifests ([http_service] + force_https, fly.toml:29-31, fly.production.toml:29-31).
+//
+// ── THE RULE THIS FILE ENFORCES: DISTINGUISH STATES WITH STRUCTURE, NEVER WITH PROSE ─────
+// An enum, a boolean, a timestamp, a counter, null-versus-empty. An operator needs to know
+// THAT something failed, WHEN, and roughly WHAT CLASS. They do not need the driver's
+// sentence, and the public does not get it. Three free-text channels used to be here and
+// all three are gone from the wire (they survive in the metrics object, the logs and
+// Sentry — all authenticated):
+//   • `lastError` — raw driver text, set at seven sites in scheduler.ts and cleared at NONE
+//     on success, so it was a SINCE-BOOT HIGH-WATER MARK that stayed on the public wire
+//     until the machine restarted. Observed carrying a real job UUID, and after a migration
+//     a message naming an internal table. Replaced by `lastErrorKind` (closed enum),
+//     `lastErrorAt` (so the high-water mark reads as one) and `errorCount`.
+//   • `globalScheduleHealthError` — same shape; observed serving a raw Postgres error
+//     naming an internal table on live staging. Replaced by the boolean
+//     `globalScheduleHealthReadFailed`, which is exactly its null-ness and nothing else.
+//   • `globalSchedules[].breakerReason` — free text NESTED inside an array, which is why
+//     every flat key-set guard was blind to it. Dropped; `status`, `breakerTrippedAt` and
+//     the failure counters already carry THAT/WHEN/CLASS.
+//
+// ── VERIFIED ON THE REAL WIRE, NOT ONLY IN TESTS ─────────────────────────────────────────
+// The compiled worker was booted against a real pg pool and the socket curled in every
+// reachable state, recording the actual bytes AND what the process was holding at that
+// instant. In all of them the free text was PRESENT internally and ABSENT from the body:
+//   • scheduler absent                      → `{"scheduler":{"known":false}}`, nothing else
+//   • healthy, durable read succeeded       → status 'last_read_ok', readFailed false
+//   • breaker durably tripped, its DB
+//     `breaker_reason` holding raw pg text  → body carries status/breakerTrippedAt/counters;
+//                                             the reason string appears nowhere in it
+//   • schema missing (a REAL pg error:
+//     `relation "global_job_schedule" does
+//     not exist`)                           → status 'unknown', readFailed TRUE,
+//                                             lastErrorKind 'poll', errorCount 14
+//   • database unreachable / wrong password
+//     / wrong database name                 → same structural signal; the driver's sentence,
+//                                             which names the database and the role, stays
+//                                             in the process
+// Every one returned HTTP 200, as the Fly contract above requires.
+//
+// ── AND THE ROOT CAUSE, WHICH WAS THE SPREAD, NOT THE THREE FIELDS ───────────────────────
+// This file used to build the reported arm as `{ ...scheduler, known: true, … }`. That
+// spread is how all three got here: a field added to `SchedulerMetrics` in scheduler.ts
+// reached the public edge in the same commit, with no edit to this file and no reader of
+// this file involved. Removing three fields would have left that route open for the fourth.
+// schedulerReport() below therefore names EVERY key it publishes, one at a time. A producer
+// field that nobody has written a line for here cannot reach the wire at all — not
+// "is caught by a test", CANNOT. The test guards are now a second line, not the only one.
+//
 // ── WHAT THE BODY MUST NEVER DO: LET A BENIGN VALUE STAND IN FOR "I DON'T KNOW" ───────────
 // Two states used to be inexpressible here, and both read as good news:
 //   • a MISSING scheduler was rendered `{ enabled: false }` — the old
 //     `scheduler: state.scheduler ?? { enabled: false }`. The defect was never a collision of
 //     BYTES. `enabled: false` on the wire could only EVER have come from that fallback, because
-//     scheduler.ts:258 sets `enabled: true` and nothing anywhere unsets it; and a producer that
-//     DID report a disabled scheduler would have sent the whole 24-field metrics object, not a
+//     scheduler.ts sets `enabled: true` and nothing anywhere unsets it; and a producer that
+//     DID report a disabled scheduler would have sent the whole metrics object, not a
 //     single key. It was a collision of MEANING, in the reader. `scheduler.enabled === false`
 //     is the check an operator — or an alert built on this endpoint — reaches for to answer
 //     "is the scheduler running?", and every single time the endpoint answered it `false` it
@@ -35,7 +109,7 @@ import type { SchedulerMetrics } from './scheduler';
 //     configuration. `known` fixes that by replacing the question, not the value.
 //   • `globalSchedules: []` meant both "no schedules are configured" and "the durable read
 //     has never succeeded", i.e. the worker is blind.
-// Both are now named explicitly — `known` and `globalScheduleHealthStatus` below — so a
+// Both are named explicitly — `known` and `globalScheduleHealthStatus` below — so a
 // reader does not have to already know the convention to avoid alerting on a false green.
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
@@ -64,8 +138,127 @@ export interface HealthState {
  *
  * The pair therefore names WHETHER THE LAST ATTEMPT WORKED, and nothing else. HOW LONG AGO
  * lives entirely in `globalScheduleHealthAt`, and no value of this enum implies a bound on it.
+ *
+ * ONE DISTINCTION IT DELIBERATELY COLLAPSES, which is why the wire also carries
+ * `globalScheduleHealthReadFailed`: 'unknown' covers BOTH "no read has been attempted or
+ * finished yet" (ordinary, for a few seconds after boot) and "the very first read FAILED"
+ * (the worker is blind and cannot fix itself). Those want opposite responses from an
+ * operator, and the boolean is what separates them.
  */
 export type GlobalScheduleHealthStatus = 'unknown' | 'last_read_ok' | 'stale';
+
+/**
+ * One global schedule's durable health AS PUBLISHED — `GlobalScheduleHealthSnapshot` minus
+ * its free text.
+ *
+ * A SEPARATE TYPE FROM THE PRODUCER'S ON PURPOSE. The producer type is what the scheduler
+ * knows; this is what the world is told, and the two are allowed to differ. Written out
+ * field by field so `breakerReason` cannot return by being spread in — it is the channel
+ * that was invisible to every guard the project had, because it is NESTED and every guard
+ * inspected flat top-level keys.
+ *
+ * WHAT REPLACES IT, for an operator asking "why is this breaker open?": `status` is the
+ * class ('breaker_tripped' vs 'missed' vs 'disabled' …), `breakerTrippedAt` is when, and
+ * `consecutiveFailures`/`maxConsecutiveFailures` are the threshold it crossed. The
+ * sentence — which is the failing job handler's own error message, so for a database fault
+ * it is raw pg driver text — is in `fly logs` and in Sentry.
+ *
+ * `jobType` IS STILL HERE, AND IT IS THE ONE VALUE ON THIS ENDPOINT THAT CODE DOES NOT
+ * BOUND. `global_job_schedule.job_type` is `text NOT NULL UNIQUE` with NO CHECK constraint
+ * (migration 0028:63, read), so it is whatever an operator or a migration named the
+ * schedule. It is kept because it is the entire answer to "WHICH job is stopped" — reduce
+ * it and `globalSchedules` becomes a row of anonymous counters and the operator has to open
+ * the database anyway, which is the audience this body exists for.
+ *
+ * WHY THAT IS SAFE, CHECKED RATHER THAN ASSUMED: it is CONFIG text, never driver output.
+ * Every write to that column in the repo was enumerated — the only ones are the two
+ * migrations' `INSERT INTO global_job_schedule (job_type, …)` with literal constants
+ * (0028:167, 0029:129). No runtime statement writes it: the three UPDATEs that touch this
+ * table (worker/scheduler/global-jobs.ts:175, worker/core/global-job-schedule.ts:74 and
+ * :458) set cadence/ledger/breaker columns and none of them names `job_type`. So no code
+ * path can put an error message, a job UUID, a hostname or a SQL fragment in here; the
+ * residual exposure is "an operator named a schedule something sensitive", which is a
+ * different and far smaller risk than echoing a driver. A deliberate, recorded trade.
+ */
+export interface PublicGlobalScheduleSnapshot {
+  jobType: GlobalScheduleHealthSnapshot['jobType'];
+  status: GlobalScheduleHealthSnapshot['status'];
+  enabled: boolean;
+  missedRuns: number;
+  consecutiveFailures: number;
+  maxConsecutiveFailures: number;
+  /** Non-null = the breaker is OPEN and only an operator can close it. WHEN it broke. */
+  breakerTrippedAt: string | null;
+  nextRunAt: string;
+  lastSuccessAt: string | null;
+  inFlight: boolean;
+}
+
+/**
+ * The scheduler's metrics AS PUBLISHED — every key an operator gets, and no others.
+ *
+ * NOT `SchedulerMetrics`, and not derived from it by any type operator. This is a
+ * hand-written list because the whole point is that adding a field to the producer must not
+ * add a field here: `Omit<SchedulerMetrics, …>` would re-open exactly the route the spread
+ * opened, since a new producer field is neither omitted nor noticed. The one-way street is
+ * the design.
+ *
+ * Everything here is a boolean, a number, an ISO timestamp, a closed enum, or an array of
+ * those. There is no field into which a future author can interpolate `errMsg(err)` without
+ * changing this type first, and doing that is a visible edit to a file whose entire header
+ * is about why they should not.
+ */
+export interface PublicSchedulerMetrics {
+  enabled: boolean;
+  environment: SchedulerMetrics['environment'];
+  schedulerTickMs: number;
+  pollIntervalMs: number;
+  ticks: number;
+  lastTickAt: string | null;
+  lastEnqueueCount: number;
+  totalEnqueued: number;
+  lastGlobalEnqueueCount: number;
+  totalGlobalEnqueued: number;
+  totalGlobalSlotsSkipped: number;
+  /** Job types whose breaker is OPEN per the DATABASE. Same `jobType` note as above. */
+  globalBreakersTripped: string[];
+  globalSchedules: PublicGlobalScheduleSnapshot[];
+  /** When the durable read last SUCCEEDED. Null = never. Judge age against YOUR clock. */
+  globalScheduleHealthAt: string | null;
+  /**
+   * Did the MOST RECENT durable-health read attempt fail? The whole of what
+   * `globalScheduleHealthError` said, minus the driver's sentence.
+   *
+   * Read it WITH `globalScheduleHealthStatus`, which cannot express this on its own:
+   *   status 'unknown' + false → no read has come back yet. Normal for a few seconds.
+   *   status 'unknown' + true  → the FIRST read failed. The worker is blind and stays blind.
+   *   status 'stale'   + true  → it worked once, at `globalScheduleHealthAt`, and not since.
+   *   status 'last_read_ok'    → always false; the two are the same fact from both ends.
+   */
+  globalScheduleHealthReadFailed: boolean;
+  jobsProcessed: number;
+  jobsSucceeded: number;
+  jobsFailed: number;
+  lastJobAt: string | null;
+  lastReconcileAt: string | null;
+  totalReconciled: number;
+  lastReconcileAttemptAt: string | null;
+  reconcileAttempts: number;
+  /**
+   * WHICH LANE last recorded an error — the closed enum that replaced the driver's message.
+   * Null = no lane has recorded one since boot.
+   *
+   * A HIGH-WATER MARK, NOT CURRENT STATE. Nothing clears it on success, so it names the
+   * last thing that went wrong however long ago that was; `lastErrorAt` is what tells you
+   * which. This is preserved on purpose — an error an hour ago is information — but it must
+   * be read as "the last one", never as "right now".
+   */
+  lastErrorKind: SchedulerErrorKind | null;
+  /** When `lastErrorKind` was stamped. Null = never. Judge age against YOUR clock. */
+  lastErrorAt: string | null;
+  /** Errors recorded since boot, all lanes. One blip vs a storm. Monotonic. */
+  errorCount: number;
+}
 
 /**
  * The `scheduler` sub-object as it appears on the wire.
@@ -76,57 +269,44 @@ export type GlobalScheduleHealthStatus = 'unknown' | 'last_read_ok' | 'stale';
  * impossible rather than merely discouraged.
  *
  * ── WHY THE UNKNOWN ARM IS A BARE BOOLEAN AND NOT A `reason` STRING ──────────────────────
- * THIS RESPONSE IS PUBLIC. Not "might be" — CONFIRMED, by Fly's API and a direct curl of
- * both default hostnames: production and staging each hold a real public IP, and
- * https://kids-fun-worker.fly.dev/healthz (and the staging equivalent) return HTTP 200 with
- * this entire body and NO AUTHENTICATION, to anyone, today. It is unauthenticated in code
- * (worker/src/index.ts:54-57), bound to every interface (index.ts:80 — `server.listen(PORT)`
- * with no host), and published at Fly's edge by both manifests (`[http_service]` +
- * force_https, fly.toml:29-31 and fly.production.toml:29-31).
+ * Same reason nothing else here is a string: the response is public and unauthenticated
+ * (see the file header). A `reason: string` field would answer the operator's question no
+ * better than `known` already does, while standing on a public endpoint as an open
+ * invitation for the next author to interpolate `errMsg(err)` into it. That is not a
+ * hypothesis about this codebase — it is what happened to `lastError`,
+ * `globalScheduleHealthError` and `breakerReason`, which is why none of the three is on
+ * this endpoint any more.
  *
- * The distinction this type exists to make is therefore carried by STRUCTURE — a boolean, an
- * absent key, an enum — and never by prose. A `reason: string` field would answer the
- * operator's question no better than `known` already does, while standing on a public
- * endpoint as an open invitation for the next author to interpolate `errMsg(err)` into it.
- * The metrics arm already serialises `lastError` and `globalScheduleHealthError`, which for
- * a pg driver error routinely name host, port, database and user (scheduler.ts:530 sets
- * `lastError` from `errMsg(err)` on any poll failure); staging was observed serving a real
- * job UUID and real telemetry through them. THAT DISCLOSURE IS REAL AND LIVE, it predates
- * this file's current shape, and remediating it is a separate unit that is not this one's to
- * pre-empt — but it is exactly why no second free-text channel opens alongside it here.
- *
- * ── EXACTLY WHAT tests/scheduler/healthz.test.ts PINS, AND WHAT IT DOES NOT ───────────────
- * It pins the `known: false` arm to structural values only, plus THREE key sets, each a
- * hard-coded literal a human has to edit:
+ * ── WHAT tests/scheduler/healthz.test.ts PINS, AND WHAT IT DOES NOT ───────────────────────
+ * FOUR key sets, each a hard-coded literal a human has to edit:
  *   1. the six TOP-LEVEL keys of the body;
- *   2. the keys THIS FILE adds on top of the metrics (`known`, `globalScheduleHealthStatus`);
- *   3. the FULL key set of the `known: true` arm.
- * Pin (3) is not redundant with pin (2): (2) is computed as a DIFFERENCE against the metrics
- * fixture, so a field added to `SchedulerMetrics` in worker/src/scheduler.ts is on both sides
- * of that subtraction and disappears from it BY CONSTRUCTION; and (1) cannot see it either,
- * because a producer field arrives INSIDE `scheduler`. That producer route is not a
- * hypothetical gap — it is precisely how `lastError` and `globalScheduleHealthError` put raw
- * pg driver text on this endpoint. Before (3) existed, the one route already known to leak was
- * the one route no guard watched.
+ *   2. the keys this file ADDS on top of the metrics, AND the metrics keys it DROPS;
+ *   3. the FULL key set of the `known: true` arm;
+ *   4. the FULL key set of a `globalSchedules[]` ELEMENT — the nested set that no guard
+ *      used to inspect, which is precisely how `breakerReason` sat on a public endpoint
+ *      with three green guards over it.
+ * Pin (3) is not redundant with pin (2): (2) is computed as a DIFFERENCE against a metrics
+ * fixture, so a key present on both sides disappears from it BY CONSTRUCTION; and (1)
+ * cannot see it either, because it arrives INSIDE `scheduler`.
  *
- * Pin (3) READS A FIXTURE, NOT THIS FILE, so it holds only while tsc forces that fixture to
- * mirror `SchedulerMetrics`. Two things break the mirror silently and are measured, not
- * theorised: an OPTIONAL field on SchedulerMetrics (never forced into the fixture, so the key
- * set never sees it — the interface has zero optional fields today and that is load-bearing,
- * prefer `T | null`), and a CAST in the fixture (`as SchedulerMetrics` silences tsc outright,
- * even for a required field). The test carries the full reasoning; the constraint is recorded
- * here too because it is a constraint on the PRODUCER TYPE, which is edited from scheduler.ts
- * by people who may never open the test.
- *
- * NONE of the three pins VALUES, and none looks inside a NESTED object. Whatever the producer
- * writes into `lastError` / `globalScheduleHealthError` goes out verbatim, and
- * `globalSchedules[].breakerReason` is free text no assertion inspects. Keys-not-values is a
- * deliberate stopping point, not an oversight: on the day a guard catches a real leak, a value
- * comparison would copy the leaked value into the CI log.
+ * NONE of the four pins VALUES. Keys-not-values is a deliberate stopping point, not an
+ * oversight: on the day a guard catches a real leak, a value comparison would copy the
+ * leaked value into the CI log. The one assertion in that file that looks at content uses a
+ * SENTINEL THE TEST ITSELF AUTHORED and asserts its ABSENCE, which cannot print anything
+ * the test did not already contain.
  */
-export type SchedulerReport =
-  | { known: false }
-  | (SchedulerMetrics & { known: true; globalScheduleHealthStatus: GlobalScheduleHealthStatus });
+export type SchedulerReport = { known: false } | SchedulerReportedArm;
+
+/**
+ * The `known: true` arm. `globalScheduleHealthStatus` is declared here rather than on
+ * PublicSchedulerMetrics because it is DERIVED by this file rather than projected from the
+ * producer — keeping that distinction visible in the type is what lets the "what does
+ * /healthz ADD to the metrics" guard mean something.
+ */
+export type SchedulerReportedArm = PublicSchedulerMetrics & {
+  known: true;
+  globalScheduleHealthStatus: GlobalScheduleHealthStatus;
+};
 
 export function deriveGlobalScheduleHealthStatus(
   metrics: Pick<SchedulerMetrics, 'globalScheduleHealthAt' | 'globalScheduleHealthError'>,
@@ -149,8 +329,32 @@ export function deriveGlobalScheduleHealthStatus(
   // If a real freshness verdict is ever wanted, it needs (a) a threshold, which is a policy
   // decision, and (b) a clock — so it belongs to whoever is alerting, not here. Adding one to
   // this enum would put a policy on a public, unauthenticated endpoint (see SchedulerReport).
+  //
+  // IT READS `globalScheduleHealthError` BUT PUBLISHES NOTHING FROM IT. The argument type is
+  // still the PRODUCER's field, because the predicate is genuinely "did the last attempt
+  // throw" and null-ness is how the producer records that. What crosses to the wire is the
+  // three-value enum below and the boolean beside it — never the string.
   if (metrics.globalScheduleHealthAt === null) return 'unknown';
   return metrics.globalScheduleHealthError === null ? 'last_read_ok' : 'stale';
+}
+
+/**
+ * Project one durable-health snapshot for publication. See PublicGlobalScheduleSnapshot for
+ * why `breakerReason` is not here and what carries its meaning instead.
+ */
+function publicSnapshot(s: GlobalScheduleHealthSnapshot): PublicGlobalScheduleSnapshot {
+  return {
+    jobType: s.jobType,
+    status: s.status,
+    enabled: s.enabled,
+    missedRuns: s.missedRuns,
+    consecutiveFailures: s.consecutiveFailures,
+    maxConsecutiveFailures: s.maxConsecutiveFailures,
+    breakerTrippedAt: s.breakerTrippedAt,
+    nextRunAt: s.nextRunAt,
+    lastSuccessAt: s.lastSuccessAt,
+    inFlight: s.inFlight,
+  };
 }
 
 /**
@@ -158,11 +362,19 @@ export function deriveGlobalScheduleHealthStatus(
  *
  * Exported so that the one place this convention is encoded is a function every reader can
  * call, rather than a rule each reader has to remember.
+ *
+ * ── EVERY KEY IS WRITTEN OUT. DO NOT REPLACE THIS WITH A SPREAD. ─────────────────────────
+ * `{ ...scheduler, known: true }` is what this used to be, and it is how three separate
+ * free-text fields reached a public unauthenticated endpoint without anyone editing this
+ * file. The verbosity is the mechanism: a field added to SchedulerMetrics is published only
+ * if somebody adds a line here, having read the header. If that feels like duplication,
+ * re-read what the duplication is buying — it is the only thing standing between the
+ * producer and the open internet, and a test cannot be that thing (a test can only notice).
  */
 export function schedulerReport(scheduler: SchedulerMetrics | null | undefined): SchedulerReport {
   // No scheduler state is attached to this process, so its status is UNKNOWN — which is NOT
   // the same as a scheduler that was deliberately disabled. A disabled one WOULD report
-  // known:true with enabled:false; nothing produces that today, because scheduler.ts:258 sets
+  // known:true with enabled:false; nothing produces that today, because scheduler.ts sets
   // `enabled: true` and nothing ever unsets it. That arm is a type contract held open for a
   // future producer, not a state you can observe on this endpoint now — the distinction this
   // branch actually makes today is "reporting" versus "not heard from".
@@ -170,9 +382,42 @@ export function schedulerReport(scheduler: SchedulerMetrics | null | undefined):
   // SchedulerReport for why no prose goes on this endpoint.
   if (scheduler == null) return { known: false };
   return {
-    ...scheduler,
     known: true,
+    enabled: scheduler.enabled,
+    environment: scheduler.environment,
+    schedulerTickMs: scheduler.schedulerTickMs,
+    pollIntervalMs: scheduler.pollIntervalMs,
+    ticks: scheduler.ticks,
+    lastTickAt: scheduler.lastTickAt,
+    lastEnqueueCount: scheduler.lastEnqueueCount,
+    totalEnqueued: scheduler.totalEnqueued,
+    lastGlobalEnqueueCount: scheduler.lastGlobalEnqueueCount,
+    totalGlobalEnqueued: scheduler.totalGlobalEnqueued,
+    totalGlobalSlotsSkipped: scheduler.totalGlobalSlotsSkipped,
+    // Copied, not aliased. `globalSchedules` is already a fresh array (`.map`), and a
+    // projection that hands one caller a live reference to the producer's own array while
+    // the other gets a copy is an inconsistency waiting to be discovered by a mutation.
+    globalBreakersTripped: [...scheduler.globalBreakersTripped],
+    globalSchedules: scheduler.globalSchedules.map(publicSnapshot),
+    globalScheduleHealthAt: scheduler.globalScheduleHealthAt,
     globalScheduleHealthStatus: deriveGlobalScheduleHealthStatus(scheduler),
+    // The string's null-ness, and nothing else that was in the string.
+    globalScheduleHealthReadFailed: scheduler.globalScheduleHealthError !== null,
+    jobsProcessed: scheduler.jobsProcessed,
+    jobsSucceeded: scheduler.jobsSucceeded,
+    jobsFailed: scheduler.jobsFailed,
+    lastJobAt: scheduler.lastJobAt,
+    lastReconcileAt: scheduler.lastReconcileAt,
+    totalReconciled: scheduler.totalReconciled,
+    lastReconcileAttemptAt: scheduler.lastReconcileAttemptAt,
+    reconcileAttempts: scheduler.reconcileAttempts,
+    lastErrorKind: scheduler.lastErrorKind,
+    lastErrorAt: scheduler.lastErrorAt,
+    errorCount: scheduler.errorCount,
+    // NOT PUBLISHED, and each one is a channel that WAS publishing until this unit:
+    //   scheduler.lastError                  — raw driver text; a since-boot high-water mark
+    //   scheduler.globalScheduleHealthError  — raw driver text
+    //   scheduler.globalSchedules[].breakerReason — raw handler text, nested (see publicSnapshot)
   };
 }
 

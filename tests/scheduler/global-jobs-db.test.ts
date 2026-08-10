@@ -29,7 +29,11 @@ import type { ServerResponse } from 'node:http';
 import { Pool } from 'pg';
 import { closePool, getPool, query } from '../../lib/db/client';
 import { startScheduler, type SchedulerMetrics } from '../../worker/src/scheduler';
-import { healthz } from '../../worker/src/healthz';
+// `SchedulerReportedArm` — NOT `SchedulerMetrics` — is what comes back over the socket.
+// The two diverged when /healthz stopped spreading the producer object and started naming
+// every key it publishes; typing a wire body as the producer type is how a test can read a
+// field that is no longer served and get `undefined` instead of a compile error.
+import { healthz, type SchedulerReportedArm } from '../../worker/src/healthz';
 import { enqueueDueGlobalJobs } from '../../worker/scheduler/global-jobs';
 import { reconcileAbandonedRuns } from '../../worker/core/reconcile';
 import {
@@ -1003,7 +1007,7 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
       const booted = await bootFreshScheduler();
       try {
         const payload = healthzPayload(booted.metrics);
-        const scheduler = payload.scheduler as SchedulerMetrics;
+        const scheduler = payload.scheduler as SchedulerReportedArm;
         expect(scheduler.globalBreakersTripped).toContain(schedule.jobType);
         const serialised = JSON.stringify(payload);
         expect(serialised).toContain(schedule.jobType);
@@ -1128,7 +1132,7 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
       }
 
       async function bootWorkerProcess(immediate: boolean): Promise<{
-        health: () => Promise<{ scheduler: SchedulerMetrics }>;
+        health: () => Promise<{ scheduler: SchedulerReportedArm }>;
         stop: () => void;
       }> {
         const child = spawn(process.execPath, [FIXTURE], {
@@ -1163,18 +1167,18 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
             reject(new Error(`child worker exited with ${code}. stderr:\n${stderr}`));
           });
         });
-        const health = async (): Promise<{ scheduler: SchedulerMetrics }> => {
+        const health = async (): Promise<{ scheduler: SchedulerReportedArm }> => {
           const res = await fetch(`http://127.0.0.1:${port}/healthz`);
-          return (await res.json()) as { scheduler: SchedulerMetrics };
+          return (await res.json()) as { scheduler: SchedulerReportedArm };
         };
         return { health, stop: () => child.kill('SIGTERM') };
       }
 
       /** Poll the child's REAL /healthz socket until it has read durable health, or fail. */
       async function awaitDurableHealth(
-        worker: { health: () => Promise<{ scheduler: SchedulerMetrics }> },
+        worker: { health: () => Promise<{ scheduler: SchedulerReportedArm }> },
         immediate: boolean
-      ): Promise<SchedulerMetrics> {
+      ): Promise<SchedulerReportedArm> {
         const deadline = Date.now() + 20_000;
         for (;;) {
           const body = await worker.health();
@@ -1190,8 +1194,12 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
       }
 
       /** The assertions that must hold whichever boot path got the health there. */
-      function expectDurableAlarm(scheduler: SchedulerMetrics, jobType: string): void {
-        expect(scheduler.globalScheduleHealthError).toBeNull();
+      function expectDurableAlarm(scheduler: SchedulerReportedArm, jobType: string): void {
+        // Was `expect(scheduler.globalScheduleHealthError).toBeNull()`. That field is raw pg
+        // driver text and is no longer published — /healthz is public and unauthenticated,
+        // so the wire carries the boolean instead. Same assertion, same meaning: the durable
+        // read the alarm below came from is not currently failing.
+        expect(scheduler.globalScheduleHealthReadFailed).toBe(false);
         expect(scheduler.globalBreakersTripped).toContain(jobType);
         const snapshot = scheduler.globalSchedules.find((s) => s.jobType === jobType);
         expect(snapshot).toBeDefined();
