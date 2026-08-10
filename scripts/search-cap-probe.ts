@@ -397,6 +397,18 @@ function toRealPath(derive: () => string): string | null {
   }
 }
 
+// The scheme of a URL and NOTHING else — see the decline diagnostic below for why nothing else.
+// Total by construction: `new URL` throws on an unparseable input, and a diagnostic that throws
+// while reporting a failure is precisely the failure mode this guard exists to avoid. Sliced as
+// well as parsed, so "bounded" is a property of this function rather than of well-behaved input.
+function urlScheme(url: string): string {
+  try {
+    return new URL(url).protocol.slice(0, 32); // 'file:' / 'data:' / 'http:' — no userinfo, host, path or query
+  } catch {
+    return '<unparseable>';
+  }
+}
+
 const invoked = process.argv[1];
 const modulePath = toRealPath(() => fileURLToPath(import.meta.url));
 const invokedPath = invoked ? toRealPath(() => invoked) : null;
@@ -407,11 +419,26 @@ if (modulePath !== null && modulePath === invokedPath) {
     process.exit(1);
   });
 } else {
+  // The fallback when there is no real path to name is the SCHEME of `import.meta.url`, and
+  // neither of the two obvious alternatives. Not `fileURLToPath` again: the reason modulePath is
+  // null is usually that converting it threw, so re-running it here would throw inside the
+  // diagnostic. Not the RAW url either, which is what this line used to print —
+  //   · it is unbounded. `modulePath` is null mainly when `import.meta.url` is not a `file:` URL,
+  //     and under a `data:` loader that URL *is the entire module*: measured on this file's own
+  //     esbuild bundle it wrote 123,136 bytes of base64 to stderr, on one line, on import.
+  //   · it can leak. The very non-`file:` schemes this fallback exists to survive are the ones
+  //     that carry credentials — `http://user:pass@host/…`, a signed URL with a token in the
+  //     query — and this is the one file in the repo whose job is to be pointed at production
+  //     connection strings. A bounded prefix does not fix that: userinfo sits in the first
+  //     ~30 characters. Only dropping every component but the scheme does.
+  // The scheme is also the whole diagnostic value of the raw url — it is what tells a reader WHY
+  // no path could be derived (`data:`/`http:` = not loaded from disk; `file:` = it was, and the
+  // file has since moved or become unreadable). Derived here, inside the declining branch, so it
+  // still cannot throw at module load and take down every importer.
+  const moduleLabel = modulePath ?? `<unresolved ${urlScheme(import.meta.url)} url>`;
   console.error(
     `search-cap-probe: loaded, but not as the process entrypoint — main() did NOT run ` +
-      // Fall back to the RAW url, never to fileURLToPath again — the whole reason modulePath can
-      // be null is that converting it threw, so re-running it here would throw in the diagnostic.
-      `(module=${modulePath ?? import.meta.url}, argv[1]=${invokedPath ?? invoked ?? '<none>'}). ` +
+      `(module=${moduleLabel}, argv[1]=${invokedPath ?? invoked ?? '<none>'}). ` +
       `Expected when something imports buildPoolConfig; if you meant to probe, run: bash scripts/search-cap-probe.sh`,
   );
 }
