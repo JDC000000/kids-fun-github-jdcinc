@@ -188,8 +188,7 @@ const ADVANCE_NEXT_RUN_AT_SQL = `
     ) prev
    WHERE s.id = prev.id
      AND s.next_run_at <= now()
-  RETURNING prev.was_due_at,
-            s.next_run_at,
+  RETURNING s.next_run_at,
             GREATEST(
               0,
               floor(
@@ -198,10 +197,9 @@ const ADVANCE_NEXT_RUN_AT_SQL = `
             )::int AS skipped_slots`;
 
 interface AdvancedRow {
-  /** The due instant that was left behind — a PRE-update snapshot from the `prev` CTE,
-   *  because RETURNING sees the new row and would report where it went, not where it was. */
-  was_due_at: Date;
   next_run_at: Date;
+  /** Counted from the PRE-update `prev` snapshot: RETURNING sees the new row, which would
+   *  report where the schedule went rather than how far it had fallen behind. */
   skipped_slots: number;
 }
 
@@ -284,9 +282,10 @@ export async function enqueueDueGlobalJobs(
 
       const advance = advanced[0];
       if (!advance) {
-        // Unreachable: the run this transaction just inserted satisfies the statement's
-        // EXISTS, and now() is fixed for the transaction so `next_run_at <= now()` holds
-        // exactly as it did in the SELECT above. It is checked anyway because the
+        // Unreachable: now() is fixed for the whole transaction, so the statement's
+        // `next_run_at <= now()` guard holds exactly as it did in the SELECT above, and no
+        // other writer can move a row this transaction holds FOR UPDATE. It is checked
+        // anyway because the
         // alternative to noticing is COMMITTING a run whose schedule was never moved on —
         // a claimed slot that stays due. Throwing rolls the whole tick back, so the next
         // tick starts from a consistent row rather than from half of one.
