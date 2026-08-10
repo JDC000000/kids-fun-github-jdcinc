@@ -14,6 +14,36 @@
 // regression — a per-value repository call, a re-run matcher, an accidental O(n²) — and is not
 // there to police milliseconds.
 //
+// WHY THE SAMPLING IS INTERLEAVED, AND WHY THAT IS THE WHOLE POINT
+// A ratio cancels host load only when the two measurements see the SAME load. Timing them in
+// disjoint, sequential blocks does not give you that — it only gives it to you for STATIONARY
+// interference. Under a burst the blocks are not exchangeable, and there were FOUR of them, not
+// two: each half of the ratio is itself a difference (facets-on minus plain), evaluated fully at
+// N and only then fully at 4N. A burst landing in one block and not the others does not cancel,
+// it divides — inflating a minuend or depressing a subtrahend swings the ratio without bound.
+//
+// Measured, not argued. 14 rounds on a 4-core box at 1-min load average 9.9–17.9, driven by
+// duty-cycled CPU spinners (bursts, not steady load, because steady load is the case that
+// already worked):
+//   blocked sampling, 9 samples      ratio spread 2.77 – 7.20   (threshold is 8)
+//   interleaved,      9 samples      ratio spread 3.04 – 5.72
+//   interleaved,     15 samples      ratio spread 3.31 – 4.71
+// The blocked estimator reached 90% of the threshold on unmodified code; independently it has
+// been observed at 9.825 — RED, and higher than the 8.854 a genuinely quadratic mutation
+// produced, which is the worst property a perf assertion can have. Interleaving samples every
+// stream inside every window, so a burst lands proportionally in all four and cancels the way
+// the ratio always claimed it did. The estimator ALGEBRA below is unchanged; only the schedule
+// is. Raising the sample count from 9 to 15 costs ~0.6s of unloaded runtime and was kept
+// because it measurably tightened the spread on the same captured data.
+//
+// A serial lane of its own for this file was considered and rejected: it would remove the other
+// test files as a source of bursts but not the host, and the numbers above were taken with the
+// interference the acceptance case actually cares about — external, bursty, and unaffected by
+// which lane this file runs in. It would also need a third vitest invocation and a third
+// workspace project, and would leave tests/vitest-lane-split.test.ts asserting a two-way
+// partition that no longer exists. Interleaving fixes the mechanism; a lane only hides one
+// source of it.
+//
 // REMOVED, and please do not re-add it in good faith: a sibling assertion that facets cost "only
 // a fraction" of the search they ride along with — `marginal < withoutFacets * 2`, where
 // `marginal = withFacets - withoutFacets`. It looked like the same load-cancelling trick. It was
@@ -83,16 +113,33 @@ function makeEngine(listings: ListingRecord[]): SearchEngine {
   });
 }
 
-/** Median wall-clock of `runs` timed calls, after a warm-up (JIT + first-call noise). */
-function medianMs(runs: number, fn: () => void): number {
-  for (let i = 0; i < 3; i += 1) fn();
-  const samples: number[] = [];
+/**
+ * Timed calls per operation. 15 rather than 9: on the same captured samples under bursty load
+ * it tightened the ratio spread from 3.04–5.72 to 3.31–4.71, for ~0.6s of unloaded runtime.
+ */
+const SAMPLES = 15;
+
+/**
+ * Median wall-clock of each op, sampled ROUND-ROBIN rather than one op at a time.
+ *
+ * Every op is timed once per iteration, so all of them span the SAME wall-clock window and a
+ * burst of host load lands in all of them proportionally — which is the only condition under
+ * which a ratio of these numbers cancels load (see the header). The starting op rotates each
+ * iteration so no op is permanently first or permanently behind the heaviest one. Warm-up runs
+ * first, per op, to absorb JIT and first-call noise.
+ */
+function interleavedMedians(runs: number, ops: Array<() => void>): number[] {
+  for (const op of ops) for (let i = 0; i < 3; i += 1) op();
+  const samples: number[][] = ops.map(() => []);
   for (let i = 0; i < runs; i += 1) {
-    const t0 = performance.now();
-    fn();
-    samples.push(performance.now() - t0);
+    for (let k = 0; k < ops.length; k += 1) {
+      const j = (i + k) % ops.length;
+      const t0 = performance.now();
+      ops[j]();
+      samples[j].push(performance.now() - t0);
+    }
   }
-  return samples.sort((a, b) => a - b)[Math.floor(runs / 2)];
+  return samples.map((xs) => xs.sort((a, b) => a - b)[Math.floor(runs / 2)]);
 }
 
 describe('facet counting cost', () => {
@@ -103,18 +150,27 @@ describe('facet counting cost', () => {
     const large = makeEngine(buildCatalogue(N * 4));
     const req = { q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, limit: 60 };
 
-    const facetCost = (engine: SearchEngine) =>
-      medianMs(9, () => engine.search({ ...req, facets: true })) - medianMs(9, () => engine.search(req));
+    // All four streams, interleaved. Subtracting the plain search leaves the facet cost alone;
+    // the two subtractions are what the ratio is taken over.
+    const [facetsAtN, plainAtN, facetsAt4N, plainAt4N] = interleavedMedians(SAMPLES, [
+      () => void small.search({ ...req, facets: true }),
+      () => void small.search(req),
+      () => void large.search({ ...req, facets: true }),
+      () => void large.search(req),
+    ]);
 
-    const atN = Math.max(facetCost(small), 0.05); // floor: never divide by timer noise
-    const at4N = Math.max(facetCost(large), 0); // floor: a negative numerator is jitter, not a speed-up
+    // Both floors are divide-by-zero / sign hygiene, NOT load protection: atN measures ~18-38ms
+    // here, 360-760x the 0.05 floor, so it has never engaged and cannot defend a denominator
+    // that load has merely depressed. Interleaving is what defends that; see the header.
+    const atN = Math.max(facetsAtN - plainAtN, 0.05); // floor: never divide by timer noise
+    const at4N = Math.max(facetsAt4N - plainAt4N, 0); // floor: a negative numerator is jitter, not a speed-up
     const growth = at4N / atN;
 
     // Linear predicts 4x. Quadratic in the candidate count predicts 16x. The threshold is the
     // geometric mean of the two — double the headroom over linear, half the margin to quadratic —
-    // so it separates the two hypotheses instead of measuring the host. Observed 3.1x–4.8x across
-    // repeated runs on a 4-core box at load average ~5, with both measurements (16–22ms and
-    // 69–77ms) far enough above timer resolution that neither is noise.
+    // so it separates the two hypotheses instead of measuring the host. Observed 3.3x-4.7x across
+    // 14 rounds at load average 9.9-17.9, with both measurements (18-38ms and 60-100ms) far
+    // enough above timer resolution that neither is noise.
     expect(growth).toBeLessThan(8);
   });
 });
