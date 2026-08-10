@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import { enqueueDueJobs } from '../scheduler/tiered';
 import { dequeue, markDone, markFailed, type Job } from '../core/queue';
 import { reconcileAbandonedRuns } from '../core/reconcile';
-import { makeTermsGatedIngestJobHandler } from '../core/source-runner';
+import { makeJobDispatcher } from '../core/job-handlers';
 import type { Environment } from '../core/terms-gate';
 import { captureWorkerException } from './sentry';
 
@@ -16,8 +16,11 @@ import { captureWorkerException } from './sentry';
 //      enqueues an ingest job for each. Idempotent per tick (skips sources with a
 //      pending/running job) and it stamps next_check_at forward per source.
 //   2. poll loop  — every WORKER_POLL_INTERVAL_MS claims one due job
-//      (FOR UPDATE SKIP LOCKED) and runs the terms-gated ingest for its source,
-//      with retry/backoff + dead-lettering handled by core/queue.
+//      (FOR UPDATE SKIP LOCKED) and runs the handler registered for its
+//      job_queue.job_type (core/job-handlers.ts): 'ingest' → the terms-gated
+//      per-source ingest; 'corrections_retention' → the global retention purge
+//      (source_id IS NULL); anything else → a loud UnknownJobTypeError. Retry/
+//      backoff + dead-lettering are handled by core/queue.
 //
 // This replaces the one-shot `ingest:once` entrypoint with a process that runs
 // continuously; the same policy remains callable from pg_cron / Vercel Cron.
@@ -153,7 +156,11 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     lastError: null,
   };
 
-  const baseHandler = makeTermsGatedIngestJobHandler(pool, environment);
+  // Dispatch by job_queue.job_type. Until this existed the loop ran the terms-gated INGEST
+  // handler for every claimed job regardless of type, so any global job (source_id=NULL,
+  // e.g. job_type='corrections_retention') threw 'ingest job has no source_id', retried to
+  // max_attempts and dead-lettered. See worker/core/job-handlers.ts.
+  const dispatch = makeJobDispatcher(pool, environment);
 
   // H6 shutdown-ordering state.
   //   `inFlight`       — the jobs whose DB rows the shutdown path has to release.
@@ -212,7 +219,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     // the shutdown path's snapshot can never miss a job that is genuinely still held.
     inFlight.set(job.id, { jobId: job.id, sourceId: job.sourceId, claimedAt: new Date() });
     try {
-      await baseHandler(job);
+      await dispatch(job);
       await markDone(pool, job.id);
       metrics.jobsSucceeded += 1;
     } catch (err) {
