@@ -1336,9 +1336,16 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
         expect(await jobsOfType(STALE_FLIP_JOB_TYPE)).toHaveLength(0);
         expect(await runsOf(schedule.id)).toHaveLength(0);
 
-        // ── TEETH ────────────────────────────────────────────────────────────────────
-        // And nothing was demoted — the whole reason the flag matters. Flip `enabled` to
-        // true in 0029 and this assertion is what goes red.
+        // ── DEFENCE IN DEPTH, NOT TEETH — AND THIS COMMENT USED TO CLAIM OTHERWISE ───
+        // It previously read "Flip `enabled` to true in 0029 and this assertion is what goes
+        // red". That is FALSE. Flipping the flag reddens this test through the FIRST
+        // assertion above (jobsOfType going 0 → 1); it can never redden THIS one, because
+        // tickFor() calls enqueueDueGlobalJobs(), which only INSERTs into global_job_run and
+        // job_queue and NEVER EXECUTES A HANDLER — so no code path reachable from here can
+        // demote a row whatever `enabled` says. See the note on the source fixture above.
+        // The check is still worth keeping as a cheap invariant ("this tick mutated no
+        // occurrence"), but it is not what makes the guard bite. The real demotion teeth are
+        // in tests/scheduler/job-dispatch-db.test.ts, which runs the actual handler.
         const [after] = await query<{ status_state: string }>(
           `SELECT status_state FROM activity_occurrence WHERE id = $1`,
           [victim.id]
