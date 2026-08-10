@@ -342,10 +342,14 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     // The reported arm spreads SchedulerMetrics verbatim, which already carries `lastError`
     // and `globalScheduleHealthError` — raw driver text that predates this unit and is not
     // this unit's to change in either direction. What must not happen is a THIRD such
-    // channel appearing. This pins the exact set of keys /healthz adds to the metrics, so
-    // any future addition to the body is a deliberate, visible decision rather than a diff
-    // nobody read — on an endpoint confirmed to be serving this payload publicly and
-    // unauthenticated on both production and staging today.
+    // channel appearing. This pins the exact set of keys /healthz ADDS ON TOP OF the
+    // metrics — and ONLY that. It computes the difference against `m`, so a field added to
+    // `SchedulerMetrics` itself is present in `m` and is filtered out here BY CONSTRUCTION;
+    // that case belongs to the next test, and a field added next to `scheduler` rather than
+    // inside it belongs to the one after. All three lists are literal, so widening the body
+    // in any of those three directions costs a deliberate human edit rather than riding in
+    // on a diff nobody read — on an endpoint confirmed to be serving this payload publicly
+    // and unauthenticated on both production and staging today.
     const m = metrics({ globalScheduleHealthAt: '2026-01-01T00:00:00.000Z' });
     const scheduler = (await get(state(m))).body.scheduler as Record<string, unknown>;
     const added = Object.keys(scheduler).filter((k) => !Object.hasOwn(m, k));
@@ -354,10 +358,103 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     expect(['unknown', 'fresh', 'stale']).toContain(scheduler.globalScheduleHealthStatus);
   });
 
+  it('the REPORTED arm is a FIXED key set — a new SchedulerMetrics field cannot reach the wire unannounced', async () => {
+    // ── WHY THIS EXISTS WHEN THE GUARD ABOVE LOOKS LIKE IT ALREADY COVERS IT ──────────────
+    // That guard computes `Object.keys(scheduler).filter((k) => !Object.hasOwn(m, k))` — what
+    // /healthz ADDS ON TOP OF the metrics. A field added to the PRODUCER (`SchedulerMetrics`
+    // in worker/src/scheduler.ts) is present in `m`, so that filter removes it BY
+    // CONSTRUCTION and the guard can never report it. It is not a tuning problem; it is what
+    // the assertion computes. The whole-body guard below cannot see it either: that one pins
+    // the six TOP-LEVEL keys, and a producer field arrives INSIDE `scheduler`.
+    //
+    // The gap between them was the producer path, which is not hypothetical — it is how
+    // `lastError` and `globalScheduleHealthError` put raw pg driver text on this endpoint in
+    // the first place (worker/src/scheduler.ts:489 assigns `lastError` from `errMsg(err)` on
+    // any poll failure, and pg errors routinely name host, port, database and user). The one
+    // route already used to leak driver text was the one route neither guard watched. This
+    // endpoint is confirmed public and unauthenticated on production and staging.
+    //
+    // ── THE EXPECTED LIST IS A HARD-CODED LITERAL AND MUST STAY ONE ──────────────────────
+    // Do NOT rewrite it as `Object.keys(metrics())`, `Object.keys(m)`, or anything else read
+    // from a runtime value. That reproduces the exact by-construction flaw described above:
+    // a new producer key would enter the fixture and the expectation in the same instant,
+    // and this guard would be green forever. It works precisely BECAUSE `metrics()` is
+    // declared `: SchedulerMetrics`, so tsc FORCES the fixture to gain any new producer
+    // field, schedulerReport's spread carries it onto this arm, and this list then fails BY
+    // NAME. Editing the list is the deliberate act the guard exists to require.
+    //
+    // ── KEYS ONLY. NEVER `toEqual` THE WHOLE OBJECT, NEVER COMPARE VALUES ────────────────
+    // A value comparison reads as strictly stronger and is strictly worse here: on the day
+    // this guard catches a real leak, it would copy the leaked value into the CI log — which
+    // is the thing the guard exists to prevent.
+    //
+    // WHAT THIS STILL DOES NOT PIN: values, and anything NESTED. `globalSchedules` entries
+    // carry their own keys, including `breakerReason: string | null`
+    // (worker/src/scheduler.ts:62) — free text already on the wire that no assertion in this
+    // file looks inside.
+    const REPORTED_ARM_KEYS = [
+      'enabled',
+      'environment',
+      'globalBreakersTripped',
+      'globalScheduleHealthAt',
+      'globalScheduleHealthError',
+      'globalScheduleHealthStatus',
+      'globalSchedules',
+      'jobsFailed',
+      'jobsProcessed',
+      'jobsSucceeded',
+      'known',
+      'lastEnqueueCount',
+      'lastError',
+      'lastGlobalEnqueueCount',
+      'lastJobAt',
+      'lastReconcileAt',
+      'lastTickAt',
+      'pollIntervalMs',
+      'schedulerTickMs',
+      'ticks',
+      'totalEnqueued',
+      'totalGlobalEnqueued',
+      'totalGlobalSlotsSkipped',
+      'totalReconciled',
+    ];
+    // Every state that reaches the reported arm, so a key that appears only in one of them
+    // is caught too.
+    const reported: Array<[string, HealthState]> = [
+      ['the durable read has NEVER succeeded', state(metrics())],
+      [
+        'the durable read is fresh',
+        state(metrics({ globalScheduleHealthAt: '2026-01-01T00:00:00.000Z' })),
+      ],
+      [
+        'the durable read is stale',
+        state(
+          metrics({
+            globalSchedules: [snapshot()],
+            globalScheduleHealthAt: '2026-01-01T00:00:00.000Z',
+            globalScheduleHealthError: 'connection terminated unexpectedly',
+            globalBreakersTripped: ['corrections_retention'],
+          }),
+        ),
+      ],
+      ['the scheduler is deliberately disabled', state(metrics({ enabled: false }))],
+    ];
+    for (const [label, s] of reported) {
+      const scheduler = (await get(s)).body.scheduler as Record<string, unknown>;
+      expect(scheduler.known, `${label}: this state did not reach the reported arm`).toBe(true);
+      expect(
+        Object.keys(scheduler).sort(),
+        `/healthz scheduler.known:true arm changed shape (${label}) — a key was added to or ` +
+          'removed from SchedulerMetrics and is now on a public, unauthenticated endpoint',
+      ).toEqual(REPORTED_ARM_KEYS);
+    }
+  });
+
   it('the WHOLE body is a fixed key set — nothing new reaches the public edge unnoticed', async () => {
-    // The guard above pins the `scheduler` sub-object. This pins the top level, which that
-    // one cannot see: a field added next to `scheduler` rather than inside it would reach
-    // https://kids-fun-worker.fly.dev/healthz just as publicly and pass every other
+    // The two guards above pin the `scheduler` sub-object — what /healthz adds to the
+    // metrics, and the full key set of the reported arm. This pins the top level, which
+    // neither of them can see: a field added next to `scheduler` rather than inside it would
+    // reach https://kids-fun-worker.fly.dev/healthz just as publicly and pass every other
     // assertion in this file. The endpoint is confirmed public and unauthenticated on both
     // apps, so the set of things it says is worth stating exactly once, here.
     //

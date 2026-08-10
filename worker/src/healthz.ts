@@ -81,7 +81,23 @@ export type GlobalScheduleHealthStatus = 'unknown' | 'fresh' | 'stale';
  * this file's current shape, and remediating it is a separate unit that is not this one's to
  * pre-empt — but it is exactly why no second free-text channel opens alongside it here.
  * tests/scheduler/healthz.test.ts pins the unknown arm to structural values only, and pins
- * the exact key set of the whole body, so nothing new reaches the public edge unnoticed.
+ * THREE key sets, each written out as a hard-coded literal that a human has to edit:
+ *   • the six TOP-LEVEL keys of the body;
+ *   • the keys THIS FILE adds to the metrics (`known`, `globalScheduleHealthStatus`);
+ *   • the FULL key set of the `known: true` arm — the only one of the three that catches a
+ *     field added to `SchedulerMetrics` in worker/src/scheduler.ts. The first two are blind
+ *     to it (one pins the top level, and a producer field arrives inside `scheduler`; the
+ *     other pins the DIFFERENCE against the metrics, which removes a producer field by
+ *     construction), and the producer path is exactly how `lastError` and
+ *     `globalScheduleHealthError` arrived here.
+ * So widening this payload costs a deliberate edit to a named list, in all three directions.
+ *
+ * What none of those pin is VALUES, or anything NESTED. Whatever text the producer writes
+ * into `lastError` / `globalScheduleHealthError` goes out verbatim, and
+ * `globalSchedules[].breakerReason` is free text that no assertion in that file looks at.
+ * Keys, not values, is the deliberate stopping point: a guard that compared values would
+ * copy the leak it caught into the CI log. Remediating those fields is a separate unit's job
+ * and no guard here has done it.
  */
 export type SchedulerReport =
   | { known: false }
