@@ -530,9 +530,8 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     //     schedulerReport. Measured: added an optional field + set it in the producer → tsc
     //     SILENT, every test in this file GREEN. SchedulerMetrics has ZERO optional fields
     //     today, and that is not cosmetic — it is the precondition that makes this guard
-    //     work. Keep it
-    //     that way; a field that is genuinely sometimes-absent should be `T | null`, which is
-    //     required and therefore forced into the fixture.
+    //     work. Keep it that way; a field that is genuinely sometimes-absent should be
+    //     `T | null`, which is required and therefore forced into the fixture.
     //
     //  2. A CAST LAUNDERS ANYTHING PAST IT, AND THIS IS THE DANGEROUS ONE. Writing
     //     `} as SchedulerMetrics;` at the end of the fixture silences tsc completely.
@@ -543,15 +542,28 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     //
     //  3. LOOSENING THE RETURN-TYPE ANNOTATION degrades it but, measured, does NOT silently
     //     defeat it: removing `: SchedulerMetrics` from `metrics()` still fails tsc, because
-    //     ~20 call sites pass the result somewhere typed `SchedulerMetrics` and re-check it
-    //     structurally. WHICH tsc, though, is the part that decides whether you ever see it:
-    //     ROOT `tsc --noEmit` fails (21 call sites, measured); `tsc -p worker/tsconfig.json`
-    //     STAYS CLEAN, because that project's `include` is worker-only and this test file is
-    //     not in it. An author who builds only the worker sees green and concludes the guard
-    //     is intact. The errors also move to those call sites and misattribute (they lead
-    //     with `environment` widening to `string`), so the real failure is stated confusingly
-    //     and an author is tempted into (2) to make it quiet. Keep the annotation — not
-    //     because it is the only check, but because it is the one that fails HERE, legibly.
+    //     EVERY call site that passes the fixture where a `SchedulerMetrics` is expected
+    //     re-checks it structurally and reports its own error. WHICH tsc, though, is the part
+    //     that decides whether you ever see it: ROOT `tsc --noEmit` fails (26 such call sites,
+    //     measured at a576bd9); `tsc -p worker/tsconfig.json` STAYS CLEAN, because that
+    //     project's `include` is worker-only and this test file is not in it. An author who
+    //     builds only the worker sees green and concludes the guard is intact. The errors also
+    //     move to those call sites and misattribute (they lead with `environment` widening to
+    //     `string`), so the real failure is stated confusingly and an author is tempted into
+    //     (2) to make it quiet. Keep the annotation — not because it is the only check, but
+    //     because it is the one that fails HERE, legibly.
+    //
+    //     ── A COUNT IN A COMMENT MUST CARRY THE SHA IT WAS MEASURED AT, OR IT ROTS ────────
+    //     That "26" is stamped because the number is a property of a moment, not of the
+    //     mechanism, and a bare count reads as timeless. Demonstrated at this repo's expense:
+    //     it was honestly measured as 21 at 3958e22 and FALSIFIED BY THE VERY COMMIT THAT
+    //     WROTE IT DOWN — a576bd9's new D-C block added five more `metrics()` call sites, so
+    //     the comment shipped stale in the same diff that introduced it. Prefer the sentence
+    //     above, which stays true as call sites come and go; keep the number only as
+    //     corroboration, and re-stamp it if you re-measure. The error direction here is
+    //     CONSERVATIVE — more call sites fail than the old text claimed, so the guard was
+    //     always stronger than advertised — but a comment that is wrong in a safe direction
+    //     is still a comment a reader cannot trust.
     //
     // ── EXERCISED FOR REAL, 2026-08-10, BY `lastReconcileAttemptAt`/`reconcileAttempts` ──
     // The first genuine producer-side addition since this list existed. It went exactly as

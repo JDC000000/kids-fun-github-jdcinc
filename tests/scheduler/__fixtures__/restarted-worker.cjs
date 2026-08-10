@@ -17,7 +17,7 @@
 //
 // It deliberately does NOT run worker/src/index.js itself, for one reason: index.js starts
 // the scheduler with no `immediate` argument (index.ts:43) and the default is TRUE
-// (scheduler.ts:215), so booting it would run an ENQUEUE tick against the shared test
+// (scheduler.ts:254), so booting it would run an ENQUEUE tick against the shared test
 // database with no way for a test to say otherwise. The wiring it skips is one line
 // (index.ts: `state.scheduler = schedulerHandle.metrics`) and is reproduced verbatim below.
 // `immediate` is instead a PARAMETER of this fixture (FIXTURE_IMMEDIATE), so a test can pick
