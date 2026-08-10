@@ -23,8 +23,16 @@ import type { SchedulerMetrics } from './scheduler';
 //
 // ── WHAT THE BODY MUST NEVER DO: LET A BENIGN VALUE STAND IN FOR "I DON'T KNOW" ───────────
 // Two states used to be inexpressible here, and both read as good news:
-//   • a MISSING scheduler was rendered `{ enabled: false }`, byte-identical to a scheduler
-//     an operator had deliberately turned OFF; and
+//   • a MISSING scheduler was rendered `{ enabled: false }` — the old
+//     `scheduler: state.scheduler ?? { enabled: false }`. The defect was never a collision of
+//     BYTES. `enabled: false` on the wire could only EVER have come from that fallback, because
+//     scheduler.ts:219 sets `enabled: true` and nothing anywhere unsets it; and a producer that
+//     DID report a disabled scheduler would have sent the whole 22-field metrics object, not a
+//     single key. It was a collision of MEANING, in the reader. `scheduler.enabled === false`
+//     is the check an operator — or an alert built on this endpoint — reaches for to answer
+//     "is the scheduler running?", and every single time the endpoint answered it `false` it
+//     was reporting that it had heard nothing at all, in the vocabulary of a deliberate
+//     configuration. `known` fixes that by replacing the question, not the value.
 //   • `globalSchedules: []` meant both "no schedules are configured" and "the durable read
 //     has never succeeded", i.e. the worker is blind.
 // Both are now named explicitly — `known` and `globalScheduleHealthStatus` below — so a
@@ -42,16 +50,22 @@ export interface HealthState {
  * from state the scheduler already records. Not a threshold and not a policy — purely a
  * name for a distinction the raw fields already make and readers kept getting wrong.
  *
- *   'unknown' — the read has NEVER succeeded (`globalScheduleHealthAt === null`), so
- *               `globalSchedules: []` means the worker is BLIND, not that nothing is
- *               scheduled. Alerting that treats this as healthy is the original defect.
- *   'fresh'   — the last read succeeded. `[]` here really does mean "no schedules".
- *   'stale'   — a read succeeded once but the LAST attempt failed. `globalSchedules` is
- *               deliberately left standing rather than blanked (worker/src/scheduler.ts's
- *               refreshGlobalScheduleHealth catch), so it is last-known-good as of
- *               `globalScheduleHealthAt` — not a description of now.
+ *   'unknown'      — the read has NEVER succeeded (`globalScheduleHealthAt === null`), so
+ *                    `globalSchedules: []` means the worker is BLIND, not that nothing is
+ *                    scheduled. Alerting that treats this as healthy is the original defect.
+ *   'last_read_ok' — the last read SUCCEEDED. `[]` here really does mean "no schedules".
+ *                    NOT a freshness claim: read `globalScheduleHealthAt` for that. It was
+ *                    called 'fresh' until a reader pointed out that no part of the predicate
+ *                    below looks at a clock — see the derivation site.
+ *   'stale'        — a read succeeded once but the LAST attempt failed. `globalSchedules` is
+ *                    deliberately left standing rather than blanked (worker/src/scheduler.ts's
+ *                    refreshGlobalScheduleHealth catch), so it is last-known-good as of
+ *                    `globalScheduleHealthAt` — not a description of now.
+ *
+ * The pair therefore names WHETHER THE LAST ATTEMPT WORKED, and nothing else. HOW LONG AGO
+ * lives entirely in `globalScheduleHealthAt`, and no value of this enum implies a bound on it.
  */
-export type GlobalScheduleHealthStatus = 'unknown' | 'fresh' | 'stale';
+export type GlobalScheduleHealthStatus = 'unknown' | 'last_read_ok' | 'stale';
 
 /**
  * The `scheduler` sub-object as it appears on the wire.
@@ -80,8 +94,26 @@ export type GlobalScheduleHealthStatus = 'unknown' | 'fresh' | 'stale';
  * job UUID and real telemetry through them. THAT DISCLOSURE IS REAL AND LIVE, it predates
  * this file's current shape, and remediating it is a separate unit that is not this one's to
  * pre-empt — but it is exactly why no second free-text channel opens alongside it here.
- * tests/scheduler/healthz.test.ts pins the unknown arm to structural values only, and pins
- * the exact key set of the whole body, so nothing new reaches the public edge unnoticed.
+ *
+ * ── EXACTLY WHAT tests/scheduler/healthz.test.ts PINS, AND WHAT IT DOES NOT ───────────────
+ * It pins the `known: false` arm to structural values only, plus THREE key sets, each a
+ * hard-coded literal a human has to edit:
+ *   1. the six TOP-LEVEL keys of the body;
+ *   2. the keys THIS FILE adds on top of the metrics (`known`, `globalScheduleHealthStatus`);
+ *   3. the FULL key set of the `known: true` arm.
+ * (3) is not redundant with (2): (2) is computed as a DIFFERENCE against the metrics fixture,
+ * so a field added to `SchedulerMetrics` in worker/src/scheduler.ts is on both sides of that
+ * subtraction and disappears from it BY CONSTRUCTION; and (1) cannot see it either, because a
+ * producer field arrives INSIDE `scheduler`. That producer route is not a hypothetical gap —
+ * it is precisely how `lastError` and `globalScheduleHealthError` put raw pg driver text on
+ * this endpoint. Before (3) existed, the one route already known to leak was the one route no
+ * guard watched.
+ *
+ * NONE of the three pins VALUES, and none looks inside a NESTED object. Whatever the producer
+ * writes into `lastError` / `globalScheduleHealthError` goes out verbatim, and
+ * `globalSchedules[].breakerReason` is free text no assertion inspects. Keys-not-values is a
+ * deliberate stopping point, not an oversight: on the day a guard catches a real leak, a value
+ * comparison would copy the leaked value into the CI log.
  */
 export type SchedulerReport =
   | { known: false }
@@ -90,8 +122,26 @@ export type SchedulerReport =
 export function deriveGlobalScheduleHealthStatus(
   metrics: Pick<SchedulerMetrics, 'globalScheduleHealthAt' | 'globalScheduleHealthError'>,
 ): GlobalScheduleHealthStatus {
+  // ── THERE IS NO AGE TERM IN THIS FUNCTION. DO NOT READ ONE INTO ITS RESULT ───────────────
+  // 'last_read_ok' is `globalScheduleHealthError === null` and NOTHING ELSE. It says the last
+  // attempt did not throw; it says nothing whatsoever about WHEN that attempt was. Judge age
+  // from `globalScheduleHealthAt`, which is the only field here that carries one — and judge
+  // it against the reader's own clock, because this process cannot tell you how long it has
+  // been asleep.
+  //
+  // That is not a hypothetical. worker/fly.toml:32 and worker/fly.production.toml:32 both set
+  // `auto_stop_machines = "suspend"`, and a suspended machine RESUMES WITH ITS HEAP INTACT:
+  // `metrics.globalScheduleHealthAt` comes back holding whatever instant it held before the
+  // suspend, with no failed read to make it 'stale', so this returns 'last_read_ok' over an
+  // arbitrarily old timestamp. The value was called 'fresh' until 2026-08-10; the name was a
+  // recency word for a predicate with no recency in it, and an alert written from the name
+  // rather than from this body would have treated an arbitrarily stale read as current.
+  //
+  // If a real freshness verdict is ever wanted, it needs (a) a threshold, which is a policy
+  // decision, and (b) a clock — so it belongs to whoever is alerting, not here. Adding one to
+  // this enum would put a policy on a public, unauthenticated endpoint (see SchedulerReport).
   if (metrics.globalScheduleHealthAt === null) return 'unknown';
-  return metrics.globalScheduleHealthError === null ? 'fresh' : 'stale';
+  return metrics.globalScheduleHealthError === null ? 'last_read_ok' : 'stale';
 }
 
 /**
@@ -102,9 +152,13 @@ export function deriveGlobalScheduleHealthStatus(
  */
 export function schedulerReport(scheduler: SchedulerMetrics | null | undefined): SchedulerReport {
   // No scheduler state is attached to this process, so its status is UNKNOWN — which is NOT
-  // the same as a scheduler that was deliberately disabled (that reports known:true with
-  // enabled:false). Said with a boolean and an absent key rather than a sentence; see the
-  // note on SchedulerReport for why no prose goes on this endpoint.
+  // the same as a scheduler that was deliberately disabled. A disabled one WOULD report
+  // known:true with enabled:false; nothing produces that today, because scheduler.ts:219 sets
+  // `enabled: true` and nothing ever unsets it. That arm is a type contract held open for a
+  // future producer, not a state you can observe on this endpoint now — the distinction this
+  // branch actually makes today is "reporting" versus "not heard from".
+  // Said with a boolean and an absent key rather than a sentence; see the note on
+  // SchedulerReport for why no prose goes on this endpoint.
   if (scheduler == null) return { known: false };
   return {
     ...scheduler,

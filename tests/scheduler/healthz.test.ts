@@ -222,6 +222,15 @@ describe('/healthz — an ABSENT scheduler is not a DISABLED one (D-A)', () => {
   });
 
   it('reports a deliberately disabled scheduler as known:true, enabled:false', async () => {
+    // ── DO NOT DELETE THIS BECAUSE THE STATE IS UNREACHABLE. THAT IS WHY IT IS HERE ────────
+    // No producer emits `enabled: false` today: worker/src/scheduler.ts:219 sets it true and
+    // nothing ever unsets it. So this pins a TYPE CONTRACT for a producer that does not exist
+    // yet — what the reported arm must look like the day something can turn the scheduler off
+    // — not a state you can observe on the endpoint now. The distinction the branch actually
+    // draws today is "reporting" versus "not heard from", which the two tests around this one
+    // cover. Read as documentation of current behaviour it would be wrong; read as the
+    // contract it holds open, it is the cheapest guard against the next author reintroducing
+    // the collapse by giving the disabled case the unknown case's shape.
     const res = await get(state(metrics({ enabled: false })));
     const scheduler = res.body.scheduler as Record<string, unknown>;
     expect(scheduler.known).toBe(true);
@@ -257,13 +266,45 @@ describe('/healthz — an empty globalSchedules is no longer ambiguous (D-B)', (
     expect(scheduler.globalScheduleHealthAt).toBeNull();
   });
 
-  it('empty + read succeeded = fresh (there really are no schedules)', async () => {
+  it('empty + read succeeded = last_read_ok (there really are no schedules)', async () => {
     const res = await get(
       state(metrics({ globalSchedules: [], globalScheduleHealthAt: '2026-01-01T00:00:00.000Z' })),
     );
     const scheduler = res.body.scheduler as Record<string, unknown>;
-    expect(scheduler.globalScheduleHealthStatus).toBe('fresh');
+    expect(scheduler.globalScheduleHealthStatus).toBe('last_read_ok');
     expect(scheduler.globalSchedules).toEqual([]);
+  });
+
+  it('last_read_ok makes NO claim about age — an ancient successful read still reports it', async () => {
+    // The value was called 'fresh' until 2026-08-10 and the name was doing work the predicate
+    // never did: deriveGlobalScheduleHealthStatus has no age term at all (worker/src/healthz.ts).
+    // Both fly manifests set `auto_stop_machines = "suspend"` (fly.toml:32,
+    // fly.production.toml:32), so a resumed machine comes back with its heap — and therefore
+    // this timestamp — intact and no failed read to mark it 'stale'. An alert written from the
+    // old NAME rather than from the timestamp would have called that healthy.
+    //
+    // This pins the honest reading: the status reports the last ATTEMPT's outcome, and
+    // `globalScheduleHealthAt` is the ONLY thing that carries how long ago it was. If someone
+    // later adds a staleness threshold to the derivation, this test fails and the decision to
+    // put an alerting policy on a public endpoint gets made deliberately.
+    const ancient = '1999-01-01T00:00:00.000Z';
+    const res = await get(state(metrics({ globalScheduleHealthAt: ancient })));
+    const scheduler = res.body.scheduler as Record<string, unknown>;
+    expect(scheduler.globalScheduleHealthStatus).toBe('last_read_ok');
+    expect(scheduler.globalScheduleHealthAt).toBe(ancient);
+    // …and the derivation itself is indifferent to the instant, not merely tolerant of it:
+    // two timestamps 27 years apart produce the same verdict.
+    expect(
+      deriveGlobalScheduleHealthStatus({
+        globalScheduleHealthAt: ancient,
+        globalScheduleHealthError: null,
+      }),
+    ).toBe(
+      deriveGlobalScheduleHealthStatus({
+        globalScheduleHealthAt: '2026-01-01T00:00:00.000Z',
+        globalScheduleHealthError: null,
+      }),
+    );
   });
 
   it('THE DEFECT ITSELF: the two empty-array cases are now distinguishable', async () => {
@@ -306,7 +347,7 @@ describe('/healthz — an empty globalSchedules is no longer ambiguous (D-B)', (
     ).toBe('unknown');
     expect(
       deriveGlobalScheduleHealthStatus({ globalScheduleHealthAt: 'x', globalScheduleHealthError: null }),
-    ).toBe('fresh');
+    ).toBe('last_read_ok');
     expect(
       deriveGlobalScheduleHealthStatus({ globalScheduleHealthAt: 'x', globalScheduleHealthError: 'boom' }),
     ).toBe('stale');
@@ -342,21 +383,125 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     // The reported arm spreads SchedulerMetrics verbatim, which already carries `lastError`
     // and `globalScheduleHealthError` — raw driver text that predates this unit and is not
     // this unit's to change in either direction. What must not happen is a THIRD such
-    // channel appearing. This pins the exact set of keys /healthz adds to the metrics, so
-    // any future addition to the body is a deliberate, visible decision rather than a diff
-    // nobody read — on an endpoint confirmed to be serving this payload publicly and
-    // unauthenticated on both production and staging today.
+    // channel appearing.
+    //
+    // ── EXACTLY WHAT THIS ONE COVERS, WHICH IS LESS THAN IT USED TO CLAIM ────────────────
+    // It pins the keys /healthz ADDS ON TOP OF the metrics, and only those. `added` is a
+    // DIFFERENCE against `m`, so a field added to `SchedulerMetrics` itself is on both sides
+    // of the subtraction and is filtered out here BY CONSTRUCTION — this assertion can never
+    // report a producer-side addition, however it is tuned. That case is the next test's,
+    // and a field added NEXT TO `scheduler` rather than inside it is the one after that.
+    // The three are disjoint on purpose; none of them is redundant, and the header comment
+    // that used to describe this one as covering "any future addition to the body" was
+    // wrong in the exact direction that matters.
     const m = metrics({ globalScheduleHealthAt: '2026-01-01T00:00:00.000Z' });
     const scheduler = (await get(state(m))).body.scheduler as Record<string, unknown>;
     const added = Object.keys(scheduler).filter((k) => !Object.hasOwn(m, k));
     expect(added.sort()).toEqual(['globalScheduleHealthStatus', 'known']);
     // …and the one added string is a closed enum of three constants, not runtime text.
-    expect(['unknown', 'fresh', 'stale']).toContain(scheduler.globalScheduleHealthStatus);
+    expect(['unknown', 'last_read_ok', 'stale']).toContain(scheduler.globalScheduleHealthStatus);
+  });
+
+  it('the REPORTED arm is a FIXED key set — a producer field cannot reach the wire unannounced', async () => {
+    // ── WHY THIS EXISTS WHEN THE GUARD ABOVE LOOKS LIKE IT ALREADY COVERS IT ─────────────
+    // That guard computes `Object.keys(scheduler).filter((k) => !Object.hasOwn(m, k))`: what
+    // /healthz ADDS to the metrics. A new field on `SchedulerMetrics` (worker/src/scheduler.ts)
+    // is present in `m`, so the filter removes it — not because the threshold is wrong but
+    // because that is what the expression computes. The whole-body guard below is blind to it
+    // too: it pins the six TOP-LEVEL keys, and a producer field arrives INSIDE `scheduler`.
+    //
+    // So the producer path was the one route neither guard watched — and it is not a
+    // hypothetical route. It is how `lastError` and `globalScheduleHealthError` put raw pg
+    // driver text on this endpoint in the first place (worker/src/scheduler.ts:489 assigns
+    // `lastError` from `errMsg(err)` on any poll failure, and a pg error routinely names host,
+    // port, database and user). This endpoint is confirmed public and unauthenticated on both
+    // production and staging.
+    //
+    // ── THE LIST IS A HARD-CODED LITERAL AND MUST STAY ONE ───────────────────────────────
+    // Do NOT rewrite it as `Object.keys(metrics())`, `Object.keys(m)`, or anything else read
+    // from a runtime value. That reproduces the exact by-construction flaw above: a new
+    // producer key would enter the fixture and the expectation in the SAME INSTANT, and this
+    // guard would be green forever while the field sailed onto the public edge. It works
+    // precisely BECAUSE the `metrics()` fixture is declared `: SchedulerMetrics`, so tsc
+    // FORCES it to gain any new producer field, schedulerReport's spread carries that field
+    // onto this arm, and this literal then fails BY NAME. Editing the list is the deliberate
+    // human act the guard exists to require.
+    //
+    // ── KEYS ONLY. NEVER `toEqual` ON THE WHOLE OBJECT, NEVER COMPARE VALUES ─────────────
+    // A value comparison reads as strictly stronger and is strictly worse here: on the day
+    // this guard catches a real leak, it would copy the leaked value into the CI log, which
+    // is the thing the guard exists to prevent. Standing project ruling — if you think you
+    // need a value compare here, stop and ask.
+    //
+    // WHAT THIS STILL DOES NOT PIN: values, and anything NESTED. `globalSchedules` entries
+    // carry their own keys, including `breakerReason: string | null`
+    // (worker/src/scheduler.ts:62) — free text already on the wire that nothing in this file
+    // looks inside.
+    const REPORTED_ARM_KEYS = [
+      'enabled',
+      'environment',
+      'globalBreakersTripped',
+      'globalScheduleHealthAt',
+      'globalScheduleHealthError',
+      'globalScheduleHealthStatus',
+      'globalSchedules',
+      'jobsFailed',
+      'jobsProcessed',
+      'jobsSucceeded',
+      'known',
+      'lastEnqueueCount',
+      'lastError',
+      'lastGlobalEnqueueCount',
+      'lastJobAt',
+      'lastReconcileAt',
+      'lastTickAt',
+      'pollIntervalMs',
+      'schedulerTickMs',
+      'ticks',
+      'totalEnqueued',
+      'totalGlobalEnqueued',
+      'totalGlobalSlotsSkipped',
+      'totalReconciled',
+    ];
+    // Every state that reaches the reported arm, so a key present in only one of them is
+    // caught as well. `known: true` is asserted first so a state that quietly stopped
+    // reaching this arm fails as itself rather than as a key-set mismatch.
+    const reported: Array<[string, HealthState]> = [
+      ['the durable read has NEVER succeeded', state(metrics())],
+      [
+        'the durable read succeeded',
+        state(metrics({ globalScheduleHealthAt: '2026-01-01T00:00:00.000Z' })),
+      ],
+      [
+        'the durable read is stale',
+        state(
+          metrics({
+            globalSchedules: [snapshot()],
+            globalScheduleHealthAt: '2026-01-01T00:00:00.000Z',
+            globalScheduleHealthError: 'connection terminated unexpectedly',
+            globalBreakersTripped: ['corrections_retention'],
+          }),
+        ),
+      ],
+      // Type contract only — no producer emits enabled:false today (scheduler.ts:219). Held in
+      // the list so the key set is pinned for that arm too if one ever does.
+      ['a scheduler reporting itself disabled', state(metrics({ enabled: false }))],
+    ];
+    for (const [label, s] of reported) {
+      const scheduler = (await get(s)).body.scheduler as Record<string, unknown>;
+      expect(scheduler.known, `${label}: this state did not reach the reported arm`).toBe(true);
+      expect(
+        Object.keys(scheduler).sort(),
+        `/healthz scheduler.known:true arm changed shape (${label}) — a key was added to or ` +
+          'removed from SchedulerMetrics and is now on a public, unauthenticated endpoint',
+      ).toEqual(REPORTED_ARM_KEYS);
+    }
   });
 
   it('the WHOLE body is a fixed key set — nothing new reaches the public edge unnoticed', async () => {
-    // The guard above pins the `scheduler` sub-object. This pins the top level, which that
-    // one cannot see: a field added next to `scheduler` rather than inside it would reach
+    // The two guards above pin the `scheduler` sub-object — what /healthz adds to the metrics,
+    // and the full key set of the reported arm. This pins the TOP LEVEL, which neither of them
+    // can see: a field added next to `scheduler` rather than inside it would reach
     // https://kids-fun-worker.fly.dev/healthz just as publicly and pass every other
     // assertion in this file. The endpoint is confirmed public and unauthenticated on both
     // apps, so the set of things it says is worth stating exactly once, here.
