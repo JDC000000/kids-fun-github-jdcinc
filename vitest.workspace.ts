@@ -126,6 +126,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/saved_search_crud.test.ts',
   'tests/saved_search_ui_roundtrip.test.ts',
   'tests/scheduler/cadence.test.ts',
+  'tests/scheduler/job-dispatch-db.test.ts',
   'tests/scheduler/robots-override-db.test.ts',
   'tests/scheduler/shutdown-sql-db.test.ts',
   'tests/search/postgres-repository.test.ts',
