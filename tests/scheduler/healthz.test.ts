@@ -254,11 +254,17 @@ describe('/healthz — an ABSENT scheduler is not a DISABLED one (D-A)', () => {
     // free-text field on a possibly-public endpoint is where the next author interpolates
     // `errMsg(err)`. Measured on a real pool at this commit, a pg error names the DATABASE
     // (`database "x" does not exist`), the ROLE (`password authentication failed for user
-    // "postgres"`) and INTERNAL TABLES (`relation "global_job_schedule" does not exist`).
-    // This comment used to say "host, port, database and user"; host and port did NOT
-    // reproduce — the connection-refused path that would carry them yields an EMPTY message
-    // from node-postgres — and table names, the most commonly observed of all, were missing
-    // from the list. Corrected from measurement rather than repeated.
+    // "postgres"`), INTERNAL TABLES (`relation "global_job_schedule" does not exist`) and —
+    // conditionally — the HOST AND PORT (`connect ECONNREFUSED 127.0.0.1:55999`).
+    // The host/port condition is worth knowing rather than memorising as a yes or no: Node
+    // wraps a connect failure in an AggregateError, whose own `.message` is `""`, ONLY when
+    // the host resolves to MULTIPLE addresses and all fail. Measured on this box (Linux,
+    // dual-stack): a literal `127.0.0.1` names host and port, `localhost` (-> ::1 AND
+    // 127.0.0.1) names nothing, `[::1]` names the host. So a SINGLE-ADDRESS host — a literal
+    // IP, a Fly `.internal` name, i.e. the PRODUCTION shape — does name both.
+    // The original comment here said "host, port, database and user" and was missing table
+    // names; a later correction of mine over-corrected to "host and port did not reproduce",
+    // having measured only `localhost`. Both are fixed above, with the environment stated.
     // If someone adds one, this fails and says so.
     for (const absent of [undefined, null]) {
       const scheduler = (await get(state(absent))).body.scheduler as Record<string, unknown>;

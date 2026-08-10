@@ -65,16 +65,31 @@ export interface GlobalScheduleHealthSnapshot {
    * NOT ON /healthz, AND MUST NOT GO BACK ON IT. It is built by
    * worker/core/global-job-schedule.ts's breakerReasonFor() as `${outcome}: ${detail}`
    * where `detail` is the job handler's own error message, so for a database-level failure
-   * it carries whatever the pg driver said. WHAT A pg ERROR ACTUALLY NAMES, MEASURED ON A REAL POOL AT THIS COMMIT (not inherited):
+   * it carries whatever the pg driver said. WHAT A pg ERROR ACTUALLY NAMES — MEASURED, AND THE ENVIRONMENT MATTERS:
    *     • the DATABASE       — `database "no_such_db" does not exist`
    *     • the DB ROLE/USER   — `password authentication failed for user "postgres"`
    *     • an INTERNAL TABLE  — `relation "global_job_schedule" does not exist`
-   *   The long-standing comment in this repo said "host, port, database and user". Database
-   *   and user reproduce; TABLE NAMES were not in that list and are the most frequently
-   *   observed of the three. HOST AND PORT DID NOT REPRODUCE AT ALL: the connection-refused
-   *   path is the one case that would carry them and node-postgres aggregates it into an
-   *   EMPTY message, so `errMsg(err)` returned `""`. Corrected here rather than repeated,
-   *   because a comment claiming more than the code delivers is this chain's known defect.
+   *     • the HOST AND PORT  — `connect ECONNREFUSED 127.0.0.1:55999`
+   *   The long-standing comment in this repo said "host, port, database and user". All four
+   *   reproduce; TABLE NAMES were missing from that list and are the most frequently
+   *   observed of them.
+   *
+   *   HOST AND PORT ARE CONDITIONAL ON DNS, AND THE CONDITION IS THE USEFUL PART. Node wraps
+   *   a connect failure in an AggregateError ONLY when the host resolves to MULTIPLE
+   *   addresses and all of them fail, and that wrapper's own `.message` is `""` — so
+   *   `errMsg(err)` returns an empty string and nothing is named. Measured on this box
+   *   (Linux, dual-stack, `localhost` -> ::1 AND 127.0.0.1):
+   *     `127.0.0.1:55999` -> "connect ECONNREFUSED 127.0.0.1:55999"   host + port NAMED
+   *     `localhost:55999` -> ""                                        nothing named
+   *     `[::1]:55999`     -> "getaddrinfo ENOTFOUND [::1]"             host named, no port
+   *   A SINGLE-ADDRESS HOST — a literal IP, a Fly `.internal` name, a single-A-record
+   *   database host, i.e. THE PRODUCTION SHAPE — therefore DOES put host and port in here.
+   *
+   *   An earlier version of this comment said host and port "did not reproduce at all". That
+   *   was measured only against `localhost` on a dual-stack box and generalised to an
+   *   absolute — the same class of error as reasoning without measuring, and it understated
+   *   how sensitive this field is. When a measurement can depend on the environment (DNS,
+   *   dual-stack, platform), say which environment it was taken in, as above.
    * It reached the public unauthenticated endpoint for as long as
    * worker/src/healthz.ts spread this object onto the wire, and NESTING is why no key-set
    * guard saw it: every one of them inspected flat top-level keys.
@@ -239,16 +254,31 @@ export interface SchedulerMetrics {
    */
   reconcileAttempts: number;
   /**
-   * The last error any lane recorded, WITH THE DRIVER'S OWN MESSAGE. WHAT A pg ERROR ACTUALLY NAMES, MEASURED ON A REAL POOL AT THIS COMMIT (not inherited):
+   * The last error any lane recorded, WITH THE DRIVER'S OWN MESSAGE. WHAT A pg ERROR ACTUALLY NAMES — MEASURED, AND THE ENVIRONMENT MATTERS:
    *     • the DATABASE       — `database "no_such_db" does not exist`
    *     • the DB ROLE/USER   — `password authentication failed for user "postgres"`
    *     • an INTERNAL TABLE  — `relation "global_job_schedule" does not exist`
-   *   The long-standing comment in this repo said "host, port, database and user". Database
-   *   and user reproduce; TABLE NAMES were not in that list and are the most frequently
-   *   observed of the three. HOST AND PORT DID NOT REPRODUCE AT ALL: the connection-refused
-   *   path is the one case that would carry them and node-postgres aggregates it into an
-   *   EMPTY message, so `errMsg(err)` returned `""`. Corrected here rather than repeated,
-   *   because a comment claiming more than the code delivers is this chain's known defect.
+   *     • the HOST AND PORT  — `connect ECONNREFUSED 127.0.0.1:55999`
+   *   The long-standing comment in this repo said "host, port, database and user". All four
+   *   reproduce; TABLE NAMES were missing from that list and are the most frequently
+   *   observed of them.
+   *
+   *   HOST AND PORT ARE CONDITIONAL ON DNS, AND THE CONDITION IS THE USEFUL PART. Node wraps
+   *   a connect failure in an AggregateError ONLY when the host resolves to MULTIPLE
+   *   addresses and all of them fail, and that wrapper's own `.message` is `""` — so
+   *   `errMsg(err)` returns an empty string and nothing is named. Measured on this box
+   *   (Linux, dual-stack, `localhost` -> ::1 AND 127.0.0.1):
+   *     `127.0.0.1:55999` -> "connect ECONNREFUSED 127.0.0.1:55999"   host + port NAMED
+   *     `localhost:55999` -> ""                                        nothing named
+   *     `[::1]:55999`     -> "getaddrinfo ENOTFOUND [::1]"             host named, no port
+   *   A SINGLE-ADDRESS HOST — a literal IP, a Fly `.internal` name, a single-A-record
+   *   database host, i.e. THE PRODUCTION SHAPE — therefore DOES put host and port in here.
+   *
+   *   An earlier version of this comment said host and port "did not reproduce at all". That
+   *   was measured only against `localhost` on a dual-stack box and generalised to an
+   *   absolute — the same class of error as reasoning without measuring, and it understated
+   *   how sensitive this field is. When a measurement can depend on the environment (DNS,
+   *   dual-stack, platform), say which environment it was taken in, as above.
    *
    * Written by noteError()
    * at the seven sites below, formatted `${lane}: ${message}` (and `job ${uuid}: ${message}`

@@ -84,9 +84,13 @@ import type { GlobalJobScheduleStatus } from '../core/global-job-schedule';
 //     not exist`)                           → status 'unknown', readFailed TRUE,
 //                                             lastErrorKind 'poll', errorCount 14
 //   • database unreachable / wrong password
-//     / wrong database name                 → same structural signal; the driver's sentence,
-//                                             which names the database and the role, stays
-//                                             in the process
+//     / wrong database name                 → same structural signal. The driver's sentence
+//                                             stays in the process; WHAT it names varies with
+//                                             the fault — the role, the database, or (for a
+//                                             single-address host) the host and port. See the
+//                                             measurement table on SchedulerMetrics.lastError
+//                                             in worker/src/scheduler.ts; it is DNS-dependent
+//                                             and the condition is written down there.
 // Every one returned HTTP 200, as the Fly contract above requires.
 //
 // ── AND THE ROOT CAUSE, WHICH WAS THE SPREAD, NOT THE THREE FIELDS ───────────────────────
