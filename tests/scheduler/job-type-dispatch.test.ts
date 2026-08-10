@@ -15,6 +15,9 @@
 // strings nothing else in the process can produce. Only lib/corrections/retention is
 // mocked — it is the one seam that would otherwise construct a pg Pool, and its real
 // behaviour against real Postgres is covered by tests/corrections/retention.test.ts and by
+// tests/scheduler/job-dispatch-db.test.ts. worker/health/stale.ts is likewise REAL here: it
+// takes the pool it is handed, so the stub is enough to see the statement it emits, and its
+// behaviour against real rows is covered by tests/health/stale.test.ts and
 // tests/scheduler/job-dispatch-db.test.ts.
 //
 // No database: the pool is a stub, so this file belongs in the fast `unit` lane and is
@@ -81,6 +84,18 @@ function stubPool(rows: Record<string, unknown>[] = []): {
   return { pool: pool as never, queries };
 }
 
+/** A pg Pool stand-in whose every statement fails — a database that is simply not there. */
+function failingPool(message: string): { pool: never; queries: string[] } {
+  const queries: string[] = [];
+  const pool = {
+    query: async (sql: string) => {
+      queries.push(sql.replace(/\s+/g, ' ').trim());
+      throw new Error(message);
+    },
+  };
+  return { pool: pool as never, queries };
+}
+
 function job(over: Partial<Job> = {}): Job {
   return {
     id: '22222222-2222-4222-8222-222222222222',
@@ -109,13 +124,21 @@ beforeEach(() => {
 });
 
 describe('job_type dispatch — the registry', () => {
-  it('registers exactly the two job types the worker can run', () => {
+  it('registers exactly the job types the worker can run', () => {
     const { pool } = stubPool();
     // A drift guard: dropping a handler, or quietly adding one, is visible here. If you are
     // adding a job type on purpose, add it to this list in the same commit.
+    //
+    // BEING IN THIS LIST IS A CAPABILITY, NOT AN ENABLEMENT. Both global types are
+    // dispatchable as soon as the worker image ships; neither is SCHEDULED, because their
+    // global_job_schedule rows ship `enabled = false` (migrations 0028 and 0029). The two
+    // facts are asserted in different places on purpose — this one is about the worker,
+    // the disabled-row assertions in tests/scheduler/global-jobs-db.test.ts are about the
+    // database.
     expect([...buildJobHandlerRegistry(pool, 'staging').keys()].sort()).toEqual([
       'corrections_retention',
       'ingest',
+      'stale_occurrence_flip',
     ]);
   });
 });
@@ -220,6 +243,78 @@ describe("job_type 'corrections_retention' — the global job the worker could n
     expect(lines[1]).toContain('deleted=3');
     // `note` is user-submitted free text; nothing from a row may reach EITHER line.
     for (const line of lines) expect(line).not.toMatch(/note|reporter|occurrence_id/i);
+  });
+});
+
+describe("job_type 'stale_occurrence_flip' — the flip finally has a caller", () => {
+  const FLIP = 'stale_occurrence_flip';
+
+  it('runs the REAL flipStaleOccurrences UPDATE on the pool the registry was built with', async () => {
+    // No mock of worker/health/stale.ts, deliberately — mocking it would prove only that the
+    // dispatcher called the thing it was told to call. The statement below is one nothing
+    // else in the process emits, so seeing it on THIS stub proves both that the real
+    // implementation ran and that it ran on the worker's pool rather than opening its own.
+    const { pool, queries } = stubPool();
+    await expect(
+      makeJobDispatcher(pool, 'staging')(job({ jobType: FLIP, sourceId: null }))
+    ).resolves.toBeUndefined();
+
+    expect(queries).toHaveLength(1);
+    const sql = queries[0];
+    expect(sql).toContain('UPDATE activity_occurrence');
+    expect(sql).toContain("SET status_state = 'stale'");
+    // The predicate's three exclusions, which are what keep the blast radius to "rows
+    // nothing has re-checked lately" rather than "every row".
+    expect(sql).toContain('o.archived_at IS NULL');
+    expect(sql).toContain('o.last_checked_at IS NOT NULL');
+    expect(sql).toContain('o.status_state::text = ANY');
+    expect(shared.purgeCalls).toHaveLength(0); // and it is not the retention job in disguise
+  });
+
+  it('propagates a database failure instead of claiming the demotion happened', async () => {
+    // ── TEETH ──────────────────────────────────────────────────────────────────────────
+    // Wrap the flip in a try/catch in worker/core/stale-occurrence-flip.ts and this goes
+    // red. Returning normally tells worker/src/scheduler.ts to markDone() the queue row AND
+    // to close the run ledger as 'success' — which resets consecutive_failures, so a job
+    // that fails every single day would look permanently healthy and never trip the breaker.
+    // That is the failure mode this job type is supposed to be the RIGHT shape for.
+    const { pool } = failingPool('terminating connection due to administrator command');
+    await expect(
+      makeJobDispatcher(pool, 'staging')(job({ jobType: FLIP }))
+    ).rejects.toThrow('terminating connection due to administrator command');
+  });
+
+  it('logs the count and NOT the flipped occurrence ids', async () => {
+    // flipStaleOccurrences returns one id per changed row; on a first run over a neglected
+    // table that is the whole backlog. The handler must not put that list in a log line.
+    const lines: string[] = [];
+    const flipped = [
+      { id: '9f1c6a6e-0000-4000-8000-00000000aaaa' },
+      { id: '9f1c6a6e-0000-4000-8000-00000000bbbb' },
+    ];
+    const { pool } = stubPool(flipped);
+    const { makeStaleOccurrenceFlipJobHandler } = await import(
+      '../../worker/core/stale-occurrence-flip'
+    );
+    await makeStaleOccurrenceFlipJobHandler(pool, { logger: { log: (m: string) => lines.push(m) } })(
+      job({ jobType: FLIP })
+    );
+
+    // Two lines: what is about to happen to real rows (before the UPDATE, so it survives a
+    // throw), then the count.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/demoting past-cadence occurrences/);
+    expect(lines[1]).toContain('flipped=2');
+    for (const id of flipped) for (const line of lines) expect(line).not.toContain(id.id);
+  });
+
+  it('does not reach the ingest handler even though its source_id is NULL', async () => {
+    // The exact shape that used to dead-letter: a global job routed to the terms-gated
+    // ingest handler, which opens by rejecting a null source_id.
+    const { pool } = stubPool();
+    await expect(
+      makeJobDispatcher(pool, 'staging')(job({ jobType: FLIP, sourceId: null }))
+    ).resolves.toBeUndefined();
   });
 });
 

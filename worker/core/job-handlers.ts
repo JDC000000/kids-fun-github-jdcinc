@@ -25,6 +25,10 @@ import {
   CORRECTIONS_RETENTION_JOB_TYPE,
   makeCorrectionsRetentionJobHandler,
 } from './corrections-retention';
+import {
+  STALE_OCCURRENCE_FLIP_JOB_TYPE,
+  makeStaleOccurrenceFlipJobHandler,
+} from './stale-occurrence-flip';
 
 /** Every queue handler has the same shape: run the job, or throw. Returning normally is a
  *  claim that the work was DONE — the scheduler marks the row 'done' on that basis. */
@@ -68,6 +72,13 @@ export class UnknownJobTypeError extends Error {
  * source_id on an ingest job is still a genuine error and still throws. Only the *routing*
  * changed — a global job never reaches this handler any more, because it is no longer the
  * only handler there is.
+ *
+ * REGISTERING A TYPE HERE IS A CAPABILITY, NOT AN ENABLEMENT. Both global types below are
+ * dispatchable the moment this code is deployed, and neither is SCHEDULED: their
+ * global_job_schedule rows ship `enabled = false` (migrations 0028 and 0029), and turning
+ * one on is a separate operator act. The drift guard in
+ * tests/scheduler/job-type-dispatch.test.ts pins this map's key set, so adding a type is
+ * always a visible edit in the same commit.
  */
 export function buildJobHandlerRegistry(
   pool: Pool,
@@ -76,6 +87,7 @@ export function buildJobHandlerRegistry(
   return new Map<string, JobHandler>([
     [INGEST_JOB_TYPE, makeTermsGatedIngestJobHandler(pool, environment)],
     [CORRECTIONS_RETENTION_JOB_TYPE, makeCorrectionsRetentionJobHandler()],
+    [STALE_OCCURRENCE_FLIP_JOB_TYPE, makeStaleOccurrenceFlipJobHandler(pool)],
   ]);
 }
 

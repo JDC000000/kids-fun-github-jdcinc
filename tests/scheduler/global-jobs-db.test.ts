@@ -8,11 +8,13 @@
 // they replace still raced. The concurrency case below therefore runs two independent Pools
 // — two workers — and asserts on the rows, not on the code.
 //
-// WHAT IT ARMS. The only registered global job today is 'corrections_retention', which
-// PERMANENTLY DELETES user-submitted correction reports. That is why the disabled-row case
-// (F) and the lock cases (B) get as much attention as the happy path: the schedule's
-// `enabled` flag and the unique index are the two things standing between a bug here and
-// real, unrecoverable deletions.
+// WHAT IT ARMS. Every global job configured here ships DISABLED, and each one arms something
+// irreversible: 'corrections_retention' PERMANENTLY DELETES user-submitted correction
+// reports, and 'stale_occurrence_flip' (migration 0029) demotes activity_occurrence rows to
+// status_state='stale' with nothing recording what they held before. That is why the
+// disabled-row cases (F) and the lock cases (B) get as much attention as the happy path: the
+// schedule's `enabled` flag and the unique index are the two things standing between a bug
+// here and a real, unrecoverable write.
 //
 // Registered in DB_INTEGRATION_SUITES (vitest.workspace.ts). Like
 // tests/scheduler/job-dispatch-db.test.ts it resets the GLOBAL job_queue table, because
@@ -40,6 +42,7 @@ const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const hasDb = Boolean(process.env.DATABASE_URL);
 
 const RETENTION_JOB_TYPE = 'corrections_retention';
+const STALE_FLIP_JOB_TYPE = 'stale_occurrence_flip';
 
 interface JobRow {
   id: string;
@@ -139,6 +142,15 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
    *  touches it. Acceptance F asserts against this, not against a re-read. */
   let shippedRetention: { id: string; enabled: boolean; cadenceSeconds: number } | null = null;
 
+  /** The same, for the schedule migration 0029 ships for `stale_occurrence_flip`. */
+  let shippedStaleFlip: {
+    id: string;
+    enabled: boolean;
+    cadenceSeconds: number;
+    maxConsecutiveFailures: number;
+    nextRunAt: Date;
+  } | null = null;
+
   /** correction_report.occurrence_id is a NOT NULL FK, so the purge assertions need a real
    *  source → series → occurrence chain to hang test rows off. */
   let occurrenceId = '';
@@ -184,6 +196,28 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
     );
     shippedRetention = shipped
       ? { id: shipped.id, enabled: shipped.enabled, cadenceSeconds: Number(shipped.cadence_seconds) }
+      : null;
+
+    const [flip] = await query<{
+      id: string;
+      enabled: boolean;
+      cadence_seconds: number;
+      max_consecutive_failures: number;
+      next_run_at: Date;
+    }>(
+      `SELECT id, enabled, EXTRACT(EPOCH FROM cadence)::float8 AS cadence_seconds,
+              max_consecutive_failures, next_run_at
+         FROM global_job_schedule WHERE job_type = $1`,
+      [STALE_FLIP_JOB_TYPE]
+    );
+    shippedStaleFlip = flip
+      ? {
+          id: flip.id,
+          enabled: flip.enabled,
+          cadenceSeconds: Number(flip.cadence_seconds),
+          maxConsecutiveFailures: flip.max_consecutive_failures,
+          nextRunAt: flip.next_run_at,
+        }
       : null;
 
     const [src] = await query<{ id: string }>(
@@ -286,6 +320,15 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
                   consecutive_failures = 0, breaker_tripped_at = NULL, breaker_reason = NULL
             WHERE id = $1`,
           [shippedRetention.id, shippedRetention.enabled]
+        );
+      }
+      if (shippedStaleFlip) {
+        // Section F rewinds this row's due instant to prove a disabled schedule cannot fire.
+        // Put it back where the migration left it so a later file reads the shipped state.
+        await query(`DELETE FROM global_job_run WHERE schedule_id = $1`, [shippedStaleFlip.id]);
+        await query(
+          `UPDATE global_job_schedule SET enabled = $2, next_run_at = $3 WHERE id = $1`,
+          [shippedStaleFlip.id, shippedStaleFlip.enabled, shippedStaleFlip.nextRunAt]
         );
       }
       await query(`DELETE FROM correction_report WHERE reporter LIKE 'global-sched-%'`);
@@ -1232,6 +1275,53 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
       expect(await jobsOfType(RETENTION_JOB_TYPE)).toHaveLength(0);
       expect(await runsOf(retention.id)).toHaveLength(0);
       expect((await runsOf(live.id)).length).toBeGreaterThan(0); // the tick really ran
+    });
+
+    // ── the SECOND shipped schedule: stale_occurrence_flip (migration 0029) ────────────
+    it('migration 0029 SHIPS stale_occurrence_flip disabled, daily, with an explicit breaker limit', () => {
+      // Captured in beforeAll, before any test in this file could have touched it.
+      // Registering the handler (worker/core/job-handlers.ts) is the CAPABILITY; this flag
+      // is the ENABLEMENT. Turning it on mutates real activity_occurrence rows on the public
+      // search surface, which is a decision the migration deliberately does not take.
+      expect(shippedStaleFlip).not.toBeNull();
+      expect(shippedStaleFlip!.enabled).toBe(false);
+      expect(shippedStaleFlip!.cadenceSeconds).toBe(86_400);
+      // Written explicitly in 0029 rather than inherited from the column default, so a
+      // future change to that default cannot silently move this job's breaker limit.
+      expect(shippedStaleFlip!.maxConsecutiveFailures).toBe(3);
+    });
+
+    it('a disabled, overdue stale_occurrence_flip produces NO job, NO ledger row, and demotes NOTHING', async () => {
+      const schedule = shippedStaleFlip!;
+      await query(
+        `UPDATE global_job_schedule SET enabled = false, next_run_at = now() - interval '30 days' WHERE id = $1`,
+        [schedule.id]
+      );
+      // A row the flip WOULD demote: this file's source takes baseline_cadence's 1-day
+      // default (migration 0003) and STALE_CADENCE_GRACE is 2, so 3 days is past threshold.
+      const [victim] = await query<{ id: string }>(
+        `INSERT INTO activity_occurrence
+           (series_id, activity_name, start_datetime_utc, status_state, confidence_label, last_checked_at)
+         VALUES ($1, $2, now() + interval '30 days', 'confirmed', 'unscored', now() - interval '3 days')
+         RETURNING id`,
+        [seriesId, `${tag} would-be-demoted`]
+      );
+      try {
+        expect(await tickFor(schedule.id)).toHaveLength(0);
+        expect(await jobsOfType(STALE_FLIP_JOB_TYPE)).toHaveLength(0);
+        expect(await runsOf(schedule.id)).toHaveLength(0);
+
+        // ── TEETH ────────────────────────────────────────────────────────────────────
+        // And nothing was demoted — the whole reason the flag matters. Flip `enabled` to
+        // true in 0029 and this assertion is what goes red.
+        const [after] = await query<{ status_state: string }>(
+          `SELECT status_state FROM activity_occurrence WHERE id = $1`,
+          [victim.id]
+        );
+        expect(after.status_state).toBe('confirmed');
+      } finally {
+        await query(`DELETE FROM activity_occurrence WHERE id = $1`, [victim.id]);
+      }
     });
   });
 });

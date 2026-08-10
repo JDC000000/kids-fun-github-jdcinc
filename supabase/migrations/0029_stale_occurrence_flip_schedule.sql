@@ -1,0 +1,123 @@
+-- 0029_stale_occurrence_flip_schedule.sql — schedule the OCCURRENCE-level staleness flip
+-- on the durable global-job scheduler. SHIPPED DISABLED.
+--
+-- WHY THIS EXISTS. Migration 0028 built a schedule, a run ledger, a DB-enforced exactly-once
+-- lock, a circuit breaker, missed-run detection and abandoned-run reconciliation — and had
+-- exactly ONE configured job (`corrections_retention`), itself disabled. A scheduler with no
+-- live tenant is a scheduler nobody has proved anything about. This adds a second tenant that
+-- was NOT written for the scheduler and therefore actually tests its shape.
+--
+-- WHAT THE JOB IS. `stale_occurrence_flip` → worker/core/stale-occurrence-flip.ts, which calls
+-- worker/health/stale.ts flipStaleOccurrences(). That function has existed since G-T15-4 with
+-- NO RUNTIME CALLER AT ALL: outside tests/health/stale.test.ts nothing in the repo invoked it,
+-- so occurrence-level staleness has never once been applied to a row. (Measured at
+-- aa14057ea37cc57c68bf0338cb6c484f81a2b229 by a repo-wide grep excluding node_modules; the
+-- only non-test hits were its own definition and a comment in vitest.workspace.ts.)
+--
+-- ── BLAST RADIUS. READ THIS BEFORE ENABLING. ────────────────────────────────────────────────
+-- The statement is an UPDATE over activity_occurrence scoped by PREDICATE, not by source, not
+-- by batch and not by time window. Every run can touch every row that satisfies:
+--     archived_at IS NULL
+--   AND last_checked_at IS NOT NULL
+--   AND status_state ∈ STALE_DEMOTE_FROM   (the six "live" states in worker/health/stale.ts;
+--                                           human/terminal and already-low states are excluded
+--                                           so staleness never overwrites a specific decision)
+--   AND last_checked_at < now() - STALE_CADENCE_GRACE × COALESCE(near_date_cadence,
+--                                                                baseline_cadence)
+-- source.baseline_cadence is NOT NULL DEFAULT '1 day' (migration 0003), so the effective
+-- threshold for a source that has never had a cadence configured is 2 days.
+--
+-- The effect on a flipped row is a DEMOTION, not a deletion and not a hide: lib/search/rank.ts
+-- scores 'stale' lowest of any status and lib/search/filters/status.ts still classes it
+-- 'primary' (shown). So the failure mode of running this job is "listings rank lower than they
+-- should", and the failure mode of NOT running it is "listings nobody has re-checked keep
+-- ranking as if they were fresh". Both are quality outcomes; neither destroys data.
+--
+-- THE ONE CONSEQUENCE THAT IS NOT OBVIOUS FROM THE NAME. The predicate says "nothing has
+-- re-checked this row lately". It does not say "the row's source went dark" — and for rows
+-- that NO producer refreshes, those are different statements. A hand-curated listing created
+-- through app/admin/listings (source family 'manual', which takes the default 1-day cadence)
+-- is stamped last_checked_at = now() at creation and is then never re-ingested by anything, so
+-- 2 days later it satisfies the predicate and is demoted. Measured, not reasoned: against a
+-- 0029-era schema, a 'confirmed' manual listing whose last_checked_at was 3 days old flipped to
+-- 'stale' on one run of the statement above.
+--
+-- There is no automatic path back. status_state is restored only by a write that re-stamps it:
+-- worker/core/upsert.ts on a real re-ingest (which cannot happen for a manual source), the
+-- admin QA queue's approve, or resolving a correction. Whether a human-curated listing SHOULD
+-- decay to lowest rank after two days is a product decision, and it is exactly the decision the
+-- `enabled` flag below is reserving. Nothing about that behaviour was changed by this
+-- migration — it has been flipStaleOccurrences()'s semantics all along; it has simply never had
+-- a caller to make it real.
+--
+-- ── WHY THE PRODUCER'S SLOT-SKIPPING IS SAFE FOR THIS JOB ──────────────────────────────────
+-- worker/scheduler/global-jobs.ts advances next_run_at to the first slot in the FUTURE, so an
+-- outage's missed slots are DROPPED, never replayed. That is destructive for edge-triggered
+-- work and correct for LEVEL-TRIGGERED work. This job is level-triggered as strongly as the
+-- category allows: its predicate is a statement about the world at now(), with no reference to
+-- the slot it is running for, so one run after ten missed slots selects a superset of what all
+-- ten would have selected and leaves nothing behind. It is also idempotent — 'stale' is not in
+-- STALE_DEMOTE_FROM, so a row it already flipped is not a candidate again.
+--
+-- ── CADENCE: 1 day ─────────────────────────────────────────────────────────────────────────
+-- The staleness threshold is itself ≥ 2 × a source's cadence, so sub-daily polling would only
+-- shorten the latency between a row crossing the threshold and being demoted — on a ranking
+-- signal, not on anything time-critical. Against that, each run is an unindexed predicate over
+-- the whole occurrence table joined to series and source. Daily is the cheap side of a
+-- trade-off whose expensive side buys hours of latency on a ranking hint.
+--
+-- ── max_consecutive_failures: 3, WRITTEN EXPLICITLY ────────────────────────────────────────
+-- Stated in the INSERT rather than inherited from the column DEFAULT so the choice is visible
+-- in the row, and survives a future change to that default. It is chosen knowing two things
+-- about this scheduler: GLOBAL_JOB_MAX_ATTEMPTS is 1 (the cadence is the retry, the breaker is
+-- the failure policy), and resetGlobalJobBreaker() is deliberately not called from any runtime
+-- path — so a tripped breaker STAYS tripped until a human clears it. At a daily cadence, 3
+-- means one transient database fault costs a day and is absorbed, while a structural fault
+-- stops the schedule within three days and asks for a person. A threshold of 1 would convert a
+-- single connection blip into an indefinite silent stop that nothing pages anyone about; a
+-- larger one would let a genuinely broken job keep running the same UPDATE for a week.
+--
+-- ── next_run_at = now() ────────────────────────────────────────────────────────────────────
+-- Matching 0028. The row is disabled, so this instant is in the past by however long the flag
+-- stays off; the first tick after enabling therefore enqueues immediately (which is what an
+-- operator flipping the flag wants to see) and logs a large skipped-slot WARN naming every
+-- daily slot that elapsed while it was disabled. For this job that warning is expected and
+-- benign — see the level-triggered note above — but it is not silent, by design.
+
+-- ── forward ──────────────────────────────────────────────────────────────────
+
+-- enabled = FALSE, and that is the whole point. Registering the handler
+-- (worker/core/job-handlers.ts) is a CAPABILITY; this flag is the ENABLEMENT, and they are
+-- deliberately separate acts. Turning it on mutates real activity_occurrence rows on the
+-- public search surface, with the consequence documented under BLAST RADIUS above.
+INSERT INTO global_job_schedule (job_type, cadence, enabled, next_run_at, max_consecutive_failures)
+VALUES ('stale_occurrence_flip', interval '1 day', false, now(), 3)
+ON CONFLICT (job_type) DO NOTHING;
+
+-- ── operator notes ───────────────────────────────────────────────────────────
+-- ENABLE (a deliberate act; reversible by flipping it back, but the rows it has already
+-- demoted are NOT restored by disabling it — see BLAST RADIUS):
+--   UPDATE global_job_schedule SET enabled = true WHERE job_type = 'stale_occurrence_flip';
+--
+-- DRY RUN THE PREDICATE FIRST — how many rows the next run would touch, and where they live.
+-- This is a SELECT; it changes nothing:
+--   SELECT s.family, s.name, count(*) AS would_flip
+--     FROM activity_occurrence o
+--     JOIN activity_series ser ON ser.id = o.series_id
+--     JOIN source s ON s.id = ser.source_id
+--    WHERE o.archived_at IS NULL
+--      AND o.last_checked_at IS NOT NULL
+--      AND o.status_state::text = ANY (ARRAY['confirmed','bookable_open','not_yet_bookable',
+--                                            'schedule_not_published','inferred_recurring',
+--                                            'seasonal_active'])
+--      AND o.last_checked_at < now() - make_interval(
+--            secs => extract(epoch FROM COALESCE(s.near_date_cadence, s.baseline_cadence)) * 2)
+--    GROUP BY 1, 2 ORDER BY would_flip DESC;
+--   -- A large count under family='manual' is the caveat above showing up in your data.
+--
+-- RESET a tripped breaker (explicit recovery; there is no automatic path) — as 0028.
+
+-- ── rollback ────────────────────────────────────────────────────────────────
+--   DELETE FROM global_job_schedule WHERE job_type = 'stale_occurrence_flip';
+--   -- CASCADEs its global_job_run ledger rows. Does NOT un-flip any occurrence: nothing
+--   -- records what status_state a row held before it was demoted.

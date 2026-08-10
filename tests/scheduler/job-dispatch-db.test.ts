@@ -123,6 +123,11 @@ describe.skipIf(!hasDb)('worker queue: job_type dispatch against real Postgres',
 
   afterEach(async () => {
     await query(`DELETE FROM correction_report WHERE reporter LIKE 'job-dispatch-%'`);
+    // The stale-flip section below mints occurrences under this file's series. They must go
+    // before afterAll tries to delete that series, and they must not survive into the next
+    // test — flipStaleOccurrences is table-wide, so a leaked fixture is a row a later test
+    // would silently demote.
+    await query(`DELETE FROM activity_occurrence WHERE activity_name LIKE 'job-dispatch-%'`);
   });
 
   afterAll(async () => {
@@ -234,5 +239,111 @@ describe.skipIf(!hasDb)('worker queue: job_type dispatch against real Postgres',
     const row = await runSchedulerUntilSettled(jobId);
     expect(row.status).toBe('dead_letter');
     expect(await reportIds()).toEqual([expired]); // still there — nothing ran
+  });
+
+  // ── ACCEPTANCE D — the SECOND global job type: stale_occurrence_flip ──────────────────
+  //
+  // worker/health/stale.ts's flipStaleOccurrences() had no runtime caller at all until
+  // worker/core/stale-occurrence-flip.ts; occurrence-level staleness had therefore never
+  // been applied to a row outside tests/health/stale.test.ts. These cases drive it the way
+  // production will: a job_queue row with source_id=NULL, claimed and dispatched by the
+  // REAL scheduler, asserted on the rows it changed rather than on the status it reached.
+  //
+  // This file's source takes source.baseline_cadence's default of 1 day (migration 0003) and
+  // STALE_CADENCE_GRACE is 2, so the threshold for every fixture below is 2 days.
+  describe('D — the stale-occurrence flip', () => {
+    /** An occurrence under this file's terms-allowed source. `daysAgo = null` = never checked.
+     *  The 0021 write-time invariant permits 'confirmed' only for a terms-approved source,
+     *  which `sourceId` is. */
+    async function mkOccurrence(
+      label: string,
+      status: string,
+      daysAgo: number | null
+    ): Promise<string> {
+      const [row] = await query<{ id: string }>(
+        `INSERT INTO activity_occurrence
+           (series_id, activity_name, start_datetime_utc, status_state, confidence_label, last_checked_at)
+         VALUES ($1, $2, now() + interval '30 days', $3::status_state, 'unscored',
+                 CASE WHEN $4::float8 IS NULL THEN NULL
+                      ELSE now() - make_interval(secs => $4::float8 * 86400) END)
+         RETURNING id`,
+        [seriesId, `${tag} ${label}`, status, daysAgo]
+      );
+      return row.id;
+    }
+
+    async function statusOf(id: string): Promise<string> {
+      const [row] = await query<{ status_state: string }>(
+        `SELECT status_state FROM activity_occurrence WHERE id = $1`,
+        [id]
+      );
+      return row.status_state;
+    }
+
+    it("a job_type='stale_occurrence_flip' job with source_id=NULL completes AND really demotes", async () => {
+      const stale = await mkOccurrence('stale', 'confirmed', 3); // 3d > 2d threshold
+      const fresh = await mkOccurrence('fresh', 'confirmed', 0);
+      const cancelled = await mkOccurrence('cancelled', 'cancelled', 5); // human-terminal
+      const never = await mkOccurrence('never-checked', 'confirmed', null);
+
+      const jobId = await enqueueOneShot('stale_occurrence_flip', null);
+      const before = await jobRow(jobId);
+      expect(before.source_id).toBeNull();
+
+      const row = await runSchedulerUntilSettled(jobId);
+      expect(row.last_error).toBeNull();
+      expect(row.status).toBe('done');
+
+      // ── TEETH ──────────────────────────────────────────────────────────────────────
+      // A job that reaches 'done' without changing a row is the silent-success failure
+      // mode this project has already shipped once. The status assertion above cannot see
+      // it; these four can.
+      expect(await statusOf(stale)).toBe('stale');
+      expect(await statusOf(fresh)).toBe('confirmed');
+      expect(await statusOf(cancelled)).toBe('cancelled');
+      expect(await statusOf(never)).toBe('confirmed');
+    });
+
+    it('running it a SECOND time completes and widens nothing', async () => {
+      // Repetition is not hypothetical: a daily cadence means this statement runs against
+      // the same table forever. That the already-demoted rows are not candidates again is
+      // pinned at the function level by tests/health/stale.test.ts; what matters here is
+      // that a repeat pass through the whole dispatch path is still a clean no-op.
+      const stale = await mkOccurrence('stale', 'confirmed', 3);
+      const fresh = await mkOccurrence('fresh', 'confirmed', 0);
+
+      const first = await runSchedulerUntilSettled(await enqueueOneShot('stale_occurrence_flip', null));
+      expect(first.status).toBe('done');
+      const second = await runSchedulerUntilSettled(await enqueueOneShot('stale_occurrence_flip', null));
+      expect(second.status).toBe('done');
+      expect(second.last_error).toBeNull();
+
+      expect(await statusOf(stale)).toBe('stale');
+      expect(await statusOf(fresh)).toBe('confirmed'); // still not a candidate
+    });
+
+    it('is LEVEL-TRIGGERED: ONE run catches up work from slots the producer would have SKIPPED', async () => {
+      // ── WHY THIS IS THE LOAD-BEARING TEST OF THE WHOLE UNIT ────────────────────────
+      // worker/scheduler/global-jobs.ts advances next_run_at to the first slot in the
+      // FUTURE, so after an outage exactly ONE run is produced and every intervening slot
+      // is dropped (EnqueuedGlobalJob.skippedSlots). Putting an EDGE-triggered job on that
+      // producer silently destroys the dropped slots' work.
+      //
+      // These three rows crossed the staleness threshold on three different days — the
+      // kind of work that would have belonged to three different daily slots. If the flip
+      // were edge-triggered in any way (a bounded window, a "since last run" clause, a
+      // LIMIT), the older two would survive one run and this goes red. It is not: the
+      // predicate is a statement about now(), so one run selects the superset.
+      const crossedRecently = await mkOccurrence('aged-3d', 'confirmed', 3);
+      const crossedWeeksAgo = await mkOccurrence('aged-12d', 'confirmed', 12);
+      const crossedLongAgo = await mkOccurrence('aged-40d', 'seasonal_active', 40);
+
+      const row = await runSchedulerUntilSettled(await enqueueOneShot('stale_occurrence_flip', null));
+      expect(row.status).toBe('done');
+
+      expect(await statusOf(crossedRecently)).toBe('stale');
+      expect(await statusOf(crossedWeeksAgo)).toBe('stale');
+      expect(await statusOf(crossedLongAgo)).toBe('stale');
+    });
   });
 });
