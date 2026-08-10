@@ -437,6 +437,34 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     // carry their own keys, including `breakerReason: string | null`
     // (worker/src/scheduler.ts:62) — free text already on the wire that nothing in this file
     // looks inside.
+    //
+    // ── THREE WAYS A FUTURE AUTHOR CAN DEFEAT THIS GUARD. ALL THREE MEASURED, NOT REASONED ──
+    // This guard reads the FIXTURE's key set, not the producer's. It catches producer drift
+    // only because tsc forces `metrics()` to mirror `SchedulerMetrics`. Break the mirror and
+    // the guard goes green while the field ships live on a public endpoint:
+    //
+    //  1. AN OPTIONAL FIELD IS INVISIBLE TO IT. `foo?: string` on SchedulerMetrics never
+    //     forces the fixture to gain the key, so `Object.keys` never sees it here — while the
+    //     REAL producer object, which does set it, spreads it straight onto the wire through
+    //     schedulerReport. Measured: added an optional field + set it in the producer → tsc
+    //     SILENT, all 24 tests GREEN. SchedulerMetrics has ZERO optional fields today, and
+    //     that is not cosmetic — it is the precondition that makes this guard work. Keep it
+    //     that way; a field that is genuinely sometimes-absent should be `T | null`, which is
+    //     required and therefore forced into the fixture.
+    //
+    //  2. A CAST LAUNDERS ANYTHING PAST IT, AND THIS IS THE DANGEROUS ONE. Writing
+    //     `} as SchedulerMetrics;` at the end of the fixture silences tsc completely.
+    //     Measured: added a REQUIRED producer field with the cast in place → tsc SILENT, all
+    //     24 tests GREEN, field live. Do not introduce a cast here, and do not "fix" a type
+    //     error in this fixture by reaching for one — that error IS the guard firing.
+    //
+    //  3. LOOSENING THE RETURN-TYPE ANNOTATION degrades it but, measured, does NOT silently
+    //     defeat it: removing `: SchedulerMetrics` from `metrics()` still fails tsc, because
+    //     ~10 call sites pass the result somewhere typed `SchedulerMetrics` and re-check it
+    //     structurally. The errors just move to those call sites and misattribute (they lead
+    //     with `environment` widening to `string`), so the real failure is stated confusingly
+    //     and an author is tempted into (2) to make it quiet. Keep the annotation — not
+    //     because it is the only check, but because it is the one that fails HERE, legibly.
     const REPORTED_ARM_KEYS = [
       'enabled',
       'environment',

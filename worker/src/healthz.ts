@@ -109,6 +109,15 @@ export type GlobalScheduleHealthStatus = 'unknown' | 'last_read_ok' | 'stale';
  * this endpoint. Before (3) existed, the one route already known to leak was the one route no
  * guard watched.
  *
+ * (3) READS A FIXTURE, NOT THIS FILE, so it holds only while tsc forces that fixture to mirror
+ * `SchedulerMetrics`. Two things break the mirror silently and are measured, not theorised: an
+ * OPTIONAL field on SchedulerMetrics (never forced into the fixture, so the key set never sees
+ * it — the interface has zero optional fields today and that is load-bearing, prefer
+ * `T | null`), and a CAST in the fixture (`as SchedulerMetrics` silences tsc outright, even
+ * for a required field). The test carries the full reasoning; the constraint is recorded here
+ * too because it is a constraint on the PRODUCER TYPE, which is edited from scheduler.ts by
+ * people who may never open the test.
+ *
  * NONE of the three pins VALUES, and none looks inside a NESTED object. Whatever the producer
  * writes into `lastError` / `globalScheduleHealthError` goes out verbatim, and
  * `globalSchedules[].breakerReason` is free text no assertion inspects. Keys-not-values is a
