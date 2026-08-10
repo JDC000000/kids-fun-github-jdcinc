@@ -16,18 +16,31 @@
 // operator would actually curl.
 //
 // It deliberately does NOT run worker/src/index.js itself, for one reason: index.js starts
-// the scheduler with `immediate: true`, which runs an ENQUEUE tick against the shared test
-// database. This process must not write to a database other suites are using. The wiring it
-// skips is one line (index.ts: `state.scheduler = schedulerHandle.metrics`) and it is
-// reproduced verbatim below.
+// the scheduler with no `immediate` argument (index.ts:43) and the default is TRUE
+// (scheduler.ts:215), so booting it would run an ENQUEUE tick against the shared test
+// database with no way for a test to say otherwise. The wiring it skips is one line
+// (index.ts: `state.scheduler = schedulerHandle.metrics`) and is reproduced verbatim below.
+// `immediate` is instead a PARAMETER of this fixture (FIXTURE_IMMEDIATE), so a test can pick
+// the boot path AND arrange the database to make that tick harmless first.
 //
-// `immediate: false` is also the sharper test: the durable health read is deliberately NOT
-// gated on `immediate` (see worker/src/scheduler.ts tickLoop), because `immediate` decides
-// whether this process WRITES on boot, while reporting what the database already says is a
-// pure SELECT an operator needs before the first tick interval elapses. If that gating ever
-// comes back, this process reports nothing and the test fails.
+// ── WHY BOTH VALUES, AND WHY THE OLD "immediate:false IS THE SHARPER TEST" CLAIM WAS WRONG ─
+// The durable health read is not gated on `immediate` — but the two settings reach it down
+// TWO DIFFERENT CODE PATHS, and only one of them is production's:
+//
+//   immediate:FALSE — tickLoop calls refreshGlobalScheduleHealth() DIRECTLY
+//                     (worker/src/scheduler.ts, the `else` arm of the boot branch).
+//   immediate:TRUE  — tickLoop calls tickOnce(), and health arrives only from the TRAILING
+//                     refresh at the END of tickOnce. This is what worker/src/index.ts
+//                     boots, i.e. the path every production worker actually takes.
+//
+// A previous version of this comment claimed immediate:false was "also the sharper test".
+// It is not, and the counter-example is mechanical: DELETE the trailing refresh at the end
+// of tickOnce and an immediate:false fixture still reports health down the direct arm, so
+// this file — the flagship restart proof — stays GREEN while the production path reports
+// NOTHING. That is the defect it exists to catch, so pinning one value was the hole.
 //
 // Protocol: prints `LISTENING <port>` on stdout once ready; exits on SIGTERM.
+// Parameters (env): DATABASE_URL, and FIXTURE_IMMEDIATE=true|false (default false).
 'use strict';
 
 const http = require('node:http');
@@ -47,10 +60,14 @@ const abort = new AbortController();
 
 const state = { chromiumReady: false, bootedAt: new Date().toISOString(), scheduler: null };
 
+// Explicit rather than defaulted: the caller decides which of the two boot paths above this
+// process exercises, and an unset variable must mean the quiet one (no boot tick, no writes).
+const immediate = process.env.FIXTURE_IMMEDIATE === 'true';
+
 const handle = startScheduler(pool, {
   signal: abort.signal,
   environment: 'staging',
-  immediate: false,
+  immediate,
   schedulerTickMs: 600_000,
   pollIntervalMs: 600_000,
 });

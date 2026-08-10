@@ -445,12 +445,42 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
         `UPDATE global_job_run SET finished_at = now(), outcome = 'success' WHERE schedule_id = $1`,
         [schedule.id]
       );
-      // Rewind to the EXACT slot that already ran — a clock skew, a replayed tick, or an
-      // operator rewinding next_run_at by hand.
-      await query(`UPDATE global_job_schedule SET next_run_at = $2 WHERE id = $1`, [
-        schedule.id,
-        scheduledFor,
-      ]);
+      // Rewind to the slot that already ran — a clock skew, a replayed tick, or an operator
+      // rewinding next_run_at by hand.
+      //
+      // ── WHY THE MICROSECONDS ARE HERE, AND WHY THEY ARE THE POINT ──────────────────────
+      // timestamptz stores MICROseconds; a JS Date holds MILLIseconds, and node-postgres
+      // TRUNCATES on the way out (verified: '…:55.169524+00' parses to …:55.169Z, and
+      // feeding that Date back does NOT equal the column). So the tick reads next_run_at,
+      // loses the tail, and writes global_job_run.scheduled_for from the truncated Date.
+      // resolveClaimConflict() must then ask its "has this slot already been served?"
+      // question with THAT truncated Date — the one the rejected INSERT used — and NOT with
+      // global_job_schedule.next_run_at, which is a few microseconds away and matches
+      // nothing. Its comment says so; nothing pinned it, because every rewind in this file
+      // wrote next_run_at from a JS Date, making ms and us identical in the fixture and the
+      // WRONG comparison pass anyway.
+      //
+      // Migration 0028 ships corrections_retention with a microsecond-bearing next_run_at
+      // (`now()`), so this is the REAL shape, not a contrived one. With the wrong comparison
+      // the rewind is misread as `run_in_flight`, next_run_at is left where it is, and the
+      // schedule is wedged for ever while health still reports the benign 'due' — the exact
+      // defect the assertions below exist to catch. Keep the offset well under half a
+      // millisecond so the truncated value still lands on the served slot.
+      await query(
+        `UPDATE global_job_schedule SET next_run_at = $2::timestamptz + interval '369 microseconds'
+          WHERE id = $1`,
+        [schedule.id, scheduledFor]
+      );
+      const [{ sub_ms: subMs }] = await query<{ sub_ms: string }>(
+        `SELECT (EXTRACT(MICROSECONDS FROM next_run_at)::bigint % 1000)::text AS sub_ms
+           FROM global_job_schedule WHERE id = $1`,
+        [schedule.id]
+      );
+      // The fixture really does carry a sub-millisecond tail. Without this, a future edit
+      // that rounds the value off would silently return this test to the toothless shape it
+      // had before, and nothing would say so.
+      expect(Number(subMs)).toBe(369);
+
       expect(await tickFor(schedule.id)).toHaveLength(0);
       expect(await runsOf(schedule.id)).toHaveLength(1);
 
@@ -940,10 +970,17 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
       }
     });
 
-    it('an operator RESET clears the alarm on a running worker, because the list is replaced from the DB', async () => {
+    it('an operator RESET clears the alarm: a worker booted AFTER it no longer reports the breaker', async () => {
       // The other half of "durable is the source": a list that only ever grew would keep
       // shouting after the fault was cleared, and an alarm that cannot be turned off is an
       // alarm that gets ignored.
+      //
+      // NAMED FOR WHAT IT ASSERTS. This used to say "on a running worker", which claimed
+      // more than the body proves: the alarm is re-read on the next durable refresh, and
+      // what is checked below is a worker that BOOTS after the reset. Clearing on a worker
+      // that stays up is true (the list is replaced, not appended, on every refresh) but it
+      // is not what these expectations look at, and a test whose name overstates its
+      // assertion is how a gap gets left behind believing it is covered.
       const schedule = await stoppedSchedule();
       const booted = await bootFreshScheduler();
       try {
@@ -986,13 +1023,57 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
         );
       }, 120_000);
 
-      async function bootWorkerProcess(): Promise<{
+      /**
+       * Park every source the TIERED producer would consider due, and hand back the undo.
+       *
+       * Only needed for the `immediate: true` child: that one runs a real boot tick, and
+       * tickOnce()'s middle step is enqueueDueJobs() — a WRITE, into the job_queue this
+       * whole db lane shares. Worse, the scheduler's queueLoop takes its first poll
+       * IMMEDIATELY (worker/src/scheduler.ts queueLoop has no leading sleep — the
+       * pollIntervalMs backoff happens only AFTER a poll finds nothing), so a job enqueued
+       * by the boot tick can be claimed and DISPATCHED — a live ingest run — before the
+       * assertion below has even fired. A large pollIntervalMs does not prevent that; making
+       * the producer find nothing does.
+       *
+       * `next_check_at` is the producer's own cadence gate and the column a normal tick
+       * advances anyway, so moving it is the same kind of write the scheduler makes, and it
+       * is restored in a finally. The `expect(lastEnqueueCount).toBe(0)` in the test is the
+       * proof this held: if a future fixture leaves a genuinely due source behind, that
+       * assertion fails loudly instead of the suite quietly starting to do network I/O.
+       */
+      async function parkDueTieredSources(): Promise<() => Promise<void>> {
+        const before = await query<{ id: string; next_check_at: Date | null }>(
+          `WITH due AS (
+             SELECT id, next_check_at FROM source
+              WHERE next_check_at IS NULL OR next_check_at <= now()
+              FOR UPDATE
+           ), parked AS (
+             UPDATE source s SET next_check_at = now() + interval '1 day'
+               FROM due d WHERE s.id = d.id
+           )
+           SELECT id, next_check_at FROM due`
+        );
+        return async () => {
+          for (const row of before) {
+            await query(`UPDATE source SET next_check_at = $2 WHERE id = $1`, [
+              row.id,
+              row.next_check_at,
+            ]);
+          }
+        };
+      }
+
+      async function bootWorkerProcess(immediate: boolean): Promise<{
         health: () => Promise<{ scheduler: SchedulerMetrics }>;
         stop: () => void;
       }> {
         const child = spawn(process.execPath, [FIXTURE], {
           cwd: REPO_ROOT,
-          env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL },
+          env: {
+            ...process.env,
+            DATABASE_URL: process.env.DATABASE_URL,
+            FIXTURE_IMMEDIATE: String(immediate),
+          },
           stdio: ['ignore', 'pipe', 'pipe'],
         });
         let stderr = '';
@@ -1025,31 +1106,81 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
         return { health, stop: () => child.kill('SIGTERM') };
       }
 
+      /** Poll the child's REAL /healthz socket until it has read durable health, or fail. */
+      async function awaitDurableHealth(
+        worker: { health: () => Promise<{ scheduler: SchedulerMetrics }> },
+        immediate: boolean
+      ): Promise<SchedulerMetrics> {
+        const deadline = Date.now() + 20_000;
+        for (;;) {
+          const body = await worker.health();
+          if (body.scheduler.globalScheduleHealthAt !== null) return body.scheduler;
+          if (Date.now() > deadline) {
+            throw new Error(
+              `child worker (immediate=${immediate}) never read durable health — ` +
+                `the ${immediate ? 'TRAILING refresh at the end of tickOnce' : 'DIRECT refresh on the boot branch'} did not report`
+            );
+          }
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
+
+      /** The assertions that must hold whichever boot path got the health there. */
+      function expectDurableAlarm(scheduler: SchedulerMetrics, jobType: string): void {
+        expect(scheduler.globalScheduleHealthError).toBeNull();
+        expect(scheduler.globalBreakersTripped).toContain(jobType);
+        const snapshot = scheduler.globalSchedules.find((s) => s.jobType === jobType);
+        expect(snapshot).toBeDefined();
+        expect(snapshot!.status).toBe('breaker_tripped');
+        expect(snapshot!.missedRuns).toBeGreaterThanOrEqual(29);
+      }
+
       it('curl /healthz on a brand-new process reports the breaker that a DEAD process tripped', async () => {
         const schedule = await stoppedSchedule();
-        const worker = await bootWorkerProcess();
+        const worker = await bootWorkerProcess(false);
         try {
-          let body: { scheduler: SchedulerMetrics } | null = null;
-          const deadline = Date.now() + 20_000;
-          for (;;) {
-            body = await worker.health();
-            if (body.scheduler.globalScheduleHealthAt !== null) break;
-            if (Date.now() > deadline) throw new Error('child worker never read durable health');
-            await new Promise((r) => setTimeout(r, 50));
-          }
-          const scheduler = body.scheduler;
-          expect(scheduler.globalScheduleHealthError).toBeNull();
-          expect(scheduler.globalBreakersTripped).toContain(schedule.jobType);
-          const snapshot = scheduler.globalSchedules.find((s) => s.jobType === schedule.jobType);
-          expect(snapshot).toBeDefined();
-          expect(snapshot!.status).toBe('breaker_tripped');
-          expect(snapshot!.missedRuns).toBeGreaterThanOrEqual(29);
+          const scheduler = await awaitDurableHealth(worker, false);
+          expectDurableAlarm(scheduler, schedule.jobType);
           // The tick counters are exactly what they were at BASELINE — this process really
           // has done no work and witnessed nothing. Every word above came from the database.
+          // It is ALSO what identifies the path taken: ticks===0 means tickOnce never ran, so
+          // the health above can only have come from the DIRECT refresh on the boot branch.
           expect(scheduler.ticks).toBe(0);
           expect(scheduler.lastGlobalEnqueueCount).toBe(0);
         } finally {
           worker.stop();
+        }
+      }, 60_000);
+
+      // ── THE PATH PRODUCTION ACTUALLY TAKES ────────────────────────────────────────────
+      // worker/src/index.ts starts the scheduler with no `immediate` argument, and the
+      // default is TRUE — so every real worker reports durable health from the TRAILING
+      // refresh at the end of tickOnce, never from the direct call the test above pins.
+      // Until this case existed, deleting that trailing refresh left the entire db lane
+      // green, INCLUDING the restart proof above, while a restarted production worker
+      // reported a clean bill of health over a stopped compliance purge. The only other
+      // guard on it is a MOCKED pool (tests/scheduler/reconcile-wiring.test.ts); this is the
+      // real process, real socket, real database version of the same question.
+      it('the same is true of the boot path PRODUCTION uses — immediate:true, health from the trailing refresh', async () => {
+        const schedule = await stoppedSchedule();
+        const restoreSources = await parkDueTieredSources();
+        const worker = await bootWorkerProcess(true);
+        try {
+          const scheduler = await awaitDurableHealth(worker, true);
+          expectDurableAlarm(scheduler, schedule.jobType);
+          // ticks===1 is the proof this really is the OTHER path: the boot tick ran, so the
+          // direct refresh was never called and every field above came out of tickOnce's
+          // trailing read. A child that silently fell back to immediate:false fails here.
+          expect(scheduler.ticks).toBe(1);
+          // …and it enqueued nothing while doing it. Both halves are the contract of
+          // parkDueTieredSources(): if a due source or an armed global schedule survives
+          // into this test, it fails HERE rather than dispatching a live job off the shared
+          // queue behind the assertion.
+          expect(scheduler.lastEnqueueCount).toBe(0);
+          expect(scheduler.lastGlobalEnqueueCount).toBe(0);
+        } finally {
+          worker.stop();
+          await restoreSources();
         }
       }, 60_000);
     });
