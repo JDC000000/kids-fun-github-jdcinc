@@ -21,7 +21,9 @@
 //   · Strictly read-only: SELECTs only, no DDL/DML, and the pool is opened read-only where the
 //     server supports it — on a single connection, so the guard covers every statement issued.
 //     Safe to point at staging or production.
-//   · TLS certificates are VERIFIED by default. Bypassing that is opt-in and warns loudly.
+//   · TLS is whatever the connection string asks for, never silently weakened. The one bypass is
+//     opt-in, genuinely takes effect (see `buildPoolConfig`), and prints the ssl options actually
+//     handed to the pool so the warning cannot claim more than it did.
 //   · Reads its connection string from KF_PROBE_DATABASE_URL, deliberately NOT DATABASE_URL —
 //     lib/testing/local-db-guard.ts refuses non-local DATABASE_URLs, and this probe must never
 //     be the reason someone sets KIDS_FUN_ALLOW_NONLOCAL_DB=1 and leaves it set.
@@ -35,9 +37,14 @@
 //
 //   KF_PROBE_ENV                    default for --env
 //   KF_PROBE_ALLOW_SELF_SIGNED_TLS  set to 1 ONLY for a self-signed staging cert; disables
-//                                   certificate verification for this run
+//                                   certificate verification for this run and prints the ssl
+//                                   options the pool was actually given
 
-import { Pool } from 'pg';
+import { pathToFileURL } from 'node:url';
+import { Pool, type PoolConfig } from 'pg';
+// The parser node-postgres itself applies to `connectionString`. Not a new dependency: pg depends
+// on it, and pg's own ConnectionParameters is built from exactly this function's output.
+import { parse } from 'pg-connection-string';
 import { loadPostgresListings } from '../lib/search/postgres-repository';
 import { SearchEngine } from '../lib/search/engine';
 import { InMemoryListingRepository } from '../lib/search/repository';
@@ -182,24 +189,47 @@ function parseArgs(argv: string[]): Args {
   return out;
 }
 
+/** True when the operator has opted out of certificate verification for this run. */
+function selfSignedTlsAllowed(): boolean {
+  return process.env.KF_PROBE_ALLOW_SELF_SIGNED_TLS === '1';
+}
+
 /**
- * TLS for the probe pool. Certificate verification is ON unless someone deliberately asks for it
- * to be off — this script advertises itself as safe to point at production, and an unconditional
- * `rejectUnauthorized: false` would have made every production run silently MITM-able.
+ * The pool config, built from the PARSED connection string rather than handing pg the raw string.
  *
- * Set `KF_PROBE_ALLOW_SELF_SIGNED_TLS=1` to opt out, for a staging server with a self-signed cert.
- * Without it, TLS is governed by the connection string's own `sslmode`, except that
- * `require`/`verify-ca`/`verify-full` are made to actually verify (node-postgres treats a bare
- * `sslmode=require` as "encrypt but do not check the certificate").
+ * WHY, AND IT IS NOT A STYLE CHOICE
+ * `new Pool({ connectionString, ssl })` does not mean "this string, with this TLS". pg does
+ * `config = Object.assign({}, config, parse(config.connectionString))`
+ * (pg/lib/connection-parameters.js), so the parsed string OVERWRITES a sibling `ssl` key. Any URL
+ * carrying `sslmode=` therefore discarded whatever this file decided — including the escape hatch:
+ * `KF_PROBE_ALLOW_SELF_SIGNED_TLS=1` against an `?sslmode=require` URL had NO effect while the run
+ * still printed a warning announcing that verification was disabled. A tool that misreports its own
+ * security posture is worse than one with no bypass at all. Parsing first and spreading puts this
+ * file's `ssl` last, where it actually wins.
+ *
+ * Default: exactly what the connection string asks for. No `sslmode` → no TLS, which is what a
+ * local probe needs; `sslmode=require`/`verify-*` → pg's own handling (8.22.0 treats `require` as
+ * an alias for `verify-full`). There is deliberately no sslmode→`rejectUnauthorized` mapping here:
+ * the previous one was premised on a claim about pg that is not true of the installed version, and
+ * silently re-interpreting a documented libpq mode is not this script's job.
+ *
+ * `max: 1` is load-bearing, not a throughput choice. `SET default_transaction_read_only` without
+ * LOCAL is per-CONNECTION, and a second pooled connection would never receive the SET while still
+ * serving the heavy catalogue loads — i.e. the guard would cover the connection that did nothing
+ * and miss the ones that did the work. One connection means the SET provably covers every
+ * statement the probe issues. This is a diagnostic script; the serialisation costs nothing.
  */
-function resolveSsl(connectionString: string): { rejectUnauthorized: boolean } | undefined {
-  if (process.env.KF_PROBE_ALLOW_SELF_SIGNED_TLS === '1') {
-    console.error('[probe] WARNING: KF_PROBE_ALLOW_SELF_SIGNED_TLS=1 — TLS certificate verification is DISABLED.');
-    return { rejectUnauthorized: false };
-  }
-  const mode = /[?&]sslmode=([^&]+)/i.exec(connectionString)?.[1]?.toLowerCase();
-  if (mode === 'require' || mode === 'verify-ca' || mode === 'verify-full') return { rejectUnauthorized: true };
-  return undefined;
+export function buildPoolConfig(connectionString: string): PoolConfig {
+  // pg-connection-string types `port` as `string | null`; pg normalises precisely this object, so
+  // the cast describes a shape pg already accepts rather than papering over a mismatch.
+  const parsed = parse(connectionString) as unknown as PoolConfig;
+  const config: PoolConfig = { ...parsed, max: 1 };
+  if (!selfSignedTlsAllowed()) return config;
+
+  // Turn verification off WITHOUT discarding the rest of the TLS material the string supplied —
+  // sslrootcert/sslcert/sslkey all parse into this same object.
+  const parsedSsl = typeof config.ssl === 'object' && config.ssl !== null ? config.ssl : {};
+  return { ...config, ssl: { ...parsedSsl, rejectUnauthorized: false } };
 }
 
 /** Distinct index vocabulary over a listing set — the same four weighted fields the matcher builds. */
@@ -222,14 +252,16 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const ssl = resolveSsl(connectionString);
-  // max: 1 is load-bearing, not a throughput choice. `SET default_transaction_read_only` without
-  // LOCAL is per-CONNECTION, and the `Promise.all` below opened a SECOND connection that never
-  // received the SET and then served the two heavy catalogue loads — i.e. the guard covered the
-  // one connection that did nothing and missed the ones that did the work. One connection means
-  // the SET provably covers every statement the probe issues. This is a diagnostic script; the
-  // serialisation costs nothing.
-  const pool = new Pool({ connectionString, max: 1, ...(ssl ? { ssl } : {}) });
+  const poolConfig = buildPoolConfig(connectionString);
+  if (selfSignedTlsAllowed()) {
+    // Printed FROM the config the pool is built with, not from the intent behind it. The warning
+    // can no longer outrun the code: if the bypass ever stopped applying, this line would say so.
+    console.error(
+      '[probe] WARNING: KF_PROBE_ALLOW_SELF_SIGNED_TLS=1 — TLS certificate verification is DISABLED for this run. ' +
+        `Effective ssl options: ${JSON.stringify(poolConfig.ssl)}`,
+    );
+  }
+  const pool = new Pool(poolConfig);
   // Belt and braces on top of "this file only ever SELECTs": ask the server to reject any write
   // this probe could conceivably be edited into making. Older/pooled servers may not honour it,
   // which is why it is not the only safeguard.
@@ -339,7 +371,12 @@ async function main(): Promise<void> {
   console.log('');
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Probe only when this file IS the entrypoint (search-cap-probe.sh bundles it and runs the
+// bundle). Importing it — tests/search/search-cap-probe-tls.test.ts drives `buildPoolConfig`
+// directly — must not open a connection.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
