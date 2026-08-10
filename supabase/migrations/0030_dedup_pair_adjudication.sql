@@ -42,7 +42,7 @@
 -- 2592 rank-space combinations forward and reversed at 8fe6268: 0 asymmetric.
 --
 -- It is order-canonical because that stability is CONTINGENT, not structural. rank() reads
--- confidence_label, and app/admin/corrections/_lib/data.ts resolveCorrectionReport UPDATEs
+-- confidence_label, and app/admin/corrections/_lib/data.ts resolveCorrection UPDATEs
 -- confidence_label from a live admin surface. One unrelated correction to either side's
 -- confidence flips the roles, and an ordered key would then stop matching — silently, in the
 -- permissive direction, re-opening a pair a human already closed. least/greatest costs nothing
@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS dedup_pair_adjudication (
   -- 'skip_low_confidence', which appears in no .ts file in this repo, while the code actually
   -- writes 'skip' (lib/llm/dedup.ts). A vocabulary that lives only in a comment is a
   -- vocabulary that drifts. Adding a second verdict here must be a migration, deliberately.
+  --
+  -- >>> AND IF YOU ADD ONE, READ THIS FIRST. <<< The detector does NOT test for the mere
+  -- PRESENCE of a row here. lib/llm/dedup.ts detectDedupCandidates names the verdict it
+  -- honours — `AND a.verdict = 'not_duplicate'` — deliberately, so that an unrecognised
+  -- verdict stops suppressing (visible: the pair keeps appearing) rather than suppresses by
+  -- default (silent: pairs nobody decided to suppress vanish). A verdict added HERE and not
+  -- added THERE therefore has no effect on detection, which is the safe direction but is
+  -- certainly not the obvious one. The two are one guard in two files; this note is the half
+  -- that was missing, so the coupling can be found from either end.
   verdict          text NOT NULL,
   -- admin_user.user_id of the human who decided. NULLABLE and deliberately NOT an FK: the
   -- verdict must outlive the admin account, exactly as 0019's decisions must outlive the
@@ -83,9 +92,15 @@ CREATE TABLE IF NOT EXISTS dedup_pair_adjudication (
 -- itself. A verdict that vanishes when one member is later archived (or merged away by an
 -- UNRELATED pair's adjudication) would re-open a decision a human already made.
 
--- Serves the detector's suppression lookup directly AND makes a second adjudication of the
--- same pair an error rather than a silent second row. See lib/llm/dedup.ts for why the
--- write is allowed to raise instead of ON CONFLICT DO NOTHING.
+-- Serves the detector's suppression lookup directly, AND is the ON CONFLICT arbiter that lets
+-- a SECOND answer to the same unordered pair recognise the first instead of writing a duplicate
+-- row. That second answer is a real, reachable state, not a fault: an admin confidence_label
+-- edit inverts chooseCanonical's roles, the detector then routes the other side too, and the
+-- one pair occupies two queue slots — both legitimately answerable. So the write is
+-- ON CONFLICT (occurrence_low, occurrence_high) DO NOTHING, and it is the audit row's
+-- `verdictRecorded` that keeps the second answer visible rather than swallowed.
+-- The full reasoning, and the measured sequence behind it, is at
+-- app/admin/qa-queue/_lib/data.ts rejectDedupPair (the ON CONFLICT comment block).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dedup_pair_adjudication_pair
   ON dedup_pair_adjudication (occurrence_low, occurrence_high);
 

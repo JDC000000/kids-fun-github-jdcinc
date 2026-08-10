@@ -370,8 +370,9 @@ export async function rejectDedupPair(
     // with the data. MEASURED at 8fe6268 through the real code:
     //
     //   1. pair routed → decision (target=B, related=A); B → 'manual_candidate'
-    //   2. an admin edits B's confidence_label (app/admin/corrections resolveCorrectionReport
-    //      does exactly this) — a rank() input, so chooseCanonical's roles INVERT
+    //   2. an admin edits B's confidence_label (app/admin/corrections/_lib/data.ts
+    //      resolveCorrection does exactly this) — a rank() input, so chooseCanonical's
+    //      roles INVERT
     //   3. the next detector run writes (target=A, related=B) and flips A → 'manual_candidate'
     //      too. BOTH rows are now queued: the same unordered pair, presented from each side.
     //      Observed directly — the queue rendered A:canonical=B alongside B:canonical=A.

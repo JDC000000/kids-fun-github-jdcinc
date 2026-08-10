@@ -324,8 +324,15 @@ describe.skipIf(!hasDb)('0030 — a human dedup verdict is durable (real Postgre
       )
     ).rejects.toMatchObject({ code: '23514' });
 
-    // And the pair key is UNIQUE — which is what lets a re-adjudication RAISE rather than
-    // silently write a second row. See rejectDedupPair for why raising is the chosen behaviour.
+    // And the pair key is UNIQUE. Note what that is FOR, because it is not what it first looks
+    // like: the write does NOT raise on a repeat. It is
+    // `ON CONFLICT (occurrence_low, occurrence_high) DO NOTHING`, so this index is the ARBITER
+    // that lets a second answer to the same unordered pair recognise the first. Answering the
+    // pair twice is a reachable, legitimate state (see test 5 below, and
+    // app/admin/qa-queue/_lib/data.ts:367-388 for the measured sequence and the reversal of the
+    // earlier "let it raise" ruling). The raw violation asserted here is what the constraint
+    // does with NO ON CONFLICT clause — i.e. it proves the index has teeth, which is what makes
+    // DO NOTHING meaningful rather than a no-op.
     await query(
       `INSERT INTO dedup_pair_adjudication (occurrence_low, occurrence_high, verdict)
        VALUES (least($1::uuid,$2::uuid), greatest($1::uuid,$2::uuid), 'not_duplicate')`,
@@ -338,7 +345,25 @@ describe.skipIf(!hasDb)('0030 — a human dedup verdict is durable (real Postgre
         [tripleB, tripleC]
       )
     ).rejects.toMatchObject({ code: '23505' }); // unique_violation
-    // MUTATION THAT REDDENS ALL THREE: drop the corresponding constraint from 0030.
+    // MUTATION THAT REDDENS ALL THREE: drop the corresponding constraint from 0030. Each was
+    // dropped independently and reddened this test on its own.
+    //
+    // ── AND THE PIECE THIS TEST DOES *NOT* COVER, NAMED SO IT IS NOT MISTAKEN FOR COVERED ──
+    // The CHECK above and detectDedupCandidates' `AND a.verdict = 'not_duplicate'` are ONE
+    // guard split across two files. This test covers the CHECK half only. The reason the
+    // predicate half looks untestable is that the CHECK permits exactly one verdict, so there
+    // is no second value to store and watch fail to suppress.
+    // THE DUAL WORKS, AND IT IS THE RECORDED MUTATION FOR THAT HALF: hold the STORED verdict
+    // at 'not_duplicate' and mutate the PREDICATE's expected literal instead (e.g.
+    // `AND a.verdict = 'something_else'`). Suppression collapses, which is only possible if the
+    // predicate compares the verdict VALUE rather than testing bare row presence. No CHECK
+    // change and no weakening, and it separates exactly the two implementations that are
+    // otherwise indistinguishable while only one verdict exists.
+    // MEASURED over 4 runs: tests 1 and 2 redden in 4 of 4. TEST 3 REDDENS IN ONLY 3 OF 4, and
+    // that is a property of test 3, not a flaky guard — it asserts ONE exact pair, and with
+    // suppression collapsed the triple's winner is decided by `ORDER BY ... r.id`, i.e. by
+    // which of tripleB/tripleC happens to sort lower as a random uuid. Read tests 1 and 2 as
+    // the signal for this mutation; do not conclude anything from test 3 either way.
   });
 
   // ── 5. THE SAME PAIR ANSWERED FROM BOTH SIDES ────────────────────────────────────────────
@@ -394,7 +419,7 @@ describe.skipIf(!hasDb)('0030 — a human dedup verdict is durable (real Postgre
   it('an admin confidence_label edit CAN swap chooseCanonical roles — which is why the key is canonical', async () => {
     // The order-canonical key is not justified by "the pair arrives in both orders" (it does
     // not). It is justified by this: rank() reads confidence_label, and
-    // app/admin/corrections/_lib/data.ts resolveCorrectionReport UPDATEs confidence_label from
+    // app/admin/corrections/_lib/data.ts resolveCorrection UPDATEs confidence_label from
     // a live admin surface. Demonstrated here rather than asserted in prose, because 0030's
     // header cites it as the reason — and a guard justified on false grounds is worse than an
     // unjustified one.
