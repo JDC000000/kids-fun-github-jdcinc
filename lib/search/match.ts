@@ -124,7 +124,12 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
     // caller that mutated the weights object it passed in would silently desync the memoised index
     // from the weights actually being applied. Foreclosed here rather than when rank weights
     // become DB-backed and the object stops being a literal.
-    this.weights = { ...DEFAULT_FIELD_WEIGHTS, ...opts.fieldWeights };
+    //
+    // COPY, NOT MERGE. `{ ...DEFAULT_FIELD_WEIGHTS, ...opts.fieldWeights }` would also backfill
+    // any missing key from the defaults, which is the wrong failure mode for a ranking config:
+    // when these weights do become DB-backed, a partial row should fail loudly at the type/parse
+    // boundary rather than be silently completed into a plausible-looking scoring function.
+    this.weights = opts.fieldWeights ? { ...opts.fieldWeights } : { ...DEFAULT_FIELD_WEIGHTS };
     this.threshold = opts.trigramThreshold ?? DEFAULT_TRIGRAM_THRESHOLD;
     this.fuzzyPenalty = opts.fuzzyPenalty ?? 0.5;
     this.synonymWeight = opts.synonymWeight ?? 0.6;
