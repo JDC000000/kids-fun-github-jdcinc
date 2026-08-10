@@ -7,9 +7,15 @@
 //      `facets: true` stays a fraction of the search it rides along with.
 //   2. That cost is linear in the candidate count, not quadratic in candidates × values.
 //
-// Budgets are deliberately loose (this runs on shared CI hardware); they are there to catch
-// an order-of-magnitude regression — a per-value repository call, a re-run matcher, an
-// accidental O(n²) — not to police a few milliseconds.
+// Both properties are RATIOS, and both are asserted as ratios. That is not a stylistic
+// preference — it is the whole reason this file can live in CI. An absolute millisecond ceiling
+// standing in for a complexity claim cannot tell "the code went quadratic" from "the runner was
+// busy", so it fails on load alone: the previous `toBeLessThan(200)` here duly failed at 202.6ms
+// on an oversubscribed 4-core box with the code working perfectly. Timing the SAME operation at
+// two catalogue sizes puts host load into both measurements, where it cancels, and leaves a
+// number that means what the test name says. These budgets catch an order-of-magnitude
+// regression — a per-value repository call, a re-run matcher, an accidental O(n²) — and are not
+// there to police milliseconds.
 
 import { describe, it, expect } from 'vitest';
 import { SearchEngine } from '../../lib/search/engine';
@@ -84,27 +90,33 @@ describe('facet counting cost', () => {
     const withFacets = medianMs(15, () => engine.search({ ...req, facets: true }));
     const marginal = withFacets - withoutFacets;
 
-    // Absolute ceiling: comfortably inside a single interaction's budget.
-    expect(marginal).toBeLessThan(25);
-    // Relative ceiling: facets must stay cheaper than the search itself. If this ever fails,
-    // something started doing real work per facet value (a query, or a second match pass).
+    // The claim in this test's name is a RATIO — "a fraction of the search it rides along with" —
+    // so it is asserted against the search it rides along with, not against a stopwatch. Both
+    // halves are measured on the same host in the same second; a loaded runner slows both. If
+    // this fails, something started doing real work per facet value (a query, a second match
+    // pass), which is exactly the regression worth a red build.
     expect(marginal).toBeLessThan(withoutFacets * 2);
   });
 
   it('scales linearly with the candidate count, not with candidates × facet values', () => {
-    const small = makeEngine(buildCatalogue(500));
-    const large = makeEngine(buildCatalogue(5000));
+    // N and 4N of the SAME catalogue shape, so the only variable is the candidate count.
+    const N = 1_000;
+    const small = makeEngine(buildCatalogue(N));
+    const large = makeEngine(buildCatalogue(N * 4));
     const req = { q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, limit: 60 };
 
     const facetCost = (engine: SearchEngine) =>
       medianMs(9, () => engine.search({ ...req, facets: true })) - medianMs(9, () => engine.search(req));
 
-    const at500 = Math.max(facetCost(small), 0.05); // floor: avoid dividing by timer noise
-    const at5000 = facetCost(large);
+    const atN = Math.max(facetCost(small), 0.05); // floor: never divide by timer noise
+    const at4N = facetCost(large);
+    const growth = at4N / atN;
 
-    // 10x the data should cost ~10x, not ~100x. Generous headroom for a noisy shared runner:
-    // measured ~9x and ~55ms on a 4-core box (~5ms at a 500-listing reference catalogue).
-    expect(at5000 / at500).toBeLessThan(30);
-    expect(at5000).toBeLessThan(200);
+    // Linear predicts 4x. Quadratic in the candidate count predicts 16x. The threshold is the
+    // geometric mean of the two — double the headroom over linear, half the margin to quadratic —
+    // so it separates the two hypotheses instead of measuring the host. Observed 3.1x–4.8x across
+    // repeated runs on a 4-core box at load average ~5, with both measurements (16–22ms and
+    // 69–77ms) far enough above timer resolution that neither is noise.
+    expect(growth).toBeLessThan(8);
   });
 });
