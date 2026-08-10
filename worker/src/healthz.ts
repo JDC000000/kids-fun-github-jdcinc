@@ -324,7 +324,8 @@ export interface PublicSchedulerMetrics {
  * which is the only assertion that states this unit's outcome as a contract.
  *
  * ── AND WHAT NONE OF THEM DOES ───────────────────────────────────────────────────────────
- * None of the four pins VALUES. Keys-not-values is a deliberate stopping point, not an
+ * None of the FIVE pins VALUES — including pin (5), whose probe attaches a value but whose
+ * assertion compares only `Object.keys(...).sort()`. Keys-not-values is a deliberate stopping point, not an
  * oversight: on the day a guard catches a real leak, a value comparison would copy the
  * leaked value into the CI log. TWO assertions in that file do look at content, and neither
  * can print anything from the object under test: one checks the ABSENCE of sentinels the

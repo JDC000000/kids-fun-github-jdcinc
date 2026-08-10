@@ -102,7 +102,7 @@ function metrics(overrides: Partial<SchedulerMetrics> = {}): SchedulerMetrics {
  * Used only by the reduction block below. The strings are constants declared here, so an
  * assertion that they are ABSENT from the body can never print anything the test did not
  * already contain — which is the whole reason this is allowed to look at content at all
- * while the four key-set pins stay `Object.keys(...).sort()` and never compare values.
+ * while all five key-set pins stay `Object.keys(...).sort()` and never compare values.
  */
 const SENTINEL = {
   lastError: 'SENTINEL_LAST_ERROR_pg_host_db_user',
@@ -879,7 +879,7 @@ describe('/healthz — the body carries no free text (D-D: the public-disclosure
   // never values, because on the day one catches a real leak a value compare copies the
   // leaked value into the CI log. Every sentinel below is a CONSTANT DECLARED IN THIS FILE
   // and every assertion checks for its ABSENCE, so a failure here can only ever print a
-  // string this file already contains. The four key-set pins above are untouched.
+  // string this file already contains. All five key-set pins above are untouched.
 
   it('NO free text reaches the body, even when every producer field is carrying some', async () => {
     const body = JSON.stringify((await get(state(poisoned()))).body);
@@ -961,27 +961,41 @@ describe('/healthz — the body carries no free text (D-D: the public-disclosure
   it('a DB failure is still fully legible: THAT, WHEN, and WHAT CLASS — with no message', async () => {
     // The replacement has to carry what an operator actually needs, or this unit traded a
     // disclosure for a blind endpoint. Poll lane failed four times, most recently at :07.
+    // ── EVERY ASSERTION IN THIS BLOCK COMPARES A PREDICATE, NEVER A VALUE ────────────────
+    // `expect(s.lastErrorKind).toBe('poll')` reads better and is unsafe here: on the day the
+    // projection leaks, vitest prints the ACTUAL value into the CI log — measured, that is
+    // exactly what it did under a mutation, echoing a planted sentinel. These tests feed the
+    // body deliberately-poisoned input, so they are the LAST assertions that may echo it.
+    // The rule is kept absolute rather than excepted for "this one is only legibility",
+    // because the next author cannot re-derive which of these is a leak-guard and which is
+    // not. Diagnostic value is preserved by the authored message, which names the field and
+    // the expectation without reading the object.
     const s = (await get(state(poisoned()))).body.scheduler as Record<string, unknown>;
-    expect(s.lastErrorKind).toBe('poll'); // WHAT CLASS
-    expect(s.lastErrorAt).toBe('2026-01-01T00:07:00.000Z'); // WHEN
-    expect(s.errorCount).toBe(4); // THAT, and how much of it
+    expect(s.lastErrorKind === 'poll', 'lastErrorKind should be the enum value "poll"').toBe(true);
+    expect(s.lastErrorAt === '2026-01-01T00:07:00.000Z', 'lastErrorAt should echo the fixture instant').toBe(true);
+    expect(s.errorCount === 4, 'errorCount should be 4').toBe(true);
     // …and the durable-health read is separately reported as failing, which `lastErrorKind`
     // cannot be relied on for — any other lane's error overwrites it.
-    expect(s.globalScheduleHealthReadFailed).toBe(true);
-    expect(s.globalScheduleHealthStatus).toBe('stale');
+    expect(s.globalScheduleHealthReadFailed === true, 'globalScheduleHealthReadFailed should be true').toBe(true);
+    expect(s.globalScheduleHealthStatus === 'stale', 'globalScheduleHealthStatus should be "stale"').toBe(true);
   });
 
   it('no errors since boot is DISTINGUISHABLE from an error whose text is withheld', async () => {
     // The failure mode of a reduction is a body that reads clean in both states. It does not.
+    // Null-ness asserted AS A BOOLEAN: `toBeNull()` prints the actual value on failure, and
+    // the value it would print here is whatever leaked into the field. See the note above.
     const clean = (await get(state(metrics()))).body.scheduler as Record<string, unknown>;
-    expect(clean.lastErrorKind).toBeNull();
-    expect(clean.lastErrorAt).toBeNull();
-    expect(clean.errorCount).toBe(0);
+    expect(clean.lastErrorKind === null, 'a clean boot should report lastErrorKind null').toBe(true);
+    expect(clean.lastErrorAt === null, 'a clean boot should report lastErrorAt null').toBe(true);
+    expect(clean.errorCount === 0, 'a clean boot should report errorCount 0').toBe(true);
 
     const failed = (await get(state(poisoned()))).body.scheduler as Record<string, unknown>;
-    expect(failed.lastErrorKind).not.toBeNull();
-    expect(failed.lastErrorAt).not.toBeNull();
-    expect(failed.errorCount).toBeGreaterThan(0);
+    expect(failed.lastErrorKind !== null, 'a failed lane should report a non-null lastErrorKind').toBe(true);
+    expect(failed.lastErrorAt !== null, 'a failed lane should report a non-null lastErrorAt').toBe(true);
+    expect(
+      typeof failed.errorCount === 'number' && failed.errorCount > 0,
+      'a failed lane should report a positive numeric errorCount',
+    ).toBe(true);
   });
 
   it('the error signal is a HIGH-WATER MARK and the timestamp is what makes that readable', async () => {
@@ -997,8 +1011,8 @@ describe('/healthz — the body carries no free text (D-D: the public-disclosure
     const recent = (await get(state(metrics({
       lastErrorKind: 'reconcile', lastErrorAt: '2026-01-01T00:00:00.000Z', errorCount: 1,
     })))).body.scheduler as Record<string, unknown>;
-    expect(ancient.lastErrorKind).toEqual(recent.lastErrorKind); // identical class…
-    expect(ancient.lastErrorAt).not.toEqual(recent.lastErrorAt); // …separable by the clock
+    expect(ancient.lastErrorKind === recent.lastErrorKind, 'the class should be identical').toBe(true);
+    expect(ancient.lastErrorAt !== recent.lastErrorAt, 'the instants should differ').toBe(true);
   });
 
   it('THE BLIND-AT-BOOT CASE: "no read yet" and "the first read FAILED" stay distinguishable', async () => {
@@ -1012,11 +1026,16 @@ describe('/healthz — the body carries no free text (D-D: the public-disclosure
       globalScheduleHealthAt: null, globalScheduleHealthError: 'connection terminated unexpectedly',
     })))).body.scheduler as Record<string, unknown>;
 
-    expect(booting.globalScheduleHealthStatus).toBe('unknown');
-    expect(blind.globalScheduleHealthStatus).toBe('unknown'); // same enum value…
-    expect(booting.globalScheduleHealthReadFailed).toBe(false);
-    expect(blind.globalScheduleHealthReadFailed).toBe(true); // …different, legible meaning
-    expect(JSON.stringify(booting)).not.toBe(JSON.stringify(blind));
+    expect(booting.globalScheduleHealthStatus === 'unknown', 'booting should be "unknown"').toBe(true);
+    expect(blind.globalScheduleHealthStatus === 'unknown', 'blind should be "unknown" too').toBe(true); // same enum value…
+    expect(booting.globalScheduleHealthReadFailed === false, 'booting should not be read-failed').toBe(true);
+    expect(blind.globalScheduleHealthReadFailed === true, 'blind SHOULD be read-failed').toBe(true); // …legible difference
+    // Compared as a predicate: `expect(JSON.stringify(a)).not.toBe(JSON.stringify(b))` prints
+    // BOTH WHOLE BODIES when it fails, which is the largest possible echo in this file.
+    expect(
+      JSON.stringify(booting) !== JSON.stringify(blind),
+      'the two blind-at-boot states are byte-identical on the wire — the distinction is gone',
+    ).toBe(true);
   });
 
   it('the unknown-scheduler arm is still PURE STRUCTURE — one boolean, nothing else', async () => {
