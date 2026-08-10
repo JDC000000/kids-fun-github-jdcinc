@@ -116,6 +116,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/llm/age-db.test.ts',
   'tests/llm/category-cost-db.test.ts',
   'tests/llm/dedup-db.test.ts',
+  'tests/llm/dedup-deterministic-db.test.ts',
   'tests/llm/dedup-merge-fixture.test.ts',
   'tests/llm/route.test.ts',
   'tests/llm/watermark-db.test.ts',

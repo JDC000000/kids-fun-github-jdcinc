@@ -24,6 +24,7 @@ import {
   DEDUP_AUTO_MERGE_MIN_CONFIDENCE,
   DEDUP_AUTO_MERGE_MIN_SIMILARITY,
   DEDUP_BLOCKING_MIN_SIMILARITY,
+  DEDUP_REVIEW_MIN_SIMILARITY,
   JOB_NAMES,
   batchModel,
   maxCandidates as configMaxCandidates,
@@ -77,6 +78,12 @@ export interface DedupDecision {
   deterministicScore: number;
   llmConfidence: number | null;
   reason: string;
+  /**
+   * How the two sides' venue rows relate. A REVIEW SIGNAL recorded alongside the decision so
+   * the adjudicated pairs are analysable as a labelled set later — never a filter, and unset
+   * on the LLM path, which does not read venue at all. See {@link decideDedupDeterministic}.
+   */
+  venueSignal?: VenueSignal;
 }
 
 /** Lower tuple sorts as the canonical (kept): higher authority, then higher confidence, then older, then smaller id. */
@@ -127,6 +134,198 @@ export function decideDedup(candidate: DedupCandidate, verdict: DedupVerdict | n
     return { ...base, action: 'auto_merge', reason: verdict.reason || 'High-confidence cross-source duplicate.' };
   }
   return { ...base, action: 'route_to_review', reason: verdict.reason || 'Possible duplicate below auto-merge bar.' };
+}
+
+// ── Option D: deterministic adjudication, no model ────────────────────────────────────────
+//
+// Same detector, same apply path, same QA queue — with the model removed from the loop and
+// AUTO-MERGE MADE UNREACHABLE RATHER THAN MERELY UNLIKELY. The reason this is a separate
+// decider and a separate runner (not a `mode` flag on the pair above) is that a flag leaves
+// the merge branch on the same code path, one boolean away; a decider whose RETURN TYPE
+// cannot express 'auto_merge' and a runner that takes NO batch client cannot reach it at all,
+// and the compiler enforces both.
+//
+// Measured justification, from a read-only pg_trgm estimate against production: of 626 live
+// occurrences, the blocker produces exactly 40 candidate pairs — every one of them Richmond
+// Public Library × Vancouver Public Library, and every one of them ABOVE the 0.55 auto-merge
+// similarity bar. They are two different library branches running a same-named programme in
+// the same half-hour slot: 40 real, distinct events. An auto-merge would archive all 40
+// irreversibly and, per dedup-merge.ts's canonicalSourceFamilies, would make each fabricated
+// canonical look BETTER corroborated than a true one. A false merge is decisively worse than
+// a false split, so this path takes the cheap error visibly and makes the expensive one
+// impossible.
+
+/** The deterministic path's action space. 'auto_merge' is excluded BY TYPE, not by policy. */
+export type DeterministicDedupAction = Exclude<DedupAction, 'auto_merge'>;
+
+/**
+ * A decision reached without a model. Narrows {@link DedupDecision} twice, and both
+ * narrowings are load-bearing: `action` cannot be 'auto_merge', and `llmConfidence` is
+ * pinned to `null` because nothing was asked and "no opinion" must never be recorded as a
+ * number a later reader could threshold on.
+ */
+export interface DeterministicDedupDecision extends DedupDecision {
+  action: DeterministicDedupAction;
+  llmConfidence: null;
+}
+
+/** How the two sides' venue rows relate. A REVIEW SIGNAL shown to the human — never a filter. */
+export type VenueSignal = 'same_venue' | 'different_venue' | 'venue_unknown';
+
+/** Venue identity per occurrence, keyed by occurrence id (absent = no venue on the series). */
+export type VenueLookup = ReadonlyMap<string, { venueId: string; venueName: string }>;
+
+function venueSignalFor(candidate: DedupCandidate, venues: VenueLookup): { signal: VenueSignal; note: string } {
+  const l = venues.get(candidate.left.id);
+  const r = venues.get(candidate.right.id);
+  if (!l || !r) return { signal: 'venue_unknown', note: 'venue unknown on at least one side' };
+  if (l.venueId === r.venueId) return { signal: 'same_venue', note: `same venue (${l.venueName})` };
+  return { signal: 'different_venue', note: `DIFFERENT venue rows — "${l.venueName}" vs "${r.venueName}"` };
+}
+
+/**
+ * PURE deterministic adjudication — the whole of Option D's judgement.
+ *
+ * Routes every detected pair at or above {@link DEDUP_REVIEW_MIN_SIMILARITY} to the existing
+ * human QA queue and skips the rest. It never merges, and it never can: the return type has
+ * no 'auto_merge' member, so a future edit that tries to add one is a compile error rather
+ * than a silent escalation of an irreversible action.
+ *
+ * `venueSignal` is threaded into the reason string the reviewer actually reads (the QA queue
+ * renders `detail->>'reason'`). It is DELIBERATELY not a predicate. All 40 real production
+ * pairs have populated, differing venue_ids, so excluding on that would "solve" them at a
+ * stroke — but `venue` has no unique constraint on any column, so two venue rows may describe
+ * one physical place. Venue identity is itself an unresolved problem (G-T14-1). Letting an
+ * unresolved key silently decide a merge-or-not question is how a false split becomes
+ * invisible; showing it to a human is how it becomes a judgement.
+ */
+export function decideDedupDeterministic(candidate: DedupCandidate, venues?: VenueLookup): DeterministicDedupDecision {
+  const { canonical, duplicate } = chooseCanonical(candidate.left, candidate.right);
+  const venue = venueSignalFor(candidate, venues ?? new Map());
+  const base = {
+    canonicalId: canonical.id,
+    duplicateId: duplicate.id,
+    deterministicScore: candidate.deterministicScore,
+    llmConfidence: null,
+    venueSignal: venue.signal,
+  } as const;
+
+  // A NaN score fails this comparison and lands in `skip` — the non-mutating branch. That is
+  // the fail-safe direction here: the expensive error is a merge, and there is none to reach.
+  if (candidate.deterministicScore >= DEDUP_REVIEW_MIN_SIMILARITY) {
+    return {
+      ...base,
+      action: 'route_to_review',
+      reason:
+        `Deterministic title match ${candidate.deterministicScore.toFixed(2)} at an identical start time, ` +
+        `across ${candidate.left.sourceName} and ${candidate.right.sourceName} — ${venue.note}. ` +
+        `No model was consulted; a human decides whether these are the same event.`,
+    };
+  }
+  return {
+    ...base,
+    action: 'skip',
+    reason: `Deterministic title similarity ${candidate.deterministicScore.toFixed(2)} below the review floor.`,
+  };
+}
+
+/** Occurrence → venue for the candidate set, in one round trip. Missing venue_id ⇒ absent. */
+async function loadVenues(occurrenceIds: string[]): Promise<VenueLookup> {
+  const map = new Map<string, { venueId: string; venueName: string }>();
+  if (occurrenceIds.length === 0) return map;
+  const rows = await query<{ occurrence_id: string; venue_id: string; venue_name: string }>(
+    `SELECT o.id AS occurrence_id, v.id AS venue_id, v.name AS venue_name
+       FROM activity_occurrence o
+       JOIN activity_series ser ON ser.id = o.series_id
+       JOIN venue v ON v.id = ser.venue_id
+      WHERE o.id = ANY($1::uuid[])`,
+    [occurrenceIds]
+  );
+  for (const row of rows) map.set(row.occurrence_id, { venueId: row.venue_id, venueName: row.venue_name });
+  return map;
+}
+
+export interface DedupDetectOnlyRunResult {
+  useCase: 'dedup';
+  mode: 'deterministic';
+  considered: number;
+  routedToReview: number;
+  skipped: number;
+  actioned: number;
+  /**
+   * Structurally 0 — the literal type is the point. This path has no merge branch, so the
+   * field exists only so a caller comparing run results cannot read an ABSENT field as
+   * "not measured". If this ever needs to be `number`, something has gone badly wrong.
+   */
+  autoMerged: 0;
+  /** No batch was built, so nothing was submitted. Also a literal type. */
+  submitted: false;
+}
+
+export interface DedupDetectOnlyRunOptions {
+  /** Count candidates and write nothing but the non-advancing run row (observe-only). */
+  dryRun?: boolean;
+  maxCandidates?: number;
+}
+
+/**
+ * Run the dedup use case with NO model: detect, adjudicate deterministically, route to the
+ * existing human queue. Takes no {@link AnthropicBatchClient}, builds no request and imports
+ * no prompt — a live API call is not merely disabled here, it is unrepresentable.
+ *
+ * Shares JOB_NAMES.dedup's watermark with the LLM runner deliberately: this is the same job
+ * with a different adjudicator, and the routed rows leave the candidate pool anyway (the
+ * detector's left side excludes status_state='manual_candidate'), so a later LLM run would
+ * not re-litigate what a human already owns. `last_status` is stamped distinctly so the run
+ * is attributable in llm_batch_run.
+ *
+ * The only state change it can cause is status_state → 'manual_candidate', which the QA
+ * queue's existing reject action reverses. Nothing here archives a record.
+ */
+export async function runDedupDetectOnlyUseCase(
+  opts: DedupDetectOnlyRunOptions = {}
+): Promise<DedupDetectOnlyRunResult> {
+  const limit = opts.maxCandidates ?? configMaxCandidates();
+  const runStart = await runTimestamp();
+  const candidates = await detectDedupCandidates(limit);
+
+  const result: DedupDetectOnlyRunResult = {
+    useCase: 'dedup',
+    mode: 'deterministic',
+    considered: candidates.length,
+    routedToReview: 0,
+    skipped: 0,
+    actioned: 0,
+    autoMerged: 0,
+    submitted: false,
+  };
+
+  if (opts.dryRun) {
+    await recordNonAdvancingRun(JOB_NAMES.dedup, 'dry_run_deterministic', { considered: candidates.length, actioned: 0 });
+    return result;
+  }
+  if (candidates.length === 0) {
+    await advanceWatermark(JOB_NAMES.dedup, runStart, { considered: 0, actioned: 0, status: 'ok_deterministic' });
+    return result;
+  }
+
+  const venues = await loadVenues(candidates.flatMap((c) => [c.left.id, c.right.id]));
+  for (const candidate of candidates) {
+    const decision = decideDedupDeterministic(candidate, venues);
+    // The SAME applyDedupDecision the LLM path uses — but reachable only on its
+    // route_to_review / skip branches, because `decision.action` cannot be 'auto_merge'.
+    const actioned = await applyDedupDecision(candidate, decision);
+    if (decision.action === 'route_to_review') result.routedToReview += 1;
+    else result.skipped += 1;
+    if (actioned) result.actioned += 1;
+  }
+
+  await advanceWatermark(JOB_NAMES.dedup, runStart, {
+    considered: result.considered,
+    actioned: result.actioned,
+    status: 'ok_deterministic',
+  });
+  return result;
 }
 
 /** Build the Message-Batches request for one candidate pair (cacheable prefix + volatile body). */
@@ -314,7 +513,13 @@ export async function applyDedupDecision(candidate: DedupCandidate, decision: De
           action: 'route_to_review',
           deterministicScore: decision.deterministicScore,
           llmConfidence: decision.llmConfidence,
-          detail: { reason: decision.reason, suspectedDuplicateOf: decision.canonicalId },
+          detail: {
+            reason: decision.reason,
+            suspectedDuplicateOf: decision.canonicalId,
+            // Present only on the deterministic path; omitted rather than null-padded so an
+            // LLM-era row is distinguishable from a deterministic one with no venue data.
+            ...(decision.venueSignal ? { venueSignal: decision.venueSignal } : {}),
+          },
         },
         client
       );

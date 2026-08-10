@@ -50,6 +50,25 @@ export const DEDUP_AUTO_MERGE_MIN_SIMILARITY = 0.55;
 export const DEDUP_BLOCKING_MIN_SIMILARITY = 0.4;
 
 /**
+ * Option D review floor: the deterministic-only adjudicator routes a detected pair to the
+ * human QA queue at or above this title similarity, and skips below it.
+ *
+ * Deliberately EQUAL to the blocking floor, i.e. "route everything the blocker detected".
+ * A second, higher floor here would silently drop pairs the blocker already judged worth
+ * surfacing, and there is no labelled pair set to justify where such a floor would sit
+ * (the auto-merge thresholds have the same problem — see DEDUP_AUTO_MERGE_MIN_*, which
+ * this path never consults). The knob exists so the floor is one named, testable constant
+ * rather than a literal buried in the decider; raising it is a deliberate act, not a
+ * default. NOTE the two scores are not the same function: the blocker's floor is applied
+ * by pg_trgm to RAW titles inside Postgres, while this one is applied to the JS
+ * reimplementation's NORMALISED score (lib/search/text/trigram.ts strips diacritics and
+ * punctuation, so it reads systematically HIGHER). At equal values that asymmetry is inert
+ * — the JS score of a pair that cleared the SQL floor also clears this one — which is a
+ * further reason not to set them apart without evidence.
+ */
+export const DEDUP_REVIEW_MIN_SIMILARITY = DEDUP_BLOCKING_MIN_SIMILARITY;
+
+/**
  * Apply an LLM-resolved age band ONLY when the model is this confident (≥). Lower than
  * the dedup bar because the action is non-destructive (it fills a previously-unknown
  * age range; the search filter's "empty → don't hide" rule bounds the harm), and the
