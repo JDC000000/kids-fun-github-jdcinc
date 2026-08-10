@@ -5,6 +5,7 @@
 import type { Pool } from 'pg';
 import { HIDDEN_STATUSES } from './filters/status';
 import type { ConfidenceLabel, CostStatus, ListingRecord, StatusState } from './types';
+import { TtlPromiseCache } from './ttl-cache';
 
 interface ListingRow {
   id: string;
@@ -302,16 +303,10 @@ function isAgeBandKey(value: string): value is ListingRecord['ageBandMatches'][n
 // DELIBERATELY NOT CACHED: `loadPostgresListingById`. A shared or deep link must always render
 // current truth, and a detail lookup has no scan cost to amortise — so the staleness budget stays
 // confined to the list surface that actually benefits from it.
-interface ReadModelCacheEntry {
-  listings: ListingRecord[];
-  loadedAt: number;
-}
-let readModelCache: ReadModelCacheEntry | null = null;
-
-function readModelCacheTtlMs(): number {
-  const raw = Number(process.env.KIDS_FUN_LISTING_CACHE_MS);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 60_000;
-}
+// See ./ttl-cache for the env-var parsing and the stampede protection this shares with the alias
+// resolver and the region hierarchy. Stampede protection matters most HERE: this is the expensive
+// 8-join catalogue scan, and all three caches go cold together on every deploy and scale-out.
+const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>('KIDS_FUN_LISTING_CACHE_MS', 60_000);
 
 /**
  * Cached accessor for the search route: the complete visible catalogue, reloaded from Postgres at
@@ -322,17 +317,27 @@ function readModelCacheTtlMs(): number {
  * whole point of the cap fix. Callers that want a bounded diagnostic page call
  * `loadPostgresListings` directly and are not served from, or written into, this cache.
  *
+ * SHARED-ARRAY INVARIANT — read before you write code against the return value.
+ * The SAME array, holding the SAME `ListingRecord` objects, is handed to every concurrent request
+ * for up to one TTL. It is therefore READ-ONLY: mutating it, or any record in it, corrupts other
+ * in-flight requests and every request for the rest of the window. Two levels of enforcement:
+ *   · The array itself is frozen, so `push`/`splice`/an in-place `sort` throws immediately (ESM is
+ *     strict mode). In-place sorting a "list of listings" is the realistic mistake here, and it is
+ *     silent without this. `readonly ListingRecord[]` states the same thing at compile time.
+ *   · The RECORDS are deliberately NOT deep-frozen: that is ~5k objects with nested arrays on
+ *     every reload, a real cost paid on every request path, to defend against a mutation that
+ *     exists nowhere in the repo today. Treat records as immutable; copy before you edit.
+ *
  * Set `KIDS_FUN_LISTING_CACHE_MS=0` to disable caching entirely (every call reloads).
  */
-export async function getCachedPostgresListings(pool: Pool, now: number = Date.now()): Promise<ListingRecord[]> {
-  const ttl = readModelCacheTtlMs();
-  if (readModelCache && ttl > 0 && now - readModelCache.loadedAt < ttl) return readModelCache.listings;
-  const listings = await loadPostgresListings(pool);
-  readModelCache = { listings, loadedAt: now };
-  return listings;
+export async function getCachedPostgresListings(
+  pool: Pool,
+  now: number = Date.now()
+): Promise<readonly ListingRecord[]> {
+  return readModelCache.get(async () => Object.freeze(await loadPostgresListings(pool)), now);
 }
 
 /** Test/ops hook: drop the cached read model so the next access reloads from the DB. */
 export function clearPostgresListingsCache(): void {
-  readModelCache = null;
+  readModelCache.clear();
 }

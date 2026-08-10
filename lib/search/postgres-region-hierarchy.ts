@@ -15,6 +15,7 @@
 
 import type { Pool } from 'pg';
 import { RegionHierarchy, type Region, type RegionLevel } from '../geo/region';
+import { TtlPromiseCache } from './ttl-cache';
 
 interface RegionRow {
   id: string;
@@ -70,30 +71,24 @@ export async function loadPostgresRegionHierarchy(pool: Pool): Promise<RegionHie
 }
 
 // ── Short in-process TTL cache for the serverless search route ────────────────
-interface CacheEntry {
-  hierarchy: RegionHierarchy;
-  loadedAt: number;
-}
-let cache: CacheEntry | null = null;
+// See ./ttl-cache for the env-var parsing and stampede protection this shares with the alias
+// resolver and the listing read model.
+const cache = new TtlPromiseCache<RegionHierarchy>('KIDS_FUN_REGION_CACHE_MS', 60_000);
 
-function cacheTtlMs(): number {
-  const raw = Number(process.env.KIDS_FUN_REGION_CACHE_MS);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 60_000;
-}
-
-/** Cached accessor for the search route; refreshes from the DB at most once per TTL. */
+/**
+ * Cached accessor for the search route; refreshes from the DB at most once per TTL, and
+ * concurrent cold callers share one load.
+ *
+ * Set `KIDS_FUN_REGION_CACHE_MS=0` to disable caching entirely (every call reloads).
+ */
 export async function getPostgresRegionHierarchy(
   pool: Pool,
   now: number = Date.now()
 ): Promise<RegionHierarchy> {
-  const ttl = cacheTtlMs();
-  if (cache && ttl > 0 && now - cache.loadedAt < ttl) return cache.hierarchy;
-  const hierarchy = await loadPostgresRegionHierarchy(pool);
-  cache = { hierarchy, loadedAt: now };
-  return hierarchy;
+  return cache.get(() => loadPostgresRegionHierarchy(pool), now);
 }
 
 /** Test/ops hook: drop the cached hierarchy so the next access reloads from the DB. */
 export function clearPostgresRegionHierarchyCache(): void {
-  cache = null;
+  cache.clear();
 }

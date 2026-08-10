@@ -21,6 +21,7 @@
 
 import type { Pool } from 'pg';
 import { FixtureAliasResolver, type AliasEntry } from './expand';
+import { TtlPromiseCache } from './ttl-cache';
 
 interface AliasRow {
   alias_text: string;
@@ -69,34 +70,26 @@ export class PostgresAliasResolver extends FixtureAliasResolver {
 }
 
 // ── Short in-process TTL cache for the serverless search route ────────────────
-interface CacheEntry {
-  resolver: PostgresAliasResolver;
-  loadedAt: number;
-}
-let cache: CacheEntry | null = null;
-
-function cacheTtlMs(): number {
-  const raw = Number(process.env.KIDS_FUN_ALIAS_CACHE_MS);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 60_000;
-}
+// Shape, env-var parsing and stampede protection all live in ./ttl-cache — this cache, the
+// listing read model's and the region hierarchy's are the same cache three times over, and
+// keeping three copies is how one bug became three.
+const cache = new TtlPromiseCache<PostgresAliasResolver>('KIDS_FUN_ALIAS_CACHE_MS', 60_000);
 
 /**
  * Cached accessor for the search route: returns a live-loaded resolver, refreshing
  * from the DB at most once per TTL window. Falls through to a fresh load on a cold
- * cache or after the TTL expires.
+ * cache or after the TTL expires; concurrent cold callers share one load.
+ *
+ * Set `KIDS_FUN_ALIAS_CACHE_MS=0` to disable caching entirely (every call reloads).
  */
 export async function getPostgresAliasResolver(
   pool: Pool,
   now: number = Date.now()
 ): Promise<PostgresAliasResolver> {
-  const ttl = cacheTtlMs();
-  if (cache && ttl > 0 && now - cache.loadedAt < ttl) return cache.resolver;
-  const resolver = await PostgresAliasResolver.load(pool);
-  cache = { resolver, loadedAt: now };
-  return resolver;
+  return cache.get(() => PostgresAliasResolver.load(pool), now);
 }
 
 /** Test/ops hook: drop the cached resolver so the next access reloads from the DB. */
 export function clearPostgresAliasResolverCache(): void {
-  cache = null;
+  cache.clear();
 }
