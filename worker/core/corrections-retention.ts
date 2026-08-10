@@ -25,7 +25,10 @@
 // worker/Dockerfile therefore ships lib/corrections + lib/db into the image; see
 // worker/tsconfig.json and tests/scheduler/worker-image-closure.test.ts.
 import { purgeExpiredCorrectionReports } from '../../lib/corrections/retention';
-import { correctionRetentionDryRunForced } from '../../lib/corrections/retention-config';
+import {
+  CORRECTION_RETENTION_DRY_RUN_ENV,
+  resolveCorrectionRetentionDryRun,
+} from '../../lib/corrections/retention-config';
 import type { Job } from './queue';
 
 /**
@@ -52,7 +55,10 @@ export interface CorrectionsRetentionHandlerOptions {
  *
  * Honours CORRECTION_RETENTION_DRY_RUN exactly as the route does
  * (app/api/corrections/retention/run/route.ts:66) — an operator kill-switch that stopped
- * deletions on one runtime but not the other would be worse than no kill-switch.
+ * deletions on one runtime but not the other would be worse than no kill-switch. It logs
+ * the RESOLVED mode and the reason it resolved that way, because "is the kill-switch on?"
+ * must be answerable from the worker log rather than inferred from an env var whose
+ * spelling is what went wrong in the first place (F1).
  *
  * Throws on a DB failure, which is what we want: the queue retries with backoff and
  * dead-letters after max_attempts rather than recording a silent success.
@@ -62,8 +68,16 @@ export function makeCorrectionsRetentionJobHandler(
 ): (job: Job) => Promise<void> {
   const logger = options.logger ?? console;
   return async (job: Job): Promise<void> => {
-    const dryRun = correctionRetentionDryRunForced();
-    const result = await purgeExpiredCorrectionReports({ dryRun });
+    const mode = resolveCorrectionRetentionDryRun();
+    // BEFORE the purge, not after: this is the line that says what is about to happen to
+    // real rows, and it has to exist even if the purge then throws.
+    logger.log(
+      `[worker] corrections_retention job ${job.id}: effective mode ` +
+        `${mode.dryRun ? 'DRY RUN (deleting nothing)' : 'DELETING'} — ` +
+        `${CORRECTION_RETENTION_DRY_RUN_ENV}=${mode.raw === null ? '<unset>' : `"${mode.raw}"`} ` +
+        `(${mode.reason})`
+    );
+    const result = await purgeExpiredCorrectionReports({ dryRun: mode.dryRun });
     // Counts only — never row contents (the `note` column is user-submitted free text).
     logger.log(
       `[worker] corrections_retention job ${job.id}: dryRun=${result.dryRun} ` +

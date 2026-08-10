@@ -46,6 +46,16 @@ vi.mock('../../lib/corrections/retention', () => ({
 vi.mock('../../lib/corrections/retention-config', () => ({
   correctionRetentionDays: vi.fn(() => 183),
   correctionRetentionDryRunForced: vi.fn(() => shared.dryRunForced),
+  // F1: the handler now resolves the kill-switch to an EFFECTIVE MODE (value + the reason
+  // it resolved that way) so the decision is readable in the worker log instead of being
+  // inferred from an env var whose spelling was the original hazard. The real parse and its
+  // spelling table are covered by tests/corrections/retention-dry-run-switch.test.ts.
+  CORRECTION_RETENTION_DRY_RUN_ENV: 'CORRECTION_RETENTION_DRY_RUN',
+  resolveCorrectionRetentionDryRun: vi.fn(() => ({
+    dryRun: shared.dryRunForced,
+    reason: shared.dryRunForced ? 'explicit_pause' : 'unset',
+    raw: shared.dryRunForced ? 'true' : null,
+  })),
 }));
 
 import {
@@ -203,10 +213,13 @@ describe("job_type 'corrections_retention' — the global job the worker could n
     await makeCorrectionsRetentionJobHandler({ logger: { log: (m: string) => lines.push(m) } })(
       job({ jobType: 'corrections_retention' })
     );
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('deleted=3');
-    // `note` is user-submitted free text; nothing from a row may reach the log.
-    expect(lines[0]).not.toMatch(/note|reporter|occurrence_id/i);
+    // Two lines now: the EFFECTIVE dry-run mode, logged BEFORE the purge so it exists even
+    // if the purge throws (F1), then the counts.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/effective mode DELETING/);
+    expect(lines[1]).toContain('deleted=3');
+    // `note` is user-submitted free text; nothing from a row may reach EITHER line.
+    for (const line of lines) expect(line).not.toMatch(/note|reporter|occurrence_id/i);
   });
 });
 
