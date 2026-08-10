@@ -3,7 +3,12 @@ import { enqueueDueJobs } from '../scheduler/tiered';
 import { enqueueDueGlobalJobs } from '../scheduler/global-jobs';
 import { dequeue, markDone, markFailed, resolveWorkerId, type Job } from '../core/queue';
 import { reconcileAbandonedRuns } from '../core/reconcile';
-import { claimGlobalJobRun, finishGlobalJobRun } from '../core/global-job-schedule';
+import {
+  claimGlobalJobRun,
+  finishGlobalJobRun,
+  readGlobalJobScheduleHealth,
+  type GlobalJobScheduleStatus,
+} from '../core/global-job-schedule';
 import { makeJobDispatcher } from '../core/job-handlers';
 import type { Environment } from '../core/terms-gate';
 import { captureWorkerException } from './sentry';
@@ -21,6 +26,10 @@ import { captureWorkerException } from './sentry';
 //      (global_job_schedule, migration 0028) — the producer for the job types Unit 1
 //      taught the dispatcher to run. The two producers are independent by design: a
 //      failure in either must not stop the other, so they have separate try/catch.
+//      The tick then READS BACK the durable health of every global schedule
+//      (readGlobalJobScheduleHealth) into the metrics /healthz serves, so a tripped
+//      breaker or a run of missed slots is reported by ANY process that boots after it
+//      happened — not only by the one that happened to witness it.
 //   2. poll loop  — every WORKER_POLL_INTERVAL_MS claims one due job
 //      (FOR UPDATE SKIP LOCKED) and runs the handler registered for its
 //      job_queue.job_type (core/job-handlers.ts): 'ingest' → the terms-gated
@@ -30,6 +39,31 @@ import { captureWorkerException } from './sentry';
 //
 // This replaces the one-shot `ingest:once` entrypoint with a process that runs
 // continuously; the same policy remains callable from pg_cron / Vercel Cron.
+
+/**
+ * One global schedule's health AS THE DATABASE HOLDS IT, projected for /healthz.
+ *
+ * Dates are ISO strings because this object is serialised straight into the health payload
+ * (worker/src/healthz.ts) and a Date would arrive there as an unlabelled ISO string anyway;
+ * making that explicit here keeps the wire shape a property of this type rather than an
+ * accident of JSON.stringify.
+ */
+export interface GlobalScheduleHealthSnapshot {
+  jobType: string;
+  /** Derived by worker/core/global-job-schedule.ts from stored state alone. */
+  status: GlobalJobScheduleStatus;
+  enabled: boolean;
+  /** Cadence slots that came due and produced NO ledger row. > 0 means work was lost. */
+  missedRuns: number;
+  consecutiveFailures: number;
+  maxConsecutiveFailures: number;
+  /** Non-null = the breaker is OPEN and only an operator can close it. */
+  breakerTrippedAt: string | null;
+  breakerReason: string | null;
+  nextRunAt: string;
+  lastSuccessAt: string | null;
+  inFlight: boolean;
+}
 
 export interface SchedulerMetrics {
   enabled: boolean;
@@ -44,11 +78,39 @@ export interface SchedulerMetrics {
   lastGlobalEnqueueCount: number;
   totalGlobalEnqueued: number;
   /**
-   * Job types whose circuit breaker this process has seen TRIP. Surfaced on /healthz
-   * because a tripped breaker is a state a human has to clear (there is no automatic
-   * recovery, by design) and an operator needs somewhere to see it that is not the logs.
+   * Cadence slots the global producer JUMPED PAST without running, since boot. Non-zero
+   * after any outage longer than one cadence. Harmless for a level-triggered job and
+   * silent data loss for an edge-triggered one — see EnqueuedGlobalJob.skippedSlots.
+   */
+  totalGlobalSlotsSkipped: number;
+  /**
+   * Job types whose circuit breaker is OPEN, ACCORDING TO THE DATABASE.
+   *
+   * IT USED TO MEAN "that this process has seen trip", and that is why /healthz reported a
+   * clean bill of health after every restart: the list was populated only by the statement
+   * that tripped the breaker, so a process booting AFTER the trip started empty and stayed
+   * empty while the compliance purge was stopped. A tripped breaker has no automatic
+   * recovery by design, so the state routinely outlives the process that caused it — which
+   * makes process memory the one place it must NOT be read from.
+   *
+   * It is now REPLACED wholesale by `globalSchedules` on every successful durable read (so
+   * an operator's reset clears it), and only ADDED to in between by a trip this process
+   * witnessed (so the escalation is not delayed until the next tick). A failing read leaves
+   * the last known list standing rather than blanking it.
    */
   globalBreakersTripped: string[];
+  /**
+   * Every global schedule's durable health, refreshed at boot and on every tick.
+   *
+   * READ `globalScheduleHealthAt` BEFORE BELIEVING AN EMPTY ARRAY. Empty means "no
+   * schedules" only if the read has succeeded at least once; before that it means UNKNOWN,
+   * and an alert that treats unknown as healthy is the defect this field exists to fix.
+   */
+  globalSchedules: GlobalScheduleHealthSnapshot[];
+  /** When the durable read above last SUCCEEDED. Null = never — see above. */
+  globalScheduleHealthAt: string | null;
+  /** Why the durable read last failed, or null if the last attempt succeeded. */
+  globalScheduleHealthError: string | null;
   jobsProcessed: number;
   jobsSucceeded: number;
   jobsFailed: number;
@@ -164,7 +226,11 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     totalEnqueued: 0,
     lastGlobalEnqueueCount: 0,
     totalGlobalEnqueued: 0,
+    totalGlobalSlotsSkipped: 0,
     globalBreakersTripped: [],
+    globalSchedules: [],
+    globalScheduleHealthAt: null,
+    globalScheduleHealthError: null,
     jobsProcessed: 0,
     jobsSucceeded: 0,
     jobsFailed: 0,
@@ -184,6 +250,93 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
   // ledger's whole purpose includes recording WHICH worker held a run when it died, and
   // the previous hardcoded 'worker' could not answer that with more than one machine.
   const workerId = resolveWorkerId();
+
+  /**
+   * The status this process last REPORTED for each job type, so a schedule that is stopped
+   * for a week produces one log line rather than one per tick. Purely a log-noise control —
+   * /healthz always carries the current durable status regardless of what is in here.
+   */
+  const lastLoggedStatus = new Map<string, GlobalJobScheduleStatus>();
+
+  /** Statuses worth a log line. 'due'/'running'/'ok'/'disabled' are ordinary operation. */
+  const ALARMING: ReadonlySet<GlobalJobScheduleStatus> = new Set(['breaker_tripped', 'missed']);
+
+  /**
+   * Fold the DATABASE's view of every global schedule into the metrics /healthz serves.
+   *
+   * ── WHY THIS EXISTS (the whole of Unit 2b) ──────────────────────────────────────────────
+   * readGlobalJobScheduleHealth() is a pure SELECT that can report 'breaker_tripped' and
+   * 'missed' from durable state with the entire worker fleet dead. Until this call it had
+   * ZERO runtime callers: the health state was produced and never consumed, the exact
+   * inverse of Unit 1's consumer with no producer. Everything /healthz said about global
+   * jobs came from `noteBreakerTrip`, which only fires on the statement that trips the
+   * breaker — so ANY restart erased it and the worker reported a clean bill of health while
+   * the correction-report purge was stopped indefinitely.
+   *
+   * A breaker never resets itself (by design), and three unlucky events trip it — scheduled
+   * jobs get max_attempts=1 and Fly's 5s kill_timeout makes an abandoned run routine — so
+   * "the state outlives the process that saw it" is the normal case here, not the exotic one.
+   *
+   * Never throws: a health read that took the tick down would trade the report for the work.
+   */
+  async function refreshGlobalScheduleHealth(): Promise<void> {
+    try {
+      const health = await readGlobalJobScheduleHealth(pool);
+      metrics.globalSchedules = health.map((h) => ({
+        jobType: h.jobType,
+        status: h.status,
+        enabled: h.enabled,
+        missedRuns: h.missedRuns,
+        consecutiveFailures: h.consecutiveFailures,
+        maxConsecutiveFailures: h.maxConsecutiveFailures,
+        breakerTrippedAt: h.breakerTrippedAt?.toISOString() ?? null,
+        breakerReason: h.breakerReason,
+        nextRunAt: h.nextRunAt.toISOString(),
+        lastSuccessAt: h.lastSuccessAt?.toISOString() ?? null,
+        inFlight: h.inFlight,
+      }));
+      // REPLACED, not merged: the database is the authority, so an operator who ran
+      // resetGlobalJobBreaker() sees the alarm clear without restarting the worker.
+      metrics.globalBreakersTripped = health
+        .filter((h) => h.status === 'breaker_tripped')
+        .map((h) => h.jobType);
+      metrics.globalScheduleHealthAt = new Date().toISOString();
+      metrics.globalScheduleHealthError = null;
+
+      for (const h of health) {
+        if (lastLoggedStatus.get(h.jobType) === h.status) continue;
+        lastLoggedStatus.set(h.jobType, h.status);
+        if (!ALARMING.has(h.status)) continue;
+        // The two statuses need DIFFERENT advice, and giving both the same is how an
+        // operator ends up resetting a breaker that was never tripped and concluding the
+        // tooling is lying to them.
+        const remedy =
+          h.status === 'breaker_tripped'
+            ? `It will NOT be enqueued again until an operator clears it (resetGlobalJobBreaker).`
+            : `The breaker is closed and the schedule is still armed — the next tick will ` +
+              `enqueue one catch-up run; the other ${Math.max(0, h.missedRuns - 1)} slot(s) ` +
+              `will never run. Find out why nothing was producing.`;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[scheduler] global job '${h.jobType}' is ${h.status.toUpperCase()} in the DATABASE: ` +
+            `${h.missedRuns} missed slot(s), ${h.consecutiveFailures}/${h.maxConsecutiveFailures} ` +
+            `consecutive failures, breaker ` +
+            `${h.breakerTrippedAt ? `OPEN since ${h.breakerTrippedAt.toISOString()} (${h.breakerReason ?? 'no reason recorded'})` : 'closed'}. ` +
+            `This state is durable and outlived whatever process caused it. ${remedy}`
+        );
+      }
+    } catch (err) {
+      // Do NOT blank globalSchedules/globalBreakersTripped here: a stale alarm is useful,
+      // an alarm silently replaced by an empty list is the false green all over again.
+      metrics.globalScheduleHealthError = errMsg(err);
+      metrics.lastError = `global schedule health: ${errMsg(err)}`;
+      // eslint-disable-next-line no-console
+      console.error('[scheduler] global schedule health read failed:', errMsg(err));
+      await captureWorkerException(err, {
+        tags: { component: 'scheduler', operation: 'global_schedule_health', environment },
+      });
+    }
+  }
 
   /** Record and shout about a breaker trip exactly once — the escalation, not a stream. */
   function noteBreakerTrip(jobType: string, reason: string): void {
@@ -404,6 +557,8 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       });
     }
     await enqueueDueGlobalJobsOnce();
+    // LAST, so it observes this tick's own writes rather than the state before them.
+    await refreshGlobalScheduleHealth();
   }
 
   /**
@@ -418,17 +573,52 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
    */
   async function enqueueDueGlobalJobsOnce(): Promise<void> {
     try {
-      const enqueuedGlobal = await enqueueDueGlobalJobs(pool, { workerId });
-      metrics.lastGlobalEnqueueCount = enqueuedGlobal.length;
-      metrics.totalGlobalEnqueued += enqueuedGlobal.length;
-      if (enqueuedGlobal.length > 0) {
+      const { enqueued, skipped } = await enqueueDueGlobalJobs(pool, { workerId });
+      metrics.lastGlobalEnqueueCount = enqueued.length;
+      metrics.totalGlobalEnqueued += enqueued.length;
+      // Both halves count: a slot jumped by a normal catch-up and a slot jumped while
+      // un-wedging a rewound schedule are equally slots that came due and will never run.
+      metrics.totalGlobalSlotsSkipped +=
+        enqueued.reduce((n, g) => n + g.skippedSlots, 0) +
+        skipped.reduce((n, s) => n + (s.skippedSlots ?? 0), 0);
+      if (enqueued.length > 0) {
         // eslint-disable-next-line no-console
         console.log(
-          `[scheduler] tick #${metrics.ticks} enqueued ${enqueuedGlobal.length} global job(s): ` +
-            enqueuedGlobal
+          `[scheduler] tick #${metrics.ticks} enqueued ${enqueued.length} global job(s): ` +
+            enqueued
               .map((g) => `${g.jobType}@${g.scheduledFor.toISOString()}→job ${g.jobId}`)
               .join(', ')
         );
+      }
+      // The slots between the one being run and now. Never inferred from a gap in the
+      // ledger by whoever reads it next — said out loud, at the moment they are dropped.
+      for (const g of enqueued.filter((e) => e.skippedSlots > 0)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[scheduler] global job '${g.jobType}' SKIPPED ${g.skippedSlots} cadence slot(s) ` +
+            `between ${g.scheduledFor.toISOString()} and ${g.nextRunAt.toISOString()} — ` +
+            `one catch-up run was enqueued for the oldest, the rest will never run. ` +
+            `Correct for a level-triggered job; DATA LOSS for an edge-triggered one.`
+        );
+      }
+      for (const s of skipped) {
+        if (s.reason === 'slot_already_served') {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[scheduler] global job '${s.jobType}' was due at ` +
+              `${s.scheduledFor.toISOString()}, which the ledger has ALREADY served — ` +
+              `a rewound next_run_at (operator edit, restore or clock skew). Advanced to ` +
+              `${s.nextRunAt?.toISOString() ?? 'UNCHANGED — investigate'} instead of ` +
+              `retrying it forever.`
+          );
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[scheduler] global job '${s.jobType}' is due at ` +
+              `${s.scheduledFor.toISOString()} but a previous run is still in flight — ` +
+              `left due, will be retried next tick.`
+          );
+        }
       }
     } catch (err) {
       metrics.lastError = `global tick: ${errMsg(err)}`;
@@ -441,7 +631,13 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
   }
 
   async function tickLoop(): Promise<void> {
+    // THE DURABLE HEALTH READ IS NOT GATED ON `immediate`. `immediate` governs whether this
+    // process ENQUEUES on boot — a write, and a policy decision. Reporting what the database
+    // already says is a pure SELECT, and a restarted worker must not spend up to a full tick
+    // interval (60s by default, and unbounded for a test/embedded scheduler that sets a long
+    // one) claiming everything is fine before it has looked.
     if (immediate) await tracked(tickOnce);
+    else await tracked(refreshGlobalScheduleHealth);
     while (!signal?.aborted) {
       await sleep(schedulerTickMs, signal);
       if (signal?.aborted) break;

@@ -50,10 +50,13 @@ vi.mock('../../worker/core/source-runner', () => ({
 vi.mock('../../worker/scheduler/tiered', () => ({ enqueueDueJobs: vi.fn(async () => []) }));
 
 // The global (source-less) producer and its run ledger — no database in this file.
-vi.mock('../../worker/scheduler/global-jobs', () => ({ enqueueDueGlobalJobs: vi.fn(async () => []) }));
+vi.mock('../../worker/scheduler/global-jobs', () => ({
+  enqueueDueGlobalJobs: vi.fn(async () => ({ enqueued: [], skipped: [] })),
+}));
 vi.mock('../../worker/core/global-job-schedule', () => ({
   claimGlobalJobRun: vi.fn(async () => false),
   finishGlobalJobRun: vi.fn(async () => null),
+  readGlobalJobScheduleHealth: vi.fn(async () => []),
 }));
 
 vi.mock('../../worker/core/reconcile', () => ({

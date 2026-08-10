@@ -15,12 +15,15 @@
 //   • it only ever removes rows already PAST retention (retained_until < now);
 //   • `{ dryRun: true }` (or the CORRECTION_RETENTION_DRY_RUN=true operator
 //     kill-switch) makes it count only and delete nothing;
+//   • the EFFECTIVE mode is logged before the purge runs, so it is on the record even
+//     when the purge then throws and the response is a bare 503;
 //   • the response carries counts only — no row contents, no PII.
 import { NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
 import {
+  CORRECTION_RETENTION_DRY_RUN_ENV,
   correctionRetentionCronSecret,
-  correctionRetentionDryRunForced,
+  resolveCorrectionRetentionDryRun,
 } from '@/lib/corrections/retention-config';
 import { purgeExpiredCorrectionReports } from '@/lib/corrections/retention';
 
@@ -63,8 +66,26 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // Real deletion unless the caller asked for a dry-run OR the operator kill-switch
   // forces observe-only.
-  const dryRun = correctionRetentionDryRunForced() || body.dryRun === true;
+  const mode = resolveCorrectionRetentionDryRun();
+  const callerAskedDryRun = body.dryRun === true;
+  const dryRun = mode.dryRun || callerAskedDryRun;
   const batchSize = typeof body.batchSize === 'number' && body.batchSize > 0 ? body.batchSize : undefined;
+
+  // BEFORE the purge, not after — symmetric with worker/core/corrections-retention.ts:74.
+  // Both runtimes delete the same rows through the same implementation, so both must be
+  // able to answer "was it deleting?" from their own log. This route could not: on a purge
+  // throw it returned 503 with no record of the effective mode, leaving the operator to
+  // infer it from an env var whose SPELLING is what went wrong in the first place (F1).
+  // The response cannot carry it — a throw means there is no result to put it in — so the
+  // log line has to exist before the call that might not return. Nothing here is a secret:
+  // `raw` is an operational flag and retention-config.ts documents it as safe to log.
+  // eslint-disable-next-line no-console
+  console.log(
+    `[api] corrections_retention run: effective mode ` +
+      `${dryRun ? 'DRY RUN (deleting nothing)' : 'DELETING'} — ` +
+      `${CORRECTION_RETENTION_DRY_RUN_ENV}=${mode.raw === null ? '<unset>' : `"${mode.raw}"`} ` +
+      `(${mode.reason}), caller dryRun=${callerAskedDryRun}`
+  );
 
   try {
     const result = await purgeExpiredCorrectionReports({ dryRun, batchSize });

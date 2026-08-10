@@ -29,6 +29,12 @@ const shared = vi.hoisted(() => ({
   calls: [] as string[],
   reconcileError: null as Error | null,
   globalEnqueueError: null as Error | null,
+  /** What the mocked global producer returns — lets a test drive the skipped-slot counter
+   *  without a database. */
+  globalTick: { enqueued: [] as unknown[], skipped: [] as unknown[] },
+  /** What the mocked DURABLE health reader returns, and whether it fails. */
+  health: [] as unknown[],
+  healthError: null as Error | null,
 }));
 
 vi.mock('../../worker/core/reconcile', () => ({
@@ -60,7 +66,7 @@ vi.mock('../../worker/scheduler/global-jobs', () => ({
   enqueueDueGlobalJobs: vi.fn(async () => {
     shared.calls.push('enqueue-global');
     if (shared.globalEnqueueError) throw shared.globalEnqueueError;
-    return [];
+    return shared.globalTick;
   }),
 }));
 
@@ -73,15 +79,28 @@ vi.mock('../../worker/core/queue', () => ({
 }));
 
 // The run ledger, likewise: no database in this file.
+//
+// readGlobalJobScheduleHealth is the DURABLE health reader, and it needs the same drift
+// protection as the producers above for the same reason, one turn of the screw further on:
+// Unit 1 shipped a consumer with no producer, Unit 2 shipped this READER WITH NO CALLER —
+// it existed, it was correct, it was tested, and nothing in the runtime ever invoked it, so
+// /healthz reported a clean bill of health after every restart while a tripped breaker had
+// stopped the compliance purge. Unwire it again and only this file says so.
 vi.mock('../../worker/core/global-job-schedule', () => ({
   claimGlobalJobRun: vi.fn(async () => false),
   finishGlobalJobRun: vi.fn(async () => null),
+  readGlobalJobScheduleHealth: vi.fn(async () => {
+    shared.calls.push('read-health');
+    if (shared.healthError) throw shared.healthError;
+    return shared.health;
+  }),
 }));
 
 import { startScheduler } from '../../worker/src/scheduler';
 import { reconcileAbandonedRuns } from '../../worker/core/reconcile';
 import { enqueueDueJobs } from '../../worker/scheduler/tiered';
 import { enqueueDueGlobalJobs } from '../../worker/scheduler/global-jobs';
+import { readGlobalJobScheduleHealth } from '../../worker/core/global-job-schedule';
 
 /** Minimal pool stand-in — nothing in this test reaches SQL. */
 const stubPool = { query: vi.fn(async () => ({ rows: [] })) } as never;
@@ -112,6 +131,9 @@ beforeEach(() => {
   shared.calls.length = 0;
   shared.reconcileError = null;
   shared.globalEnqueueError = null;
+  shared.globalTick = { enqueued: [], skipped: [] };
+  shared.health = [];
+  shared.healthError = null;
   vi.mocked(reconcileAbandonedRuns).mockClear();
   vi.mocked(enqueueDueJobs).mockClear();
   vi.mocked(enqueueDueGlobalJobs).mockClear();
@@ -232,6 +254,166 @@ describe('scheduler → reconcile wiring (H4-A drift protection)', () => {
     } finally {
       controller.abort();
       await handle.done;
+    }
+  });
+});
+
+// ── THE DURABLE HEALTH READER'S WIRING ──────────────────────────────────────────────────
+describe('scheduler → durable global-schedule health wiring', () => {
+  const TRIPPED = {
+    jobType: 'corrections_retention',
+    status: 'breaker_tripped',
+    enabled: true,
+    cadenceSeconds: 86_400,
+    nextRunAt: new Date('2026-07-01T00:00:00Z'),
+    lastRunAt: null,
+    lastSuccessAt: null,
+    consecutiveFailures: 3,
+    maxConsecutiveFailures: 3,
+    breakerTrippedAt: new Date('2026-07-01T00:00:00Z'),
+    breakerReason: 'failure: boom',
+    lastRunSlot: null,
+    inFlight: false,
+    missedRuns: 29,
+    observedAt: new Date('2026-08-01T00:00:00Z'),
+  };
+
+  async function bootAndWait(opts: {
+    immediate: boolean;
+    schedulerTickMs?: number;
+  }): Promise<{
+    metrics: ReturnType<typeof startScheduler>['metrics'];
+    stop: () => Promise<void>;
+  }> {
+    const controller = new AbortController();
+    const handle = startScheduler(stubPool, {
+      signal: controller.signal,
+      immediate: opts.immediate,
+      schedulerTickMs: opts.schedulerTickMs ?? 600_000,
+      pollIntervalMs: 600_000,
+      environment: 'staging',
+    });
+    await vi.waitFor(() => expect(shared.calls).toContain('read-health'), { timeout: 5_000 });
+    return {
+      metrics: handle.metrics,
+      stop: async () => {
+        controller.abort();
+        await handle.done;
+      },
+    };
+  }
+
+  it('reads durable health on the boot tick and folds it into the /healthz metrics', async () => {
+    shared.health = [TRIPPED];
+    const booted = await bootAndWait({ immediate: true });
+    try {
+      expect(readGlobalJobScheduleHealth).toHaveBeenCalledWith(stubPool);
+      expect(booted.metrics.globalScheduleHealthAt).not.toBeNull();
+      expect(booted.metrics.globalScheduleHealthError).toBeNull();
+      expect(booted.metrics.globalBreakersTripped).toEqual(['corrections_retention']);
+      expect(booted.metrics.globalSchedules).toEqual([
+        {
+          jobType: 'corrections_retention',
+          status: 'breaker_tripped',
+          enabled: true,
+          missedRuns: 29,
+          consecutiveFailures: 3,
+          maxConsecutiveFailures: 3,
+          breakerTrippedAt: '2026-07-01T00:00:00.000Z',
+          breakerReason: 'failure: boom',
+          nextRunAt: '2026-07-01T00:00:00.000Z',
+          lastSuccessAt: null,
+          inFlight: false,
+        },
+      ]);
+    } finally {
+      await booted.stop();
+    }
+  });
+
+  it('reads it even when `immediate` is false — the report is not gated on the WRITE', async () => {
+    // `immediate` decides whether this process enqueues on boot. Reporting what the database
+    // already says is a pure SELECT, and an operator restarting after an incident must not
+    // wait a whole tick interval to find out the schedule is stopped.
+    shared.health = [TRIPPED];
+    const booted = await bootAndWait({ immediate: false });
+    try {
+      expect(shared.calls).not.toContain('enqueue'); // it really did skip the tick
+      expect(booted.metrics.globalBreakersTripped).toEqual(['corrections_retention']);
+    } finally {
+      await booted.stop();
+    }
+  });
+
+  it('reads AFTER the producer, so the report reflects this tick’s own writes', async () => {
+    shared.health = [TRIPPED];
+    const booted = await bootAndWait({ immediate: true });
+    try {
+      expect(shared.calls.indexOf('enqueue-global')).toBeLessThan(
+        shared.calls.indexOf('read-health')
+      );
+    } finally {
+      await booted.stop();
+    }
+  });
+
+  it('counts SKIPPED cadence slots from both halves of the tick', async () => {
+    // The only place the skip count is visible without reading the ledger by hand. An
+    // outage that jumps 30 daily slots is correct for the level-triggered purge and silent
+    // data loss for any edge-triggered job put on this producer later.
+    shared.globalTick = {
+      enqueued: [
+        {
+          jobType: 'a',
+          scheduleId: 's1',
+          runId: 'r1',
+          jobId: 'j1',
+          scheduledFor: new Date('2026-07-01T00:00:00Z'),
+          nextRunAt: new Date('2026-08-01T00:00:00Z'),
+          skippedSlots: 30,
+        },
+      ],
+      skipped: [
+        {
+          jobType: 'b',
+          scheduleId: 's2',
+          scheduledFor: new Date('2026-07-01T00:00:00Z'),
+          reason: 'slot_already_served',
+          nextRunAt: new Date('2026-08-01T00:00:00Z'),
+          skippedSlots: 4,
+        },
+      ],
+    };
+    const booted = await bootAndWait({ immediate: true });
+    try {
+      expect(booted.metrics.totalGlobalSlotsSkipped).toBe(34);
+      expect(booted.metrics.lastGlobalEnqueueCount).toBe(1);
+    } finally {
+      await booted.stop();
+    }
+  });
+
+  it('a FAILING health read is reported and does NOT blank the last known state', async () => {
+    // The false green, one level up: replacing a stale alarm with an empty list because the
+    // read failed is indistinguishable from "everything is fine", which is the whole defect.
+    shared.health = [TRIPPED];
+    // A short tick so a SECOND read really happens — the point is what the second one does
+    // to the state the first one left.
+    const booted = await bootAndWait({ immediate: true, schedulerTickMs: 40 });
+    try {
+      expect(booted.metrics.globalBreakersTripped).toEqual(['corrections_retention']);
+
+      shared.healthError = new Error('connection terminated');
+      shared.calls.length = 0;
+      await vi.waitFor(
+        () => expect(booted.metrics.globalScheduleHealthError).toMatch(/connection terminated/),
+        { timeout: 5_000 }
+      );
+      expect(booted.metrics.globalBreakersTripped).toEqual(['corrections_retention']);
+      expect(booted.metrics.globalSchedules).toHaveLength(1);
+      expect(booted.metrics.lastError).toMatch(/global schedule health/);
+    } finally {
+      await booted.stop();
     }
   });
 });

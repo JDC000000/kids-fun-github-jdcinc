@@ -19,15 +19,23 @@
 // dequeue() claims the oldest due pending job table-wide.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import type { ServerResponse } from 'node:http';
 import { Pool } from 'pg';
 import { closePool, getPool, query } from '../../lib/db/client';
-import { startScheduler } from '../../worker/src/scheduler';
+import { startScheduler, type SchedulerMetrics } from '../../worker/src/scheduler';
+import { healthz } from '../../worker/src/healthz';
 import { enqueueDueGlobalJobs } from '../../worker/scheduler/global-jobs';
 import { reconcileAbandonedRuns } from '../../worker/core/reconcile';
 import {
   readGlobalJobScheduleHealth,
   resetGlobalJobBreaker,
 } from '../../worker/core/global-job-schedule';
+
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
@@ -211,9 +219,27 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
     scheduleId: string,
     pool = getPool(),
     workerId?: string
-  ): Promise<Awaited<ReturnType<typeof enqueueDueGlobalJobs>>> {
-    const all = await enqueueDueGlobalJobs(pool, workerId ? { workerId } : {});
-    return all.filter((e) => e.scheduleId === scheduleId);
+  ): Promise<Awaited<ReturnType<typeof enqueueDueGlobalJobs>>['enqueued']> {
+    const { enqueued } = await enqueueDueGlobalJobs(pool, workerId ? { workerId } : {});
+    return enqueued.filter((e) => e.scheduleId === scheduleId);
+  }
+
+  /** The same filter applied to the tick's SKIPPED half — the due schedules it could not
+   *  claim, and which conflict it decided each one was. */
+  async function skipsFor(
+    scheduleId: string,
+    pool = getPool()
+  ): Promise<Awaited<ReturnType<typeof enqueueDueGlobalJobs>>['skipped']> {
+    const { skipped } = await enqueueDueGlobalJobs(pool);
+    return skipped.filter((s) => s.scheduleId === scheduleId);
+  }
+
+  async function nextRunAtOf(scheduleId: string): Promise<Date> {
+    const [row] = await query<{ next_run_at: Date }>(
+      `SELECT next_run_at FROM global_job_schedule WHERE id = $1`,
+      [scheduleId]
+    );
+    return row.next_run_at;
   }
 
   beforeEach(async () => {
@@ -412,7 +438,7 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
       expect(await jobsOfType(schedule.jobType)).toHaveLength(1);
     });
 
-    it('a FINISHED run still cannot be replayed at the same slot', async () => {
+    it('a FINISHED run still cannot be replayed at the same slot — and the rewind does not WEDGE the schedule', async () => {
       const schedule = await makeSchedule({ cadenceSeconds: 3600, dueAt: 'now' });
       const [{ scheduledFor }] = await tickFor(schedule.id);
       await query(
@@ -427,6 +453,75 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
       ]);
       expect(await tickFor(schedule.id)).toHaveLength(0);
       expect(await runsOf(schedule.id)).toHaveLength(1);
+
+      // ── THE ASSERTION THIS TEST WAS MISSING ────────────────────────────────────────────
+      // "0 enqueued and still 1 run" is ALSO what a permanently wedged schedule looks like,
+      // which is why the anti-replay guarantee shipped sitting on top of a silent stop: the
+      // tick `continue`d past the next_run_at advance, so the row stayed at the served slot,
+      // every later tick re-conflicted, and the schedule never ran again while health
+      // reported the benign 'due'. A test that never looks at next_run_at cannot tell the
+      // guarantee from the bug.
+      const advanced = await nextRunAtOf(schedule.id);
+      expect(advanced.getTime()).toBeGreaterThan(scheduledFor.getTime());
+      expect(advanced.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('the rewind is REPORTED as slot_already_served, not passed off as an ordinary lost race', async () => {
+      const schedule = await makeSchedule({ cadenceSeconds: 3600, dueAt: 'now' });
+      const [{ scheduledFor }] = await tickFor(schedule.id);
+      await query(
+        `UPDATE global_job_run SET finished_at = now(), outcome = 'success' WHERE schedule_id = $1`,
+        [schedule.id]
+      );
+      await query(`UPDATE global_job_schedule SET next_run_at = $2 WHERE id = $1`, [
+        schedule.id,
+        scheduledFor,
+      ]);
+
+      const [skip] = await skipsFor(schedule.id);
+      expect(skip).toBeDefined();
+      expect(skip.reason).toBe('slot_already_served');
+      expect(skip.scheduledFor.getTime()).toBe(scheduledFor.getTime());
+      expect(skip.nextRunAt).not.toBeNull();
+      expect(skip.nextRunAt!.getTime()).toBeGreaterThan(scheduledFor.getTime());
+    });
+
+    it('an in-flight conflict is reported as run_in_flight and LEAVES next_run_at alone — the level-triggered case still works', async () => {
+      // The other half of the discrimination. Advancing here would be wrong: nothing has run
+      // for this instant, the schedule must stay due until the open run closes.
+      const schedule = await makeSchedule({ cadenceSeconds: 3600, dueAt: 'now' });
+      expect(await tickFor(schedule.id)).toHaveLength(1);
+      await makeDue(schedule.id); // a FRESH instant, so only the in-flight lock can block
+      const due = await nextRunAtOf(schedule.id);
+
+      const [skip] = await skipsFor(schedule.id);
+      expect(skip.reason).toBe('run_in_flight');
+      expect(skip.nextRunAt).toBeNull();
+      expect((await nextRunAtOf(schedule.id)).getTime()).toBe(due.getTime());
+    });
+
+    it('four consecutive ticks after a rewind leave the schedule RUNNING, not stopped', async () => {
+      // The reproduction, end to end: before the fix this loop enqueued 0 four times and
+      // next_run_at never moved. Now the first tick un-wedges it and a later one runs it.
+      const schedule = await makeSchedule({ cadenceSeconds: 1, dueAt: 'now' });
+      const [{ scheduledFor }] = await tickFor(schedule.id);
+      await query(
+        `UPDATE global_job_run SET finished_at = now(), outcome = 'success' WHERE schedule_id = $1`,
+        [schedule.id]
+      );
+      await query(`UPDATE global_job_schedule SET next_run_at = $2 WHERE id = $1`, [
+        schedule.id,
+        scheduledFor,
+      ]);
+
+      let enqueuedTotal = 0;
+      for (let i = 0; i < 4; i += 1) {
+        enqueuedTotal += (await tickFor(schedule.id)).length;
+        await new Promise((r) => setTimeout(r, 1100)); // let the 1s cadence come due again
+      }
+      expect(enqueuedTotal).toBeGreaterThan(0);
+      expect((await runsOf(schedule.id)).length).toBeGreaterThan(1);
+      expect((await nextRunAtOf(schedule.id)).getTime()).toBeGreaterThan(scheduledFor.getTime());
     });
   });
 
@@ -676,6 +771,290 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
     });
   });
 
+  // ── SKIPPED SLOTS ARE COUNTED, NOT SWEPT UNDER THE CARPET ─────────────────────────────
+  describe('after an outage the producer says HOW MANY slots it jumped past', () => {
+    it('a ten-minute gap on a one-minute cadence enqueues ONE run and reports 10 skipped slots', async () => {
+      // The producer jumps next_run_at to the first future slot, so ten one-minute slots get
+      // no run at all. That is right for the level-triggered purge and it is SILENT DATA
+      // LOSS for any edge-triggered job put on this shared path later. Before this the
+      // count existed nowhere: not in the return value, not in a log, not on /healthz — the
+      // next author would have had to derive it from gaps in the ledger to know it happened.
+      const schedule = await makeSchedule({ cadenceSeconds: 60 });
+      await query(
+        `UPDATE global_job_schedule SET next_run_at = now() - interval '10 minutes' WHERE id = $1`,
+        [schedule.id]
+      );
+
+      const [enqueued] = await tickFor(schedule.id);
+      expect(enqueued.skippedSlots).toBe(10);
+      // ONE run for the oldest missed slot — not eleven replays.
+      expect(await runsOf(schedule.id)).toHaveLength(1);
+      expect(enqueued.nextRunAt.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('an ON-TIME run reports ZERO skipped slots — the counter is not just "always something"', async () => {
+      const schedule = await makeSchedule({ cadenceSeconds: 3600, dueAt: 'now' });
+      const [enqueued] = await tickFor(schedule.id);
+      expect(enqueued.skippedSlots).toBe(0);
+    });
+  });
+
+  // ── ACCEPTANCE G ──────────────────────────────────────────────────────────────────────
+  describe('G — the operator-facing health comes from the DATABASE, so a RESTART cannot erase it', () => {
+    // WHAT THIS BLOCK IS FOR. Unit 2 shipped readGlobalJobScheduleHealth() — the only thing
+    // that can report 'breaker_tripped'/'missed' from durable state — with ZERO runtime
+    // callers, and populated /healthz from a per-PROCESS list that only the statement which
+    // TRIPPED the breaker ever wrote to. A process booting after the trip therefore reported
+    // globalBreakersTripped=[] and lastError=null while the compliance purge was stopped
+    // indefinitely. Every test here starts from state written by NOBODY the reader ever met.
+
+    /** A schedule that is enabled, badly overdue, and STOPPED — with no process alive that
+     *  saw any of it happen. Cadence is 1 day so the missed-slot count is legible. */
+    async function stoppedSchedule(): Promise<{ id: string; jobType: string }> {
+      const schedule = await makeSchedule({ cadenceSeconds: 86_400, maxConsecutiveFailures: 3 });
+      await query(
+        `UPDATE global_job_schedule
+            SET enabled = true,
+                created_at = now() - interval '30 days',
+                next_run_at = now() - interval '30 days',
+                consecutive_failures = 3,
+                breaker_tripped_at = now() - interval '30 days',
+                breaker_reason = 'failure: the machine that broke this is long gone'
+          WHERE id = $1`,
+        [schedule.id]
+      );
+      return schedule;
+    }
+
+    /**
+     * Boot a scheduler that has NEVER seen anything, on its own Pool, and wait for its first
+     * durable health read.
+     *
+     * `immediate: false` + a 10-minute tick means it enqueues nothing: the health read is
+     * deliberately not gated on `immediate`, so this is also the assertion that a restarted
+     * worker reports the truth AT BOOT rather than after up to a full tick interval.
+     */
+    async function bootFreshScheduler(): Promise<{
+      metrics: SchedulerMetrics;
+      stop: () => Promise<void>;
+    }> {
+      const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+      const controller = new AbortController();
+      const handle = startScheduler(pool, {
+        signal: controller.signal,
+        environment: 'staging',
+        immediate: false,
+        schedulerTickMs: 600_000,
+        pollIntervalMs: 600_000,
+      });
+      const stop = async (): Promise<void> => {
+        controller.abort();
+        await handle.done;
+        await pool.end();
+      };
+      const deadline = Date.now() + 10_000;
+      while (handle.metrics.globalScheduleHealthAt === null && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return { metrics: handle.metrics, stop };
+    }
+
+    /** The bytes an operator would actually get from GET /healthz for these metrics. */
+    function healthzPayload(metrics: SchedulerMetrics): Record<string, unknown> {
+      let body = '';
+      const res = {
+        writeHead: () => undefined,
+        end: (chunk: string) => {
+          body = chunk;
+        },
+      } as unknown as ServerResponse;
+      healthz({} as never, res, {
+        chromiumReady: true,
+        bootedAt: new Date().toISOString(),
+        scheduler: metrics,
+      });
+      return JSON.parse(body) as Record<string, unknown>;
+    }
+
+    it('a scheduler that boots AFTER the trip reports it — the in-process list is no longer the source', async () => {
+      const schedule = await stoppedSchedule();
+      const booted = await bootFreshScheduler();
+      try {
+        const { metrics } = booted;
+        // The read happened at all. An empty globalSchedules with a null timestamp means
+        // UNKNOWN, and a test that skipped this check could pass on "nothing is wrong".
+        expect(metrics.globalScheduleHealthAt).not.toBeNull();
+        expect(metrics.globalScheduleHealthError).toBeNull();
+
+        const snapshot = metrics.globalSchedules.find((s) => s.jobType === schedule.jobType);
+        expect(snapshot).toBeDefined();
+        expect(snapshot!.status).toBe('breaker_tripped');
+        expect(snapshot!.breakerTrippedAt).not.toBeNull();
+        expect(snapshot!.breakerReason).toMatch(/long gone/);
+        expect(snapshot!.consecutiveFailures).toBe(3);
+        // 30 daily slots came due against an anchor 30 days old; one is forgiven as merely
+        // 'due' (MISSED_RUN_GRACE_PERIODS).
+        expect(snapshot!.missedRuns).toBeGreaterThanOrEqual(29);
+
+        // The alarm an operator reads first, which this process could not possibly have
+        // witnessed — it did not exist when the breaker tripped.
+        expect(metrics.globalBreakersTripped).toContain(schedule.jobType);
+      } finally {
+        await booted.stop();
+      }
+    });
+
+    it('the /healthz PAYLOAD carries it, not just the metrics object', async () => {
+      const schedule = await stoppedSchedule();
+      const booted = await bootFreshScheduler();
+      try {
+        const payload = healthzPayload(booted.metrics);
+        const scheduler = payload.scheduler as SchedulerMetrics;
+        expect(scheduler.globalBreakersTripped).toContain(schedule.jobType);
+        const serialised = JSON.stringify(payload);
+        expect(serialised).toContain(schedule.jobType);
+        expect(serialised).toContain('breaker_tripped');
+      } finally {
+        await booted.stop();
+      }
+    });
+
+    it('a healthy schedule is NOT reported as tripped — the reader is not just "always alarmed"', async () => {
+      // The negative control. Without it, a reader hard-coded to shout would pass every
+      // assertion above.
+      const schedule = await makeSchedule({ cadenceSeconds: 3600, dueAt: 'future' });
+      await query(
+        `INSERT INTO global_job_run (schedule_id, scheduled_for, enqueued_by, started_at, finished_at, outcome)
+           VALUES ($1, now() - interval '30 seconds', 'live-worker',
+                   now() - interval '30 seconds', now() - interval '29 seconds', 'success')`,
+        [schedule.id]
+      );
+      const booted = await bootFreshScheduler();
+      try {
+        const snapshot = booted.metrics.globalSchedules.find((s) => s.jobType === schedule.jobType);
+        expect(snapshot!.status).toBe('ok');
+        expect(snapshot!.missedRuns).toBe(0);
+        expect(booted.metrics.globalBreakersTripped).not.toContain(schedule.jobType);
+      } finally {
+        await booted.stop();
+      }
+    });
+
+    it('an operator RESET clears the alarm on a running worker, because the list is replaced from the DB', async () => {
+      // The other half of "durable is the source": a list that only ever grew would keep
+      // shouting after the fault was cleared, and an alarm that cannot be turned off is an
+      // alarm that gets ignored.
+      const schedule = await stoppedSchedule();
+      const booted = await bootFreshScheduler();
+      try {
+        expect(booted.metrics.globalBreakersTripped).toContain(schedule.jobType);
+
+        await resetGlobalJobBreaker(getPool(), schedule.jobType);
+        await query(`UPDATE global_job_schedule SET next_run_at = now() + interval '1 day' WHERE id = $1`, [
+          schedule.id,
+        ]);
+        // Re-boot rather than wait out a 10-minute tick; the assertion is about where the
+        // list comes from, and a fresh process is the strictest way to ask.
+        await booted.stop();
+        const rebooted = await bootFreshScheduler();
+        try {
+          expect(rebooted.metrics.globalBreakersTripped).not.toContain(schedule.jobType);
+          const snapshot = rebooted.metrics.globalSchedules.find(
+            (s) => s.jobType === schedule.jobType
+          );
+          expect(snapshot!.status).not.toBe('breaker_tripped');
+        } finally {
+          await rebooted.stop();
+        }
+      } catch (err) {
+        await booted.stop().catch(() => undefined);
+        throw err;
+      }
+    });
+
+    // ── THE ACCEPTANCE TEST IS A RESTART, AND THIS ONE IS A REAL OS PROCESS ──────────────
+    describe('a genuinely separate process, over a real socket', () => {
+      const FIXTURE = join(REPO_ROOT, 'tests/scheduler/__fixtures__/restarted-worker.cjs');
+
+      beforeAll(() => {
+        // The same compile worker/Dockerfile runs. Built here rather than assumed present so
+        // the test is self-sufficient locally as well as in CI (which builds worker/ first).
+        execFileSync(
+          process.execPath,
+          [join(REPO_ROOT, 'node_modules/typescript/bin/tsc'), '-p', join(REPO_ROOT, 'worker/tsconfig.json')],
+          { cwd: REPO_ROOT, stdio: 'pipe' }
+        );
+      }, 120_000);
+
+      async function bootWorkerProcess(): Promise<{
+        health: () => Promise<{ scheduler: SchedulerMetrics }>;
+        stop: () => void;
+      }> {
+        const child = spawn(process.execPath, [FIXTURE], {
+          cwd: REPO_ROOT,
+          env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stderr = '';
+        child.stderr.on('data', (d: Buffer) => {
+          stderr += d.toString();
+        });
+        const port = await new Promise<number>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`child worker never listened. stderr:\n${stderr}`)),
+            20_000
+          );
+          let out = '';
+          child.stdout.on('data', (d: Buffer) => {
+            out += d.toString();
+            const m = /LISTENING (\d+)/.exec(out);
+            if (m) {
+              clearTimeout(timer);
+              resolve(Number(m[1]));
+            }
+          });
+          child.on('exit', (code) => {
+            clearTimeout(timer);
+            reject(new Error(`child worker exited with ${code}. stderr:\n${stderr}`));
+          });
+        });
+        const health = async (): Promise<{ scheduler: SchedulerMetrics }> => {
+          const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+          return (await res.json()) as { scheduler: SchedulerMetrics };
+        };
+        return { health, stop: () => child.kill('SIGTERM') };
+      }
+
+      it('curl /healthz on a brand-new process reports the breaker that a DEAD process tripped', async () => {
+        const schedule = await stoppedSchedule();
+        const worker = await bootWorkerProcess();
+        try {
+          let body: { scheduler: SchedulerMetrics } | null = null;
+          const deadline = Date.now() + 20_000;
+          for (;;) {
+            body = await worker.health();
+            if (body.scheduler.globalScheduleHealthAt !== null) break;
+            if (Date.now() > deadline) throw new Error('child worker never read durable health');
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          const scheduler = body.scheduler;
+          expect(scheduler.globalScheduleHealthError).toBeNull();
+          expect(scheduler.globalBreakersTripped).toContain(schedule.jobType);
+          const snapshot = scheduler.globalSchedules.find((s) => s.jobType === schedule.jobType);
+          expect(snapshot).toBeDefined();
+          expect(snapshot!.status).toBe('breaker_tripped');
+          expect(snapshot!.missedRuns).toBeGreaterThanOrEqual(29);
+          // The tick counters are exactly what they were at BASELINE — this process really
+          // has done no work and witnessed nothing. Every word above came from the database.
+          expect(scheduler.ticks).toBe(0);
+          expect(scheduler.lastGlobalEnqueueCount).toBe(0);
+        } finally {
+          worker.stop();
+        }
+      }, 60_000);
+    });
+  });
+
   // ── ACCEPTANCE F ──────────────────────────────────────────────────────────────────────
   describe('F — a disabled schedule enqueues nothing, ever', () => {
     it('migration 0028 SHIPS corrections_retention disabled', () => {
@@ -713,7 +1092,7 @@ describe.skipIf(!hasDb)('global job schedule + run ledger (real Postgres)', () =
       const live = await makeSchedule({ cadenceSeconds: 3600, dueAt: 'now' });
 
       for (let i = 0; i < 3; i += 1) {
-        const enqueued = await enqueueDueGlobalJobs(getPool());
+        const { enqueued } = await enqueueDueGlobalJobs(getPool());
         expect(enqueued.every((e) => e.jobType !== RETENTION_JOB_TYPE)).toBe(true);
         await query(`UPDATE global_job_run SET finished_at = now(), outcome = 'success'
                       WHERE schedule_id = $1 AND finished_at IS NULL`, [live.id]);

@@ -22,6 +22,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const shared = vi.hoisted(() => ({
   calls: [] as Array<{ dryRun: boolean | undefined }>,
+  /** Set to make the mocked purge THROW after recording the call — see the last block. */
+  purgeError: null as Error | null,
 }));
 
 // One mock covers BOTH import specifiers: the route imports '@/lib/corrections/retention'
@@ -30,6 +32,7 @@ const shared = vi.hoisted(() => ({
 vi.mock('@/lib/corrections/retention', () => ({
   purgeExpiredCorrectionReports: vi.fn(async (opts: { dryRun?: boolean } = {}) => {
     shared.calls.push({ dryRun: opts.dryRun });
+    if (shared.purgeError) throw shared.purgeError;
     return {
       dryRun: opts.dryRun === true,
       expired: 0,
@@ -129,7 +132,11 @@ describe('F1 — CORRECTION_RETENTION_DRY_RUN resolves the same way for every sp
     savedSecret = process.env.CORRECTION_RETENTION_CRON_SECRET;
     process.env.CORRECTION_RETENTION_CRON_SECRET = SECRET;
     warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // The route logs its effective mode through console.log (it has no injectable logger);
+    // captured rather than printed so the table below stays readable.
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
     shared.calls.length = 0;
+    shared.purgeError = null;
   });
 
   afterEach(() => {
@@ -204,5 +211,140 @@ describe('F1 — CORRECTION_RETENTION_DRY_RUN resolves the same way for every sp
     );
     expect(res.status).toBe(200);
     expect(shared.calls[0].dryRun).toBe(true);
+  });
+});
+
+// ── THE EFFECTIVE-MODE LINE SURVIVES A FAILING PURGE ────────────────────────────────────
+//
+// WHY THIS NEEDS ITS OWN GUARD. The whole point of logging the resolved mode BEFORE calling
+// the purge is the case where the purge does not come back: the response then carries
+// nothing but a status code, so the log line is the ONLY record of whether that invocation
+// was deleting real correction reports or counting them. The property held on the worker
+// and did not exist at all on the route (which returned a bare 503), and NOTHING asserted
+// it on either. An ordering that is only correct by accident is one refactor from being
+// wrong — moving the log after the purge, or folding it into the success response, breaks
+// this and breaks nothing else in the suite.
+//
+// "Was it deleting when it fell over?" is not a debugging nicety here. correction_report
+// deletion is permanent and the privacy page promises it happens automatically, so an
+// operator answering that question after an incident has no second source.
+describe('the effective-mode line is on the record even when the purge THROWS', () => {
+  let savedSwitch: string | undefined;
+  let savedSecret: string | undefined;
+  let log: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    savedSwitch = process.env[CORRECTION_RETENTION_DRY_RUN_ENV];
+    savedSecret = process.env.CORRECTION_RETENTION_CRON_SECRET;
+    process.env.CORRECTION_RETENTION_CRON_SECRET = SECRET;
+    log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    shared.calls.length = 0;
+    shared.purgeError = new Error('connection terminated unexpectedly');
+  });
+
+  afterEach(() => {
+    if (savedSwitch === undefined) delete process.env[CORRECTION_RETENTION_DRY_RUN_ENV];
+    else process.env[CORRECTION_RETENTION_DRY_RUN_ENV] = savedSwitch;
+    if (savedSecret === undefined) delete process.env.CORRECTION_RETENTION_CRON_SECRET;
+    else process.env.CORRECTION_RETENTION_CRON_SECRET = savedSecret;
+    shared.purgeError = null;
+    vi.restoreAllMocks();
+  });
+
+  async function postRun(): Promise<Response> {
+    return POST(
+      new Request('http://localhost/api/corrections/retention/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-cron-secret': SECRET },
+        body: '{}',
+      })
+    );
+  }
+
+  it('ROUTE: a purge that throws still returns 503 AND leaves "effective mode DELETING" logged', async () => {
+    setSwitch('false'); // the switch says delete — the mode that destroys rows
+    const res = await postRun();
+
+    expect(res.status).toBe(503);
+    expect(shared.calls).toHaveLength(1); // it really did attempt the purge
+    const logged = log.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toMatch(/effective mode DELETING/);
+    expect(logged).toContain(CORRECTION_RETENTION_DRY_RUN_ENV);
+    expect(logged).toContain('explicit_run');
+  });
+
+  it('ROUTE: the same holds when the kill-switch has PAUSED it — the record says DRY RUN', async () => {
+    setSwitch('TRUE');
+    const res = await postRun();
+
+    expect(res.status).toBe(503);
+    const logged = log.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toMatch(/effective mode DRY RUN/);
+    expect(logged).toContain('explicit_pause');
+    // And the mode it recorded is the mode it actually asked for — a log line that can
+    // disagree with the call is worse than none.
+    expect(shared.calls[0].dryRun).toBe(true);
+  });
+
+  it('ROUTE: the caller’s own {dryRun:true} is reflected in the line, not just the env var', async () => {
+    setSwitch('false');
+    shared.calls.length = 0;
+    const res = await POST(
+      new Request('http://localhost/api/corrections/retention/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-cron-secret': SECRET },
+        body: JSON.stringify({ dryRun: true }),
+      })
+    );
+    expect(res.status).toBe(503);
+    const logged = log.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toMatch(/effective mode DRY RUN/);
+    expect(logged).toContain('caller dryRun=true');
+  });
+
+  it('WORKER: the handler rethrows (so the queue records a failure) with the line already logged', async () => {
+    setSwitch('false');
+    const logged: string[] = [];
+    const handler = makeCorrectionsRetentionJobHandler({
+      logger: { log: (m: string) => void logged.push(m) },
+    });
+
+    await expect(
+      handler({
+        id: 'job-throws',
+        sourceId: null,
+        jobType: 'corrections_retention',
+        attempts: 1,
+        maxAttempts: 1,
+      })
+    ).rejects.toThrow(/connection terminated/);
+
+    expect(logged.join('\n')).toMatch(/effective mode DELETING/);
+    // The RESULT line never happened — which is exactly why the mode line cannot be
+    // attached to it.
+    expect(logged.join('\n')).not.toMatch(/deleted=/);
+  });
+
+  it('BOTH runtimes record the SAME effective mode for the same configuration', async () => {
+    setSwitch('yes');
+    const workerLogged: string[] = [];
+    const handler = makeCorrectionsRetentionJobHandler({
+      logger: { log: (m: string) => void workerLogged.push(m) },
+    });
+    await expect(
+      handler({
+        id: 'job-throws-2',
+        sourceId: null,
+        jobType: 'corrections_retention',
+        attempts: 1,
+        maxAttempts: 1,
+      })
+    ).rejects.toThrow();
+    await postRun();
+
+    const routeLogged = log.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(workerLogged.join('\n')).toMatch(/effective mode DRY RUN/);
+    expect(routeLogged).toMatch(/effective mode DRY RUN/);
   });
 });
