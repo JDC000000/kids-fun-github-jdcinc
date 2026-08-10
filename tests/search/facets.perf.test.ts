@@ -203,6 +203,15 @@ function interleavedMedians(runs: number, ops: Array<() => void>): number[] {
 }
 
 describe('facet counting cost', () => {
+  // The explicit timeout is not padding — vitest 2.0.5's DEFAULT testTimeout is 5000ms and
+  // nothing overrides it (no testTimeout in vitest.config.ts, vitest.workspace.ts or
+  // package.json), while this test measures 3105–6456ms in the loaded lane. Four measured runs
+  // were already OVER 5000ms and all four PASSED — only because this body is fully synchronous,
+  // so the event loop never yields and vitest's timer-based timeout cannot fire. The margin is
+  // negative today and synchronicity is the only thing hiding it: the day any part of this
+  // becomes await-ing (a real repository, an async fixture), the file silently converts into a
+  // timeout flake whose message says nothing about facet cost — the exact failure mode this
+  // suite has minted three times already. 30s changes nothing about what is measured.
   it('scales linearly with the candidate count, not with candidates × facet values', () => {
     // N and 4N of the SAME catalogue shape, so the only variable is the candidate count.
     const N = 1_000;
@@ -234,5 +243,5 @@ describe('facet counting cost', () => {
     // weakest real quadratic regression measured in the same lane. Conditions, the full dataset
     // and its limits are in the header — do not quote this line without them.
     expect(growth).toBeLessThan(8);
-  });
+  }, 30_000);
 });
