@@ -112,7 +112,16 @@ describe('Option D — deterministic dedup decider', () => {
             for (const { venues } of VENUE_CASES) {
               const l = side('a', { authorityTier: authority, confidenceLabel: confidence });
               const r = side('b', { authorityTier: 'official', confidenceLabel: 'high' });
-              // Both orderings — chooseCanonical is order-sensitive by construction.
+              // Both orderings, though chooseCanonical is in fact order-INSENSITIVE for any
+              // input the detector can produce: rank() (dedup.ts) ends in side.id and the
+              // comparison is element-wise, so with distinct ids the tie always resolves
+              // before the argument-order fallback — and detectDedupCandidates guarantees
+              // distinctness via `r.id <> f.id`. Swept forward and reversed over the rank
+              // space at 8fe6268: 0 asymmetric results. (This comment previously claimed the
+              // opposite, "order-sensitive by construction"; migration 0030's key design
+              // depends on which is true, so the account is corrected rather than left to
+              // contradict it. Sweeping both orders here is still worth the cost — it is what
+              // would CATCH a future edit that made the function order-sensitive.)
               seen.add(decideDedupDeterministic(candidate(score, l, r), venues).action);
               seen.add(decideDedupDeterministic(candidate(score, r, l), venues).action);
               evaluated += 2;

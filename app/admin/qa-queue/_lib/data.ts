@@ -315,17 +315,46 @@ export async function confirmDedupMerge(
   });
 }
 
-export type DedupRejectResult = { ok: true; duplicateId: string } | { ok: false; reason: 'already_handled' };
+export type DedupRejectResult =
+  | { ok: true; duplicateId: string }
+  | { ok: false; reason: 'already_handled' | 'not_a_pair' };
 
 /**
  * Human-confirmed dedup REJECT — "not a duplicate" (G-T34-6). Keeps BOTH records live and
  * separate; the flagged candidate is CONFIRMED (a trusted, distinct listing) so it leaves
  * the queue — a real, audited decision, never a silent drop or an archive. In one admin
  * transaction: lock + re-check the row is still a live manual_candidate (else already
- * handled), flip status_state → 'confirmed', write the audit row.
+ * handled), record the PAIR-SCOPED verdict, flip status_state → 'confirmed', write the audit
+ * row.
+ *
+ * WHY THIS TAKES canonicalId (0030). The verdict is pair-scoped — "this is not a duplicate OF
+ * THAT" — and until 0030 this function was row-scoped AT ITS SIGNATURE: it never received the
+ * second id, so there was nothing pair-shaped it COULD record, and the detector re-routed the
+ * pair on its very next run. Note that the sibling below/above it, confirmDedupMerge, has
+ * always taken both. The missing parameter was the whole defect.
+ *
+ * The adjudication row, the status flip and the audit row are ONE transaction deliberately: a
+ * committed status flip with an uncommitted verdict is the original bug with extra steps.
  */
-export async function rejectDedupPair(duplicateId: string, note: string | null, adminUserId: string): Promise<DedupRejectResult> {
+export async function rejectDedupPair(
+  duplicateId: string,
+  canonicalId: string,
+  note: string | null,
+  adminUserId: string
+): Promise<DedupRejectResult> {
   return withAdminTransaction(async (client: PoolClient) => {
+    // Same guard confirmDedupMerge applies, and for the same reason: the pair must be one the
+    // detector actually routed, so an adjudication row can never be minted for an arbitrary
+    // pair of ids posted at the action. Ordered here to match how the row was written; that is
+    // safe because the caller renders canonicalId FROM this same decision row (listReviewQueue).
+    const link = await client.query(
+      `SELECT 1 FROM llm_batch_decision
+        WHERE target_id = $1 AND related_id = $2 AND use_case = 'dedup' AND action = 'route_to_review'
+        LIMIT 1`,
+      [duplicateId, canonicalId]
+    );
+    if ((link.rowCount ?? 0) === 0) return { ok: false, reason: 'not_a_pair' } as const;
+
     const cur = await client.query<{ status_state: string; archived_at: Date | string | null }>(
       `SELECT status_state::text AS status_state, archived_at FROM activity_occurrence WHERE id = $1 FOR UPDATE`,
       [duplicateId]
@@ -334,6 +363,38 @@ export async function rejectDedupPair(duplicateId: string, note: string | null, 
     if (cur.rows[0].archived_at != null || cur.rows[0].status_state !== 'manual_candidate') {
       return { ok: false, reason: 'already_handled' } as const;
     }
+
+    // ON CONFLICT DO NOTHING — RULED, not defaulted into, and the first ruling was WRONG.
+    // The draft let the unique violation RAISE, reasoning that a pair could only be adjudicated
+    // twice if the suppression predicate had failed. That reasoning does not survive contact
+    // with the data. MEASURED at 8fe6268 through the real code:
+    //
+    //   1. pair routed → decision (target=B, related=A); B → 'manual_candidate'
+    //   2. an admin edits B's confidence_label (app/admin/corrections resolveCorrectionReport
+    //      does exactly this) — a rank() input, so chooseCanonical's roles INVERT
+    //   3. the next detector run writes (target=A, related=B) and flips A → 'manual_candidate'
+    //      too. BOTH rows are now queued: the same unordered pair, presented from each side.
+    //      Observed directly — the queue rendered A:canonical=B alongside B:canonical=A.
+    //   4. the human answers one, then the other. That second reject is a legitimate answer to
+    //      a legitimately-queued item, and a raising INSERT would fail it — permanently
+    //      stranding that row at 'manual_candidate' with no way for anyone to clear it.
+    //
+    // Suppression stops FUTURE DETECTION; it deliberately does not retract an already-flipped
+    // status. So "one unordered pair answered twice" is a normal state, not a broken one, and
+    // the order-canonical key is what lets the second answer recognise the first.
+    //
+    // It is still not silent. `verdictRecorded` below distinguishes the reject that CREATED the
+    // verdict from one that matched an existing row, so a pair answered twice is visible in
+    // admin_audit_log rather than swallowed — the property the raising version was reaching
+    // for, without the dead end.
+    const [low, high] = duplicateId < canonicalId ? [duplicateId, canonicalId] : [canonicalId, duplicateId];
+    const inserted = await client.query(
+      `INSERT INTO dedup_pair_adjudication (occurrence_low, occurrence_high, verdict, decided_by, note)
+       VALUES ($1, $2, 'not_duplicate', $3, $4)
+       ON CONFLICT (occurrence_low, occurrence_high) DO NOTHING`,
+      [low, high, adminUserId, note]
+    );
+    const verdictRecorded = (inserted.rowCount ?? 0) > 0 ? 'created' : 'already_recorded';
 
     await client.query(
       `UPDATE activity_occurrence SET status_state = 'confirmed', last_checked_at = now() WHERE id = $1`,
@@ -345,8 +406,17 @@ export async function rejectDedupPair(duplicateId: string, note: string | null, 
         action: QA_AUDIT_ACTIONS.DEDUP_REJECT,
         targetTable: 'activity_occurrence',
         targetId: duplicateId,
+        // The audit row is keyed on the duplicate alone (admin_audit_log is row-shaped), so
+        // WHICH pair was judged lives in `after.notDuplicateOf` and, durably, in
+        // dedup_pair_adjudication. Before 0030 it was recorded nowhere at all.
         before: { statusState: 'manual_candidate', archived: false },
-        after: { statusState: 'confirmed', archived: false, note },
+        after: {
+          statusState: 'confirmed',
+          archived: false,
+          notDuplicateOf: canonicalId,
+          verdictRecorded,
+          note,
+        },
       },
       client
     );

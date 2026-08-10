@@ -167,7 +167,7 @@ describe.skipIf(!hasDb)('QA queue — dedup-pair review (G-T34-6)', () => {
   });
 
   it('reject ("not a duplicate"): confirms the candidate, keeps BOTH live & separate, audits', async () => {
-    const res = await rejectDedupPair(dup2, 'Different age group.', adminId);
+    const res = await rejectDedupPair(dup2, canon2, 'Different age group.', adminId);
     expect(res.ok).toBe(true);
 
     const dup = await occRow(dup2);
@@ -189,7 +189,18 @@ describe.skipIf(!hasDb)('QA queue — dedup-pair review (G-T34-6)', () => {
   it('a second dedup action on an already-handled row is a safe no-op', async () => {
     const merged = await confirmDedupMerge(dup1, canon1, null, adminId);
     expect(merged).toEqual({ ok: false, reason: 'already_handled' });
-    const rejected = await rejectDedupPair(dup2, null, adminId);
+    const rejected = await rejectDedupPair(dup2, canon2, null, adminId);
     expect(rejected).toEqual({ ok: false, reason: 'already_handled' });
+  });
+
+  it('reject refuses a forged pair (no route_to_review decision) → not_a_pair, and writes NO verdict', async () => {
+    // Same guard confirmDedupMerge has always had. Without it the pair-scoped verdict could be
+    // minted for two arbitrary ids posted at the action, permanently suppressing detection for
+    // a pair no detector ever proposed — a silent, durable hole rather than a visible one.
+    const before = await query<{ n: string }>(`SELECT count(*)::text AS n FROM dedup_pair_adjudication`);
+    const res = await rejectDedupPair(dup1, unrelated, null, adminId);
+    expect(res).toEqual({ ok: false, reason: 'not_a_pair' });
+    const after = await query<{ n: string }>(`SELECT count(*)::text AS n FROM dedup_pair_adjudication`);
+    expect(after[0].n).toBe(before[0].n);
   });
 });

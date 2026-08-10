@@ -114,6 +114,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/ingestion/source-runner.test.ts',
   'tests/ingestion/venue.test.ts',
   'tests/llm/age-db.test.ts',
+  'tests/llm/dedup-adjudication-db.test.ts',
   'tests/llm/category-cost-db.test.ts',
   'tests/llm/dedup-db.test.ts',
   'tests/llm/dedup-deterministic-db.test.ts',

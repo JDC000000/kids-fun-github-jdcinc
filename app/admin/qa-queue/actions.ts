@@ -110,14 +110,29 @@ export async function dedupReviewAction(formData: FormData): Promise<ReviewActio
   }
 
   // reject_merge — keep both records separate.
+  // canonicalId is REQUIRED here too, and checked the same way the merge branch checks it.
+  // The verdict is pair-scoped, so recording it needs both ids; accepting a blank one would
+  // either write an adjudication row with a meaningless second id, or (worse) skip the verdict
+  // while still flipping the status — which is silently the exact defect this path closes.
+  // No UI change was needed to get it: DedupReviewForm renders the hidden canonicalId at FORM
+  // level, above both buttons, so it is already in the POST body for this intent.
+  const rejectCanonicalId = str(formData.get('canonicalId'));
+  if (!rejectCanonicalId) return { ok: false, message: 'Missing canonical id — reload the queue.' };
+
   let result;
   try {
-    result = await rejectDedupPair(duplicateId, noteParsed.note, admin.userId);
+    result = await rejectDedupPair(duplicateId, rejectCanonicalId, noteParsed.note, admin.userId);
   } catch {
     return { ok: false, message: 'Could not apply the decision — reload the queue and try again.' };
   }
   if (!result.ok) {
-    return { ok: false, message: 'That record was already handled by someone else — reload the queue.' };
+    return {
+      ok: false,
+      message:
+        result.reason === 'not_a_pair'
+          ? 'These records are not a flagged duplicate pair — reload the queue.'
+          : 'That record was already handled by someone else — reload the queue.',
+    };
   }
   revalidatePath('/admin/qa-queue');
   redirect('/admin/qa-queue?flash=kept_separate');

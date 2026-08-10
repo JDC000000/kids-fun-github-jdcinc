@@ -427,6 +427,12 @@ function dedupCustomId(leftId: string): string {
  * Detect cross-source duplicate candidates changed since the last run. Deterministic
  * blocking: same start instant, different source, title trigram ≥ blocking floor. One best
  * match per fresh left occurrence, de-duplicated to one row per unordered pair.
+ *
+ * PAIRS A HUMAN HAS ALREADY JUDGED ARE EXCLUDED — see the NOT EXISTS in the JOIN's WHERE.
+ * Without it a rejection is not durable: rejectDedupPair sets status_state='confirmed', which
+ * the `fresh` CTE below ACCEPTS, and its last_checked_at bump clears the watermark, so the very
+ * act of dismissing a pair re-qualifies it. Measured at 8fe6268 on a pristine local Postgres:
+ * run 1 routed the pair, the human reject returned ok, run 2 routed the same pair again.
  */
 export async function detectDedupCandidates(limit = configMaxCandidates()): Promise<DedupCandidate[]> {
   const rows = await query<DedupCandidateRow>(
@@ -461,6 +467,35 @@ export async function detectDedupCandidates(limit = configMaxCandidates()): Prom
        JOIN activity_series rs ON rs.id = r.series_id AND rs.source_id <> f.source_id
        JOIN source rsrc ON rsrc.id = rs.source_id
       WHERE similarity(f.activity_name, r.activity_name) >= $3::float8
+        -- ── ALREADY JUDGED BY A HUMAN (0030). Two things about this predicate are
+        -- load-bearing and neither is stylistic.
+        --
+        -- 1. IT IS HERE, ON THE PAIR, AND NOT UP IN THE "fresh" CTE where it reads more
+        --    naturally. The CTE constrains only the LEFT side; this JOIN has NO status and no
+        --    dedup_key predicate on the right (finding F4). Measured at 8fe6268: with the
+        --    routed row already at 'manual_candidate' — i.e. ALREADY excluded from "fresh" —
+        --    freshening only its counterpart brought the pair straight back as left=other,
+        --    right=routed, and a third decision row was written. So any left-side-only
+        --    exclusion is bypassable through the right side, and a row-scoped marker is
+        --    bypassable for exactly that reason. Do not "simplify" this into the CTE.
+        --    (Side effect worth naming, NOT the fix: for an adjudicated pair this also stops
+        --    F4's per-run decision-row growth. F4 itself is untouched and still open.)
+        --
+        -- 2. IT NAMES THE VERDICT IT HONOURS rather than testing for row presence. A bare
+        --    NOT EXISTS silently means "ANY verdict suppresses detection" — true today only
+        --    because 'not_duplicate' is the only verdict 0030's CHECK permits, and wrong in
+        --    the PERMISSIVE direction the moment a second one lands. Naming it fails the
+        --    other way: an unrecognised verdict stops suppressing, the pair keeps appearing,
+        --    and a human notices. Visible-wrong beats silent-wrong for a guard nobody watches.
+        --
+        -- least/greatest matches 0030's canonical (low, high) storage. NOT because the pair
+        -- arrives in both orders — chooseCanonical is symmetric for distinct ids — but because
+        -- that symmetry depends on confidence_label, which a live admin surface can change.
+        AND NOT EXISTS (
+              SELECT 1 FROM dedup_pair_adjudication a
+               WHERE a.occurrence_low = least(f.id, r.id)
+                 AND a.occurrence_high = greatest(f.id, r.id)
+                 AND a.verdict = 'not_duplicate')
       ORDER BY f.id, similarity(f.activity_name, r.activity_name) DESC, r.id`,
     [JOB_NAMES.dedup, limit, DEDUP_BLOCKING_MIN_SIMILARITY]
   );
