@@ -3,7 +3,8 @@
 //
 // WHY THIS MODULE EXISTS RATHER THAN THREE COPIES
 // The three caches were written independently to the same shape, and each independently carried
-// the same two defects. Both are fixed once here:
+// the same three defects. All three are fixed once here — consolidating the copies is what makes
+// fixing them once possible:
 //
 //   1. `Number('')` is 0. A var that is SET BUT EMPTY — trivially produced by a Vercel env entry
 //      saved blank, or `KIDS_FUN_LISTING_CACHE_MS=` in a .env — parsed to 0 and passed the old
@@ -17,6 +18,9 @@
 //      requests issued ~3N loads, N of them the expensive 8-join catalogue scan. Worst exactly
 //      when it hurts most: at deploy, at scale-out, and at every TTL rollover under load.
 //      Caching the in-flight PROMISE collapses that to one load per TTL window.
+//   3. `now - loadedAt < ttl` is satisfied by every NEGATIVE age, so a backwards wall-clock step
+//      (NTP correction, host suspend/resume) pinned the cached value indefinitely rather than for
+//      the TTL. See the age check in `get`.
 //
 // A REJECTED load is never left in the cache. Caching a rejected promise would turn one transient
 // DB blip into a full TTL window of guaranteed 5xx.
@@ -95,7 +99,15 @@ export class TtlPromiseCache<T> {
       this.entry = null;
       return load();
     }
-    if (this.entry && now - this.entry.loadedAt < ttl) return this.entry.value;
+    if (this.entry) {
+      // `age >= 0` is not defensive noise. `now` is wall-clock, and wall-clock moves BACKWARDS on
+      // an NTP step correction or a host suspend/resume. A negative age is always `< ttl`, so the
+      // old comparison alone pinned the stale entry until real time caught up — unbounded, and
+      // exactly when the catalogue is most likely to have changed underneath it. A backwards jump
+      // is treated as expiry: one extra load is cheap, an indefinitely stale read model is not.
+      const age = now - this.entry.loadedAt;
+      if (age >= 0 && age < ttl) return this.entry.value;
+    }
 
     const entry: CacheEntry<T> = { value: load(), loadedAt: now };
     this.entry = entry;
