@@ -1,18 +1,38 @@
 // tests/search/facets.perf.test.ts — Facet counting has to be cheap enough to run on EVERY
-// filter interaction, because that is what a live count-driven rail does. This pins the property
-// that makes that true and would be silently lost in a refactor: facets add no I/O and no second
-// text match — they are a handful of in-memory filter passes over the candidate set the search
-// already built — so their cost grows with the candidate count, not with candidates × values.
+// filter interaction, because that is what a live count-driven rail does. This file pins ONE
+// narrow property of that: the SHAPE of the cost curve. Facet counting is a handful of
+// in-memory filter passes over the candidate set the search already built, so its cost should
+// grow with the candidate count and NOT with candidates × facet values. That is all this file
+// asserts. Read "WHAT THIS DOES NOT CATCH" before crediting it with more.
 //
-// That is asserted as a growth RATIO: the SAME operation timed at two catalogue sizes. Which is
-// not a stylistic preference, it is the whole reason this file can live in CI. An absolute
-// millisecond ceiling standing in for a complexity claim cannot tell "the code went quadratic"
-// from "the runner was busy", so it fails on load alone: the previous `toBeLessThan(200)` here
-// duly failed at 202.6ms on an oversubscribed 4-core box with the code working perfectly. Timing
-// one operation at N and at 4N puts host load into BOTH measurements, where it cancels, and
-// leaves a number that means what the test name says. This budget catches an order-of-magnitude
-// regression — a per-value repository call, a re-run matcher, an accidental O(n²) — and is not
-// there to police milliseconds.
+// HOW IT IS ASSERTED
+// As a growth RATIO — the same operation timed at N and at 4N — rather than as a stopwatch
+// ceiling. That is not a stylistic preference. An absolute millisecond budget standing in for a
+// complexity claim cannot tell "the code went quadratic" from "the runner was busy", and fails
+// on load alone: the `toBeLessThan(200)` this file used to carry duly failed at 202.6ms on an
+// oversubscribed 4-core box with the code working perfectly. Linear predicts 4x; quadratic in
+// the candidate count predicts 16x; the threshold of 8 is the geometric mean of the two, so it
+// separates the two hypotheses instead of measuring the host.
+//
+// WHAT THIS DOES NOT CATCH — established by mutation, not by argument
+// A growth ratio is blind to any cost that is CONSTANT or LINEAR in n, because such a cost
+// scales identically in both windows and divides out. Both blind spots were demonstrated
+// against this exact assertion by running it:
+//   • a LINEAR mutation (600 units of extra work per candidate) PASSED GREEN while
+//     QUADRUPLING this file's runtime;
+//   • a CONSTANT per-facet-value mutation — which is the shape of a per-value repository call —
+//     PASSED GREEN and LOWERED the ratio. That regression makes this test MORE green, not less.
+// So this file does NOT pin "facets add no I/O and no second text match", and does not pin the
+// absolute magnitude of the facet cost either. Earlier versions of this header claimed it did;
+// they were wrong, and the claim was wrong in the specific direction that matters — the FIRST
+// regression it named, a per-value repository call, is one the test actively rewards.
+//
+// Those gaps are known debt, deliberately deferred rather than overlooked. Closing them means
+// adding NEW wall-clock assertions, and this suite's wall-clock methodology is what has
+// repeatedly minted flakes here (three separate times now: the 200ms ceiling, the deleted
+// marginal-cost sibling, and the blocked sampling replaced below). Fix the measurement first,
+// add coverage second. Outstanding: facet cost magnitude, "no I/O", "no second text match", and
+// a real text query at ~500 listings (today's page size).
 //
 // WHY THE SAMPLING IS INTERLEAVED, AND WHY THAT IS THE WHOLE POINT
 // A ratio cancels host load only when the two measurements see the SAME load. Timing them in
@@ -57,9 +77,13 @@
 // severe regression), and it was GENUINELY FLAKY (red on unmodified code at load average 7.29;
 // eleven baseline ratios spanned -0.14 to 1.86 against its threshold of 2.0, four of them
 // negative). A test that cannot fail for the right reason but can fail for the wrong one is
-// negative protection, so net coverage went UP when it was deleted. The property it claimed to
-// guard is pinned — with teeth — by the growth ratio below, which trips under that same quadratic
-// mutation at 8x.
+// negative protection, so removing it was right. What was NOT right was the claim attached to
+// it. The commit that removed it (be1b025) said the property it guarded is "pinned — with teeth —
+// by the growth ratio below"; the mutations in WHAT THIS DOES NOT CATCH show it is not, and the
+// same commit also said the growth test was "left exactly as it is" while its own diff changed
+// the `at4N` floor. That floor change is harmless (a negative numerator used to yield a negative
+// ratio, which passed; it now yields 0, which also passes — it cannot turn a red run green), but
+// it was not a no-op, and the record should say so.
 
 import { describe, it, expect } from 'vitest';
 import { SearchEngine } from '../../lib/search/engine';
