@@ -91,7 +91,8 @@ export interface MatchCandidate {
 
 /** Query→candidates contract. */
 export interface CandidateMatcher {
-  match(expanded: ExpandedQuery, listings: ListingRecord[]): MatchCandidate[];
+  /** `readonly`: the DB-backed listing array is the shared cached read model — read, never edit. */
+  match(expanded: ExpandedQuery, listings: readonly ListingRecord[]): MatchCandidate[];
 }
 
 interface WeightedField {
@@ -119,7 +120,11 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
   private readonly tokenWeightCache = new WeakMap<ListingRecord, TokenWeights>();
 
   constructor(opts: MatcherOptions = {}) {
-    this.weights = opts.fieldWeights ?? { ...DEFAULT_FIELD_WEIGHTS };
+    // Copy BOTH branches. The token index is memoised per matcher (see `tokenWeightCache`), so a
+    // caller that mutated the weights object it passed in would silently desync the memoised index
+    // from the weights actually being applied. Foreclosed here rather than when rank weights
+    // become DB-backed and the object stops being a literal.
+    this.weights = { ...DEFAULT_FIELD_WEIGHTS, ...opts.fieldWeights };
     this.threshold = opts.trigramThreshold ?? DEFAULT_TRIGRAM_THRESHOLD;
     this.fuzzyPenalty = opts.fuzzyPenalty ?? 0.5;
     this.synonymWeight = opts.synonymWeight ?? 0.6;
@@ -128,7 +133,7 @@ export class WeightedTrigramMatcher implements CandidateMatcher {
     this.minFuzzyQueryLength = opts.minFuzzyQueryLength ?? MIN_FUZZY_QUERY_LENGTH;
   }
 
-  match(expanded: ExpandedQuery, listings: ListingRecord[]): MatchCandidate[] {
+  match(expanded: ExpandedQuery, listings: readonly ListingRecord[]): MatchCandidate[] {
     const userTerms = uniq(expanded.originalTerms);
     const synonymPhrases = expanded.synonymPhrases;
     const categoryKeys = new Set(expanded.canonicalCategoryKeys);
