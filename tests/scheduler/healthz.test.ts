@@ -4,10 +4,14 @@
 // tests still hold" had been offered as reassurance more than once while meaning nothing at
 // all, and the endpoint is the only operator-facing signal the ingestion worker has.
 //
-// Three things are pinned here, in descending order of how expensive getting them wrong is:
+// Four things are pinned here, in descending order of how expensive getting them wrong is:
 //   1. the status code is 200 on EVERY path — see the Fly section on the first `it` below;
 //   2. an ABSENT scheduler is not reported as a DISABLED one;
-//   3. `globalSchedules: []` no longer means both "nothing scheduled" and "we are blind".
+//   3. `globalSchedules: []` no longer means both "nothing scheduled" and "we are blind";
+//   4. `lastReconcileAt: null` no longer means both "the sweep found nothing to do" and "the
+//      sweep has never run" — the D-C block.
+// (2), (3) and (4) are the same defect three times over: a benign-looking value standing in
+// for "I don't know", on an endpoint an operator reaches for when something is already wrong.
 //
 // Requests go over a REAL socket rather than through a stubbed ServerResponse, because the
 // thing being pinned in (1) is precisely what Fly's prober sees on the wire — a stub whose
@@ -75,6 +79,8 @@ function metrics(overrides: Partial<SchedulerMetrics> = {}): SchedulerMetrics {
     lastJobAt: null,
     lastReconcileAt: null,
     totalReconciled: 0,
+    lastReconcileAttemptAt: null,
+    reconcileAttempts: 0,
     lastError: null,
     ...overrides,
   };
@@ -176,7 +182,7 @@ describe('/healthz — an ABSENT scheduler is not a DISABLED one (D-A)', () => {
   // reads as a deliberate configuration ("somebody turned it off") when it actually means
   // "nothing has been heard from the scheduler at all".
   //
-  // It is worse than a coincidence of shape: worker/src/scheduler.ts:219 initialises
+  // It is worse than a coincidence of shape: worker/src/scheduler.ts:258 initialises
   // `enabled: true` and NOTHING in the file ever assigns it false, so `enabled: false` on
   // the wire could only EVER have been produced by this unknown branch. The one field an
   // operator would reach for to answer "is the scheduler running?" was, in every case where
@@ -223,7 +229,7 @@ describe('/healthz — an ABSENT scheduler is not a DISABLED one (D-A)', () => {
 
   it('reports a deliberately disabled scheduler as known:true, enabled:false', async () => {
     // ── DO NOT DELETE THIS BECAUSE THE STATE IS UNREACHABLE. THAT IS WHY IT IS HERE ────────
-    // No producer emits `enabled: false` today: worker/src/scheduler.ts:219 sets it true and
+    // No producer emits `enabled: false` today: worker/src/scheduler.ts:258 sets it true and
     // nothing ever unsets it. So this pins a TYPE CONTRACT for a producer that does not exist
     // yet — what the reported arm must look like the day something can turn the scheduler off
     // — not a state you can observe on the endpoint now. The distinction the branch actually
@@ -354,6 +360,81 @@ describe('/healthz — an empty globalSchedules is no longer ambiguous (D-B)', (
   });
 });
 
+describe('/healthz — a sweep that found NOTHING is not a sweep that never RAN (D-C)', () => {
+  // Third instance of this file's recurring defect, on the abandoned-run sweep.
+  // `lastReconcileAt` is stamped only when the sweep reclaims something (worker/src/
+  // scheduler.ts's reconcileOnce, `if (total > 0)`), which is the correct meaning for that
+  // field and the wrong answer to the question an operator asks first. A healthy worker
+  // reclaims nothing week after week, so it served `lastReconcileAt: null` forever — the
+  // same bytes a worker whose sweep had never run once would serve.
+  //
+  // `lastReconcileAttemptAt` / `reconcileAttempts` carry the AGE and the PROGRESS; the pair
+  // above still carries WHAT WAS FOUND. What an operator concludes, in one sentence:
+  // lastReconcileAttemptAt is when recovery last ran (judged against their own clock, not
+  // this process's), and reconcileAttempts: 0 is the only reading that means it is not
+  // running at all.
+  //
+  // These assert VALUES of fields this file's own fixture set, which is a different thing
+  // from the key-set pins below — those stay `Object.keys(...).sort()` and never compare
+  // values, because on the day one catches a real leak a value compare copies the leaked
+  // value into the CI log.
+  const NEVER_SWEPT = metrics();
+  const SWEPT_FOUND_NOTHING = metrics({
+    lastReconcileAttemptAt: '2026-01-01T00:05:00.000Z',
+    reconcileAttempts: 240,
+  });
+
+  it('never swept = no age and no attempts, and that is the ONLY state that means so', async () => {
+    const s = (await get(state(NEVER_SWEPT))).body.scheduler as Record<string, unknown>;
+    expect(s.lastReconcileAttemptAt).toBeNull();
+    expect(s.reconcileAttempts).toBe(0);
+    expect(s.lastReconcileAt).toBeNull();
+  });
+
+  it('swept 240 times and reclaimed nothing = the healthy steady state, and it is legible', async () => {
+    const s = (await get(state(SWEPT_FOUND_NOTHING))).body.scheduler as Record<string, unknown>;
+    expect(s.lastReconcileAttemptAt).toBe('2026-01-01T00:05:00.000Z');
+    expect(s.reconcileAttempts).toBe(240);
+    // Untouched, because nothing was ever reclaimed. Widening these to mean "the sweep ran"
+    // would destroy the found-work signal, which is a genuinely different question.
+    expect(s.lastReconcileAt).toBeNull();
+    expect(s.totalReconciled).toBe(0);
+  });
+
+  it('THE DEFECT ITSELF: the two are now distinguishable on the wire', async () => {
+    const never = (await get(state(NEVER_SWEPT))).body.scheduler as Record<string, unknown>;
+    const idle = (await get(state(SWEPT_FOUND_NOTHING))).body.scheduler as Record<string, unknown>;
+    // Identical on the field an operator used to reach for…
+    expect(never.lastReconcileAt).toEqual(idle.lastReconcileAt);
+    expect(never.totalReconciled).toEqual(idle.totalReconciled);
+    // …and now separable, by a timestamp and an integer. No prose was added to do it: this
+    // endpoint is public and unauthenticated (see the note on SchedulerReport).
+    expect(never.lastReconcileAttemptAt).not.toEqual(idle.lastReconcileAttemptAt);
+    expect(never.reconcileAttempts).not.toEqual(idle.reconcileAttempts);
+  });
+
+  it('the two questions stay independent when the sweep DID reclaim rows', async () => {
+    const s = (
+      await get(
+        state(
+          metrics({
+            lastReconcileAttemptAt: '2026-01-01T00:05:00.000Z',
+            reconcileAttempts: 240,
+            lastReconcileAt: '2026-01-01T00:03:00.000Z',
+            totalReconciled: 7,
+          }),
+        ),
+      )
+    ).body.scheduler as Record<string, unknown>;
+    // "recovery last ran at :05, and the last time it actually had work was :03, 7 rows so
+    // far" — four fields, two questions, no sentence.
+    expect(s.lastReconcileAttemptAt).toBe('2026-01-01T00:05:00.000Z');
+    expect(s.lastReconcileAt).toBe('2026-01-01T00:03:00.000Z');
+    expect(s.reconcileAttempts).toBe(240);
+    expect(s.totalReconciled).toBe(7);
+  });
+});
+
 describe('/healthz — the fields other guards poll are still on the wire', () => {
   // tests/scheduler/global-jobs-db.test.ts's awaitDurableHealth and
   // tests/scheduler/__fixtures__/restarted-worker.cjs both poll this body over a real socket
@@ -412,7 +493,7 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     //
     // So the producer path was the one route neither guard watched — and it is not a
     // hypothetical route. It is how `lastError` and `globalScheduleHealthError` put raw pg
-    // driver text on this endpoint in the first place (worker/src/scheduler.ts:489 assigns
+    // driver text on this endpoint in the first place (worker/src/scheduler.ts:530 assigns
     // `lastError` from `errMsg(err)` on any poll failure, and a pg error routinely names host,
     // port, database and user). This endpoint is confirmed public and unauthenticated on both
     // production and staging.
@@ -447,24 +528,47 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
     //     forces the fixture to gain the key, so `Object.keys` never sees it here — while the
     //     REAL producer object, which does set it, spreads it straight onto the wire through
     //     schedulerReport. Measured: added an optional field + set it in the producer → tsc
-    //     SILENT, all 24 tests GREEN. SchedulerMetrics has ZERO optional fields today, and
-    //     that is not cosmetic — it is the precondition that makes this guard work. Keep it
+    //     SILENT, every test in this file GREEN. SchedulerMetrics has ZERO optional fields
+    //     today, and that is not cosmetic — it is the precondition that makes this guard
+    //     work. Keep it
     //     that way; a field that is genuinely sometimes-absent should be `T | null`, which is
     //     required and therefore forced into the fixture.
     //
     //  2. A CAST LAUNDERS ANYTHING PAST IT, AND THIS IS THE DANGEROUS ONE. Writing
     //     `} as SchedulerMetrics;` at the end of the fixture silences tsc completely.
-    //     Measured: added a REQUIRED producer field with the cast in place → tsc SILENT, all
-    //     24 tests GREEN, field live. Do not introduce a cast here, and do not "fix" a type
-    //     error in this fixture by reaching for one — that error IS the guard firing.
+    //     Measured: added a REQUIRED producer field with the cast in place → tsc SILENT,
+    //     every test in this file GREEN, field live. Do not introduce a cast here, and do
+    //     not "fix" a type error in this fixture by reaching for one — that error IS the
+    //     guard firing.
     //
     //  3. LOOSENING THE RETURN-TYPE ANNOTATION degrades it but, measured, does NOT silently
     //     defeat it: removing `: SchedulerMetrics` from `metrics()` still fails tsc, because
-    //     ~10 call sites pass the result somewhere typed `SchedulerMetrics` and re-check it
-    //     structurally. The errors just move to those call sites and misattribute (they lead
+    //     ~20 call sites pass the result somewhere typed `SchedulerMetrics` and re-check it
+    //     structurally. WHICH tsc, though, is the part that decides whether you ever see it:
+    //     ROOT `tsc --noEmit` fails (21 call sites, measured); `tsc -p worker/tsconfig.json`
+    //     STAYS CLEAN, because that project's `include` is worker-only and this test file is
+    //     not in it. An author who builds only the worker sees green and concludes the guard
+    //     is intact. The errors also move to those call sites and misattribute (they lead
     //     with `environment` widening to `string`), so the real failure is stated confusingly
     //     and an author is tempted into (2) to make it quiet. Keep the annotation — not
     //     because it is the only check, but because it is the one that fails HERE, legibly.
+    //
+    // ── EXERCISED FOR REAL, 2026-08-10, BY `lastReconcileAttemptAt`/`reconcileAttempts` ──
+    // The first genuine producer-side addition since this list existed. It went exactly as
+    // described above, and the ORDER is worth recording because the middle step looks like
+    // the guard failing to work:
+    //   1. fields added to SchedulerMetrics ONLY → root `tsc --noEmit` failed HERE, at the
+    //      `metrics()` fixture, naming `lastReconcileAttemptAt`;
+    //   2. with the producer already carrying both fields and the fixture not yet updated,
+    //      THIS FILE RAN GREEN END TO END. Vitest does not typecheck, so the fixture still built
+    //      the old key set. tsc is the FIRST link in this chain, not a formality beside it —
+    //      the runtime pin below cannot see a producer field until tsc has forced the fixture
+    //      to carry one. That is exactly why defeat vectors (1) and (2) work;
+    //   3. fixture updated → the assertion below failed by name, printing precisely
+    //      `+ "lastReconcileAttemptAt"` and `+ "reconcileAttempts"`, and the literal was then
+    //      edited by hand.
+    // If you are here because step 1 or step 3 just failed at you: that is this guard doing
+    // its job. Add the key to the list deliberately. Do not derive the list; do not cast.
     const REPORTED_ARM_KEYS = [
       'enabled',
       'environment',
@@ -482,8 +586,10 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
       'lastGlobalEnqueueCount',
       'lastJobAt',
       'lastReconcileAt',
+      'lastReconcileAttemptAt',
       'lastTickAt',
       'pollIntervalMs',
+      'reconcileAttempts',
       'schedulerTickMs',
       'ticks',
       'totalEnqueued',
@@ -511,7 +617,7 @@ describe('/healthz — the fields other guards poll are still on the wire', () =
           }),
         ),
       ],
-      // Type contract only — no producer emits enabled:false today (scheduler.ts:219). Held in
+      // Type contract only — no producer emits enabled:false today (scheduler.ts:258). Held in
       // the list so the key set is pinned for that arm too if one ever does.
       ['a scheduler reporting itself disabled', state(metrics({ enabled: false }))],
     ];

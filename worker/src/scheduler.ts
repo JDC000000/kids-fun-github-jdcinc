@@ -115,10 +115,49 @@ export interface SchedulerMetrics {
   jobsSucceeded: number;
   jobsFailed: number;
   lastJobAt: string | null;
-  /** H4: last tick that actually reclaimed abandoned 'running' rows (null = never). */
+  /**
+   * H4: last tick that actually RECLAIMED abandoned 'running' rows (null = never reclaimed
+   * anything). It answers WHEN THE SWEEP LAST FOUND WORK — deliberately not "when did the
+   * sweep last run", which is `lastReconcileAttemptAt` below. A correctly-working system
+   * reclaims nothing for weeks on end and leaves this null the whole time; that is the
+   * expected reading, not a fault. Do not widen it to mean "the sweep ran".
+   */
   lastReconcileAt: string | null;
   /** H4: cumulative abandoned rows recovered (jobs + check runs) since boot. */
   totalReconciled: number;
+  /**
+   * H4: when the sweep last FINISHED AN ATTEMPT — stamped on every tick, whether that
+   * attempt reclaimed rows, reclaimed nothing, or threw. Null means, and only means, that
+   * no sweep has completed since this process booted.
+   *
+   * THIS IS THE FIELD THAT CARRIES THE SWEEP'S AGE, and it exists because nothing did.
+   * `lastReconcileAt` is stamped only when the sweep finds work, so a healthy worker whose
+   * sweep runs every tick and correctly reclaims nothing reported `lastReconcileAt: null`
+   * forever — byte-identical, on a public unauthenticated endpoint, to a worker whose sweep
+   * had never run at all. An operator reaching for "when did recovery last happen" could not
+   * tell "nothing to report" from "nothing happened".
+   *
+   * Judge it against YOUR OWN clock, not this process's: worker/fly.toml:32 sets
+   * `auto_stop_machines = "suspend"` and a resumed machine comes back with its heap intact,
+   * so this can hold an arbitrarily old instant with no error anywhere to hint at it. Same
+   * trap as `globalScheduleHealthAt` — see deriveGlobalScheduleHealthStatus in
+   * worker/src/healthz.ts.
+   */
+  lastReconcileAttemptAt: string | null;
+  /**
+   * H4: sweeps ATTEMPTED since boot — one per tick, incremented on the success path and the
+   * swallowed-error path alike, so it counts attempts and never outcomes.
+   *
+   * `reconcileAttempts > 0` with `totalReconciled: 0` is the healthy steady state: recovery
+   * is running and there is nothing to recover. `reconcileAttempts: 0` is the only value
+   * that means the sweep is not running.
+   *
+   * It also gives the tick loop a second, independent counter: the sweep runs BEFORE
+   * `enqueueDueJobs` and increments unconditionally, while `ticks` increments only after
+   * that enqueue RETURNS (see tickOnce). So a growing gap between this and `ticks` is the
+   * tiered producer failing every tick while the process itself is perfectly alive.
+   */
+  reconcileAttempts: number;
   lastError: string | null;
 }
 
@@ -237,6 +276,8 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     lastJobAt: null,
     lastReconcileAt: null,
     totalReconciled: 0,
+    lastReconcileAttemptAt: null,
+    reconcileAttempts: 0,
     lastError: null,
   };
 
@@ -529,6 +570,15 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       await captureWorkerException(err, {
         tags: { component: 'scheduler', operation: 'reconcile', environment },
       });
+    } finally {
+      // IN THE FINALLY, SO EVERY SWEEP STAMPS ITS OWN AGE — the one above stamps only when
+      // `total > 0`, which is precisely why it could not answer "is the sweep running".
+      // Both the found-nothing path (the healthy steady state) and the threw path (where
+      // `lastError` is the only other trace, and it is shared with the poll and tick loops
+      // and overwritten by them) land here. Moving either line into the `if (total > 0)`
+      // above re-creates the defect; tests/scheduler/reconcile-wiring.test.ts fails if you do.
+      metrics.reconcileAttempts += 1;
+      metrics.lastReconcileAttemptAt = new Date().toISOString();
     }
   }
 

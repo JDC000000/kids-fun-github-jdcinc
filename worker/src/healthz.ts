@@ -26,8 +26,8 @@ import type { SchedulerMetrics } from './scheduler';
 //   • a MISSING scheduler was rendered `{ enabled: false }` — the old
 //     `scheduler: state.scheduler ?? { enabled: false }`. The defect was never a collision of
 //     BYTES. `enabled: false` on the wire could only EVER have come from that fallback, because
-//     scheduler.ts:219 sets `enabled: true` and nothing anywhere unsets it; and a producer that
-//     DID report a disabled scheduler would have sent the whole 22-field metrics object, not a
+//     scheduler.ts:258 sets `enabled: true` and nothing anywhere unsets it; and a producer that
+//     DID report a disabled scheduler would have sent the whole 24-field metrics object, not a
 //     single key. It was a collision of MEANING, in the reader. `scheduler.enabled === false`
 //     is the check an operator — or an alert built on this endpoint — reaches for to answer
 //     "is the scheduler running?", and every single time the endpoint answered it `false` it
@@ -89,7 +89,7 @@ export type GlobalScheduleHealthStatus = 'unknown' | 'last_read_ok' | 'stale';
  * operator's question no better than `known` already does, while standing on a public
  * endpoint as an open invitation for the next author to interpolate `errMsg(err)` into it.
  * The metrics arm already serialises `lastError` and `globalScheduleHealthError`, which for
- * a pg driver error routinely name host, port, database and user (scheduler.ts:489 sets
+ * a pg driver error routinely name host, port, database and user (scheduler.ts:530 sets
  * `lastError` from `errMsg(err)` on any poll failure); staging was observed serving a real
  * job UUID and real telemetry through them. THAT DISCLOSURE IS REAL AND LIVE, it predates
  * this file's current shape, and remediating it is a separate unit that is not this one's to
@@ -101,22 +101,22 @@ export type GlobalScheduleHealthStatus = 'unknown' | 'last_read_ok' | 'stale';
  *   1. the six TOP-LEVEL keys of the body;
  *   2. the keys THIS FILE adds on top of the metrics (`known`, `globalScheduleHealthStatus`);
  *   3. the FULL key set of the `known: true` arm.
- * (3) is not redundant with (2): (2) is computed as a DIFFERENCE against the metrics fixture,
- * so a field added to `SchedulerMetrics` in worker/src/scheduler.ts is on both sides of that
- * subtraction and disappears from it BY CONSTRUCTION; and (1) cannot see it either, because a
- * producer field arrives INSIDE `scheduler`. That producer route is not a hypothetical gap —
- * it is precisely how `lastError` and `globalScheduleHealthError` put raw pg driver text on
- * this endpoint. Before (3) existed, the one route already known to leak was the one route no
- * guard watched.
+ * Pin (3) is not redundant with pin (2): (2) is computed as a DIFFERENCE against the metrics
+ * fixture, so a field added to `SchedulerMetrics` in worker/src/scheduler.ts is on both sides
+ * of that subtraction and disappears from it BY CONSTRUCTION; and (1) cannot see it either,
+ * because a producer field arrives INSIDE `scheduler`. That producer route is not a
+ * hypothetical gap — it is precisely how `lastError` and `globalScheduleHealthError` put raw
+ * pg driver text on this endpoint. Before (3) existed, the one route already known to leak was
+ * the one route no guard watched.
  *
- * (3) READS A FIXTURE, NOT THIS FILE, so it holds only while tsc forces that fixture to mirror
- * `SchedulerMetrics`. Two things break the mirror silently and are measured, not theorised: an
- * OPTIONAL field on SchedulerMetrics (never forced into the fixture, so the key set never sees
- * it — the interface has zero optional fields today and that is load-bearing, prefer
- * `T | null`), and a CAST in the fixture (`as SchedulerMetrics` silences tsc outright, even
- * for a required field). The test carries the full reasoning; the constraint is recorded here
- * too because it is a constraint on the PRODUCER TYPE, which is edited from scheduler.ts by
- * people who may never open the test.
+ * Pin (3) READS A FIXTURE, NOT THIS FILE, so it holds only while tsc forces that fixture to
+ * mirror `SchedulerMetrics`. Two things break the mirror silently and are measured, not
+ * theorised: an OPTIONAL field on SchedulerMetrics (never forced into the fixture, so the key
+ * set never sees it — the interface has zero optional fields today and that is load-bearing,
+ * prefer `T | null`), and a CAST in the fixture (`as SchedulerMetrics` silences tsc outright,
+ * even for a required field). The test carries the full reasoning; the constraint is recorded
+ * here too because it is a constraint on the PRODUCER TYPE, which is edited from scheduler.ts
+ * by people who may never open the test.
  *
  * NONE of the three pins VALUES, and none looks inside a NESTED object. Whatever the producer
  * writes into `lastError` / `globalScheduleHealthError` goes out verbatim, and
@@ -162,7 +162,7 @@ export function deriveGlobalScheduleHealthStatus(
 export function schedulerReport(scheduler: SchedulerMetrics | null | undefined): SchedulerReport {
   // No scheduler state is attached to this process, so its status is UNKNOWN — which is NOT
   // the same as a scheduler that was deliberately disabled. A disabled one WOULD report
-  // known:true with enabled:false; nothing produces that today, because scheduler.ts:219 sets
+  // known:true with enabled:false; nothing produces that today, because scheduler.ts:258 sets
   // `enabled: true` and nothing ever unsets it. That arm is a type contract held open for a
   // future producer, not a state you can observe on this endpoint now — the distinction this
   // branch actually makes today is "reporting" versus "not heard from".

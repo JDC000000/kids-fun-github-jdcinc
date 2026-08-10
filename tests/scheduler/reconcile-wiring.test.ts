@@ -96,7 +96,7 @@ vi.mock('../../worker/core/global-job-schedule', () => ({
   }),
 }));
 
-import { startScheduler } from '../../worker/src/scheduler';
+import { startScheduler, type SchedulerMetrics } from '../../worker/src/scheduler';
 import { reconcileAbandonedRuns } from '../../worker/core/reconcile';
 import { enqueueDueJobs } from '../../worker/scheduler/tiered';
 import { enqueueDueGlobalJobs } from '../../worker/scheduler/global-jobs';
@@ -106,11 +106,12 @@ import { readGlobalJobScheduleHealth } from '../../worker/core/global-job-schedu
 const stubPool = { query: vi.fn(async () => ({ rows: [] })) } as never;
 
 /**
- * Run the scheduler just long enough for its immediate boot tick, then stop it.
- * Intervals are set far above the test's lifetime so only the boot tick can fire and the
- * assertions cannot be satisfied by a second, later tick.
+ * Run the scheduler just long enough for its immediate boot tick, then stop it, and hand back
+ * the metrics that tick left behind. Intervals are set far above the test's lifetime so only
+ * the boot tick can fire and the assertions cannot be satisfied by a second, later tick —
+ * which is what makes an exact `toBe(1)` on a per-tick counter safe here.
  */
-async function runOneTick(): Promise<void> {
+async function runOneTick(): Promise<SchedulerMetrics> {
   const controller = new AbortController();
   const handle = startScheduler(stubPool, {
     signal: controller.signal,
@@ -125,6 +126,7 @@ async function runOneTick(): Promise<void> {
     controller.abort();
     await handle.done;
   }
+  return handle.metrics;
 }
 
 beforeEach(() => {
@@ -255,6 +257,104 @@ describe('scheduler → reconcile wiring (H4-A drift protection)', () => {
       controller.abort();
       await handle.done;
     }
+  });
+});
+
+// ── THE SWEEP'S AGE, WHICH IS A DIFFERENT QUESTION FROM WHAT THE SWEEP FOUND ────────────
+//
+// `lastReconcileAt` / `totalReconciled` are stamped ONLY inside `if (total > 0)`. That is
+// correct for what they mean — "when did the sweep last reclaim something" — and useless for
+// the question an operator actually asks first: IS THE SWEEP STILL RUNNING. A healthy system
+// reclaims nothing, tick after tick, so it reported `lastReconcileAt: null` forever, which is
+// byte-identical on https://kids-fun-worker.fly.dev/healthz to a sweep that had never run at
+// all. Same defect class as `enabled: false` for an absent scheduler and `globalSchedules: []`
+// for a blind one: a benign-looking value standing in for "I don't know".
+//
+// `lastReconcileAttemptAt` / `reconcileAttempts` answer the age question and ONLY the age
+// question. The tests below pin the split in both directions, because the cheap wrong fix is
+// to widen `lastReconcileAt` to mean "the sweep ran" and lose the found-work signal entirely.
+//
+// The mocked sweep in this file returns all-zeros by default — i.e. the healthy steady state
+// is this file's DEFAULT, which is exactly the state that used to be unreportable.
+describe('scheduler → reconcile sweep age (the sweep runs even when it finds nothing)', () => {
+  it('stamps the attempt when the sweep finds NOTHING — the healthy steady state has an age', async () => {
+    // THE DEFECT, DIRECTLY. Move either line out of reconcileOnce()'s `finally` and back
+    // under `if (total > 0)` and this is the test that fails.
+    const m = await runOneTick();
+    expect(reconcileAbandonedRuns).toHaveBeenCalledTimes(1);
+    expect(shared.calls).toContain('reconcile');
+
+    expect(m.reconcileAttempts).toBe(1);
+    expect(m.lastReconcileAttemptAt).not.toBeNull();
+    expect(Date.parse(m.lastReconcileAttemptAt as string)).not.toBeNaN();
+
+    // …and the found-work fields are untouched, because nothing WAS found. If these two ever
+    // start reporting a swept-but-empty tick, the endpoint has lost the ability to say
+    // "recovery actually had to do something", which is the whole reason they exist.
+    expect(m.lastReconcileAt).toBeNull();
+    expect(m.totalReconciled).toBe(0);
+  });
+
+  it('stamps the attempt when the sweep THREW — proving it is the finally, not the happy path', async () => {
+    // The error path swallows deliberately (scheduler.ts: "never let the sweep take the tick
+    // down"), so before this the ONLY trace of a failing sweep was `lastError` — which the
+    // poll loop and the tick loop also write and overwrite. A sweep that has been throwing
+    // every tick for an hour must still show an age that moves.
+    shared.reconcileError = new Error('reconcile boom');
+    const m = await runOneTick();
+    expect(m.reconcileAttempts).toBe(1);
+    expect(m.lastReconcileAttemptAt).not.toBeNull();
+    expect(m.lastReconcileAt).toBeNull();
+  });
+
+  it('counts ATTEMPTS, one per tick — not a boolean, not a count of what it found', async () => {
+    // A short tick so more than one sweep really happens. `reconcileAttempts` rising while
+    // `totalReconciled` stays 0 is the reading that says "recovery is alive and idle", and it
+    // is the reading that was impossible before.
+    const controller = new AbortController();
+    const handle = startScheduler(stubPool, {
+      signal: controller.signal,
+      immediate: true,
+      schedulerTickMs: 40,
+      pollIntervalMs: 600_000,
+      environment: 'staging',
+    });
+    try {
+      await vi.waitFor(() => expect(handle.metrics.reconcileAttempts).toBeGreaterThanOrEqual(3), {
+        timeout: 5_000,
+      });
+      expect(vi.mocked(reconcileAbandonedRuns).mock.calls.length).toBe(
+        handle.metrics.reconcileAttempts
+      );
+      expect(handle.metrics.totalReconciled).toBe(0);
+      expect(handle.metrics.lastReconcileAt).toBeNull();
+    } finally {
+      controller.abort();
+      await handle.done;
+    }
+  });
+
+  it('still stamps lastReconcileAt when the sweep DOES reclaim rows — the other question survives', async () => {
+    // The guard against the cheap wrong fix. If someone "simplifies" by folding
+    // lastReconcileAt into the finally, the test above catches it; if someone deletes the
+    // `if (total > 0)` stamp altogether, this one does. Nothing else in the suite covered
+    // lastReconcileAt's positive direction at all.
+    vi.mocked(reconcileAbandonedRuns).mockImplementationOnce(async () => {
+      shared.calls.push('reconcile');
+      return {
+        jobsRequeued: 2,
+        jobsDeadLettered: 1,
+        checkRunsFailed: 1,
+        globalJobRuns: { abandoned: 1, resolvedSuccessful: 0, breakersTripped: [] },
+      };
+    });
+    const m = await runOneTick();
+    expect(m.lastReconcileAt).not.toBeNull();
+    expect(m.totalReconciled).toBe(5);
+    // Both clocks stamped on a tick that found work — the fields are independent, not
+    // alternatives.
+    expect(m.lastReconcileAttemptAt).not.toBeNull();
+    expect(m.reconcileAttempts).toBe(1);
   });
 });
 
