@@ -42,19 +42,52 @@
 // N and only then fully at 4N. A burst landing in one block and not the others does not cancel,
 // it divides — inflating a minuend or depressing a subtrahend swings the ratio without bound.
 //
-// Measured, not argued. 14 rounds on a 4-core box at 1-min load average 9.9–17.9, driven by
-// duty-cycled CPU spinners (bursts, not steady load, because steady load is the case that
-// already worked):
-//   blocked sampling, 9 samples      ratio spread 2.77 – 7.20   (threshold is 8)
-//   interleaved,      9 samples      ratio spread 3.04 – 5.72
-//   interleaved,     15 samples      ratio spread 3.31 – 4.71
-// The blocked estimator reached 90% of the threshold on unmodified code; independently it has
-// been observed at 9.825 — RED, and higher than the 8.854 a genuinely quadratic mutation
-// produced, which is the worst property a perf assertion can have. Interleaving samples every
-// stream inside every window, so a burst lands proportionally in all four and cancels the way
-// the ratio always claimed it did. The estimator ALGEBRA below is unchanged; only the schedule
-// is. Raising the sample count from 9 to 15 costs ~0.6s of unloaded runtime and was kept
-// because it measurably tightened the spread on the same captured data.
+// Measured, not argued — and measured under the interference that actually dominates this file.
+// Everything below is the FULL dataset, not a capture of one: every round taken is counted here.
+//
+// THE CONDITION. `bash scripts/test.sh` — the whole suite, both lanes running CONCURRENTLY, with
+// the db lane at FULL STRENGTH: 71 of 71 db-lane files, 486 of 486 db-lane tests, zero skipped,
+// in every round counted below. That is not incidental rigour. scripts/test.sh:12-13 says
+// overlapping the unit lane with the db lane "hides the unit lane's cost almost entirely" — the
+// db lane IS the dominant interference source for this file, and its cost is bursty rather than
+// steady, which is exactly the shape a ratio has to survive. An earlier version of this header
+// attributed its numbers to duty-cycled CPU spinners and did not disclose that the db lane was
+// not running for any of them: it documented a PROXY for this condition as though it were this
+// condition. Those figures are gone; these replace them.
+//
+// THE METHOD. The old (blocked) and new (interleaved) estimators were TIMED IN THE SAME ROUND —
+// same lane, same live load, same catalogue and fixtures — with the running order alternated
+// round by round so neither is permanently second. They cannot both be read off one capture: the
+// two differ ONLY in schedule, so a schedule has to be executed, not replayed.
+//
+// THE RESULT — 13 paired rounds, 1-min load average 6.57–14.32:
+//   blocked sampling,  9 samples   2.409 – 18.794   RED (>=8) in 3 of 13   ← ON CLEAN CODE
+//   interleaved,      15 samples   2.968 –  5.041   RED       in 0 of 13   ← the same 13 rounds
+// The blocked schedule's worst clean-code reading, 18.794, is above the 16x a purely quadratic
+// regression predicts — a build failing there is indistinguishable from a catastrophic one — and
+// above the 12.324 the SAME schedule produced in the same lane on code deliberately made
+// quadratic. Reading HIGHER on correct code than on broken code is the worst property a perf
+// assertion can have. Separately, 15 full-suite runs on the shipped schedule at load average
+// 6.40–12.46, same 71/71 db lane: green 15 of 15.
+//
+// THE TEETH, so this is not merely "fewer reds". A quadratic mutation inside lib/search/facets.ts
+// count(), tuned off set.length (the candidate count this ratio varies, never off n) at the
+// WEAKEST strength tried, replicated 9x in the same full lane at load average 9.7–12.8: RED 9 of
+// 9, minimum 9.470. So the two distributions are separated, and in the right order:
+//   false-positive ceiling   5.041   worst clean-code reading, 13 rounds
+//   threshold                    8   between them
+//   true-positive floor      9.470   weakest real regression, 9 replications
+// The blocked schedule INVERTED that pair, and an inverted pair is what makes a perf assertion
+// worse than useless. Un-inverting it is the entire point of interleaving: samples of every
+// stream inside every window, so a burst lands proportionally in all four and cancels the way the
+// ratio always claimed it did. The estimator ALGEBRA below is unchanged — only the schedule and
+// the sample count (9 → 15; see SAMPLES).
+//
+// LIMITS OF THIS EVIDENCE, stated so nobody reads it as more than it is. 13 rounds and 9
+// replications bound the tails loosely. This says the shipped schedule did not go red in 28
+// full-strength observations while the blocked one went red 3 times in 13, and that the weakest
+// mutation never landed below 9.470 in 9 tries under load at least as heavy — not that either
+// tail is impossible.
 //
 // A serial lane of its own for this file was considered and rejected: it would remove the other
 // test files as a source of bursts but not the host, and the numbers above were taken with the
@@ -138,8 +171,11 @@ function makeEngine(listings: ListingRecord[]): SearchEngine {
 }
 
 /**
- * Timed calls per operation. 15 rather than 9: on the same captured samples under bursty load
- * it tightened the ratio spread from 3.04–5.72 to 3.31–4.71, for ~0.6s of unloaded runtime.
+ * Timed calls per operation. 15 rather than 9: on one capture under CPU spinners it tightened the
+ * ratio spread from 3.04–5.72 to 3.31–4.71, for ~0.6s of unloaded runtime. Read that pair as the
+ * reason it was TRIED, not as its warrant — it is half of one earlier dataset and was taken with
+ * the db lane inert. The warrant is the header: the schedule was re-measured at 15 samples under
+ * the full-strength condition, and it is those numbers the threshold is judged against.
  */
 const SAMPLES = 15;
 
@@ -192,9 +228,11 @@ describe('facet counting cost', () => {
 
     // Linear predicts 4x. Quadratic in the candidate count predicts 16x. The threshold is the
     // geometric mean of the two — double the headroom over linear, half the margin to quadratic —
-    // so it separates the two hypotheses instead of measuring the host. Observed 3.3x-4.7x across
-    // 14 rounds at load average 9.9-17.9, with both measurements (18-38ms and 60-100ms) far
-    // enough above timer resolution that neither is noise.
+    // so it separates the two hypotheses instead of measuring the host. Observed 2.968-5.041 on
+    // clean code across ALL 13 paired rounds of the full suite (db lane 71/71 files, 486/486
+    // tests, zero skipped) at 1-min load average 6.57-14.32, against a floor of 9.470 for the
+    // weakest real quadratic regression measured in the same lane. Conditions, the full dataset
+    // and its limits are in the header — do not quote this line without them.
     expect(growth).toBeLessThan(8);
   });
 });
