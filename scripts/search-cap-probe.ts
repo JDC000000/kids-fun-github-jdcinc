@@ -40,7 +40,8 @@
 //                                   certificate verification for this run and prints the ssl
 //                                   options the pool was actually given
 
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Pool, type PoolConfig } from 'pg';
 // The parser node-postgres itself applies to `connectionString`. Not a new dependency: pg depends
 // on it, and pg's own ConnectionParameters is built from exactly this function's output.
@@ -374,9 +375,34 @@ async function main(): Promise<void> {
 // Probe only when this file IS the entrypoint (search-cap-probe.sh bundles it and runs the
 // bundle). Importing it — tests/search/search-cap-probe-tls.test.ts drives `buildPoolConfig`
 // directly — must not open a connection.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+//
+// Compare REAL paths, never the path strings as handed to us. `import.meta.url` is resolved
+// through symlinks by the loader; `process.argv[1]` is the path exactly as typed, and the wrapper
+// derives it from bash's `pwd`, which is LOGICAL, not physical. So any checkout reached through a
+// symlink used to miss this guard and the probe did nothing at all while exiting 0 — the worst
+// failure mode a diagnostic has, and the same class of defect (a probe misreporting its own
+// behaviour) that this guard was added to fix in the first place. Hence the `else` as well:
+// declining to run is now audible on stderr instead of looking like a clean, empty success.
+function toRealPath(candidate: string): string | null {
+  try {
+    return realpathSync(candidate);
+  } catch {
+    return null; // deleted, unreadable, or not a path at all — treat as "not us"
+  }
+}
+
+const modulePath = toRealPath(fileURLToPath(import.meta.url));
+const invokedPath = process.argv[1] ? toRealPath(process.argv[1]) : null;
+
+if (modulePath !== null && modulePath === invokedPath) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);
   });
+} else {
+  console.error(
+    `search-cap-probe: loaded, but not as the process entrypoint — main() did NOT run ` +
+      `(module=${modulePath ?? fileURLToPath(import.meta.url)}, argv[1]=${invokedPath ?? process.argv[1] ?? '<none>'}). ` +
+      `Expected when something imports buildPoolConfig; if you meant to probe, run: bash scripts/search-cap-probe.sh`,
+  );
 }
