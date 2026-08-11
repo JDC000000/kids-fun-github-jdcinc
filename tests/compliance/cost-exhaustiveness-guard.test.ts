@@ -18,11 +18,18 @@
 //
 // This is a SOURCE-TEXT scanner. It pins the guard's SHAPE and its SETTING; it cannot prove the
 // type-level consequence, because no test can add a fifth `CostRead` arm without editing production
-// code. A file-level `// @ts-nocheck`, a loosened tsconfig, or a CI job that stops running `tsc`
-// each defeat the guarantee without touching `formatCost`'s body, and NONE of them are watched
-// here. That is deliberate and it is where this file stops: the target is the benign author making
-// an unfamiliar compiler error go away, not a determined one. A scanner can always lose that second
-// argument, and chasing it would trade real coverage for theatre.
+// code. Two unwatched exits, both MEASURED rather than assumed: a file-level `// @ts-nocheck` (with
+// a fifth arm, both TS2322 errors vanish), and anything that stops `tsc` running over these files
+// at all. Re-homing the guard into a nested function whose PARAMETER is named `read` also defeats
+// it and passes every check here — a known, accepted gap, because the fix for that class is a
+// CI-integrity check that `tsc` runs and neither file is exempt, not a sixth assertion in a
+// formatter pin. Two things that sound like exits and are NOT, so nobody re-asserts them: with a
+// fifth arm, `"strict": false` still errors on both surfaces, and adding both files to tsconfig's
+// `exclude` still errors on both surfaces (the import graph pulls them in regardless).
+//
+// Where this file stops is deliberate: the target is the benign author making an unfamiliar
+// compiler error go away, not a determined one. A scanner always loses that second argument, and
+// chasing it would trade real coverage for theatre.
 //
 // WHY THIS FILE EXISTS. Nothing else in the repo notices if the guard goes. Measured, not
 // argued (U4 QA verdict): delete both `never` assignments and `tsc --noEmit`, `eslint .` and the
@@ -243,19 +250,43 @@ function hasUnstatedArm(body: FormatCostBody): boolean {
  * with a fifth `CostRead` arm BOTH TS2322 errors simply do not appear. The guard is still there and
  * no longer does anything, which is worse than deleting it: it reads as protection.
  *
- * "In a comment" is required, not merely "in the body", using the third view: masking preserves
- * length, so a directive that was blanked in `keys` was comment content, while one that survived is
- * a string or an identifier and cannot suppress anything. A tripwire that fires on a doc string
- * mentioning `@ts-ignore` is a tripwire people start disabling.
+ * THE DIRECTIVE MUST BE THE COMMENT'S LEADING TOKEN, which is the only position TypeScript honours,
+ * and getting that wrong in the other direction is not free: the first version of this check matched
+ * the directive ANYWHERE inside a comment, so the single most natural next edit to the guard's own
+ * (very verbose) comments — warning the next author off `@ts-ignore` — would have failed this file
+ * with the message "the guard is switched OFF" while the guarantee was completely intact. That is
+ * worse than a miss: it is a tripwire that lies, and this file's own docstring already argued a
+ * tripwire firing on innocent prose is one people start disabling.
  *
- * `@ts-nocheck` is deliberately NOT included: it only takes effect at the top of a file, so
- * matching it inside a body would be theatre. It is named in this file's header as unwatched.
+ * Measured, planting each form above the guard with a fifth `CostRead` arm added, and counting
+ * TS2322 across the two label surfaces (2 = both still error = guarantee intact):
+ *
+ *   line comment, directive first          -> 0   HONOURED
+ *   line comment, `@ts-expect-error` first -> 0   HONOURED
+ *   BLOCK comment, directive first         -> 0   HONOURED  (a line-comment-only pattern loses this)
+ *   JSDOC block, directive first           -> 0   HONOURED
+ *   line comment, prose then directive     -> 2   not a directive; must stay green
+ *   block comment, prose then directive    -> 2   not a directive
+ *   jsdoc, directive on a continuation line -> 2  not a directive
+ *
+ * So the rule is: a comment opener, then horizontal whitespace only, then the directive. No newline
+ * between them — the jsdoc continuation form is measured NOT to suppress, so matching it would
+ * re-introduce exactly the false failure this narrowing exists to remove. Nothing TypeScript
+ * actually honours is lost by narrowing to this; the three forms that suppress are all still caught.
+ *
+ * The opener's own offset is then required to be blanked in `keys`, which is what proves it is a
+ * real comment rather than the same text inside a string literal.
+ *
+ * `@ts-nocheck` is deliberately NOT included: it only takes effect at the top of a FILE, so matching
+ * it inside a body would be theatre. It is named in this file's header as an unwatched exit.
  */
+const SUPPRESSION_DIRECTIVE = /(?:\/\/\/?|\/\*+)[ \t]*(@ts-(?:ignore|expect-error))/g;
+
 function suppressionDirectives(body: FormatCostBody): string[] {
-  const re = /@ts-(?:ignore|expect-error)/g;
+  const re = new RegExp(SUPPRESSION_DIRECTIVE.source, 'g');
   const found: string[] = [];
   for (let m = re.exec(body.raw); m; m = re.exec(body.raw)) {
-    if (body.keys[m.index] === ' ') found.push(m[0]);
+    if (body.keys[m.index] === ' ') found.push(m[1]);
   }
   return found;
 }
@@ -600,7 +631,10 @@ export function formatCost(listing: ListingRecord): string {
     for (const file of GUARDED_SURFACES) {
       const raw = readSurface(file);
       expect(suppressionDirectives(bodyOf(file)), `${file}: the PRISTINE file must carry none`).toEqual([]);
-      for (const directive of ['// @ts-ignore', '// @ts-expect-error']) {
+      // All three forms are MEASURED to suppress: with a fifth CostRead arm planted, each one makes
+      // both TS2322 errors disappear. The block form is here because a line-comment-only pattern
+      // would silently stop catching it.
+      for (const directive of ['// @ts-ignore', '// @ts-expect-error', '/* @ts-ignore */']) {
         const mutated = plantAboveGuard(raw, directive);
         expect(
           mutated,
@@ -610,13 +644,48 @@ export function formatCost(listing: ListingRecord): string {
         const body = formatCostBody(mutated);
         expect(body, `${file}: the mutated file must still HAVE a formatCost body`).not.toBeNull();
         expect(body ? suppressionDirectives(body) : [], `${file}: ${directive} went UNDETECTED`).toEqual([
-          directive.replace('// ', ''),
+          /@ts-[a-z-]+/.exec(directive)?.[0],
         ]);
         // …and the guard is still textually present, which is exactly why this check had to exist:
         // every other assertion in this file stays green while the guarantee is gone.
         expect(body ? hasNeverGuard(body) : false, `${file}: the guard is still there, just disarmed`).toBe(true);
       }
     }
+  });
+
+  it('is not tripped by a directive NAMED IN PROSE inside a comment', () => {
+    // THE FALSE FAILURE THIS CHECK ONCE PRODUCED, pinned so it cannot come back. The first version
+    // matched the directive anywhere inside a comment, so the most natural next edit to the guard's
+    // own comments — warning the next author off `@ts-ignore` — failed this file claiming the guard
+    // was switched OFF. Measured: with a fifth CostRead arm, that comment leaves BOTH TS2322 errors
+    // firing. The guarantee is intact and the message said it was gone.
+    //
+    // Asserted in BOTH directions on the REAL files, because narrowing a detector is exactly where a
+    // quiet weakening hides: prose stays green, a real leading-token directive is still caught.
+    const prose = '// Do NOT reach for @ts-ignore here — that error is the guard working.';
+    for (const file of GUARDED_SURFACES) {
+      const raw = readSurface(file);
+      const documented = plantAboveGuard(raw, prose);
+      expect(documented, `${file}: the prose mutation did not apply`).not.toBe(raw);
+      const documentedBody = formatCostBody(documented);
+      expect(documentedBody, `${file}: the mutated file must still HAVE a formatCost body`).not.toBeNull();
+      expect(
+        documentedBody ? suppressionDirectives(documentedBody) : ['<no body>'],
+        `${file}: a comment that merely NAMES the directive is not a suppression — failing here tells ` +
+          'an author the guard is disarmed when it is fully intact'
+      ).toEqual([]);
+      // The other direction, same file, same run: a real one is still caught.
+      const suppressed = formatCostBody(plantAboveGuard(raw, '// @ts-ignore'));
+      expect(
+        suppressed ? suppressionDirectives(suppressed) : [],
+        `${file}: narrowing to leading-token position must not have cost any real detection`
+      ).toEqual(['@ts-ignore']);
+    }
+    // And the same pair on a block comment, whose leading-token form is also measured to suppress.
+    const blockProse = mutate([[/const unhandledArm: never = read;/, '/* prose first, then @ts-ignore */\n      const unhandledArm: never = read;']]);
+    expect(suppressionDirectives(inspect(blockProse))).toEqual([]);
+    const blockReal = mutate([[/const unhandledArm: never = read;/, '/* @ts-ignore */\n      const unhandledArm: never = read;']]);
+    expect(suppressionDirectives(inspect(blockReal))).toEqual(['@ts-ignore']);
   });
 
   it('is not tripped by a STRING that merely names a directive', () => {
