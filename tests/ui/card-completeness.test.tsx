@@ -14,6 +14,8 @@ vi.mock('next/link', () => ({
 
 import { ActivityCard } from '../../app/preview/_components/ActivityCard';
 import {
+  REGISTRATION_REQUIRED_TAG,
+  bookingTag,
   confidenceMeta,
   formatAges,
   formatChecked,
@@ -179,6 +181,96 @@ describe('ResultCard completeness (G-T22-4 / KPI #5)', () => {
       expect(html, `${status}: distance`).toContain(formatDistance(a));
       expect(html, `${status}: cost`).toContain(formatCost(a));
       expect(html, `${status}: cta`).toMatch(/See details|View on/);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The card states its status ONCE (Jon's beta feedback on the freshness stamp).
+//
+// "Bookable now" is the only exact string shared by the two independent vocabularies the
+// card renders — the BOOKING read (`activity.booking` → bookingTag(), the pill) and the
+// STATUS read (`activity.status` → statusMeta(), the freshness stamp) — and search-api's
+// mapBooking sends every `bookable_open` occurrence to `bookable_now`, so it collided on
+// every such card. The pill keeps it; the stamp drops it and is left as source credit +
+// freshness.
+//
+// THE POINT OF THESE TESTS IS THE CONDITION, NOT THE DELETION. Deleting the stamp's label
+// outright would have stripped the ONLY status text from every card whose status the pill
+// cannot state — 'May be stale', 'Unverified', 'Full', 'Out of season', 'Suspended' — and
+// breached the honesty invariant (UXR-06 / T-07) the statusMeta header states. The second
+// test below fails on exactly that mistake.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('status is stated once on the card face (freshness-stamp de-duplication)', () => {
+  /** The freshness stamp's own markup, sliced out of the rendered card. */
+  function stampOf(html: string): string {
+    const start = html.indexOf('<span class="kf-stamp');
+    const end = html.indexOf('<span class="kf-card__cta"', start);
+    expect(start, 'card renders a freshness stamp').toBeGreaterThan(-1);
+    expect(end, 'the stamp precedes the CTA').toBeGreaterThan(start);
+    return html.slice(start, end);
+  }
+
+  /** Visible text only — tags (and therefore aria-label attributes) stripped. */
+  const visibleText = (html: string) => html.replace(/<[^>]*>/g, ' ');
+  const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+
+  it('a bookable_open card prints "Bookable now" once — in the pill, not in the stamp', () => {
+    const a = activity({ statusState: 'bookable_open' });
+    // Precondition: this really is the colliding case, or the test proves nothing.
+    expect(bookingTag(a.booking)).toBe(statusMeta(a.status).label);
+
+    const html = renderToStaticMarkup(<ActivityCard activity={a} />);
+    const stamp = stampOf(html);
+
+    // Once VISIBLY. It also appears in the aria-label, which is the parity that is wanted:
+    // one visible statement, one announced statement (tags are stripped before counting).
+    expect(occurrences(visibleText(html), 'Bookable now'), 'stated exactly once on the face').toBe(1);
+    expect(occurrences(html, 'Bookable now'), 'once visible + once announced').toBe(2);
+    expect(html, 'the pill keeps it').toContain('<span class="kf-tag kf-tag--book">Bookable now</span>');
+    expect(stamp, 'the stamp drops it').not.toContain('Bookable now');
+    // What Jon asked to keep inside the dashed box.
+    expect(stamp, 'source credit stays').toContain(a.sourceName);
+    expect(stamp, 'freshness stays').toContain(formatChecked(a.lastCheckedIso));
+    // The aria-label announces the label that is still VISIBLE (in the pill) — no drift.
+    expect(html).toContain(`aria-label="${[
+      `${a.activityName} at ${a.venue}`,
+      `${formatWhen(a.startIso, a.endIso).day} ${formatWhen(a.startIso, a.endIso).time}`,
+      formatAges(a.ageMin, a.ageMax),
+      'Bookable now',
+    ].join(', ')}"`);
+  });
+
+  it('the stamp still carries the status text for every status the pill cannot state', () => {
+    const ALL: StatusState[] = [
+      'confirmed',
+      'bookable_open',
+      'not_yet_bookable',
+      'schedule_not_published',
+      'inferred_recurring',
+      'manual_candidate',
+      'seasonal_out_of_season',
+      'seasonal_preseason',
+      'seasonal_active',
+      'suspended',
+      'stale',
+      'cancelled',
+      'postponed',
+      'full',
+      'waitlist',
+      'needs_review',
+    ];
+    for (const status of ALL) {
+      const a = activity({ statusState: status });
+      const label = statusMeta(status).label;
+      const pill = a.registrationRequired ? REGISTRATION_REQUIRED_TAG : bookingTag(a.booking);
+      const stamp = stampOf(renderToStaticMarkup(<ActivityCard activity={a} />));
+      if (pill === label) {
+        expect(stamp, `${status}: stamp yields to the identical pill`).not.toContain(label);
+      } else {
+        // No pill states this status, so the stamp is the only status text on the card.
+        expect(stamp, `${status}: stamp is the only status text and must keep it`).toContain(label);
+      }
     }
   });
 });

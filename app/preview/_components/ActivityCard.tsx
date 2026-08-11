@@ -68,6 +68,13 @@ export function ActivityCard({ activity }: { activity: Activity }) {
   // source-authority read ("Official source") was dropped from it along with the badge below —
   // announcing a label a sighted parent can no longer see is exactly the kind of drift that
   // makes an aria-label wrong over time.
+  //
+  // `meta.label` STAYS IN THIS LIST even though the stamp below can now hide it, and that is
+  // not an oversight — it is the same rule applied. The stamp only hides the label when the
+  // booking pill prints the IDENTICAL string (see `statusLabelDuplicatedByTag`), so the label
+  // remains visible on the face in every case; announcing it announces something a sighted
+  // parent can still read. If anything the parity improved: the string used to be visible
+  // twice and announced once, and is now visible once and announced once.
   const label = [
     `${activity.activityName} at ${activity.venue}`,
     `${when.day} ${whenTime}`,
@@ -79,6 +86,26 @@ export function ActivityCard({ activity }: { activity: Activity }) {
     .filter(Boolean)
     .join(', ');
   const bookingLabel = activity.registrationRequired ? REGISTRATION_REQUIRED_TAG : bookingTag(activity.booking);
+  // A `bookable_open` occurrence printed "Bookable now" TWICE on the face: once as the booking
+  // pill, once inside the freshness stamp. Two different fields drive them — `activity.booking`
+  // through bookingTag(), `activity.status` through statusMeta() — so this is a collision, not
+  // one value rendered twice, and "Bookable now" is the only exact string the two vocabularies
+  // share (search-api's mapBooking maps status `bookable_open` → booking `bookable_now`, which is
+  // why it collides on every such card rather than occasionally).
+  //
+  // The de-duplication is therefore an EQUALITY TEST, not a `status === 'bookable_open'` special
+  // case. That matters: statusMeta covers all 16 canonical statuses and most of them ('May be
+  // stale', 'Unverified', 'Full', 'Out of season', 'Suspended') have NO pill at all, so the stamp
+  // is their only status text on the card. Suppressing on equality keeps every one of those
+  // untouched — the honesty invariant (UXR-06 / T-07) cannot be broken by this branch, because it
+  // only ever fires when the same words are still on screen. It also stays correct on its own if
+  // either vocabulary gains or loses a label later.
+  //
+  // The pill wins and the stamp yields, per Jon's beta feedback ("keep only source credit +
+  // freshness" inside the dashed box). `Boolean(bookingLabel)` is load-bearing: no pill is
+  // rendered for an empty booking label, so without it an empty statusMeta label would suppress
+  // the stamp's text with nothing left to state the status.
+  const statusLabelDuplicatedByTag = Boolean(bookingLabel) && bookingLabel === meta.label;
   const body = (
     <>
       <CategoryTile category={activity.category} />
@@ -114,7 +141,7 @@ export function ActivityCard({ activity }: { activity: Activity }) {
             <BookingTag activity={activity} />
           </div>
         )}
-        <FreshnessStamp activity={activity} />
+        <FreshnessStamp activity={activity} hideStatusLabel={statusLabelDuplicatedByTag} />
         <span className="kf-card__cta">{ctaLabel}</span>
       </div>
     </>
