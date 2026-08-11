@@ -1,0 +1,150 @@
+/*
+ * terms.css — styling for the /terms Terms of Service page.
+ *
+ * Deliberately a sibling of privacy.css rather than a shared stylesheet: /privacy is
+ * a signed-off artifact and must not acquire a new styling dependency that a change
+ * here could move underneath it. Same layout idiom, separate file, separate risk.
+ *
+ * Long-form legal prose, not the phone-frame app shell: a single centred, readable
+ * document column on the canvas. Every colour/spacing/radius value comes from the
+ * canonical global --kf-* tokens (app/design-tokens.css) — there are no colour
+ * literals in this file — so the page inherits the brand system AND flips correctly
+ * in dark mode for free. The surface/ink roles used here (--kf-canvas / --kf-ink /
+ * --kf-ink-secondary / --kf-surface-subtle) are the flipping roles.
+ *
+ * The page wrapper carries both `kf` (brand font + ink + the shared `.kf :focus-
+ * visible` ring) and `kf-terms` (this layout).
+ */
+
+.kf-terms {
+  min-height: 100vh;
+  background: var(--kf-canvas);
+  color: var(--kf-ink);
+  padding: var(--kf-space-7) var(--kf-space-4) var(--kf-space-8);
+  display: flex;
+  justify-content: center;
+}
+
+.kf-terms__doc {
+  width: 100%;
+  max-width: 720px;
+}
+
+/* ── Header ── */
+.kf-terms__header {
+  margin-bottom: var(--kf-space-6);
+}
+.kf-terms__wordmark {
+  margin: 0 0 var(--kf-space-2);
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--kf-ink-secondary);
+}
+.kf-terms__title {
+  margin: 0;
+  font-weight: 800;
+  font-size: 30px;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: var(--kf-ink);
+}
+
+/* ── Draft-status notice ──────────────────────────────────────────────────────
+ * The one thing on this page that must not be missable: the body text is an
+ * unreviewed draft and merging publishes it live. Sized as real prose (15px, full
+ * document width, at the top of <main>) rather than small print, because burying it
+ * would defeat the point — but on the site's existing "expected/heads-up" token pair
+ * rather than the danger pair, so it reads as honest context and not as a broken
+ * page.
+ *
+ * --kf-expected-bg / --kf-expected-text is the established notice pairing in this
+ * repo (components/ui/Badge.module.css, the admin *_components/*.module.css notes).
+ * Both halves flip in dark mode and the pair clears WCAG-AA in both schemes:
+ * #6b4e12 on #fbf3de = 6.9:1 light, #f2d99a on #3a2f16 = 9.5:1 dark.
+ *
+ * --kf-warn-amber is a FIXED brand token (it does not flip) and is used here only as
+ * a decorative left rule — never as text or as the sole carrier of meaning, which the
+ * wording handles (WCAG 1.4.1).
+ */
+.kf-terms__notice {
+  margin: 0 0 var(--kf-space-6);
+  padding: var(--kf-space-4);
+  border-radius: var(--kf-r-card);
+  border-left: 4px solid var(--kf-warn-amber);
+  background: var(--kf-expected-bg);
+  color: var(--kf-expected-text);
+}
+.kf-terms__notice-title {
+  margin: 0 0 var(--kf-space-2);
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1.3;
+  color: var(--kf-expected-text);
+}
+.kf-terms__notice-body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--kf-expected-text);
+}
+
+/* ── Prose ── */
+.kf-terms__prose {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--kf-ink);
+}
+.kf-terms__prose h2 {
+  margin: var(--kf-space-6) 0 var(--kf-space-3);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--kf-ink);
+}
+.kf-terms__prose p {
+  margin: 0 0 var(--kf-space-4);
+}
+.kf-terms__meta {
+  color: var(--kf-ink-secondary);
+}
+.kf-terms__prose ul {
+  margin: 0 0 var(--kf-space-4);
+  padding-left: var(--kf-space-5);
+}
+.kf-terms__prose li {
+  margin: 0 0 var(--kf-space-2);
+}
+/* NOTE: privacy.css also carries a `.kf-privacy__prose code` rule. It is deliberately
+ * NOT mirrored here — this document renders no <code> element, and an unused rule with
+ * the one non-tokenised value in the file (a bare 6px radius) is worth less than not
+ * having it. Add it back with a real token if code spans ever appear in these terms. */
+
+/* Links: override the `.kf a` reset (colour: inherit; no underline). Distinguished by
+ * BOTH the high-contrast flipping ink colour AND an underline — never colour alone
+ * (WCAG 1.4.1). Higher specificity (.kf.kf-terms a) guarantees this wins over `.kf a`
+ * regardless of stylesheet order. Focus ring is inherited from the shared
+ * `.kf :focus-visible` rule. */
+.kf.kf-terms a {
+  color: var(--kf-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.kf.kf-terms a:hover {
+  text-decoration-color: var(--kf-leaf-hover);
+}
+
+@media (max-width: 560px) {
+  .kf-terms {
+    padding: var(--kf-space-6) var(--kf-space-3) var(--kf-space-7);
+  }
+  .kf-terms__title {
+    font-size: 26px;
+  }
+  .kf-terms__notice {
+    padding: var(--kf-space-3);
+  }
+}

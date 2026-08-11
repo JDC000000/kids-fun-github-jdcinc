@@ -31,6 +31,9 @@ export function SiteFooter() {
           <Link className="kf-site-footer__link" href="/privacy">
             Privacy Policy
           </Link>
+          <Link className="kf-site-footer__link" href="/terms">
+            Terms of Service
+          </Link>
         </nav>
       </div>
       {attributions.length > 0 && (
