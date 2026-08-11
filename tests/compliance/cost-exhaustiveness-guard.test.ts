@@ -1,9 +1,28 @@
 // tests/compliance/cost-exhaustiveness-guard.test.ts — pins the U4 cost exhaustiveness guard.
 //
-// THE GUARANTEE: the two formatters that turn a `CostRead` into words a parent reads —
-// app/preview/_data/format.ts and lib/email/format.ts — keep the guard that makes a NEW
-// `CostRead` arm a BUILD failure instead of a silent mislabel. Delete the guard, or re-fuse
-// `case 'unstated':` back onto `default:`, and this file fails naming the file it happened in.
+// THE GUARANTEE, STATED NARROWLY ON PURPOSE: the two formatters that turn a `CostRead` into words
+// a parent reads — app/preview/_data/format.ts and lib/email/format.ts — keep the U4 exhaustiveness
+// guard both PRESENT and IN FORCE inside `formatCost`'s own body. Four ways to undo it fail this
+// file by name:
+//   • the `never` assignment is DELETED;
+//   • the value it is fed is SHADOWED, so the assignment survives and proves nothing;
+//   • a `@ts-ignore` / `@ts-expect-error` switches it OFF while leaving it in place;
+//   • `case 'unstated':` is RE-FUSED with `default:` — either order, either spelling.
+//
+// WHAT IT DOES NOT, AND CANNOT, ENFORCE. The first draft of this header claimed the broader
+// property — "the guard that makes a NEW `CostRead` arm a BUILD failure" — and independent QA
+// measured a third exit from that claim which no assertion here was watching (`// @ts-ignore` above
+// the guard: this file green, eslint exit 0, and with a fifth arm BOTH TS2322 errors gone). The two
+// bypasses QA measured are now watched, and the claim is narrowed to match, because a header that
+// outruns its file is the exact defect this repo has already been bitten by twice.
+//
+// This is a SOURCE-TEXT scanner. It pins the guard's SHAPE and its SETTING; it cannot prove the
+// type-level consequence, because no test can add a fifth `CostRead` arm without editing production
+// code. A file-level `// @ts-nocheck`, a loosened tsconfig, or a CI job that stops running `tsc`
+// each defeat the guarantee without touching `formatCost`'s body, and NONE of them are watched
+// here. That is deliberate and it is where this file stops: the target is the benign author making
+// an unfamiliar compiler error go away, not a determined one. A scanner can always lose that second
+// argument, and chasing it would trade real coverage for theatre.
 //
 // WHY THIS FILE EXISTS. Nothing else in the repo notices if the guard goes. Measured, not
 // argued (U4 QA verdict): delete both `never` assignments and `tsc --noEmit`, `eslint .` and the
@@ -42,14 +61,18 @@
 //
 // SHAPE — the same shape as tests/compliance/venue-geo-authority-declared.test.ts, deliberately:
 //
-//   (A) THE GUARD IS PRESENT, per surface, located inside `formatCost`'s own body rather than
-//       anywhere in the file, and matched by SHAPE (a `never`-typed binding fed from the value
-//       the switch discriminates on) rather than by the variable's name — so renaming
+//   (A) THE GUARD IS PRESENT AND IN FORCE, per surface, located inside `formatCost`'s own body
+//       rather than anywhere in the file, and matched by SHAPE (a `never`-typed binding fed from
+//       the value the switch discriminates on) rather than by the variable's name — so renaming
 //       `unhandledArm` or `read` is not a false alarm, while a guard fed from something other
-//       than the switched value does not count.
+//       than the switched value does not count. Two things make "present" mean "in force":
+//       the subject must be bound exactly ONCE and from `readCost()` (a rebinding shadows the
+//       CostRead, and a guard fed from `undefined as never` type-checks while proving nothing),
+//       and no TS suppression directive may sit in the body (it silences the guard in place).
 //
 //   (B) THE SPLIT SHAPE IS INTACT — the `unstated` arm still exists and is NOT fused onto
-//       `default:`, in either the one-line or the two-line spelling.
+//       `default:`, in the one-line spelling, the two-line spelling, or the reversed order
+//       (`default:` written ABOVE the arm, which falls through identically).
 //
 //   (C) TRIPWIRE SELF-CHECK. Both scanners are run against mutated copies of the REAL sources
 //       (guard deleted; arms re-fused across two lines) and against synthetic snippets for the
@@ -125,6 +148,8 @@ const SWITCH_SUBJECT = /switch\s*\(\s*([A-Za-z_$][\w$]*)\s*\.\s*kind\s*\)/;
  * them — blunting the scanner is the one thing this file must not do.
  */
 interface FormatCostBody {
+  /** Untouched source. The ONLY view in which a comment — and so a TS directive — is visible. */
+  readonly raw: string;
   /** Comment-masked; string content intact, so `case 'unstated':` is readable. */
   readonly keys: string;
   /** Comment- AND string-masked; only real code survives. Same length as `keys`. */
@@ -158,6 +183,7 @@ function formatCostBody(src: string): FormatCostBody | null {
   }
   if (end >= code.length) return null; // unbalanced — better to fail than to scan half a body
   return {
+    raw: src.slice(start, end + 1),
     keys: keys.slice(start, end + 1),
     code: code.slice(start, end + 1),
     subject: SWITCH_SUBJECT.exec(code.slice(start, end + 1))?.[1] ?? null,
@@ -182,8 +208,13 @@ function codeMatches(body: FormatCostBody, pattern: RegExp): number[] {
   return hits;
 }
 
-/** `case 'unstated':` fused onto `default:` — ANY spelling, same line or across lines. */
-const FUSED_ARMS = /case\s*(['"`])unstated\1\s*:\s*default\s*:/;
+/**
+ * `case 'unstated':` fused onto `default:` — ANY spelling: same line, across lines, and in EITHER
+ * ORDER. The reversed form (`default:` written above the arm) falls through identically, compiles
+ * clean and is a real shippable revert; it was reported by QA as a gap in the first version, which
+ * only looked for the arm-then-default order.
+ */
+const FUSED_ARMS = /case\s*(['"`])unstated\1\s*:\s*default\s*:|default\s*:\s*case\s*(['"`])unstated\2\s*:/;
 /** The `unstated` arm itself — deleting it outright is a third way to undo the split. */
 const UNSTATED_ARM = /case\s*(['"`])unstated\1\s*:/;
 
@@ -203,6 +234,49 @@ function fusedArms(body: FormatCostBody): boolean {
 
 function hasUnstatedArm(body: FormatCostBody): boolean {
   return codeMatches(body, UNSTATED_ARM).length > 0;
+}
+
+/**
+ * TypeScript suppression directives sitting in a COMMENT inside the body — the third exit from the
+ * guarantee, measured by QA on the real files: `// @ts-ignore` above the guard leaves this file
+ * green, `eslint` exit 0 (no `@typescript-eslint/ban-ts-comment` resolves for these files), and
+ * with a fifth `CostRead` arm BOTH TS2322 errors simply do not appear. The guard is still there and
+ * no longer does anything, which is worse than deleting it: it reads as protection.
+ *
+ * "In a comment" is required, not merely "in the body", using the third view: masking preserves
+ * length, so a directive that was blanked in `keys` was comment content, while one that survived is
+ * a string or an identifier and cannot suppress anything. A tripwire that fires on a doc string
+ * mentioning `@ts-ignore` is a tripwire people start disabling.
+ *
+ * `@ts-nocheck` is deliberately NOT included: it only takes effect at the top of a file, so
+ * matching it inside a body would be theatre. It is named in this file's header as unwatched.
+ */
+function suppressionDirectives(body: FormatCostBody): string[] {
+  const re = /@ts-(?:ignore|expect-error)/g;
+  const found: string[] = [];
+  for (let m = re.exec(body.raw); m; m = re.exec(body.raw)) {
+    if (body.keys[m.index] === ' ') found.push(m[0]);
+  }
+  return found;
+}
+
+/**
+ * Every initialiser the switch subject is bound from, inside the body. There must be exactly ONE,
+ * and it must be `readCost(...)`.
+ *
+ * Why counting matters (QA finding 2): `hasNeverGuard` proves a `never` binding is fed from the
+ * IDENTIFIER the switch reads, which is not the same as proving it is fed from the CostRead. Drop
+ * `const read = undefined as never;` into the default block and the guard type-checks forever,
+ * both TS2322 errors vanish with a fifth arm, and the shape check still says yes — because the name
+ * it checks now refers to the shadow. The decoy test covers a differently-NAMED source; this covers
+ * the same name rebound, which is the half that was missing.
+ */
+function subjectBindings(body: FormatCostBody): string[] {
+  if (!body.subject) return [];
+  const re = new RegExp(`(?:const|let|var)\\s+${body.subject}\\b[^=;{]*=\\s*([^;\\n]*)`, 'g');
+  const initialisers: string[] = [];
+  for (let m = re.exec(body.code); m; m = re.exec(body.code)) initialisers.push(m[1].trim());
+  return initialisers;
 }
 
 function readSurface(file: string): string {
@@ -246,6 +320,48 @@ describe('(A) both cost surfaces still carry the exhaustiveness guard', () => {
       'the U4 exhaustiveness guard has been deleted. If you hit `TS2322: not assignable to type never`, ' +
         'that IS the guard working: the switch is missing an arm — add words for the new CostRead kind, ' +
         'do not delete the assignment.'
+    ).toEqual([]);
+  });
+
+  it('the guard is fed by the real CostRead — the subject is bound ONCE, from readCost()', () => {
+    // "Present" is not "in force". A guard fed from a shadow compiles forever and protects nothing.
+    const shadowed: string[] = [];
+    for (const file of GUARDED_SURFACES) {
+      const body = bodyOf(file);
+      const bindings = subjectBindings(body);
+      if (bindings.length !== 1) {
+        shadowed.push(
+          `${file} — \`${body.subject}\` is bound ${bindings.length} time(s) inside formatCost ` +
+            `(${bindings.join(' | ') || 'none'}): a rebinding SHADOWS the CostRead, so the guard below it ` +
+            'type-checks against the shadow and stops proving the switch is exhaustive'
+        );
+      } else if (!/^readCost\s*\(/.test(bindings[0])) {
+        shadowed.push(
+          `${file} — \`${body.subject}\` is no longer bound from readCost(); it is bound from ` +
+            `\`${bindings[0]}\`, so the guard no longer says anything about the real CostRead union`
+        );
+      }
+    }
+    expect(shadowed, 'the value the exhaustiveness guard is fed is no longer the CostRead').toEqual([]);
+  });
+
+  it('no TypeScript suppression directive sits inside either formatCost body', () => {
+    // The bypass that leaves the guard visibly in place and silently switched off.
+    const suppressed: string[] = [];
+    for (const file of GUARDED_SURFACES) {
+      const body = bodyOf(file);
+      for (const directive of suppressionDirectives(body)) {
+        suppressed.push(
+          `${file} — \`${directive}\` inside formatCost: it switches the exhaustiveness guard OFF while ` +
+            'leaving it in place, so a new CostRead arm produces NO error on this surface at all'
+        );
+      }
+    }
+    expect(
+      suppressed,
+      'a TS suppression directive is disarming the guard. If you reached for it because of ' +
+        '`TS2322: not assignable to type never`, that error IS the guard working — the switch is missing ' +
+        'an arm. Give the new CostRead kind words instead of silencing the check.'
     ).toEqual([]);
   });
 });
@@ -448,14 +564,107 @@ export function formatCost(listing: ListingRecord): string {
   });
 
   it("is specific to the `unstated` label, so the files' other fused defaults are not false alarms", () => {
-    // Both real files fuse a default onto some OTHER label outside formatCost (`case 'unknown':`,
-    // `case 'none':`, `case 'candidate':`). Those are ordinary and must stay silent.
-    const otherLabel = mutate([[/case 'free':\n\s*return 'Free';/, "case 'free':\n    default:"]]);
+    // Both real files fuse a default onto some OTHER label (`case 'unknown':`, `case 'none':`,
+    // `case 'candidate':`). Those are ordinary and must stay silent. The fixture is a nested
+    // switch inside the body because that is the real shape: pre-U4 lib/email/format.ts carried
+    // `unstatedCostLabel`'s `case 'unknown': default:` switch INSIDE formatCost.
+    //
+    // The first version of this fixture fused `default:` onto `case 'free':` immediately above the
+    // unstated arm, which — once FUSED_ARMS gained the reversed alternation — became a genuine
+    // `default:` / `case 'unstated':` fusion and was correctly caught. The fixture was wrong, not
+    // the scanner: kept as a note because "my control fixture accidentally built the defect" is
+    // easy to mistake for a false positive.
+    const otherLabel = mutate([
+      [
+        /void unhandledArm;\n      return 'Cost not listed';/,
+        "void unhandledArm;\n      switch (listing.costStatus) {\n        case 'unknown':\n        default:\n          return 'Cost not listed';\n      }",
+      ],
+    ]);
     expect(fusedArms(inspect(otherLabel))).toBe(false);
+    expect(hasUnstatedArm(inspect(otherLabel)), 'and the unstated arm is still seen').toBe(true);
   });
 
   it('a body it cannot locate is a FAILURE, not a silent pass', () => {
     expect(formatCostBody('export function somethingElse(): string { return "x"; }')).toBeNull();
     expect(formatCostBody('export function formatCost(l: L): string { return "x";')).toBeNull();
+  });
+
+  // ── the three bypasses independent QA measured against the shipped file (findings 1–3) ──
+
+  /** Plant `text` on its own line immediately above the guard, at the guard's indentation. */
+  function plantAboveGuard(src: string, text: string): string {
+    return src.replace(/^([ \t]*)(const\s+[A-Za-z_$][\w$]*\s*:\s*never\s*=)/m, `$1${text}\n$1$2`);
+  }
+
+  it('catches a TS suppression directive planted above the guard in the REAL file', () => {
+    for (const file of GUARDED_SURFACES) {
+      const raw = readSurface(file);
+      expect(suppressionDirectives(bodyOf(file)), `${file}: the PRISTINE file must carry none`).toEqual([]);
+      for (const directive of ['// @ts-ignore', '// @ts-expect-error']) {
+        const mutated = plantAboveGuard(raw, directive);
+        expect(
+          mutated,
+          `${file}: planting ${directive} changed nothing, so this tripwire proves nothing — there is no ` +
+            'guard line to plant it above, which means the guard is ALREADY gone (see (A) above)'
+        ).not.toBe(raw);
+        const body = formatCostBody(mutated);
+        expect(body, `${file}: the mutated file must still HAVE a formatCost body`).not.toBeNull();
+        expect(body ? suppressionDirectives(body) : [], `${file}: ${directive} went UNDETECTED`).toEqual([
+          directive.replace('// ', ''),
+        ]);
+        // …and the guard is still textually present, which is exactly why this check had to exist:
+        // every other assertion in this file stays green while the guarantee is gone.
+        expect(body ? hasNeverGuard(body) : false, `${file}: the guard is still there, just disarmed`).toBe(true);
+      }
+    }
+  });
+
+  it('is not tripped by a STRING that merely names a directive', () => {
+    const inString = mutate([
+      [/const read = readCost\(listing\);/, "const doc = 'never write @ts-ignore in here';\n  const read = readCost(listing);"],
+    ]);
+    expect(suppressionDirectives(inspect(inString))).toEqual([]);
+    const inComment = mutate([[/const unhandledArm: never = read;/, '// @ts-expect-error\n      const unhandledArm: never = read;']]);
+    expect(suppressionDirectives(inspect(inComment))).toEqual(['@ts-expect-error']);
+  });
+
+  it('catches a SHADOWED subject planted above the guard in the REAL file', () => {
+    for (const file of GUARDED_SURFACES) {
+      const raw = readSurface(file);
+      const subject = bodyOf(file).subject;
+      const pristine = subjectBindings(bodyOf(file));
+      expect(pristine.length, `${file}: the PRISTINE file must bind the subject exactly once`).toBe(1);
+      expect(pristine[0], `${file}: and bind it from readCost()`).toMatch(/^readCost\s*\(/);
+      const mutated = plantAboveGuard(raw, `const ${subject} = undefined as never;`);
+      expect(
+        mutated,
+        `${file}: planting the shadow changed nothing, so this tripwire proves nothing — there is no guard ` +
+          'line to plant it above, which means the guard is ALREADY gone (see (A) above)'
+      ).not.toBe(raw);
+      const body = formatCostBody(mutated);
+      expect(body, `${file}: the mutated file must still HAVE a formatCost body`).not.toBeNull();
+      expect(body ? subjectBindings(body).length : 0, `${file}: the shadow went UNDETECTED`).toBe(2);
+      // The honest half: the SHAPE check cannot see this, which is the whole reason for the
+      // binding count. Asserted rather than assumed, so the division of labour stays visible.
+      expect(body ? hasNeverGuard(body) : false, `${file}: the shape check alone still says yes`).toBe(true);
+    }
+  });
+
+  it("catches the REVERSED order — `default:` written ABOVE the unstated arm", () => {
+    // Identical fall-through, compiles clean, a real shippable revert. The first version of
+    // FUSED_ARMS only looked for arm-then-default and missed it (QA finding 3).
+    const snippet = mutate([
+      [/case 'unstated':\n\s*return 'Cost not listed';\n\s*default: \{/, "default:\n    case 'unstated': {"],
+    ]);
+    expect(fusedArms(inspect(snippet)), 'the reversed spelling in a snippet').toBe(true);
+    for (const file of GUARDED_SURFACES) {
+      const reversed = refuseArms(readSurface(file)).replace(/(case 'unstated':)(\n[ \t]*)(default\s*:)/, '$3$2$1');
+      expect(reversed, `${file}: the reversal did not produce default-above-arm`).toMatch(
+        /default:\n[ \t]*case 'unstated':/
+      );
+      const body = formatCostBody(reversed);
+      expect(body, `${file}: the mutated file must still HAVE a formatCost body`).not.toBeNull();
+      expect(body ? fusedArms(body) : false, `${file}: the reversed re-fusion went UNDETECTED`).toBe(true);
+    }
   });
 });
