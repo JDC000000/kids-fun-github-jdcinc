@@ -40,8 +40,13 @@
 // argued (U4 QA verdict): delete both `never` assignments and `tsc --noEmit`, `eslint .` and the
 // whole suite stay green; fully revert the split and the suite's output is BYTE-IDENTICAL to the
 // unreverted commit — not one of 2491 passing tests notices the unit was undone. The suite is
-// not asleep: tampering with a single cost LABEL still produces 18 named failures in
-// tests/cost-honesty-matrix.test.tsx. It simply had nothing pointed at the guard itself.
+// not asleep: tampering the `'Cost varies'` label produces 18 named failures in
+// tests/cost-honesty-matrix.test.tsx (U4 QA verdict — and reproduced here: 18 of 110, against a
+// 110-passed control). THE COUNT IS LABEL-SPECIFIC AND 18 IS NOT A GENERAL FIGURE: on my own
+// probes `'Free'` gives 29 and `COST_UNKNOWN` gives 69. Said explicitly because a number you
+// cannot reproduce invites the wrong correction — probe a different label, fail to get 18, and
+// the tempting "fix" is to overwrite a real measurement or delete this sentence, which is the
+// anti-vacuity argument for the whole file. It simply had nothing pointed at the guard itself.
 // eslint structurally cannot cover it either — the resolved config for these two files is
 // `next/core-web-vitals` and nothing else, which carries no rule in the `no-unused-vars` family.
 // (Which is also why the `void unhandledArm;` line beside the guard is inert today, and why this
