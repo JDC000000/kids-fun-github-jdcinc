@@ -62,6 +62,16 @@
 import { zonedLocalToUtcIso } from '../../core/time';
 import { firstTag, stripHtml, tagBlocks } from './rss-text';
 import type { LibraryBranchLocation, LibrarySystemConfig } from './config';
+// The family-wide run-health vocabulary (itemsInFeed / emitted / droppedByLimit, the tally
+// line, and the empty-feed / collapse / truncation verdicts). Extracted from this file so
+// the BiblioCommons path can reuse it instead of growing a second copy — see ./run-health.ts.
+import {
+  YIELD_COLLAPSE_RATIO,
+  assessLibraryFeedRun,
+  formatFeedTally,
+  type LibraryFeedTally,
+  type LibraryHealthVerdict,
+} from './run-health';
 
 /** A generic-RSS event after normalisation. Mirrors what the feed can actually support. */
 export interface GenericRssEvent {
@@ -83,18 +93,21 @@ export interface GenericRssEvent {
   pubDate?: string;
 }
 
-/** Per-run tallies. Every item the parser declines to emit lands in exactly one bucket,
- *  so "why is this source's yield lower than the feed's item count?" always has an
- *  answer on the health board instead of needing a re-pull to reconstruct. */
-export interface GenericRssParseDiagnostics {
-  itemsInFeed: number;
-  /**
-   * Records actually EMITTED. Deliberately not named `kidRelevant`: an item can classify
-   * kid-relevant and still not be emitted (a multi-day range, an unparseable date), so a
-   * field called `kidRelevant` holding the emit count would understate the classifier's
-   * own hit rate — measured on the live pull, 42 items classify kid-relevant but 41 emit.
-   */
-  emitted: number;
+/**
+ * Per-run tallies. Every item the parser declines to emit lands in exactly one bucket,
+ * so "why is this source's yield lower than the feed's item count?" always has an
+ * answer on the health board instead of needing a re-pull to reconstruct. That invariant —
+ * the buckets sum to `itemsInFeed` — is asserted directly in
+ * tests/adapters/library-nvdpl-rss.test.ts.
+ *
+ * `itemsInFeed` / `emitted` / `droppedByLimit` come from the family-wide `LibraryFeedTally`
+ * (./run-health.ts); the buckets below are this platform's own. On `emitted` specifically:
+ * it is deliberately NOT named `kidRelevant`, because an item can classify kid-relevant and
+ * still not be emitted (a multi-day range, an unparseable date), so a field called
+ * `kidRelevant` holding the emit count would understate the classifier's own hit rate —
+ * measured on the live pull, 42 items classify kid-relevant but 41 emit.
+ */
+export interface GenericRssParseDiagnostics extends LibraryFeedTally {
   /** Skipped: service notices (closures), not programming. */
   nonEventNotices: number;
   /** Skipped: multi-day date RANGES, which are not single occurrences (trap 6). */
@@ -105,17 +118,6 @@ export interface GenericRssParseDiagnostics {
   notKidRelevant: number;
   /** Skipped: missing title/link, i.e. structurally unusable. */
   malformedItems: number;
-  /**
-   * Skipped: would have been emitted, but `liveEventsLimit` was already reached.
-   *
-   * A COUNT, not a boolean — and that is the fix for a real defect. This started life as
-   * `truncatedByLimit: boolean`, which meant a truncated run reported "something was cut"
-   * without saying how much, and left the skip buckets NOT summing to `itemsInFeed`: the
-   * gap was silent in exactly the case where the number matters most. The invariant the
-   * buckets exist to uphold — every non-emitted item is accounted for in exactly one
-   * bucket — is asserted directly in tests/adapters/library-nvdpl-rss.test.ts.
-   */
-  droppedByLimit: number;
 }
 
 export interface GenericRssParseResult {
@@ -601,35 +603,39 @@ export const MAX_UNPARSEABLE_DATE_SHARE = 0.2;
  * beyond title and link is recovered from free text, so the realistic failure is PARTIAL,
  * not total: NVDPL rewords the Date/Time label for some templates, or shortens the rolling
  * window, and yield falls 46 → 5 while the feed still answers 200 and `emitted > 0`. The
- * absolute-zero checks below would pass that as green. This is the check that catches it.
- *
- * 0.5 deliberately MIRRORS the project's existing `YIELD_COLLAPSE_RATIO` (ActiveNet and
- * PerfectMind both use it) so the project has ONE collapse semantic rather than a third
- * opinion. It is redeclared here rather than imported because the canonical value currently
- * lives duplicated inside two other adapter families' health modules, and consolidating it
- * into `worker/core/checkrun.ts` (which already owns `loadRecordsFoundBaseline`) means
- * editing files outside this task's declared file_scope. Flagged as a follow-up instead of
- * done unilaterally — see the note in docs/source-register.md §7.
+ * absolute-zero checks would pass that as green. That is the check that catches it — and it
+ * now lives in ./run-health.ts, shared with the BiblioCommons path, because the collapse
+ * question is identical on any feed. Re-exported here so existing importers of this module
+ * keep resolving the same value from the same place.
  */
-export const YIELD_COLLAPSE_RATIO = 0.5;
+export { YIELD_COLLAPSE_RATIO };
 
-export interface GenericRssHealthVerdict {
-  code: string;
-  alert: boolean;
-  detail: string;
+/** Retained as the generic_rss-facing name for the family-wide verdict shape. */
+export type GenericRssHealthVerdict = LibraryHealthVerdict;
+
+/** This platform's skip buckets, in the order the tally line has always rendered them. */
+function genericRssSkipBuckets(d: GenericRssParseDiagnostics) {
+  return [
+    { label: 'not-kid', count: d.notKidRelevant },
+    { label: 'notices', count: d.nonEventNotices },
+    { label: 'multi-day ranges', count: d.multiDayRanges },
+    { label: 'unparseable dates', count: d.unparseableDateTime },
+    { label: 'malformed', count: d.malformedItems },
+  ];
 }
 
 /**
  * Fold parse diagnostics into a verdict for the health board.
  *
+ * The universal checks (empty feed, yield collapse, client-side truncation) come from
+ * `assessLibraryFeedRun`; the ONLY thing this platform adds is the free-text
+ * `date_shape_drift` canary below, which is meaningless on a structured feed. It is passed
+ * as the platform hook so it keeps its exact previous position in the verdict order —
+ * after the collapse checks, before truncation.
+ *
  * `baselineRecordsFound` is the source's trailing record count (null on a first run, or when
  * the caller has no DB). `live` says whether the run that produced `diagnostics` actually hit
- * the network.
- *
- * ⚠️ THE FIXTURE TRAP, which ActiveNet documented and this would otherwise have repeated: a
- * fixture dry-run emits 2 records. Compared against a live baseline of ~46 that is a 96%
- * "collapse", so every fixture run — i.e. the DEFAULT posture, and every CI run — would fire
- * a false alert. A non-live run is therefore never compared to a baseline at all.
+ * the network; see the fixture-trap note on `assessLibraryFeedRun`.
  */
 export function assessGenericRssRun(
   system: LibrarySystemConfig,
@@ -637,56 +643,23 @@ export function assessGenericRssRun(
   baselineRecordsFound: number | null = null,
   live = false
 ): GenericRssHealthVerdict {
-  const {
-    itemsInFeed, emitted, unparseableDateTime, nonEventNotices,
-    multiDayRanges, notKidRelevant, malformedItems, droppedByLimit,
-  } = diagnostics;
-  const tally =
-    `${emitted} emitted of ${itemsInFeed} feed items ` +
-    `(skipped: ${notKidRelevant} not-kid, ${nonEventNotices} notices, ` +
-    `${multiDayRanges} multi-day ranges, ${unparseableDateTime} unparseable dates, ` +
-    `${malformedItems} malformed, ${droppedByLimit} over limit)`;
-
-  if (itemsInFeed === 0) {
-    return { code: 'empty_feed', alert: true, detail: `${system.systemKey}: feed returned zero items` };
-  }
-  if (emitted === 0) {
-    return { code: 'yield_collapse', alert: true, detail: `${system.systemKey}: ${tally}` };
-  }
-  // Baseline collapse — only meaningful for a live run with a known, non-zero baseline.
-  if (
-    live &&
-    baselineRecordsFound != null &&
-    baselineRecordsFound > 0 &&
-    emitted < baselineRecordsFound * YIELD_COLLAPSE_RATIO
-  ) {
-    return {
-      code: 'yield_collapse',
-      alert: true,
-      detail:
-        `${system.systemKey}: ${emitted} records vs trailing baseline ${baselineRecordsFound} ` +
-        `(< ${YIELD_COLLAPSE_RATIO * 100}%) — ${tally}`,
-    };
-  }
-  if (unparseableDateTime / itemsInFeed > MAX_UNPARSEABLE_DATE_SHARE) {
-    return {
-      code: 'date_shape_drift',
-      alert: true,
-      detail: `${system.systemKey}: free-text Date/Time parse failed on >${Math.round(
-        MAX_UNPARSEABLE_DATE_SHARE * 100
-      )}% of items — ${tally}`,
-    };
-  }
-  if (droppedByLimit > 0) {
-    return {
-      code: 'truncated_by_limit',
-      alert: true,
-      // States HOW MANY were lost, not merely that truncation happened — the difference
-      // between an actionable alert and one someone has to re-pull the feed to interpret.
-      detail: `${system.systemKey}: liveEventsLimit=${system.liveEventsLimit} dropped ${droppedByLimit} record(s) — ${tally}`,
-    };
-  }
-  return { code: 'ok', alert: false, detail: `${system.systemKey}: ${tally}` };
+  return assessLibraryFeedRun(
+    system,
+    diagnostics,
+    formatFeedTally(diagnostics, genericRssSkipBuckets(diagnostics)),
+    baselineRecordsFound,
+    live,
+    (tally) =>
+      diagnostics.unparseableDateTime / diagnostics.itemsInFeed > MAX_UNPARSEABLE_DATE_SHARE
+        ? {
+            code: 'date_shape_drift',
+            alert: true,
+            detail: `${system.systemKey}: free-text Date/Time parse failed on >${Math.round(
+              MAX_UNPARSEABLE_DATE_SHARE * 100
+            )}% of items — ${tally}`,
+          }
+        : null
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

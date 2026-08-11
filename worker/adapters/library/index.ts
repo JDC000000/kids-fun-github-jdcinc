@@ -27,9 +27,17 @@ import {
   assessGenericRssRun,
   parseGenericRss,
   type GenericRssEvent,
-  type GenericRssHealthVerdict,
   type GenericRssParseDiagnostics,
 } from './generic-rss';
+// The family-wide run-health vocabulary, shared with the generic_rss handler rather than
+// re-stated here: same tally fields, same tally line, same empty-feed/collapse/truncation
+// verdicts. See ./run-health.ts for why it was extracted.
+import {
+  assessLibraryFeedRun,
+  formatFeedTally,
+  type LibraryFeedTally,
+  type LibraryHealthVerdict,
+} from './run-health';
 
 /** BiblioCommons/BiblioEvents-shaped event after normalisation from gateway JSON. */
 interface BiblioEvent {
@@ -399,17 +407,71 @@ function rssLocation(system: LibrarySystemConfig, itemXml: string): LibraryBranc
   };
 }
 
-function parseBiblioCommonsRss(system: LibrarySystemConfig, xml: string): BiblioEvent[] {
+/**
+ * Per-run tallies for the BiblioCommons RSS feed — the family's only LIVE platform (VPL,
+ * RPL), and until now the one throwing this away entirely.
+ *
+ * Same three universal fields as every other library feed (`LibraryFeedTally`), plus this
+ * platform's own two skip buckets. The invariant the buckets exist to uphold — every item
+ * the feed delivered lands in exactly ONE bucket, so they sum to `itemsInFeed` — is asserted
+ * in tests/adapters/library-bibliocommons-truncation.test.ts, the same way the generic_rss
+ * buckets are asserted in tests/adapters/library-nvdpl-rss.test.ts.
+ *
+ * There is deliberately NO kid-relevance bucket here: unlike NVDPL, this platform does no
+ * audience filtering in the parser (it happens downstream), so inventing one would report a
+ * filter that does not exist.
+ */
+export interface BiblioCommonsParseDiagnostics extends LibraryFeedTally {
+  /** Skipped: `bc:is_cancelled` — the library withdrew the event. Not a defect. */
+  cancelledItems: number;
+  /** Skipped: no title, no link, or no parseable `bc:start_date` — structurally unusable. */
+  malformedItems: number;
+}
+
+export interface BiblioCommonsParseResult {
+  events: BiblioEvent[];
+  diagnostics: BiblioCommonsParseDiagnostics;
+}
+
+export function parseBiblioCommonsRss(
+  system: LibrarySystemConfig,
+  xml: string
+): BiblioCommonsParseResult {
   const items = tagBlocks(xml, 'item');
   const limit = system.liveEventsLimit ?? DEFAULT_BIBLIOCOMMONS_LIMIT;
   const events: BiblioEvent[] = [];
+  const diagnostics: BiblioCommonsParseDiagnostics = {
+    itemsInFeed: items.length,
+    emitted: 0,
+    cancelledItems: 0,
+    malformedItems: 0,
+    droppedByLimit: 0,
+  };
 
   for (const item of items) {
-    if ((firstTag(item, 'bc:is_cancelled') ?? '').toLowerCase() === 'true') continue;
+    if ((firstTag(item, 'bc:is_cancelled') ?? '').toLowerCase() === 'true') {
+      diagnostics.cancelledItems += 1;
+      continue;
+    }
     const title = firstTag(item, 'title');
     const link = firstTag(item, 'link');
     const start = toUtcIso(firstTag(item, 'bc:start_date'));
-    if (!title || !link || !start) continue;
+    if (!title || !link || !start) {
+      diagnostics.malformedItems += 1;
+      continue;
+    }
+
+    // WAS `if (events.length >= limit) break;` AFTER the push, which emitted exactly the
+    // same records but abandoned the loop — so the items the cap cost us were never even
+    // counted, and "the feed gave us N, we emitted M" was unanswerable without a re-pull.
+    // Hoisted ABOVE the field derivation because, past the two skips above, a BiblioCommons
+    // item is unconditionally emittable: nothing below can still reject it, so anything
+    // refused here is exactly "would have been emitted but for the cap" — the same meaning
+    // `droppedByLimit` carries on the generic_rss path.
+    if (events.length >= limit) {
+      diagnostics.droppedByLimit += 1;
+      continue;
+    }
 
     const descriptionHtml = firstTag(item, 'description') ?? '';
     const descriptionText = stripHtml(descriptionHtml);
@@ -436,9 +498,47 @@ function parseBiblioCommonsRss(system: LibrarySystemConfig, xml: string): Biblio
       categoryHint: categoryHint(title, categories),
       location,
     });
-    if (events.length >= limit) break;
+    diagnostics.emitted += 1;
   }
-  return events;
+  return { events, diagnostics };
+}
+
+/**
+ * Fold a BiblioCommons RSS run's tally into a health-board verdict.
+ *
+ * Every check here is the family-wide one from ./run-health.ts — empty feed, yield collapse
+ * (absolute and against the trailing baseline), and client-side truncation, stating HOW MANY
+ * records the cap cost. This platform adds no canary of its own: its fields are structured
+ * and versioned, so it has no free-text shape to drift the way NVDPL's Date/Time can.
+ *
+ * ⚠️ WHAT A `droppedByLimit: 0` DOES AND DOES NOT MEAN, because on VPL it is the answer
+ * FOREVER and reading it as "not truncated" would be exactly wrong. `droppedByLimit` counts
+ * what OUR cap refused out of what BiblioCommons handed us. BiblioCommons' RSS page-caps at
+ * 25 items whatever we ask for, and VPL's `liveEventsLimit` is also 25 — so VPL emits 25 of
+ * 25 and drops nothing by our cap while still being capped, upstream, at 25. RPL's cap is 20
+ * against the same 25-item page, so RPL DOES report `droppedByLimit: 5`. The shape that
+ * betrays the upstream ceiling is `itemsInFeed` sitting exactly on `liveEventsLimit`, which
+ * is why both numbers are in the tally line of every verdict, including `ok`. Turning that
+ * shape into an alert of its own is deliberately NOT done here — for VPL it would fire on
+ * every run forever and degrade every live run to `partial`, which is an operational policy
+ * call, not a parser's.
+ */
+export function assessBiblioCommonsRun(
+  system: LibrarySystemConfig,
+  diagnostics: BiblioCommonsParseDiagnostics,
+  baselineRecordsFound: number | null = null,
+  live = false
+): LibraryHealthVerdict {
+  return assessLibraryFeedRun(
+    system,
+    diagnostics,
+    formatFeedTally(diagnostics, [
+      { label: 'cancelled', count: diagnostics.cancelledItems },
+      { label: 'malformed', count: diagnostics.malformedItems },
+    ]),
+    baselineRecordsFound,
+    live
+  );
 }
 
 async function fetchBiblioCommonsRss(system: LibrarySystemConfig): Promise<BiblioEvent[]> {
@@ -455,8 +555,29 @@ async function fetchBiblioCommonsRss(system: LibrarySystemConfig): Promise<Bibli
     throw new Error(`BiblioCommons RSS fetch failed: ${response.status} ${response.statusText}`);
   }
   const xml = await response.text();
-  return parseBiblioCommonsRss(system, xml);
+  return parseAndRecordBiblioCommonsRss(system, xml, true);
 }
+
+/** Parse a BiblioCommons RSS body and record its tallies for assessRun(). Mirrors
+ *  parseAndRecordGenericRss — the recording lives at the parse seam, not at the fetch seam,
+ *  so a test that drives the parser directly exercises the same path production does. */
+function parseAndRecordBiblioCommonsRss(
+  system: LibrarySystemConfig,
+  xml: string,
+  live: boolean
+): BiblioEvent[] {
+  const { events, diagnostics } = parseBiblioCommonsRss(system, xml);
+  lastBiblioCommonsDiagnostics.set(system.systemKey, { diagnostics, live });
+  return events;
+}
+
+/** Last run's BiblioCommons parse tallies per system. Same module-scoped hand-off as
+ *  `lastGenericRssDiagnostics` below, for the same reason: the Adapter interface hands
+ *  assessRun() only a baseline count, never the parse result. */
+const lastBiblioCommonsDiagnostics = new Map<
+  string,
+  { diagnostics: BiblioCommonsParseDiagnostics; live: boolean }
+>();
 
 // --- generic_rss feed path (NVDPL, D-12) ---------------------------------------
 // Same seam, same politeness, same single unauthenticated GET as the BiblioCommons RSS
@@ -554,6 +675,12 @@ export class LibraryAdapter implements Adapter {
       return parseAndRecordGenericRss(this.system, GENERIC_RSS_FIXTURE_XML, false);
     }
     if (this.system.platform === 'bibliocommons') {
+      // NO feed was parsed on this path — the fixture is a hand-built object, not RSS — so
+      // there is no tally to record and assessRun() must report nothing rather than a
+      // fabricated one. Any tally left over from an earlier LIVE run in this process is
+      // dropped here for the same reason: reporting last run's 25-of-25 against a run that
+      // never touched the network would be a lie with a plausible number attached.
+      lastBiblioCommonsDiagnostics.delete(this.system.systemKey);
       const events: BiblioEvent[] = [
         {
           id: `${this.system.systemKey}-baby-storytime-1`,
@@ -676,17 +803,34 @@ export class LibraryAdapter implements Adapter {
   }
 
   /**
-   * Only the generic_rss platform self-assesses. The BiblioCommons feeds publish
-   * structured, versioned fields whose breakage is loud; NVDPL's date, venue and audience
-   * all come out of free text, so this source can answer HTTP 200 with a perfectly valid
-   * feed and still yield nothing — a green run over an empty municipality. That is what
-   * this reports. Returns null for the other platforms rather than inventing a verdict.
+   * Self-assess the run just extracted (Adapter.assessRun), for BOTH feed-parsing platforms.
+   *
+   * WHY BIBLIOCOMMONS IS NOW INCLUDED, having previously been excluded on the grounds that
+   * "the BiblioCommons feeds publish structured, versioned fields whose breakage is loud".
+   * That reasoning is sound about SHAPE breakage and irrelevant to the failure this project
+   * actually has. Truncation is not a shape change and is not loud: the feed answers 200,
+   * every field parses, every record is valid, and the run is silently short. The capability
+   * to say so already existed for generic_rss — the one platform that never runs live — so
+   * the two sources that DO run live (VPL, RPL) were the two discarding the tally. Reusing
+   * the family-wide assessor rather than writing a second one also means empty-feed and
+   * yield-collapse now cover them, which are correct on any feed and were simply unreachable.
+   *
+   * Returns null when there is nothing honest to report: Communico (no feed parser at all),
+   * or a BiblioCommons run that took the FIXTURE path, where no feed was parsed. A verdict
+   * is only ever derived from a tally an actual parse produced.
    */
-  assessRun(baselineRecordsFound: number | null = null): GenericRssHealthVerdict | null {
-    if (this.system.platform !== 'generic_rss') return null;
-    const last = lastGenericRssDiagnostics.get(this.system.systemKey);
-    if (!last) return null;
-    return assessGenericRssRun(this.system, last.diagnostics, baselineRecordsFound, last.live);
+  assessRun(baselineRecordsFound: number | null = null): LibraryHealthVerdict | null {
+    if (this.system.platform === 'generic_rss') {
+      const last = lastGenericRssDiagnostics.get(this.system.systemKey);
+      if (!last) return null;
+      return assessGenericRssRun(this.system, last.diagnostics, baselineRecordsFound, last.live);
+    }
+    if (this.system.platform === 'bibliocommons') {
+      const last = lastBiblioCommonsDiagnostics.get(this.system.systemKey);
+      if (!last) return null;
+      return assessBiblioCommonsRun(this.system, last.diagnostics, baselineRecordsFound, last.live);
+    }
+    return null;
   }
 
   dedupKeys(record: StructuredRecord): DedupKey {

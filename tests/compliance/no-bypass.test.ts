@@ -747,6 +747,12 @@ const ADAPTER_SOURCES = [
   // no-login / no-CAPTCHA / no-headless / no-POST prohibitions.
   'worker/adapters/library/generic-rss.ts',
   'worker/adapters/library/rss-text.ts',
+  // Shared run-health vocabulary for the family's feed parsers (tallies + verdicts). A pure
+  // function module that cannot make a request — listed anyway, for the same reason
+  // activenet/venue-geo.ts is: "this one can't fetch" is precisely the assumption a
+  // tripwire exists so nobody has to take on trust. Section (D) below is what caught its
+  // absence when the file was added, which is the mechanism working as designed.
+  'worker/adapters/library/run-health.ts',
   'worker/adapters/citycalendar/index.ts',
   'worker/adapters/citycalendar/config.ts',
   'worker/adapters/activenet/index.ts',
