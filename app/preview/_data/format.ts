@@ -2,6 +2,7 @@
 // Every number a parent reads (time, age, cost, distance, freshness) is formatted
 // here so it stays consistent and honest across card + detail (D2 tabular numerals).
 
+import { readCost } from '@/lib/search/filters/cost';
 import type { Activity, ConfidenceLabel, StatusMeta, StatusState } from './types';
 
 const VANCOUVER_TZ = 'America/Vancouver';
@@ -60,32 +61,31 @@ const COST_UNKNOWN = 'Cost — check source';
  * old `costMinCad ?? 0` turned every one of those into a printed price — "$0 approx." for a
  * listing whose cost we never had, and "$0–$30" for one where we only ever knew the ceiling. A
  * fabricated $0 is the single worst thing this formatter can say to a parent, because it is the
- * one reading they will act on. We now only print a number we were actually given.
+ * one reading they will act on. We only print a number we were actually given.
  *
- * ZERO AGREES WITH THE FREE FILTER, DELIBERATELY. `isFree()` in lib/search/filters/cost.ts is the
- * authority on what counts as free, and it requires BOTH bounds at zero — so known/0/0 is free
- * and known/0/null is not. This mirrors that rule rather than inventing a display-only one,
- * because the two are read together: a tile reading "$0" for a listing the Free quick filter
- * EXCLUDES is a contradiction a parent can see (tick Free, watch the $0 card vanish). Where we
- * hold a lone zero and no second bound we therefore say nothing numeric at all — a bare "$0"
- * reads as free, and per cost.ts it is not.
+ * WHAT THIS FUNCTION NO LONGER DECIDES. Which listings are free, and which hold a statable
+ * number, is now `readCost()` in lib/search/filters/cost.ts — the same derivation the weekly
+ * digest reads, sitting next to the `isFree()` the Free quick filter uses. This formatter is
+ * left with the card's WORDS and nothing else.
+ *
+ * That split is the fix for a specific failure, not tidiness. This comment previously said
+ * `isFree()` "requires BOTH bounds at zero". It does not: it requires the MAXIMUM to be zero and
+ * lets the minimum be zero OR ABSENT. The two worked examples underneath the false sentence
+ * happened to be correct, which is how it survived review — and the cell it mis-stated
+ * (known/min=null/max=0) was consequently never enumerated, so this card said "Cost — check
+ * source" about a listing the Free filter was already returning as free. A hand-rolled mirror of
+ * a rule owned elsewhere can be wrong in exactly this silent way; a call cannot.
  */
 export function formatCost(activity: Pick<Activity, 'costStatus' | 'costMinCad' | 'costMaxCad'>): string {
-  switch (activity.costStatus) {
+  const read = readCost(activity);
+  switch (read.kind) {
     case 'free':
       return 'Free';
-    case 'known': {
-      const min = activity.costMinCad ?? null;
-      const max = activity.costMaxCad ?? null;
-      // Known with both bounds at zero is free — the same call isFree() makes.
-      if (min === 0 && max === 0) return 'Free';
-      if (min != null && max != null) return min === max ? `$${min} approx.` : `$${min}–$${max}`;
-      // Exactly one bound, or none. A lone non-zero bound is the one number we can honestly
-      // state; a lone zero (or no bound at all) is not a price we have.
-      const only = min ?? max;
-      return only != null && only !== 0 ? `$${only} approx.` : COST_UNKNOWN;
-    }
-    case 'unknown':
+    case 'amount':
+      return `$${read.amount} approx.`;
+    case 'range':
+      return `$${read.min}–$${read.max}`;
+    case 'unstated':
     default:
       return COST_UNKNOWN;
   }
