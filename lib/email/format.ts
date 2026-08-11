@@ -52,10 +52,11 @@ function money(n: number): string {
  * anyone notices, and there is no way to take it back. The email is the irreversible channel,
  * so it is the one that must not guess.
  *
- * The three not-a-number labels below are deliberately distinct and are kept: they say WHY we
- * have no price, which the card (one label, less room) cannot. "Cost varies" is the honest read
- * for a listing whose status claims a known cost but whose bounds do not yield one — including
- * the lone-zero and contradictory (min > max) cases that used to print "Free" and "$7–$0".
+ * The three not-a-number labels in `unstatedCostLabel` are deliberately distinct and are kept:
+ * they say WHY we have no price, which the card (one label, less room) cannot. "Cost varies" is
+ * the honest read for a listing whose status claims a known cost but whose bounds do not yield
+ * one — including the lone-zero and contradictory (min > max) cases that used to print "Free"
+ * and "$7–$0".
  */
 export function formatCost(listing: ListingRecord): string {
   const read = readCost(listing);
@@ -67,16 +68,46 @@ export function formatCost(listing: ListingRecord): string {
     case 'range':
       return `${money(read.min)}–${money(read.max)}`;
     case 'unstated':
+      return unstatedCostLabel(listing.costStatus);
+    default: {
+      // EXHAUSTIVENESS GUARD — `unstated` and `default` are deliberately NOT fused, and this is
+      // the whole reason this arm exists.
+      //
+      // Fused (`case 'unstated': default:`), a NEW `CostRead` arm is swallowed as "we hold no
+      // price": the digest would tell a parent "Cost not listed" about a listing we DO have cost
+      // information for, and nothing anywhere would say so. This file already carries the reason
+      // that is unacceptable here specifically — the digest is the irreversible channel, and it
+      // has already shipped one Free-mislabel for this family of reason. Split, the assignment
+      // below stops compiling the moment `CostRead` grows an arm this switch does not handle
+      // (`read` narrows to `never` here only while every arm is covered), so the next person to
+      // add one is told, at build time, that the digest needs words for it. The next queued cost
+      // change IS a new arm, so this is the failure it is meant to hit.
+      //
+      // The guard is a type assignment rather than the absence of a `default:` on purpose: TS2366
+      // would only bite while this function keeps an explicit non-undefined return annotation,
+      // and it would leave a real path that returns `undefined` into an email. Keeping the arm
+      // keeps the honest wording as the runtime floor.
+      const unhandledArm: never = read;
+      void unhandledArm;
+      return unstatedCostLabel(listing.costStatus);
+    }
+  }
+}
+
+/**
+ * The digest's three not-a-number labels — WHY we have no price, in the digest's own words.
+ * Named so `formatCost`'s exhaustiveness guard can fall back on exactly these words instead of a
+ * second copy of them (a second copy of a cost rule is the defect this whole area exists to end).
+ */
+function unstatedCostLabel(costStatus: ListingRecord['costStatus']): string {
+  switch (costStatus) {
+    case 'check_source':
+      return 'Check source for cost';
+    case 'known':
+      return 'Cost varies';
+    case 'unknown':
     default:
-      switch (listing.costStatus) {
-        case 'check_source':
-          return 'Check source for cost';
-        case 'known':
-          return 'Cost varies';
-        case 'unknown':
-        default:
-          return 'Cost not listed';
-      }
+      return 'Cost not listed';
   }
 }
 

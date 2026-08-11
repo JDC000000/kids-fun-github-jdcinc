@@ -86,8 +86,25 @@ export function formatCost(activity: Pick<Activity, 'costStatus' | 'costMinCad' 
     case 'range':
       return `$${read.min}–$${read.max}`;
     case 'unstated':
-    default:
       return COST_UNKNOWN;
+    default: {
+      // EXHAUSTIVENESS GUARD — `unstated` and `default` are deliberately NOT fused.
+      //
+      // Fused (`case 'unstated': default:`), a NEW `CostRead` arm is swallowed as "we hold no
+      // price": this card would print "Cost — check source" for a listing we DO have cost
+      // information for, which is the same shape of silent mislabel the hand-rolled mirror above
+      // this function was deleted for. Split, the assignment below stops compiling the moment
+      // `CostRead` grows an arm this switch does not handle (`read` narrows to `never` here only
+      // while every arm is covered), so whoever adds one is told at build time that the card
+      // needs words for it. The next queued cost change IS a new arm.
+      //
+      // The arm is kept (rather than deleted to let the missing return bite) so the card still
+      // has an honest runtime floor, and so the guard does not depend on this function keeping an
+      // explicit return annotation.
+      const unhandledArm: never = read;
+      void unhandledArm;
+      return COST_UNKNOWN;
+    }
   }
 }
 
