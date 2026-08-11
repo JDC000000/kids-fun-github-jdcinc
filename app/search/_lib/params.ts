@@ -153,10 +153,19 @@ const TIME_OF_DAY_KEYS = new Set<string>(TIME_OF_DAY_OPTIONS.map((t) => t.key));
 // unrecognised param, and `parseSearchState` ignores unrecognised params. No price ceiling can
 // reach the engine from any URL.
 //
-// What deliberately REMAINS is the free-text path: a parent who literally types "under $20"
-// still gets a ceiling (lib/search/parse.ts). That is a stated intent in their own words, not
-// a control silently managing what they can see, and it is the same reason the "Free" quick
-// filter survives. Flagged for Jon rather than decided silently.
+// THE FREE-TEXT PATH IS GONE TOO, AND THAT QUESTION IS NOW CLOSED (Jon, 2026-08-11).
+// This note used to end by flagging one thing for Jon rather than deciding it silently: the
+// URL path was dead, but a parent who literally TYPED "under $20" still got a ceiling
+// (lib/search/parse.ts), on the argument that a stated intent in their own words is not the
+// same as a control quietly managing what they can see. Jon ruled against it — remove the
+// price ceiling from search, full stop, "it can be found on the original source site" — and
+// the typed path was removed with the same completeness as the URL path: `costMaxCad` is gone
+// from SearchContext and `maxCad` from CostFilter, so nothing anywhere can compute a ceiling.
+//
+// LEAVING THE FLAG OPEN IN THIS COMMENT WOULD HAVE BEEN ITS OWN VERSION OF THE BUG. Keeping
+// exactly one half of a removal live is what silently emptied weekly digest emails; a comment
+// that still describes the dead half as deliberately alive is the same defect in prose, and a
+// future reader would reason from it. What survives is the "Free" quick filter, and only that.
 
 // ── "Include unknown cost" — REMOVED FROM THE PRODUCT (Jon's beta feedback) ───────
 //
