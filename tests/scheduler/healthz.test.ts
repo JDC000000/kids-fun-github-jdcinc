@@ -315,7 +315,11 @@ describe('/healthz — an ABSENT scheduler is not a DISABLED one (D-A)', () => {
     // here, with a fake credential planted in `globalBreakersTripped` and this assertion forced
     // to fail: at chai's default truncateThreshold — 40, measured, this repo sets no chaiConfig
     // — the message truncates and the credential does NOT appear; with the threshold lifted to
-    // 0 it appears TWICE. So the old form's discretion was never a property of the assertion.
+    // 0 it appears TWICE IN THE FAILURE DETAIL BLOCK, and four times across the whole reporter
+    // output, which repeats the message in its summary list. (Both figures are the same
+    // measurement counted over different spans — the scope has to be said, or two correct counts
+    // read as a contradiction.) So the old form's discretion was never a property of the
+    // assertion.
     // It was a property of a global formatting default, and lifting that default is the
     // ordinary way to read a full diff. The predicate collapses to a boolean before chai
     // formats anything, so no setting can expose it: a failure prints `expected false to be
@@ -353,12 +357,26 @@ describe('/healthz — an empty globalSchedules is no longer ambiguous (D-B)', (
   // Written down because it is NOT re-derivable from the code, and an unexplained exception
   // decays: the next author cannot tell which assertions here are which, so they either
   // "tidy" the predicate back into a `toEqual` or convert the key-set pins that must never be
-  // converted. THE LINE IS: an assertion may compare a value THIS FILE'S FIXTURE supplied, and
-  // may not compare one THE PAYLOAD supplied.
-  //   • `toEqual([])` and `toEqual(['corrections_retention'])` below are the first kind — the
-  //     `metrics({ … })` call earlier in that same `it` set that exact value, so a failure can
-  //     only print what this file already contains. Left alone deliberately.
-  //   • the cross-state comparison in "THE DEFECT ITSELF" is the second kind: both sides come
+  // converted.
+  //
+  // THE RULE BOUNDS THE **ACTUAL** SIDE — the value inside `expect(…)` — AND ONLY THAT SIDE,
+  // because that is the side a failure prints FROM. A hand-written EXPECTED side buys nothing on
+  // its own, and saying so is the whole point: D-B's old form here had a file-literal expected
+  // side and a payload-derived actual side, and it printed producer content IN FULL at the
+  // default threshold. Stated loosely as "the expected value is a literal, so it is safe", the
+  // rule would bless precisely the assertion this unit removed. So, exactly: an assertion may
+  // `toEqual` an ACTUAL side whose every byte this file put there, and may not `toEqual` an
+  // ACTUAL side that came off the wire.
+  //   • `toEqual([])` and `toEqual(['corrections_retention'])` below satisfy that — the
+  //     `metrics({ … })` call earlier in the same `it` set that exact value, AND the projection
+  //     carries it to the wire without rewriting it: `globalBreakersTripped` is published as a
+  //     spread copy and an EMPTY `globalSchedules` maps to an empty array (schedulerReport in
+  //     worker/src/healthz.ts). THAT SECOND CLAUSE IS A REAL PREMISE, NOT A FORMALITY — and note
+  //     what it is: projection faithfulness, which is the very property the guards below this
+  //     block exist to test. If a projection is ever changed to TRANSFORM one of these fields,
+  //     that assertion's actual side begins carrying producer content the fixture never had, and
+  //     it moves into the second category without a character of the assertion changing.
+  //   • the cross-state comparison in "THE DEFECT ITSELF" never satisfied it: both sides come
   //     off the wire, so `toEqual` there prints producer-derived content. MEASURED, with a
   //     credential in a snapshot's `jobType` — the one published value code does not bound, see
   //     PublicGlobalScheduleSnapshot — the old `toEqual` form printed it at chai's DEFAULT
@@ -1095,7 +1113,8 @@ describe('/healthz — the body carries no free text (D-D: the public-disclosure
     expect(blind.globalScheduleHealthReadFailed === true, 'blind SHOULD be read-failed').toBe(true); // …legible difference
     // Compared as a predicate. `expect(JSON.stringify(a)).not.toBe(JSON.stringify(b))` hands
     // chai both whole serialised bodies and lets its formatter decide how much to print: at
-    // this repo's default truncateThreshold — 40, measured — the first 38 characters of each,
+    // this repo's default truncateThreshold — 40, measured — the first 37 characters of each
+    // body plus an ellipsis, i.e. 38 printed characters, not 38 characters of payload;
     // and with the threshold lifted to 0 the WHOLE of both, which is the largest possible echo
     // in this file. This comment said "prints BOTH WHOLE BODIES" flatly until the two D-A/D-B
     // pins were converted to this same form and the number was actually measured; the bound is
