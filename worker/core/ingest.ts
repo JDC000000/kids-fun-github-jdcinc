@@ -53,6 +53,15 @@ export interface IngestSummary {
    * is what the dashboard and the SLA read.
    */
   healthAlert: RunHealthAlert | null;
+  /**
+   * How many items the source's feed delivered, before any of our filtering or capping —
+   * null when the adapter reports none (fixture runs, adapters with no feed). Persisted to
+   * source_check_run.items_in_feed; that column, not this field, is what a later query reads.
+   *
+   * NOT the same quantity as `recordsFound`, which counts what we EMITTED and is therefore
+   * censored by our own `liveEventsLimit`.
+   */
+  itemsInFeed: number | null;
   errors: string[];
 }
 
@@ -89,6 +98,8 @@ export async function ingestSource(
   let lowConfidenceFlagged = 0;
   let editorialCandidates = 0;
   let healthAlert: RunHealthAlert | null = null;
+  /** The feed's own item count for this run — see where it is read, below. */
+  let itemsInFeed: number | null = null;
 
   try {
     const raw = await adapter.fetch();
@@ -97,6 +108,21 @@ export async function ingestSource(
       const hook = adapter.normalizeHook.bind(adapter);
       records = await Promise.all(records.map((r) => hook(r)));
     }
+
+    // THE FEED'S OWN ITEM COUNT — recorded UNCONDITIONALLY, and read BEFORE the verdict
+    // block below on purpose.
+    //
+    // Everything the verdict carries is discarded on a non-alerting run: the `if
+    // (verdict?.alert)` below has no else branch and no logging path, so an `ok` verdict's
+    // detail is computed and dropped. A source that is quietly capped by its vendor on every
+    // run is `ok` on every run, so nothing about it has ever reached a durable surface. That
+    // is the blind spot this line closes, and it only closes it by being independent of the
+    // verdict — hence a separate adapter method, read outside the branch, before it.
+    //
+    // Distinct from `recordsFound` below, which counts what the adapter EMITTED and is
+    // therefore censored by our own `liveEventsLimit`. This is the same run measured before
+    // our cap touches it. Null for fixture runs and for adapters with no feed to count.
+    itemsInFeed = adapter.reportItemsInFeed?.() ?? null;
 
     // Adapter self-assessment (optional). A run over an undocumented, unversioned source
     // can complete without throwing and still be broken — the vendor moves a key, the
@@ -259,6 +285,7 @@ export async function ingestSource(
   await finishCheckRun(pool, checkRunId, {
     status,
     recordsFound,
+    itemsInFeed,
     errors: errors.length > 0 ? errors : undefined,
     healthAlert,
     startedAt,
@@ -277,6 +304,7 @@ export async function ingestSource(
     lowConfidenceFlagged,
     editorialCandidates,
     healthAlert,
+    itemsInFeed,
     errors,
   };
 }

@@ -61,6 +61,23 @@ export interface RunHealthAlert {
 export interface FinishCheckRunOptions {
   status: 'success' | 'partial' | 'failed';
   recordsFound?: number;
+  /**
+   * How many items the source's FEED delivered this run, before any of our own filtering or
+   * capping. Null/absent when the adapter reports none — a fixture run, or an adapter with no
+   * feed to count. Written to `source_check_run.items_in_feed` (migration 0031).
+   *
+   * WHY THIS IS NOT `recordsFound` BY ANOTHER NAME. `recordsFound` is incremented once per
+   * EXTRACTED record (worker/core/ingest.ts), so it is identically the adapter's emit count —
+   * the quantity our own `liveEventsLimit` censors. `loadRecordsFoundBaseline` above computes
+   * every trailing baseline in this project from it, which means our own configuration is an
+   * input to every yield-collapse threshold we have: a cap sitting below vendor supply pins
+   * the baseline to the cap, and the run that emits exactly the cap looks identical whether
+   * the vendor sent that many or ten times that many. `items_in_feed` is the same run measured
+   * BEFORE our cap touches it, and it had never been recorded anywhere. Nothing reads it yet
+   * — reading it is what a later stage does, once weeks of it exist. This is the stage that
+   * starts writing it.
+   */
+  itemsInFeed?: number | null;
   errors?: unknown;
   /** The run's health verdict, or null/absent when the adapter raised none. */
   healthAlert?: RunHealthAlert | null;
@@ -95,7 +112,7 @@ export async function finishCheckRun(
   const { rows } = await pool.query<{ source_id: string }>(
     `UPDATE source_check_run
         SET status = $2, records_found = $3, errors = $4, duration_ms = $5,
-            health_alert_code = $6, health_alert_detail = $7
+            health_alert_code = $6, health_alert_detail = $7, items_in_feed = $8
       WHERE id = $1
       RETURNING source_id`,
     [
@@ -106,6 +123,7 @@ export async function finishCheckRun(
       durationMs,
       opts.healthAlert?.code ?? null,
       opts.healthAlert?.detail ?? null,
+      opts.itemsInFeed ?? null,
     ]
   );
 

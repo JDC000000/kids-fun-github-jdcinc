@@ -4,10 +4,12 @@
 //
 //     how many items did the feed give us · how many did we emit · what did we refuse
 //
-// WHY THIS FILE EXISTS RATHER THAN A SECOND COPY NEXT DOOR. The truncation signal was
-// built once, for `generic_rss` (NVDPL), and it works: `droppedByLimit` is a COUNT, the
-// buckets reconcile to `itemsInFeed`, and `truncated_by_limit` says how many records were
-// lost rather than merely that loss happened. None of that was reachable from the
+// WHY THIS FILE EXISTS RATHER THAN A SECOND COPY NEXT DOOR. The truncation MEASUREMENT was
+// built once, for `generic_rss` (NVDPL): `droppedByLimit` is a COUNT and the buckets
+// reconcile to `itemsInFeed`, so "why did an N-item feed yield M records?" is answerable
+// without a re-pull. (It also carried a `truncated_by_limit` ALERT on that count. That alert
+// is deleted — see the note in `assessLibraryFeedRun`. The measurement stayed; the verdict
+// went.) None of it was reachable from the
 // `bibliocommons` path, which is the family's only LIVE platform (VPL, RPL) — so the two
 // sources that actually run in production were the two throwing the tally away.
 // Duplicating ~50 lines of verdict logic into index.ts would have given the family two
@@ -49,7 +51,13 @@ export interface LibraryFeedTally {
    * truncation the VENDOR applied before responding — if a feed page-caps at 25 items and
    * `liveEventsLimit` is also 25, every run reports `droppedByLimit: 0` while still being
    * capped. `itemsInFeed` sitting exactly on the limit is the fingerprint of that case, and
-   * it is visible in the tally line for precisely that reason.
+   * `formatFeedTally` now spells that out in words rather than leaving it to be inferred.
+   *
+   * A COUNT, NEVER AN ALERT. This number does NOT drive a health verdict and must not be
+   * made to — see the deletion note in `assessLibraryFeedRun` for why an alert on it fires
+   * on healthy runs and stays silent on short ones. What it IS good for: the tally line, and
+   * the error message of the Stage 1 CI lint that compares the cap against a MEASURED vendor
+   * page size.
    */
   droppedByLimit: number;
 }
@@ -62,15 +70,68 @@ export interface FeedSkipBucket {
 }
 
 /**
+ * What the tally's relationship to OUR OWN cap means, in words, appended to the tally line.
+ *
+ * WHY THIS EXISTS. The bare tally states three numbers and leaves the reader to notice that
+ * two of them coincide. The VPL shape — `25 emitted of 25 feed items (… 0 over limit)` — has
+ * misled every previous reader of these constants, because `0 over limit` reads as "nothing
+ * was lost" when it actually means "our cap never had to refuse anything". Those are very
+ * different claims and only one of them is true. So the line says which.
+ *
+ * ⚠️ WHAT THIS DELIBERATELY DOES NOT CLAIM. It says nothing about the VENDOR's page size,
+ * because this codebase has never measured one — `source_check_run.items_in_feed` (migration
+ * 0031) is the column that starts measuring it, and until there are weeks of it on record any
+ * statement of the form "the vendor page-caps at N" is a prediction wearing a measurement's
+ * clothes. `liveEventsLimit` is OUR constant and is the only ceiling this function can speak
+ * about honestly. Naming the vendor's ceiling is Stage 1's job, after the data exists.
+ *
+ * ⚠️ AND IT IS NOT THE VISIBILITY MECHANISM FOR A NON-ALERTING RUN. worker/core/ingest.ts
+ * reads `verdict.detail` ONLY inside `if (verdict?.alert)` — there is no else branch and no
+ * logging path — so an `ok` verdict's tally line is computed and discarded in memory. This
+ * clause therefore only ever reaches a durable surface (`health_alert_detail`, `errors`) on
+ * verdicts that ALREADY alert. The thing that makes a quiet, permanently-capped source
+ * visible is the recorded `items_in_feed` COLUMN, not this string.
+ */
+function capRelationNote(tally: LibraryFeedTally, liveEventsLimit: number): string {
+  if (tally.droppedByLimit > 0) {
+    // itemsInFeed > liveEventsLimit. Our own misconfiguration, and fixable by us alone:
+    // these records were already fetched and paid for, then thrown away client-side.
+    return (
+      ` — OUR CAP IS BELOW SUPPLY: liveEventsLimit=${liveEventsLimit} against ` +
+      `${tally.itemsInFeed} items delivered, so ${tally.droppedByLimit} already-fetched ` +
+      `record(s) were discarded`
+    );
+  }
+  if (tally.itemsInFeed > 0 && tally.itemsInFeed === liveEventsLimit) {
+    return (
+      ` — AT OUR CAP: the feed delivered exactly liveEventsLimit=${liveEventsLimit}, so ` +
+      `"0 over limit" means OUR cap refused nothing — NOT that the feed was complete`
+    );
+  }
+  return '';
+}
+
+/**
  * The one-line run tally every verdict carries, so a thin run is diagnosable off the health
  * board instead of needing the feed re-pulled. `droppedByLimit` is appended last, always,
  * because it is the one bucket every platform has.
+ *
+ * `liveEventsLimit` is the cap the PARSE ACTUALLY APPLIED, not `system.liveEventsLimit` —
+ * the two differ whenever a system omits the config value and the platform default stands in,
+ * and a tally line quoting a cap the run did not use would be worse than quoting none.
  */
-export function formatFeedTally(tally: LibraryFeedTally, skips: FeedSkipBucket[]): string {
+export function formatFeedTally(
+  tally: LibraryFeedTally,
+  skips: FeedSkipBucket[],
+  liveEventsLimit: number
+): string {
   const buckets = [...skips, { label: 'over limit', count: tally.droppedByLimit }]
     .map((b) => `${b.count} ${b.label}`)
     .join(', ');
-  return `${tally.emitted} emitted of ${tally.itemsInFeed} feed items (skipped: ${buckets})`;
+  return (
+    `${tally.emitted} emitted of ${tally.itemsInFeed} feed items (skipped: ${buckets})` +
+    capRelationNote(tally, liveEventsLimit)
+  );
 }
 
 export interface LibraryHealthVerdict {
@@ -115,7 +176,7 @@ export function assessLibraryFeedRun(
   live: boolean,
   platformCheck?: (tallyLine: string) => LibraryHealthVerdict | null
 ): LibraryHealthVerdict {
-  const { itemsInFeed, emitted, droppedByLimit } = tally;
+  const { itemsInFeed, emitted } = tally;
 
   if (itemsInFeed === 0) {
     return { code: 'empty_feed', alert: true, detail: `${system.systemKey}: feed returned zero items` };
@@ -142,14 +203,35 @@ export function assessLibraryFeedRun(
   const platformVerdict = platformCheck?.(tallyLine);
   if (platformVerdict) return platformVerdict;
 
-  if (droppedByLimit > 0) {
-    return {
-      code: 'truncated_by_limit',
-      alert: true,
-      // States HOW MANY were lost, not merely that truncation happened — the difference
-      // between an actionable alert and one someone has to re-pull the feed to interpret.
-      detail: `${system.systemKey}: liveEventsLimit=${system.liveEventsLimit} dropped ${droppedByLimit} record(s) — ${tallyLine}`,
-    };
-  }
+  // ─────────────────────────────────────────────────────────────────────────────────────
+  // DELETED HERE: the `droppedByLimit > 0` ⇒ `truncated_by_limit` ALERTING ARM.
+  //
+  // DO NOT REINSTATE IT. A test pins its absence
+  // (tests/adapters/library-bibliocommons-truncation.test.ts, "the truncation ALERT is gone").
+  // The count, the tally line and the bucket-reconciliation invariant all SURVIVE — only the
+  // alert went. `droppedByLimit` is still counted by both parsers, still rendered as the
+  // "N over limit" bucket, and still reconciles to `itemsInFeed`.
+  //
+  // WHY THE ALERT WAS WRONG, not merely noisy. `droppedByLimit > 0` is a VENDOR-SUPPLY-VOLUME
+  // indicator wearing a health signal's clothes, and it is INVERTED:
+  //   • RPL's cap (20) sits below the BiblioCommons page size, so a HEALTHY full run drops
+  //     records on every run — alert every run, forever;
+  //   • a genuinely SHORT run (the vendor published less than our cap) drops nothing — silent
+  //     in exactly the case a human should look.
+  // And a permanent alert is far worse than a noisy one here. Via `CLEAN_SUCCESS_RUN_SQL`
+  // (worker/health/sla.ts:66, mirrored byte-identically at lib/admin/dashboard.ts:147, pinned
+  // by tests/health/sla-consistency.test.ts) a non-NULL `health_alert_code` drops the run out
+  // of clean-success AND stops `last_success_at` advancing — so the source would read as
+  // PERMANENTLY DOWN on both the SLA board and the admin dashboard, with no successful run
+  // ever recorded, while behaving perfectly.
+  //
+  // WHERE THE FACT WENT INSTEAD. `liveEventsLimit < vendorPageSize` is a STANDING config fact —
+  // pure arithmetic over two constants — so it belongs in a CI lint, not in a per-run verdict
+  // recomputed from scratch every run. That lint (Condition A) is Stage 1's, and it is blocked
+  // on `vendorPageSize`, which is deliberately NOT declared yet: the number has never been
+  // measured for either tenant. `source_check_run.items_in_feed` (migration 0031) starts
+  // measuring it. Declaring the cap now by inheriting an unmeasured 25 is precisely the move
+  // that produced this defect.
+  // ─────────────────────────────────────────────────────────────────────────────────────
   return { code: 'ok', alert: false, detail: `${system.systemKey}: ${tallyLine}` };
 }

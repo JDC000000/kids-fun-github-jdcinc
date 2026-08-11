@@ -117,8 +117,10 @@ const NVDPL_SYSTEM: LibrarySystemConfig = {
   // pre-QA-F-A figure that counted 5 adult "Summer Reading Rave" occurrences as kid
   // programming — see docs/source-register.md §6.8.3.
   // 60 leaves real headroom over that without letting an unexpectedly large
-  // window ingest unbounded; exceeding it raises `truncated_by_limit` rather than passing
-  // quietly (see ./generic-rss.ts assessGenericRssRun).
+  // window ingest unbounded. Exceeding it is COUNTED (`droppedByLimit`, rendered in the run's
+  // tally line) but does NOT alert: the `truncated_by_limit` verdict was deleted because a cap
+  // below vendor supply drops records on every healthy run and none on a genuinely short one
+  // — see the deletion note in ./run-health.ts.
   liveEventsLimit: 60,
   /**
    * Curated NVDPL locations. This feed has NO location element of any kind, so these are

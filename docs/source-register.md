@@ -1408,8 +1408,19 @@ free text, so it can answer 200 with a valid feed and yield nothing — or, more
   41 → 0, and every absolute-zero check passes that as green.
 - `date_shape_drift` — >20% of items fail the free-text date parse. The single most likely
   way this adapter breaks, since one reworded vendor string degrades it silently.
-- `truncated_by_limit` — states **how many** records the cap dropped, not merely that it
-  truncated.
+- ~~`truncated_by_limit`~~ — **DELETED as an alerting verdict (U1 Stage 0).** The
+  `droppedByLimit` count, the tally line and the bucket-reconciliation invariant all survive;
+  only the alert went. It was inverted: `liveEventsLimit` sitting below the vendor's page size
+  means records are dropped on every **healthy** full run — so it fired forever on a working
+  source — while a genuinely short run drops nothing and said nothing. A permanent alert is
+  also worse than a noisy one: `health_alert_code IS NULL` is half of `CLEAN_SUCCESS_RUN_SQL`
+  (`worker/health/sla.ts`, mirrored in `lib/admin/dashboard.ts`), so an alert on every run
+  means the source never records a clean success and `last_success_at` never advances — it
+  reads as permanently down on the SLA board while working perfectly. `liveEventsLimit <
+  vendorPageSize` is a **standing config fact**, so it belongs in a CI lint rather than a
+  per-run verdict; that lint is blocked on `vendorPageSize`, which is deliberately not yet
+  declared because it has never been measured for either tenant.
+  `source_check_run.items_in_feed` (migration 0031) is what starts measuring it.
 
 ⚠️ **A fixture run is never compared to a baseline.** A fixture dry-run emits 2 records;
 against a live baseline of ~41 that is a 95% "collapse", so comparing them would fire a false

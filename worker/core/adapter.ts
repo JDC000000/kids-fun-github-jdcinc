@@ -161,6 +161,27 @@ export interface Adapter {
    */
   assessRun?(baselineRecordsFound: number | null): AdapterRunDiagnostics | null;
 
+  /**
+   * (D, optional) How many items the SOURCE'S FEED delivered on the run just extracted,
+   * before any of our own filtering or capping. Null when this run has no honest number:
+   * a fixture run, or an adapter with no feed to count. Called by ingestSource after
+   * extract(), and persisted to `source_check_run.items_in_feed` (migration 0031).
+   *
+   * A MEASUREMENT, NOT A VERDICT — and deliberately not a field on AdapterRunDiagnostics.
+   * ingestSource reads the verdict ONLY inside `if (verdict?.alert)`, so anything travelling
+   * on the verdict is discarded on a non-alerting run. That is precisely the run this number
+   * exists to describe: a source can be quietly capped by its vendor on every single run,
+   * report a perfectly healthy `ok`, and leave no trace anywhere. Routing the measurement
+   * through the alert path would reproduce that blindness.
+   *
+   * WHY IT IS WORTH A COLUMN. `records_found` is identically the count of records the adapter
+   * EMITTED, i.e. the quantity our own `liveEventsLimit` censors. Every trailing baseline and
+   * yield-collapse threshold in this project is computed from it, so our own configuration is
+   * baked into every health statistic we have. This is the same run measured before our cap
+   * touches it. No adapter had ever recorded it.
+   */
+  reportItemsInFeed?(): number | null;
+
   /** (D) Build a stable dedup key for a structured record. */
   dedupKeys(record: StructuredRecord): DedupKey;
 }

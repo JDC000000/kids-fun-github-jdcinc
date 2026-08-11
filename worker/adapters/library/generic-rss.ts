@@ -494,9 +494,18 @@ export function eventIdFromLink(link: string): string {
 /** Emit cap when a system config declares none. */
 export const DEFAULT_GENERIC_RSS_LIMIT = 40;
 
+/**
+ * The cap a generic_rss parse ACTUALLY applies — config value, or the platform default when a
+ * system omits it. Shared by the parser and the tally line so the line can never quote a cap
+ * the parse did not use. Mirrors `biblioCommonsLimit` in ./index.ts.
+ */
+function genericRssLimit(system: LibrarySystemConfig): number {
+  return system.liveEventsLimit ?? DEFAULT_GENERIC_RSS_LIMIT;
+}
+
 export function parseGenericRss(system: LibrarySystemConfig, xml: string): GenericRssParseResult {
   const items = tagBlocks(xml, 'item');
-  const limit = system.liveEventsLimit ?? DEFAULT_GENERIC_RSS_LIMIT;
+  const limit = genericRssLimit(system);
   const events: GenericRssEvent[] = [];
   const diagnostics: GenericRssParseDiagnostics = {
     itemsInFeed: items.length,
@@ -627,11 +636,12 @@ function genericRssSkipBuckets(d: GenericRssParseDiagnostics) {
 /**
  * Fold parse diagnostics into a verdict for the health board.
  *
- * The universal checks (empty feed, yield collapse, client-side truncation) come from
- * `assessLibraryFeedRun`; the ONLY thing this platform adds is the free-text
- * `date_shape_drift` canary below, which is meaningless on a structured feed. It is passed
- * as the platform hook so it keeps its exact previous position in the verdict order —
- * after the collapse checks, before truncation.
+ * The universal checks (empty feed, yield collapse) come from `assessLibraryFeedRun`; the
+ * ONLY thing this platform adds is the free-text `date_shape_drift` canary below, which is
+ * meaningless on a structured feed. It is passed as the platform hook so it keeps its exact
+ * previous position in the verdict order — after the collapse checks, and last, now that the
+ * client-side-truncation alert that used to follow it has been deleted (see the deletion note
+ * in ./run-health.ts). `droppedByLimit` is still counted and still in the tally line.
  *
  * `baselineRecordsFound` is the source's trailing record count (null on a first run, or when
  * the caller has no DB). `live` says whether the run that produced `diagnostics` actually hit
@@ -646,7 +656,7 @@ export function assessGenericRssRun(
   return assessLibraryFeedRun(
     system,
     diagnostics,
-    formatFeedTally(diagnostics, genericRssSkipBuckets(diagnostics)),
+    formatFeedTally(diagnostics, genericRssSkipBuckets(diagnostics), genericRssLimit(system)),
     baselineRecordsFound,
     live,
     (tally) =>

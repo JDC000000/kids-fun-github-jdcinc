@@ -127,6 +127,19 @@ interface BiblioCommonsGatewayEvent {
 
 const DEFAULT_BIBLIOCOMMONS_LIMIT = 20;
 
+/**
+ * The cap a BiblioCommons parse ACTUALLY applies — the config value, or the platform default
+ * when a system omits it.
+ *
+ * One function rather than a repeated `?? DEFAULT_BIBLIOCOMMONS_LIMIT` because the parser and
+ * the tally line MUST agree on it: a tally line quoting `system.liveEventsLimit` would print
+ * `undefined` for any system relying on the default, while the parse it describes had silently
+ * used 20.
+ */
+function biblioCommonsLimit(system: LibrarySystemConfig): number {
+  return system.liveEventsLimit ?? DEFAULT_BIBLIOCOMMONS_LIMIT;
+}
+
 /** Stable per-source politeness key (rate-limit + backoff state) for a library system. */
 function libraryPolicyKey(system: LibrarySystemConfig): string {
   return `${system.sourceFamily}::${system.systemKey}`;
@@ -438,7 +451,7 @@ export function parseBiblioCommonsRss(
   xml: string
 ): BiblioCommonsParseResult {
   const items = tagBlocks(xml, 'item');
-  const limit = system.liveEventsLimit ?? DEFAULT_BIBLIOCOMMONS_LIMIT;
+  const limit = biblioCommonsLimit(system);
   const events: BiblioEvent[] = [];
   const diagnostics: BiblioCommonsParseDiagnostics = {
     itemsInFeed: items.length,
@@ -513,15 +526,20 @@ export function parseBiblioCommonsRss(
  *
  * ⚠️ WHAT A `droppedByLimit: 0` DOES AND DOES NOT MEAN, because on VPL it is the answer
  * FOREVER and reading it as "not truncated" would be exactly wrong. `droppedByLimit` counts
- * what OUR cap refused out of what BiblioCommons handed us. BiblioCommons' RSS page-caps at
- * 25 items whatever we ask for, and VPL's `liveEventsLimit` is also 25 — so VPL emits 25 of
- * 25 and drops nothing by our cap while still being capped, upstream, at 25. RPL's cap is 20
- * against the same 25-item page, so RPL DOES report `droppedByLimit: 5`. The shape that
- * betrays the upstream ceiling is `itemsInFeed` sitting exactly on `liveEventsLimit`, which
- * is why both numbers are in the tally line of every verdict, including `ok`. Turning that
- * shape into an alert of its own is deliberately NOT done here — for VPL it would fire on
- * every run forever and degrade every live run to `partial`, which is an operational policy
- * call, not a parser's.
+ * what OUR cap refused out of what BiblioCommons handed us. If the vendor's page and our cap
+ * are the same number — VPL's `liveEventsLimit` is 25, and a single probe once saw a 25-item
+ * page — then VPL emits 25 of 25 and drops nothing BY OUR CAP while potentially still being
+ * capped upstream. RPL's cap is 20 against that same page, so RPL DOES report
+ * `droppedByLimit: 5`. The shape that betrays the collision is `itemsInFeed` sitting on
+ * `liveEventsLimit`, and `formatFeedTally` now states it in words instead of leaving two
+ * numbers to be compared by eye.
+ *
+ * ⚠️ NEITHER SHAPE ALERTS, AND THE TALLY LINE IS NOT WHAT MAKES THEM VISIBLE. An `ok`
+ * verdict's `detail` is read nowhere: worker/core/ingest.ts consults it only inside
+ * `if (verdict?.alert)`, so it is computed and dropped. What makes a permanently-capped
+ * source visible is `source_check_run.items_in_feed` (migration 0031) — a recorded number
+ * anything can query — not a string on a verdict nobody reads. The vendor's true page size
+ * is still UNMEASURED for both tenants; that column is what will measure it.
  */
 export function assessBiblioCommonsRun(
   system: LibrarySystemConfig,
@@ -532,10 +550,14 @@ export function assessBiblioCommonsRun(
   return assessLibraryFeedRun(
     system,
     diagnostics,
-    formatFeedTally(diagnostics, [
-      { label: 'cancelled', count: diagnostics.cancelledItems },
-      { label: 'malformed', count: diagnostics.malformedItems },
-    ]),
+    formatFeedTally(
+      diagnostics,
+      [
+        { label: 'cancelled', count: diagnostics.cancelledItems },
+        { label: 'malformed', count: diagnostics.malformedItems },
+      ],
+      biblioCommonsLimit(system)
+    ),
     baselineRecordsFound,
     live
   );
@@ -831,6 +853,45 @@ export class LibraryAdapter implements Adapter {
       return assessBiblioCommonsRun(this.system, last.diagnostics, baselineRecordsFound, last.live);
     }
     return null;
+  }
+
+  /**
+   * How many items the FEED delivered on the run just extracted (Adapter.reportItemsInFeed),
+   * for persistence to `source_check_run.items_in_feed`. Null when this run has no honest
+   * number to report.
+   *
+   * WHY THIS IS THE POINT OF THE UNIT. `records_found` is identically `emitted`
+   * (worker/core/ingest.ts increments it once per extracted record), i.e. the quantity OUR
+   * OWN cap censors — so every health statistic built on it has our configuration baked into
+   * it, and a cap sitting below vendor supply makes a healthy run look thin and a thin run
+   * look healthy. `itemsInFeed` is read off the raw response BEFORE any cap logic
+   * (`parseBiblioCommonsRss`), and the live request carries no limit parameter, so it is
+   * censored only by the VENDOR. It has never been recorded anywhere. This is where that
+   * starts.
+   *
+   * WHY IT IS A SEPARATE METHOD FROM `assessRun` AND NOT A FIELD ON THE VERDICT. The verdict
+   * pipeline discards everything on a non-alerting run — ingest.ts reads the verdict ONLY
+   * inside `if (verdict?.alert)`. A measurement routed through that pipeline would be lost in
+   * exactly the case it exists to illuminate: the quiet, permanently-capped source. Keeping
+   * it structurally outside means no future edit to the alert branch can silently drop it.
+   *
+   * LIVE RUNS ONLY, DELIBERATELY. A fixture run's item count is a property of a hand-written
+   * fixture, not of the vendor, and recording it would poison both of the things this column
+   * exists for: `max(items_in_feed)` as the measured vendor page size, and a live-only supply
+   * baseline. The bibliocommons fixture path gets this for free (it clears the diagnostics
+   * map), but the generic_rss fixture path DOES record a tally — so the `live` gate here is
+   * what makes "items_in_feed IS NULL ⇒ not a live run" true for the whole family rather than
+   * accidentally true for one platform.
+   */
+  reportItemsInFeed(): number | null {
+    const last =
+      this.system.platform === 'generic_rss'
+        ? lastGenericRssDiagnostics.get(this.system.systemKey)
+        : this.system.platform === 'bibliocommons'
+          ? lastBiblioCommonsDiagnostics.get(this.system.systemKey)
+          : undefined;
+    if (!last || !last.live) return null;
+    return last.diagnostics.itemsInFeed;
   }
 
   dedupKeys(record: StructuredRecord): DedupKey {

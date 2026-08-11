@@ -495,11 +495,16 @@ describe('NVDPL generic_rss — run health', () => {
     });
   });
 
-  it('ALERTS when liveEventsLimit truncated the run, and says HOW MANY were lost', () => {
+  it('does NOT alert when liveEventsLimit dropped records, but still says how many', () => {
+    // The `truncated_by_limit` ALERT is deleted family-wide — see the deletion note in
+    // worker/adapters/library/run-health.ts. It was inverted: a cap below vendor supply drops
+    // records on every HEALTHY run (alert forever) and drops none on a genuinely short one
+    // (silent when it matters). Via CLEAN_SUCCESS_RUN_SQL a permanent alert also means the
+    // source never records a clean success and `last_success_at` never advances.
+    // The COUNT survives — it is still tallied, still reconciles, still on the line.
     const verdict = assessGenericRssRun(nvdpl(), diagnostics({ droppedByLimit: 12 }));
-    expect(verdict).toMatchObject({ code: 'truncated_by_limit', alert: true });
-    // "was truncated" is not actionable; "dropped 12 record(s)" is.
-    expect(verdict.detail).toContain('dropped 12 record(s)');
+    expect(verdict).toMatchObject({ code: 'ok', alert: false });
+    expect(verdict.detail, 'the count is still reported').toContain('12 over limit');
   });
 
   it('every verdict states the tally, so a thin run is diagnosable without a re-pull', () => {
