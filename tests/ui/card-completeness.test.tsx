@@ -241,6 +241,32 @@ describe('status is stated once on the card face (freshness-stamp de-duplication
     ].join(', ')}"`);
   });
 
+  // THE QUADRANT THE ALL-16 TEST BELOW CANNOT SEE — and the one where an equality check and a
+  // `status === 'bookable_open'` special case disagree.
+  //
+  // That test drives booking through mapBooking with `bookingUrl: null` and no drop_in tag, so
+  // for 15 of the 16 statuses the pill is EMPTY and for the 16th it COLLIDES. It never renders a
+  // card whose pill is non-empty AND non-colliding, which is exactly the shape a special case
+  // gets wrong. This case supplies it, and it is ordinary production data, not a contrivance:
+  // isRegistrationShaped (lib/search/filters/registration.ts) keys on the title, entirely
+  // independently of status, so a registration-shaped title on a bookable_open occurrence gives a
+  // "Registration required" pill beside a "Bookable now" status. Nothing is duplicated, so the
+  // stamp must keep its label — otherwise this card states no status at all.
+  it('keeps the stamp label when the pill is non-empty but states something DIFFERENT', () => {
+    const a = activity({ statusState: 'bookable_open', activityName: 'Swim Lessons Level 3' });
+    const label = statusMeta(a.status).label;
+
+    // Preconditions — assert the fixture really is this quadrant, or the test proves nothing.
+    expect(a.registrationRequired, 'registration-shaped by title alone').toBe(true);
+    expect(a.booking, 'still bookable_open → bookable_now').toBe('bookable_now');
+    expect(REGISTRATION_REQUIRED_TAG, 'pill is non-empty').not.toBe('');
+    expect(REGISTRATION_REQUIRED_TAG, 'and does NOT collide with the status label').not.toBe(label);
+
+    const html = renderToStaticMarkup(<ActivityCard activity={a} />);
+    expect(html, 'the pill states registration').toContain(REGISTRATION_REQUIRED_TAG);
+    expect(stampOf(html), 'the stamp is the only place this status is stated').toContain(label);
+  });
+
   it('the stamp still carries the status text for every status the pill cannot state', () => {
     const ALL: StatusState[] = [
       'confirmed',
