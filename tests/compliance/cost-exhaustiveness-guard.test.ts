@@ -21,9 +21,14 @@
 // code. Two unwatched exits, both MEASURED rather than assumed: a file-level `// @ts-nocheck` (with
 // a fifth arm, both TS2322 errors vanish), and anything that stops `tsc` running over these files
 // at all. Re-homing the guard into a nested function whose PARAMETER is named `read` also defeats
-// it and passes every check here — a known, accepted gap, because the fix for that class is a
-// CI-integrity check that `tsc` runs and neither file is exempt, not a sixth assertion in a
-// formatter pin. Two things that sound like exits and are NOT, so nobody re-asserts them: with a
+// it — measured, both TS2322 errors gone with a fifth arm — and it passes every check here THAT IS
+// ABOUT THE GUARD: (A) and (B) all stay green, which is the half that matters. The tree does still
+// go red (measured on this commit: 4 failed | 17 passed), but ONLY through (C)'s self-checks, and
+// only because they can no longer find a line-leading `const … : never = …;` to mutate — so their
+// messages misdescribe what happened, and a maintainer would not learn from them that the guard had
+// been re-homed. A known, accepted gap: the fix for that class is a CI-integrity check that `tsc`
+// runs and neither file is exempt, not a sixth assertion in a formatter pin. Two things that sound
+// like exits and are NOT, so nobody re-asserts them: with a
 // fifth arm, `"strict": false` still errors on both surfaces, and adding both files to tsconfig's
 // `exclude` still errors on both surfaces (the import graph pulls them in regardless).
 //
