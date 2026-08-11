@@ -143,7 +143,7 @@ describe('planRailGroups — the 9 → 5-6 reduction that makes the rail viable'
   it('renders in canonical order, so the rail never reshuffles between queries', () => {
     const plan = planRailGroups(
       DEFAULT_STATE,
-      facets(12, [group('costMax', 12, [11]), group('when', 12, [2, 3]), group('ages', 12, [7, 9, 10])]),
+      facets(12, [group('category', 12, [11]), group('when', 12, [2, 3]), group('ages', 12, [7, 9, 10])]),
     );
     const order = (ids: RailGroupId[]) => ids.map((id) => RAIL_GROUP_ORDER.indexOf(id));
     expect(order(plan.primary)).toEqual([...order(plan.primary)].sort((a, b) => a - b));

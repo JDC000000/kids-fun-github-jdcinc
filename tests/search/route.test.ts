@@ -151,8 +151,10 @@ describe('GET /api/search — facet counts for the filter UI (facets=1)', () => 
     const { body } = await call('q=open+gym&facets=1&minResults=0');
     expect(body.facets.total).toBe(body.total);
     expect(body.facets.groups.map((g: { key: string }) => g.key)).toEqual(
-      expect.arrayContaining(['when', 'timeOfDay', 'ages', 'areas', 'quick', 'costMax', 'category'])
+      expect.arrayContaining(['when', 'timeOfDay', 'ages', 'areas', 'quick', 'category'])
     );
+    // No 'costMax': the Max price group went with the price ceiling (Jon, 2026-08-11).
+    expect(body.facets.groups.map((g: { key: string }) => g.key)).not.toContain('costMax');
     const ages = body.facets.groups.find((g: { key: string }) => g.key === 'ages');
     expect(ages.values.map((v: { value: string }) => v.value)).toEqual([
       'any', 'under2', '2-4', '5-9', '10-14', '15+',

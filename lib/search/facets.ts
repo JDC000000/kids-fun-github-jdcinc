@@ -40,7 +40,11 @@ export type FacetGroupKey =
   | 'ages'
   | 'areas'
   | 'quick'
-  | 'costMax'
+  // No 'costMax': the Max price group is gone. Jon removed the price ceiling from the product
+  // (2026-08-11 — see lib/search/parse.ts), and this group was the last thing in the codebase
+  // still computing one. It had no renderer even before that (there is no 'costMax' in
+  // app/search/_lib/rail-groups.ts's RailGroupId), so it was shipping ceiling-filtered counts
+  // over the wire that nothing drew.
   | 'radius'
   | 'registration'
   | 'category';
@@ -113,9 +117,6 @@ const DAY_PART_VALUES: DayPart[] = ['morning', 'afternoon', 'evening'];
 
 const AGE_BAND_VALUES: AgeBandKey[] = ['under2', '2-4', '5-9', '10-14', '15+'];
 
-/** Max-price ceilings in CAD (the "Any price" default is emitted separately). */
-const COST_CEILINGS_CAD = [20, 50];
-
 const RADIUS_VALUES_KM = [5, 10, 20];
 
 /** The four independent quick-filter toggles, and the context flag each one sets. */
@@ -174,7 +175,6 @@ export function computeFacetCounts(listings: ListingRecord[], request: FacetRequ
     agesGroup(ctx),
     areasGroup(ctx),
     quickGroup(ctx),
-    costMaxGroup(ctx),
     ...(applied.origin ? [radiusGroup(ctx)] : []),
     registrationGroup(ctx),
     categoryGroup(ctx),
@@ -315,23 +315,6 @@ function quickGroup(c: CountContext): FacetGroupCounts {
     };
   });
   return { key: 'quick', selection: 'toggle', values };
-}
-
-function costMaxGroup(c: CountContext): FacetGroupCounts {
-  // Only the ceiling is dropped — the separate "Free" toggle and the include-unknown-cost
-  // preference are other groups' constraints and stay applied.
-  const dropped = withContext(c.applied, { costMaxCad: null });
-  const set = c.base(dropped);
-  const current = c.applied.ctx.costMaxCad;
-  const values: FacetValueCount[] = [{ value: ANY, count: countCards(set), selected: current == null }];
-  for (const ceiling of COST_CEILINGS_CAD) {
-    values.push({
-      value: String(ceiling),
-      count: c.count(set, withContext(dropped, { costMaxCad: ceiling })),
-      selected: current === ceiling,
-    });
-  }
-  return { key: 'costMax', selection: 'single', values };
 }
 
 function radiusGroup(c: CountContext): FacetGroupCounts {

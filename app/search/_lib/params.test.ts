@@ -425,17 +425,27 @@ describe('time-of-day and drop-in filters (Round 17 / T21 — G-T21-3/4)', () =>
     expect(analyticsFilterTokens(parseSearchState({ cost: '50' }))).toEqual([]);
   });
 
-  it('DECISIVE: a `cost=` in the URL reaches the backend SearchContext as NO ceiling', () => {
-    // The end-to-end check that matters. Previously `?cost=20` composed "under $20" into `q`,
-    // which parseQuery turned into ctx.costMaxCad=20 and filters/cost.ts turned into a price
-    // ceiling. Following the identical path now must yield a null ceiling — proving the
-    // removal reaches the layer that filters, not merely the layer that renders chips.
+  it('DECISIVE: neither a stale `cost=` NOR a TYPED "under $20" reaches the backend as a ceiling', () => {
+    // The end-to-end check that matters, now covering BOTH halves. Previously `?cost=20`
+    // composed "under $20" into `q`, which parseQuery turned into ctx.costMaxCad=20 and
+    // filters/cost.ts turned into a price ceiling. The beta round closed the URL half and
+    // deliberately left the typed half open, flagging it for Jon; he ruled on 2026-08-11 that
+    // the ceiling goes entirely. Asserting only the URL half is what let that asymmetry live.
     const stale = parseSearchState({ q: 'swim', cost: '20', time: 'morning', dropin: '1' });
     const q = new URLSearchParams(apiQuery(stale)).get('q') ?? '';
     const ctx = parseQuery(q);
-    expect(ctx.costMaxCad).toBeNull();
+    // No ceiling anywhere in the parsed context. Asserted structurally because the field is
+    // gone from SearchContext — a `ctx.costMaxCad` read would no longer compile, and a guard
+    // deleted to make the file compile is a guard that stopped guarding.
+    expect(Object.keys(ctx)).not.toContain('costMaxCad');
     expect(ctx.timeOfDay).toBe('morning');
     expect(ctx.dropIn).toBe(true);
     expect(ctx.terms).toContain('swim');
+
+    // The typed half: the phrase is still STRIPPED (it is cost intent, not content, and the
+    // matcher ORs user terms) but contributes no constraint and no extra term.
+    const typed = parseQuery('swim under $20');
+    expect(Object.keys(typed)).not.toContain('costMaxCad');
+    expect(typed.terms).toEqual(parseQuery('swim').terms);
   });
 });

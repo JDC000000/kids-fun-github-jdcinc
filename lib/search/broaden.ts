@@ -17,7 +17,9 @@ export type ConstraintKey =
   | 'rainyDay'
   | 'dropIn'
   | 'costFree'
-  | 'costMax'
+  // No 'costMax': the max-price ceiling was removed from the product (Jon's ruling,
+  // 2026-08-11 — see lib/search/parse.ts). A constraint that can never be active cannot be
+  // the thing blocking a query, so it must not appear in the ladder or the explanation.
   | 'ageBands';
 
 export type BroadenRungKey =
@@ -46,7 +48,6 @@ export const CONSTRAINT_LABELS: Record<ConstraintKey, string> = {
   rainyDay: 'Rainy-day (indoor) filter',
   dropIn: 'Drop-in filter',
   costFree: 'Free filter',
-  costMax: 'price limit',
   ageBands: 'age filter',
 };
 
@@ -56,7 +57,7 @@ function nextRadius(km: number): number {
 }
 
 /** Chips ordered most-restrictive → least, for "drop the most restrictive chip" (rung 4). */
-const CHIP_RESTRICTIVENESS: ConstraintKey[] = ['bookableNow', 'dropIn', 'rainyDay', 'costFree', 'costMax', 'ageBands'];
+const CHIP_RESTRICTIVENESS: ConstraintKey[] = ['bookableNow', 'dropIn', 'rainyDay', 'costFree', 'ageBands'];
 
 /** Which constraints are actually active (present) in this context. */
 export function activeConstraints(ctx: SearchContext): ConstraintKey[] {
@@ -69,7 +70,6 @@ export function activeConstraints(ctx: SearchContext): ConstraintKey[] {
   if (ctx.rainyDay) active.push('rainyDay');
   if (ctx.dropIn) active.push('dropIn');
   if (ctx.costFree) active.push('costFree');
-  if (ctx.costMaxCad != null) active.push('costMax');
   if (ctx.ageBands.length > 0) active.push('ageBands');
   return active;
 }
@@ -85,7 +85,6 @@ export function relaxSingle(ctx: SearchContext, key: ConstraintKey): SearchConte
     case 'rainyDay': return { ...ctx, rainyDay: false };
     case 'dropIn': return { ...ctx, dropIn: false };
     case 'costFree': return { ...ctx, costFree: false };
-    case 'costMax': return { ...ctx, costMaxCad: null };
     case 'ageBands': return { ...ctx, ageBands: [] };
   }
 }
@@ -115,7 +114,7 @@ export function explainEmptyState(
   // Blocking = the highest-priority FILTER whose relaxation unlocks results. Relaxing the
   // search terms ('text') abandons the query rather than unblocking it, so it ranks last —
   // only named when no filter relaxation helps.
-  const priority: ConstraintKey[] = ['radius', 'timeOfDay', 'date', 'bookableNow', 'dropIn', 'rainyDay', 'costMax', 'costFree', 'ageBands', 'text'];
+  const priority: ConstraintKey[] = ['radius', 'timeOfDay', 'date', 'bookableNow', 'dropIn', 'rainyDay', 'costFree', 'ageBands', 'text'];
   const helpful = singleRelaxations
     .filter((r) => r.wouldYield > 0)
     .sort((a, b) => priority.indexOf(a.constraint) - priority.indexOf(b.constraint) || b.wouldYield - a.wouldYield);

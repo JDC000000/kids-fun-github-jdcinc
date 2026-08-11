@@ -96,9 +96,12 @@ const FACETS: FacetCounts = {
       { value: 'van', count: 7, selected: false },
     ] },
     { key: 'quick', selection: 'toggle', values: [{ value: 'free', count: 2, selected: false }] },
-    { key: 'costMax', selection: 'single', values: [
-      { value: 'any', count: 12, selected: true },
-      { value: '20', count: 4, selected: false },
+    // Was the removed Max price group. Replaced with `category` — the one facet group that,
+    // like costMax, maps to NO rail group (see FACET_KEY_FOR in rail-groups.ts), so the payload
+    // stays as rich as it was without silently changing which groups the adaptive plan picks.
+    { key: 'category', selection: 'breakdown', values: [
+      { value: 'open_gym', count: 7, selected: false },
+      { value: 'storytime', count: 4, selected: false },
     ] },
   ],
 };

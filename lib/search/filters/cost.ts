@@ -18,14 +18,30 @@
 // got wrong: there is no parameter, no default, and no caller that can turn suppression back on.
 // If you are about to reintroduce an inclusion flag here, read the note in
 // app/search/_lib/params.ts first.
+//
+// THE MAX-PRICE CEILING IS GONE TOO, AND FOR THE SAME REASON IT IS GONE RATHER THAN UNREACHED
+// (Jon's ruling, 2026-08-11: "remove the price ceiling from search, full stop — it can be found
+// on the original source site").
+//
+// The beta round removed the ceiling's URL path and left the free-text path ("under $20") live.
+// That asymmetry is the defect this change ends, so the removal is made where it cannot be half
+// applied: `SearchContext.costMaxCad` no longer exists, so nothing in the product can compute a
+// ceiling to hand this function. The obvious alternative — keep `maxCad` here as an unreachable
+// parameter — was considered and REJECTED. An unreachable branch is a read surface: it reads as
+// "ceilings work, something just isn't setting one", which is exactly the belief that has to be
+// wrong for this removal to hold. The sibling `includeUnknown` removal above already settled
+// this question for this file ("expressed as the ABSENCE of a switch, it cannot be got wrong"),
+// and the same answer applies here.
+//
+// WHAT SURVIVES, DELIBERATELY: the `free` filter. Jon removed the price CEILING, not the Free
+// quick filter, and "free" is a parent stating a category of thing they want rather than a
+// control silently managing what they are allowed to see. Do not fold the two together.
 
 import type { ListingRecord } from '../types';
 
 export interface CostFilter {
-  /** User asked for free-only. */
+  /** User asked for free-only. The only cost constraint that exists. */
   free: boolean;
-  /** Optional max price ceiling in CAD (P1 cost range). */
-  maxCad?: number | null;
 }
 
 /** True when a listing's cost is unknown at source. */
@@ -52,14 +68,9 @@ export function matchesCost(listing: ListingRecord, filter: CostFilter): boolean
     return unknown;
   }
 
-  // No free constraint. An unknown/check-source price is NEVER a reason to drop a listing.
-  if (unknown) return true;
-
-  // A price ceiling can only ever apply to a listing whose price we actually know. Reaching
-  // here means cost is known, so an unknown-cost listing can never be excluded by `maxCad`.
-  if (filter.maxCad != null && listing.costStatus === 'known') {
-    const min = listing.costMinCad ?? listing.costMaxCad ?? 0;
-    if (min > filter.maxCad) return false;
-  }
+  // No free constraint. Nothing about a listing's PRICE can exclude it any more: an
+  // unknown/check-source price was never a reason to drop a listing, and since the ceiling was
+  // removed a known price is not one either. A parent who wants to know what something costs
+  // reads it on the card or on the source site; they do not have results withheld over it.
   return true;
 }

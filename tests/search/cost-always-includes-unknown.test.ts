@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { GET } from '../../app/api/search/route';
-import { matchesCost } from '../../lib/search/filters/cost';
+import { matchesCost, type CostFilter } from '../../lib/search/filters/cost';
 import { makeListing } from '../../lib/search/__fixtures__/factory';
 
 interface Item { listing: { id: string; costStatus: string } }
@@ -87,23 +87,69 @@ describe('matchesCost — the predicate itself has no inclusion switch left', ()
   const checkSource = makeListing({ costStatus: 'check_source' });
   const paid = makeListing({ costStatus: 'known', costMinCad: 40, costMaxCad: 40 });
 
-  it('admits unknown/check-source under every filter shape, including a price ceiling', () => {
+  it('admits unknown/check-source under every filter shape there is', () => {
     for (const listing of [unknown, checkSource]) {
       expect(matchesCost(listing, { free: false })).toBe(true);
       expect(matchesCost(listing, { free: true })).toBe(true);
-      expect(matchesCost(listing, { free: false, maxCad: 1 })).toBe(true);
-      expect(matchesCost(listing, { free: true, maxCad: 1 })).toBe(true);
-      expect(matchesCost(listing, { free: false, maxCad: null })).toBe(true);
     }
+    // "Every filter shape there is" is now literally two, because `free` is the only key
+    // CostFilter carries since the ceiling was removed (Jon, 2026-08-11). Pinned at the type
+    // level: re-adding `maxCad` makes this directive unused and `tsc --noEmit` fails by name.
+    // @ts-expect-error — CostFilter carries no price ceiling any more.
+    matchesCost(unknown, { free: false, maxCad: 1 } satisfies CostFilter);
   });
 
-  it('ANTI-FIX GUARD: a KNOWN price over the ceiling is still excluded', () => {
-    // Without this, "always return true" would satisfy every assertion above while deleting
-    // cost filtering outright. The ceiling is no longer reachable from the UI, but it is still
-    // reachable from a typed "under $20", so it must still work.
-    expect(matchesCost(paid, { free: false, maxCad: 20 })).toBe(false);
-    expect(matchesCost(paid, { free: false, maxCad: 50 })).toBe(true);
-    // And a free-only search still excludes a known-paid listing.
+  it('ANTI-FIX GUARD (rewritten 2026-08-11): the FREE filter still has teeth', () => {
+    // WHAT THIS GUARD USED TO SAY, AND WHY IT NO LONGER SAYS IT.
+    // It read "a KNOWN price over the ceiling is still excluded", and it was written to stop
+    // someone satisfying the always-include-unknown assertions above by gutting cost filtering
+    // into `return true`. Jon removed the max-price ceiling from the product on 2026-08-11
+    // ("remove the price ceiling from search, full stop — it can be found on the original
+    // source site"), which makes that assertion's premise false: an expensive listing is now
+    // SUPPOSED to come back. The guard is rewritten rather than deleted because the trap it was
+    // defending against is still open — `matchesCost` returning true unconditionally would
+    // still pass everything above.
+    //
+    // WHAT IT GUARDS INSTEAD: the one exclusion that survives. `free` is a parent naming the
+    // kind of thing they want, not a control quietly managing what they may see, so it stays —
+    // and if it ever stops excluding a known-paid listing, cost filtering really has been
+    // gutted and this line is what says so.
     expect(matchesCost(paid, { free: true })).toBe(false);
+    // The honesty distinction the Free filter rests on, restated here so the two cannot drift:
+    // unknown is not free, but it is not hidden from a free search either.
+    expect(matchesCost(unknown, { free: true })).toBe(true);
+    // And with no free constraint, a $40 listing comes back — the removal itself.
+    expect(matchesCost(paid, { free: false })).toBe(true);
+  });
+});
+
+describe('/api/search — a typed price ceiling reaches the engine as nothing (Jon, 2026-08-11)', () => {
+  // Asserted at the HTTP boundary for the same reason as everything else in this file: the
+  // beta round removed the ceiling's URL path and left the free-text path live, and that
+  // asymmetry is what silently emptied weekly emails. A predicate-only test would not have
+  // caught it. This one follows the real route, with the phrase a parent actually types.
+  const savedBackend = process.env.KIDS_FUN_SEARCH_BACKEND;
+  beforeEach(() => {
+    delete process.env.KIDS_FUN_SEARCH_BACKEND; // fixture mode: hermetic, no DB
+  });
+  afterEach(() => {
+    if (savedBackend === undefined) delete process.env.KIDS_FUN_SEARCH_BACKEND;
+    else process.env.KIDS_FUN_SEARCH_BACKEND = savedBackend;
+  });
+
+  it('"aquarium under $20" returns the $40 aquarium, identically to "aquarium"', async () => {
+    const plain = await call('q=aquarium&minResults=0&limit=100');
+    const typed = await call('q=aquarium+under+%2420&minResults=0&limit=100');
+    const ids = (r: { body: Body }) => items(r.body).map((i) => i.listing.id);
+
+    expect(plain.status).toBe(200);
+    expect(typed.status).toBe(200);
+    // Non-vacuous: the over-ceiling listing is really in the catalogue and really returned.
+    expect(ids(plain)).toContain('l-aquarium-van');
+    expect(ids(typed)).toContain('l-aquarium-van');
+    // Same ids in the same order. Equality (not merely "contains") is what also catches the
+    // other way this can go wrong: the stripped words leaking into the term list and changing
+    // what matches or how it ranks.
+    expect(ids(typed)).toEqual(ids(plain));
   });
 });

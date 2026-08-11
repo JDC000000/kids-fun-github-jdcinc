@@ -59,7 +59,6 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
     nearMe: false,
     costFree: false,
     includeRegistration: opts.includeRegistration ?? false,
-    costMaxCad: null,
     bookableNow: false,
     rainyDay: false,
     dropIn: false,
@@ -95,14 +94,24 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
     ctx.costFree = true;
     strip(/\bfree\b|\bno cost\b|\bno charge\b/g);
   }
-  // Max-price ceiling (P1 cost range, G-T21-4). normalize() has already stripped the "$",
-  // so we match the digits after under/up-to/below. Requiring 2+ digits keeps this from
-  // ever swallowing the "under 2" AGE phrase (a single digit), which parses below.
-  const maxPriceMatch = s.match(/\b(?:under|up to|below) (\d{2,4})\b/);
-  if (maxPriceMatch) {
-    ctx.costMaxCad = Number(maxPriceMatch[1]);
-    strip(/\b(?:under|up to|below) \d{2,4}\b/g);
-  }
+  // Max-price ceiling (was P1 cost range, G-T21-4) — RECOGNISED AND DISCARDED, NOT UNPARSED.
+  //
+  // The ceiling is gone from the product (Jon's ruling, 2026-08-11: "remove the price ceiling
+  // from search, full stop — it can be found on the original source site"). The URL path was
+  // removed in the beta round; this closes the free-text path it deliberately left open, and
+  // with it the question app/search/_lib/params.ts flagged for Jon rather than deciding.
+  //
+  // DELETING THIS BLOCK OUTRIGHT WOULD HAVE BEEN A REGRESSION, WHICH IS WHY IT IS STILL HERE.
+  // It is the only thing that strips "under 20" out of the search text. Without the strip the
+  // words "under" and "20" survive into `ctx.terms`, and the matcher ORs user terms
+  // (lib/search/match.ts) — so they would start pulling coincidental relevance out of
+  // descriptions, widening results and degrading ranking. The phrase is cost INTENT, not
+  // content; it is removed from the text for the same reason "check source" is stripped above,
+  // and for the same reason. Only the VALUE is thrown away.
+  //
+  // The 2+ digit requirement is likewise load-bearing and unchanged: it keeps this from
+  // swallowing the "under 2" AGE phrase (a single digit), which parses below.
+  strip(/\b(?:under|up to|below) \d{2,4}\b/g);
 
   // --- Status chips ---
   if (/\bbookable now\b|\bbookable\b|\bbook now\b/.test(s)) {

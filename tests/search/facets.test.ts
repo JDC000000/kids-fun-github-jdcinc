@@ -52,7 +52,12 @@ describe('facet counts — shape + wiring', () => {
 
   it('expose every filter group the rail renders', () => {
     const keys = facetsFor().groups.map((g) => g.key);
-    expect(keys).toEqual(expect.arrayContaining(['when', 'timeOfDay', 'ages', 'areas', 'quick', 'costMax', 'category']));
+    expect(keys).toEqual(expect.arrayContaining(['when', 'timeOfDay', 'ages', 'areas', 'quick', 'category']));
+    // The Max price group went with the price ceiling (Jon, 2026-08-11). It had no renderer
+    // even before that — there is no 'costMax' in rail-groups.ts's RailGroupId — so it was
+    // shipping ceiling-filtered counts over the wire that nothing drew. Asserted as an
+    // exclusion, because `arrayContaining` above would not notice it coming back.
+    expect(keys).not.toContain('costMax');
   });
 
   it('keep zero-count values rather than dropping them, so the UI can disable instead of guess', () => {
@@ -108,8 +113,6 @@ describe('facet counts — parity with a real search (the whole point)', () => {
     { group: 'quick', value: 'dropIn', applied: { q: 'drop-in' } },
     { group: 'quick', value: 'rainyDay', applied: { q: 'rainy day' } },
     { group: 'quick', value: 'free', applied: { q: 'free' } },
-    { group: 'costMax', value: '20', applied: { q: 'under $20' } },
-    { group: 'costMax', value: '50', applied: { q: 'under $50' } },
   ];
 
   it.each(cases)('$group=$value counts exactly what applying it returns', ({ group, value, applied }) => {

@@ -40,13 +40,22 @@ describe('SearchEngine.search (FR-02)', () => {
     expect(freeIds).toContain('l-storytime-unknown');
   });
 
-  it('honours the max-price ceiling end-to-end — "under $N" drops pricier listings (G-T21-4)', () => {
-    // minResults:0 disables the broadening ladder so we observe the raw filtered set
-    // (otherwise "drop the most restrictive chip" would re-add the excluded listing).
+  it('NO max-price ceiling end-to-end — a typed "under $N" no longer drops pricier listings (Jon, 2026-08-11)', () => {
+    // The inverse of the test it replaces. Jon removed the price ceiling from search outright
+    // ("it can be found on the original source site"), so the phrase must now change the
+    // result set in NO way at all. minResults:0 disables the broadening ladder, so what is
+    // compared is the raw filtered set — otherwise "drop the most restrictive chip" could
+    // re-add an excluded listing and make a live ceiling look removed.
     const base = engine.search({ q: 'aquarium', now: FIXTURE_NOW, minResults: 0 });
-    expect(base.results.map((r) => r.listing.id)).toContain('l-aquarium-van'); // $40, shown with no ceiling
-    const capped = engine.search({ q: 'aquarium under $20', now: FIXTURE_NOW, minResults: 0 });
-    expect(capped.results.map((r) => r.listing.id)).not.toContain('l-aquarium-van'); // $40 > $20 → excluded
+    const typed = engine.search({ q: 'aquarium under $20', now: FIXTURE_NOW, minResults: 0 });
+    const ids = (r: typeof base) => r.results.map((x) => x.listing.id);
+
+    // Non-vacuous first: the $40 listing is in the catalogue and is genuinely over the old $20.
+    expect(ids(base)).toContain('l-aquarium-van');
+    expect(ids(typed)).toContain('l-aquarium-van');
+    // Identical, in the same order — the phrase is stripped from the text and then discarded,
+    // so it can neither filter (a ceiling) nor rank (residual terms leaking into matching).
+    expect(ids(typed)).toEqual(ids(base));
   });
 
   it('honours a custom date range end-to-end — only in-range days survive, open-hours always (T26/FR-04)', () => {

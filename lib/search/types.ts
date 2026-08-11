@@ -152,8 +152,12 @@ export interface SearchContext {
    * every listing it adds is labelled as registration content on its card.
    */
   includeRegistration: boolean;
-  /** Optional max-price ceiling in CAD (P1 cost range, G-T21-4). null → no ceiling. */
-  costMaxCad: number | null;
+
+  // NOTE: there is deliberately no `costMaxCad` here any more. The max-price ceiling was
+  // removed from the product on Jon's ruling (2026-08-11) — see lib/search/parse.ts. Removing
+  // the FIELD rather than leaving it permanently null is the point: with no field, the compiler
+  // enumerates the consumers for us and no future reader can mistake a null that never changes
+  // for a ceiling that works. If you are about to add it back, read lib/search/filters/cost.ts.
 
   // Status intent (quick chips).
   bookableNow: boolean;

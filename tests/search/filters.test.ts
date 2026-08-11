@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { matchesTimeOfDay, matchesDate } from '../../lib/search/filters/time';
-import { matchesCost, isFree, isUnknownCost } from '../../lib/search/filters/cost';
+import { matchesCost, isFree, isUnknownCost, type CostFilter } from '../../lib/search/filters/cost';
 import { isBookableNow, isRainyDayFriendly, isDropIn, isPrimaryResult, isExpectedSection, isHidden, matchesStatus } from '../../lib/search/filters/status';
 import { makeListing } from '../../lib/search/__fixtures__/factory';
 
@@ -68,16 +68,19 @@ describe('cost filter (FR-10/BR-11, G-T16-5)', () => {
     expect(matchesCost(unknown, { free: true })).toBe(true);
   });
 
-  it('applies a max-cost ceiling to known prices', () => {
-    expect(matchesCost(paid, { free: false, maxCad: 3 })).toBe(false);
-    expect(matchesCost(paid, { free: false, maxCad: 10 })).toBe(true);
-  });
-
-  it('a price ceiling can never exclude an unknown-cost listing', () => {
-    // The ceiling only applies to a KNOWN price. An unknown price is not "too expensive";
-    // it is unmeasured, and a ceiling must not become a second route to suppression.
-    expect(matchesCost(unknown, { free: false, maxCad: 1 })).toBe(true);
-    expect(matchesCost(makeListing({ costStatus: 'check_source' }), { free: false, maxCad: 1 })).toBe(true);
+  it('has NO max-cost ceiling left — price alone never excludes anything (Jon, 2026-08-11)', () => {
+    // Replaces two tests that asserted a ceiling applied to known prices and never to unknown
+    // ones. Jon removed the ceiling from the product outright, and it was removed here as the
+    // ABSENCE of a parameter rather than an unreachable one (see lib/search/filters/cost.ts) —
+    // so the assertion that carries the decision is that `free` is the only key CostFilter has.
+    // A reintroduced `maxCad` would fail to type-check at every call site, which is the point.
+    expect(matchesCost(paid, { free: false })).toBe(true); // $5, and nothing can cap it
+    expect(matchesCost(makeListing({ costStatus: 'known', costMinCad: 500, costMaxCad: 500 }), { free: false })).toBe(true);
+    // Type-level half, and the half with the real teeth: if `maxCad` is ever put back on
+    // CostFilter this directive becomes unused and `tsc --noEmit` fails on it by name. A
+    // runtime assertion cannot catch a parameter being re-added; this can.
+    // @ts-expect-error — CostFilter carries no price ceiling any more (Jon, 2026-08-11).
+    matchesCost(paid, { free: false, maxCad: 20 } satisfies CostFilter);
   });
 });
 
