@@ -48,20 +48,46 @@ export function formatAges(min: number, max: number): string {
   return `Ages ${min}–${max}`;
 }
 
-/** Cost copy — unknown is never presented as free (BR: "unknown ≠ free"). */
+/** The card's one not-a-number cost read. Unknown cost gets THIS, never a price and never "Free". */
+const COST_UNKNOWN = 'Cost — check source';
+
+/**
+ * Cost copy for the card face — unknown is never presented as free (BR-11, TSD §6.2;
+ * lib/search/types.ts:15 "unknown/check_source is NEVER treated as free").
+ *
+ * THE MISSING NUMBER IS NOT A ZERO. `cost_status = 'known'` does not guarantee a number: the DTO,
+ * the postgres read-model and the admin listing form all permit known with null bounds, and the
+ * old `costMinCad ?? 0` turned every one of those into a printed price — "$0 approx." for a
+ * listing whose cost we never had, and "$0–$30" for one where we only ever knew the ceiling. A
+ * fabricated $0 is the single worst thing this formatter can say to a parent, because it is the
+ * one reading they will act on. We now only print a number we were actually given.
+ *
+ * ZERO AGREES WITH THE FREE FILTER, DELIBERATELY. `isFree()` in lib/search/filters/cost.ts is the
+ * authority on what counts as free, and it requires BOTH bounds at zero — so known/0/0 is free
+ * and known/0/null is not. This mirrors that rule rather than inventing a display-only one,
+ * because the two are read together: a tile reading "$0" for a listing the Free quick filter
+ * EXCLUDES is a contradiction a parent can see (tick Free, watch the $0 card vanish). Where we
+ * hold a lone zero and no second bound we therefore say nothing numeric at all — a bare "$0"
+ * reads as free, and per cost.ts it is not.
+ */
 export function formatCost(activity: Pick<Activity, 'costStatus' | 'costMinCad' | 'costMaxCad'>): string {
   switch (activity.costStatus) {
     case 'free':
       return 'Free';
     case 'known': {
-      const min = activity.costMinCad ?? 0;
-      const max = activity.costMaxCad;
-      if (max != null && max !== min) return `$${min}–$${max}`;
-      return `$${min} approx.`;
+      const min = activity.costMinCad ?? null;
+      const max = activity.costMaxCad ?? null;
+      // Known with both bounds at zero is free — the same call isFree() makes.
+      if (min === 0 && max === 0) return 'Free';
+      if (min != null && max != null) return min === max ? `$${min} approx.` : `$${min}–$${max}`;
+      // Exactly one bound, or none. A lone non-zero bound is the one number we can honestly
+      // state; a lone zero (or no bound at all) is not a price we have.
+      const only = min ?? max;
+      return only != null && only !== 0 ? `$${only} approx.` : COST_UNKNOWN;
     }
     case 'unknown':
     default:
-      return 'Cost — check source';
+      return COST_UNKNOWN;
   }
 }
 
