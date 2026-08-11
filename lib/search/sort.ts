@@ -5,6 +5,7 @@
 // searches. Every comparator has a stable id tiebreak so ordering is reproducible.
 // Missing values (no distance, no date, unknown cost) sort last, never first.
 
+import { readCost } from './filters/cost';
 import type { ScoredListing } from './rank';
 import type { SortKey } from './types';
 
@@ -24,11 +25,33 @@ function soonestValue(s: ScoredListing): number | null {
   return iso ? new Date(iso).getTime() : null; // open-hours (null start) → sorts last
 }
 
+/**
+ * The cost we may order a listing at — DERIVED from `readCost()`, never restated.
+ *
+ * Ordering and DISPLAY must not be able to drift, so this reads the same authority every cost
+ * label reads (lib/search/filters/cost.ts). It used to hand-roll its own mirror of the rule
+ * (`costMinCad ?? costMaxCad ?? 0`), which ranked listings at prices no surface will print:
+ * `known` with no bounds sorted FIRST at 0, `min=7/max=0` sorted at 7, and a negative bound
+ * — reachable through the admin form — sorted ABOVE genuinely-free listings. `readCost()`
+ * already screens negative bounds, contradictory bounds and lone zeros, so those cells fall
+ * out of this delegation rather than needing a branch each.
+ *
+ * Anything it declines to state has no cost to order by, so it sorts last via `nullsLast` —
+ * per this file's header and the sort sentence a parent reads in app/search/_lib/params.ts
+ * ("free and low-cost first; unknown cost last").
+ */
 function lowestCostValue(s: ScoredListing): number | null {
-  const l = s.candidate.listing;
-  if (l.costStatus === 'free') return 0;
-  if (l.costStatus === 'known') return l.costMinCad ?? l.costMaxCad ?? 0;
-  return null; // unknown/check_source → sorts last
+  const cost = readCost(s.candidate.listing);
+  switch (cost.kind) {
+    case 'free':
+      return 0;
+    case 'amount':
+      return cost.amount;
+    case 'range':
+      return cost.min; // it is the LOWEST-cost sort, and readCost has already ordered min <= max
+    case 'unstated':
+      return null;
+  }
 }
 
 function newestValue(s: ScoredListing): number | null {
