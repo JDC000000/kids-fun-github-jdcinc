@@ -15,7 +15,7 @@ vi.mock('@/lib/email/recipients', () => ({
 }));
 
 import { query, closePool } from '@/lib/db/client';
-import { sendWeeklyDigestForUser } from '@/lib/email/weekly';
+import { sendWeeklyDigestForUser, previewWeeklyDigestForUser } from '@/lib/email/weekly';
 import { recordWeeklySend } from '@/lib/email/send-log';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -28,6 +28,8 @@ describe.skipIf(!hasDb)('sendWeeklyDigestForUser (dry-run, real Postgres)', () =
     optOut: randomUUID(),
     noSearch: randomUUID(),
     nothingNew: randomUUID(),
+    /** Opted in, one saved search, and that search matches NOTHING. */
+    blocked: randomUUID(),
   };
   let occurrenceId = '';
 
@@ -77,6 +79,13 @@ describe.skipIf(!hasDb)('sendWeeklyDigestForUser (dry-run, real Postgres)', () =
         [id]
       );
     }
+    // blocked: a saved search that matches nothing at all. The digest now records WHY —
+    // and must still not send. See the "records the reason but sends nothing" test below.
+    await query(
+      `INSERT INTO saved_search (user_id, query_json)
+         VALUES ($1, '{"name":"Quidditch","params":{"q":"quidditch"}}'::jsonb)`,
+      [users.blocked]
+    );
     // nothingNew: record a real send NOW → watermark is after the occurrence's created_at.
     await recordWeeklySend({ userId: users.nothingNew, activityCount: 1, resendId: 'seed', dryRun: false });
   });
@@ -121,5 +130,26 @@ describe.skipIf(!hasDb)('sendWeeklyDigestForUser (dry-run, real Postgres)', () =
   it('skips when nothing is new since the last email (watermark honoured)', async () => {
     const res = await sendWeeklyDigestForUser(users.nothingNew, { dryRun: true, now: new Date() });
     expect(res.status).toBe('skipped_nothing_new');
+  });
+
+  // A saved search that matches nothing now produces a RECORDED reason where it previously
+  // produced nothing at all — and that reason changes no send decision. This is the guard
+  // for the safety property of the empty-state unit: not one currently-silent parent starts
+  // receiving mail because we learned how to explain their empty search.
+  it('records the reason a saved search is empty but still sends nothing', async () => {
+    const preview = await previewWeeklyDigestForUser(users.blocked, { now: new Date() });
+    expect(preview).not.toBeNull();
+    expect(preview?.emptySearches).toHaveLength(1);
+    expect(preview?.emptySearches[0].label).toBe('Quidditch');
+    expect(preview?.shouldSend).toBe(false);
+
+    const res = await sendWeeklyDigestForUser(users.blocked, { dryRun: true, now: new Date() });
+    expect(res.status).toBe('skipped_nothing_new');
+    expect(res.activityCount).toBe(0);
+    expect(res.payload).toBeUndefined(); // nothing was even built for dispatch
+
+    // And the watermark stayed put — no send row of any kind.
+    const sends = await query(`SELECT id FROM weekly_email_send WHERE user_id = $1`, [users.blocked]);
+    expect(sends).toHaveLength(0);
   });
 });

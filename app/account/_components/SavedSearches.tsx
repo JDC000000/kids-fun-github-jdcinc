@@ -11,7 +11,9 @@
 // handles the current user's rows.
 import { useState, type FormEvent } from 'react';
 import { Button, Input } from '@/components/ui';
-import { hrefForParams } from '@/app/search/_lib/params';
+import { hrefForParams, parseSearchState } from '@/app/search/_lib/params';
+import { activeFilterCount } from '@/app/search/_lib/filter-summary';
+import { emptyStateSentence, savedSearchRawParams } from '@/lib/search/saved-search-status';
 
 export interface SavedSearchView {
   id: string;
@@ -21,18 +23,34 @@ export interface SavedSearchView {
   last_run_at: string | null;
 }
 
+/** Server-computed "this saved search matches nothing right now" for one row. */
+export interface SavedSearchEmptyView {
+  /** Human label for the blocking constraint, e.g. "price limit". Null when none unlocks it. */
+  blockingLabel: string | null;
+}
+
 type Status =
   | { kind: 'idle' }
   | { kind: 'saving' }
   | { kind: 'error'; message: string; signin?: boolean };
 
-/** A compact, human summary of a saved search's params for the list row. */
+/**
+ * A compact, human summary of a saved search's params for the list row.
+ *
+ * The filter count is read through the SAME parser that executes the search
+ * (parseSearchState → activeFilterCount, what /search itself counts) rather than by
+ * counting raw stored keys. A search saved before the beta removal of the price controls
+ * can still carry `cost=` / `includeUnknownCost=`; those are now inert — parseSearchState
+ * ignores unrecognised params, so no ceiling reaches the engine — and counting keys made
+ * the row claim filters whose behaviour no longer applies. Counting parsed state instead
+ * means the summary cannot outlive the behaviour again, for this param or the next one.
+ */
 function summarize(params: Record<string, unknown>): string {
   const q = typeof params.q === 'string' ? params.q.trim() : '';
-  const otherKeys = Object.keys(params).filter((k) => k !== 'q');
+  const filters = activeFilterCount(parseSearchState(savedSearchRawParams(params)));
   const parts: string[] = [];
   if (q) parts.push(`“${q}”`);
-  if (otherKeys.length > 0) parts.push(`${otherKeys.length} filter${otherKeys.length === 1 ? '' : 's'}`);
+  if (filters > 0) parts.push(`${filters} filter${filters === 1 ? '' : 's'}`);
   return parts.length > 0 ? parts.join(' · ') : 'Custom search';
 }
 
@@ -43,7 +61,18 @@ function formatDate(iso: string): string {
   return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-export function SavedSearches({ initial }: { initial: SavedSearchView[] }) {
+export function SavedSearches({
+  initial,
+  emptyById = {},
+}: {
+  initial: SavedSearchView[];
+  /**
+   * Server-computed, keyed by saved-search id: present iff that search matches nothing
+   * right now. Rows created in this session are absent and simply show no line — never a
+   * guess.
+   */
+  emptyById?: Record<string, SavedSearchEmptyView>;
+}) {
   const [items, setItems] = useState<SavedSearchView[]>(initial);
   const [name, setName] = useState('');
   const [queryText, setQueryText] = useState('');
@@ -158,6 +187,15 @@ export function SavedSearches({ initial }: { initial: SavedSearchView[] }) {
                   {s.name ? ' · ' : ''}
                   {formatDate(s.created_at)}
                 </span>
+                {/* Shown here UNCONDITIONALLY. A parent whose saved searches all match
+                    nothing receives no weekly email at all (lib/email/digest.ts keeps
+                    shouldSend gated on genuine matches), so this page is the only place
+                    that population can be told why. */}
+                {emptyById[s.id] && (
+                  <span className="kf-saved__item-empty">
+                    {emptyStateSentence(emptyById[s.id].blockingLabel)}
+                  </span>
+                )}
               </div>
               <div className="kf-saved__item-actions">
                 <a

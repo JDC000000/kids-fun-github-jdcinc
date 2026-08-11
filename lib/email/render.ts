@@ -10,7 +10,8 @@
 // no external CSS). Every piece of dynamic text is HTML-escaped — an activity name
 // from an external source can never inject markup. A hidden preheader controls the
 // inbox preview line. Pure (no DB/network): the caller passes the unsubscribe URL.
-import type { WeeklyDigest } from './digest';
+import type { WeeklyDigest, DigestEmptySearch } from './digest';
+import { emptyStateSentence } from '@/lib/search/saved-search-status';
 import { appUrl } from './config';
 
 export interface RenderedEmail {
@@ -80,6 +81,39 @@ function sectionHtml(s: { label: string; searchUrl: string; activities: Array<Pa
     </td></tr>`;
 }
 
+/**
+ * One short factual line per saved search that matched NOTHING, naming the blocking
+ * constraint and linking to that search so it can be adjusted.
+ *
+ * Only rendered inside an email that is being sent anyway (weekly.ts returns before
+ * rendering when !shouldSend), and only when there is at least one — this block can never
+ * become the reason an email exists.
+ */
+function emptySearchesHtml(empties: DigestEmptySearch[]): string {
+  if (empties.length === 0) return '';
+  const rows = empties
+    .map(
+      (e) => `
+      <tr><td style="padding:8px 0;border-bottom:1px solid ${C.rule};">
+        <div style="color:${C.ink};font-size:15px;line-height:1.45;font-weight:600;">${escapeHtml(e.label)}</div>
+        <div style="color:${C.moss};font-size:14px;line-height:1.5;margin-top:2px;">
+          ${escapeHtml(emptyStateSentence(e.blockingLabel))}
+          &nbsp;<a href="${escapeAttr(e.searchUrl)}" style="color:${C.moss};text-decoration:underline;">Edit this search</a>
+        </div>
+      </td></tr>`,
+    )
+    .join('');
+  return `
+    <tr><td style="padding:28px 0 4px 0;">
+      <div style="font-size:13px;letter-spacing:0.04em;text-transform:uppercase;color:${C.moss};">Saved searches with no matches</div>
+    </td></tr>
+    <tr><td>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+        ${rows}
+      </table>
+    </td></tr>`;
+}
+
 export function renderWeeklyDigest(digest: WeeklyDigest, opts: RenderOptions): RenderedEmail {
   const subject = subjectFor(digest);
   const preheader = `${digest.totalActivities} new kid-friendly ${
@@ -118,6 +152,7 @@ export function renderWeeklyDigest(digest: WeeklyDigest, opts: RenderOptions): R
 
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
             ${digest.sections.map(sectionHtml).join('')}
+            ${emptySearchesHtml(digest.emptySearches)}
           </table>
 
           <!-- CTA -->
@@ -172,6 +207,15 @@ function renderText(
       lines.push(`  • ${a.name} — ${a.venue}`);
       lines.push(`    ${a.when} · ${a.cost}`);
       lines.push(`    ${a.url}`);
+    }
+  }
+  if (digest.emptySearches.length > 0) {
+    lines.push('');
+    lines.push('Saved searches with no matches:');
+    for (const e of digest.emptySearches) {
+      // Colon, not a dash: the sentence itself already carries an em-dash.
+      lines.push(`  • ${e.label}: ${emptyStateSentence(e.blockingLabel)}`);
+      lines.push(`    Edit this search: ${e.searchUrl}`);
     }
   }
   lines.push('');

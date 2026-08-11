@@ -210,6 +210,19 @@
   overflow-wrap: anywhere;
 }
 
+/* "This saved search matches nothing right now, and here is what is blocking it."
+   Plain and quiet — a statement of fact, not a warning banner. Same moss secondary
+   ink as the meta line; the leading rule is what separates it from the summary. */
+.kf-saved__item-empty {
+  margin-top: 0.25rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--kf-hairline);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--park-moss-text);
+  overflow-wrap: anywhere;
+}
+
 .kf-saved__item-actions {
   flex: 0 0 auto;
   display: flex;

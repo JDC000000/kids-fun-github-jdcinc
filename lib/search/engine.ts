@@ -178,9 +178,20 @@ export class SearchEngine {
     const applied: BroadenRung[] = [];
     let emptyState: ConstraintExplanation | null = null;
 
-    // Broaden if too few results (deterministic ladder).
-    if (run.scored.length < minResults) {
+    // BROADENING and EXPLAINING are two different policies and they used to share one
+    // condition. Broadening ADDS results the caller did not ask for, so a caller must be
+    // able to decline it — `minResults: 0` is exactly that opt-out, and lib/email/digest.ts
+    // uses it because a weekly email must contain only genuine matches. The explanation
+    // adds NO results; it only names the constraint that emptied the set. Fusing them meant
+    // that declining the padding also silently declined the explanation (`0 < 0` is false),
+    // so the digest went quiet about a search it could not fill without ever computing why
+    // — while /search, which always broadens, explained itself. Explain whenever the primary
+    // run came back genuinely EMPTY; broaden only when the caller asked for a minimum.
+    const tooFew = run.scored.length < minResults;
+    if (tooFew || run.scored.length === 0) {
       emptyState = explainEmptyState(ctx0, (v) => primaryOf(v).scored.length);
+    }
+    if (tooFew) {
       for (const rung of buildBroadeningLadder(ctx0)) {
         applied.push(rung);
         working = rung.context;

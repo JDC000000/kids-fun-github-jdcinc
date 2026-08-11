@@ -18,10 +18,16 @@
 // `newOccurrenceIds` (created since the watermark), i.e. genuinely NEW since we last
 // wrote. Broadening is disabled (minResults: 0) so the digest never pads itself with
 // non-matching "expected/seasonal" suggestions — only real matches.
-import type { SearchEngine, SearchRequest } from '@/lib/search/engine';
+//
+// A saved search that matches NOTHING is still dropped from `sections` (there is nothing
+// to list) but is no longer dropped SILENTLY: it is recorded in `emptySearches` together
+// with the constraint the engine found to be blocking it. Declining to pad an email is not
+// the same as declining to say why it is thin, and until now those were one decision.
+import type { SearchEngine } from '@/lib/search/engine';
 import type { ListingRecord } from '@/lib/search/types';
-import type { OriginRequest } from '@/lib/geo/origin';
-import { parseSearchState, intentPhrases, hrefForParams } from '@/app/search/_lib/params';
+import type { ConstraintKey } from '@/lib/search/broaden';
+import { runSavedSearch } from '@/lib/search/saved-search-status';
+import { hrefForParams } from '@/app/search/_lib/params';
 import { appUrl } from './config';
 import { formatWhen, formatCost, savedSearchLabel } from './format';
 
@@ -53,11 +59,32 @@ export interface DigestSection {
   activities: DigestActivity[];
 }
 
+/**
+ * A saved search that currently matches NOTHING AT ALL, and the constraint blocking it.
+ *
+ * Distinct from "has matches but nothing new this week": that search is not blocked by a
+ * filter and gets no entry here, because naming one would be false.
+ */
+export interface DigestEmptySearch {
+  savedSearchId: string;
+  label: string;
+  /** /search URL rebuilt from the stored params, so the parent can open and adjust it. */
+  searchUrl: string;
+  blockingConstraint: ConstraintKey | null;
+  /** Human label for the blocking constraint, e.g. "price limit". Null when none unlocks it. */
+  blockingLabel: string | null;
+}
+
 /** The full per-user digest data model. */
 export interface WeeklyDigest {
   userId: string;
   sections: DigestSection[];
   totalActivities: number;
+  /**
+   * Saved searches that matched nothing, with the reason. Reporting only — it does NOT
+   * feed `shouldSend`; see the note there.
+   */
+  emptySearches: DigestEmptySearch[];
   /** True iff there is at least one new matching activity worth emailing. */
   shouldSend: boolean;
 }
@@ -72,51 +99,6 @@ export interface BuildDigestInput {
   /** Occurrence ids created since this user's last email (the "new" set). */
   newOccurrenceIds: Set<string>;
   perSearchLimit?: number;
-}
-
-/** Next.js searchParams shape parseSearchState expects. */
-type RawParams = Record<string, string | string[] | undefined>;
-
-/** Coerce a stored params envelope (values may be any JSON) into clean URL-param strings. */
-function toRawParams(params: Record<string, unknown>): RawParams {
-  const out: RawParams = {};
-  for (const [k, v] of Object.entries(params)) {
-    if (typeof v === 'string') out[k] = v;
-    else if (typeof v === 'number' || typeof v === 'boolean') out[k] = String(v);
-    // objects/arrays/null are ignored — not part of the /search URL contract.
-  }
-  return out;
-}
-
-/** Turn a saved search's stored params into a SearchRequest (mirrors app/search apiQuery intent). */
-function savedSearchToRequest(
-  params: Record<string, unknown>,
-  homePostal: string | null,
-  now: Date
-): { request: SearchRequest; query: string } {
-  const state = parseSearchState(toRawParams(params));
-  const query = [state.q, ...intentPhrases(state)].filter(Boolean).join(' ').trim();
-
-  // The only durable origin a saved search can carry is the saved-location intent
-  // (home=1). Raw near-me coordinates are never persisted (Task B privacy rule), so
-  // there is nothing else to resolve. saved_home requires signedIn=true in
-  // resolveOrigin; the digest is inherently for a known, signed-up user.
-  const origin: OriginRequest | null =
-    state.useSavedLocation && homePostal ? { mode: 'saved_home', homePostal } : null;
-
-  return {
-    query,
-    request: {
-      q: query,
-      now,
-      origin,
-      signedIn: origin != null,
-      regionChipIds: state.regions,
-      sort: state.sort,
-      minResults: 0, // never broaden — a digest must contain only genuine matches
-      limit: 100, // generous; we filter to "new" and cap per-search below
-    },
-  };
 }
 
 /** Start-time key for soonest-first ordering; open-hours / undated sort last. */
@@ -156,25 +138,44 @@ function toActivity(listing: ListingRecord): DigestActivity {
  * matches are omitted; `shouldSend` is false when nothing new matches any saved
  * search (the caller must NOT send — and must NOT advance the watermark — in that
  * case, so nothing new is missed next week).
+ *
+ * A saved search that matched NOTHING AT ALL also lands in `emptySearches` with the
+ * constraint blocking it, so a digest that IS being sent can say why one of its saved
+ * searches is missing. That is reporting only: see `shouldSend` below.
  */
 export function buildWeeklyDigest(input: BuildDigestInput): WeeklyDigest {
   const perSearchLimit = input.perSearchLimit ?? DEFAULT_PER_SEARCH_LIMIT;
   const sections: DigestSection[] = [];
+  const emptySearches: DigestEmptySearch[] = [];
 
   for (const ss of input.savedSearches) {
-    const { request, query } = savedSearchToRequest(ss.params, input.homePostal, input.now);
-    const response = input.engine.search(request);
+    const run = runSavedSearch(input.engine, ss.params, input.homePostal, input.now);
 
-    const fresh = response.results
+    const fresh = run.response.results
       .map((r) => r.listing)
       .filter((l) => input.newOccurrenceIds.has(l.id));
 
     const deduped = dedupeSoonestPerSeries(fresh).slice(0, perSearchLimit);
-    if (deduped.length === 0) continue; // no empty sections
+    if (deduped.length === 0) {
+      // No empty sections — but record WHY when the reason is a constraint. `run.emptyState`
+      // is non-null only when the saved search matched nothing at all; a search with plenty
+      // of matches that simply has nothing NEW this week is not blocked by a filter, so it
+      // gets no line rather than a wrong one.
+      if (run.emptyState) {
+        emptySearches.push({
+          savedSearchId: ss.id,
+          label: savedSearchLabel(ss.name, run.query),
+          searchUrl: appUrl(hrefForParams(ss.params)),
+          blockingConstraint: run.emptyState.blockingConstraint,
+          blockingLabel: run.emptyState.blockingLabel,
+        });
+      }
+      continue;
+    }
 
     sections.push({
       savedSearchId: ss.id,
-      label: savedSearchLabel(ss.name, query),
+      label: savedSearchLabel(ss.name, run.query),
       searchUrl: appUrl(hrefForParams(ss.params)),
       activities: deduped.map(toActivity),
     });
@@ -185,6 +186,12 @@ export function buildWeeklyDigest(input: BuildDigestInput): WeeklyDigest {
     userId: input.userId,
     sections,
     totalActivities,
+    emptySearches,
+    // DELIBERATELY UNCHANGED, and it must stay that way. An email still requires at least one
+    // GENUINE new match. `emptySearches` is explanatory payload for an email that is already
+    // being sent — it must never become a reason to send one, or a parent whose searches all
+    // match nothing would start receiving mail whose entire content is "nothing matched".
+    // tests/email/digest_empty_state.test.ts guards this.
     shouldSend: totalActivities > 0,
   };
 }

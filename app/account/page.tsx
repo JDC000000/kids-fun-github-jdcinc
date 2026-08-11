@@ -2,8 +2,10 @@ import { redirect } from 'next/navigation';
 import { getRequestUser } from '@/lib/db/session-user';
 import { ensureUserProfile, getUserProfile, type UserProfile } from '@/lib/db/user-profile';
 import { listSavedSearches } from '@/lib/db/saved-search';
+import { getServerSearchEngine } from '@/lib/search/server-engine';
+import { runSavedSearch } from '@/lib/search/saved-search-status';
 import { AccountForm } from './_components/AccountForm';
-import { SavedSearches, type SavedSearchView } from './_components/SavedSearches';
+import { SavedSearches, type SavedSearchView, type SavedSearchEmptyView } from './_components/SavedSearches';
 import { AccountData } from './_components/AccountData';
 import './account.css';
 
@@ -59,6 +61,35 @@ export default async function AccountPage() {
     savedSearches = [];
   }
 
+  // Which saved searches currently match NOTHING, and what is blocking each.
+  //
+  // Unconditional, and that is the point: the parent whose every saved search matches
+  // nothing is precisely the parent who gets no weekly email, so an email can never be the
+  // place they find out. Same evaluation the digest runs (runSavedSearch), so the two
+  // surfaces cannot disagree.
+  //
+  // Best-effort: any failure — engine unavailable, one bad stored params blob — leaves the
+  // row with no line at all. "We could not check" must never render as "nothing matches".
+  const emptyById: Record<string, SavedSearchEmptyView> = {};
+  if (savedSearches.length > 0) {
+    try {
+      const engine = await getServerSearchEngine();
+      if (engine) {
+        const now = new Date();
+        for (const s of savedSearches) {
+          try {
+            const run = runSavedSearch(engine, s.params, profile?.home_postal ?? null, now);
+            if (run.emptyState) emptyById[s.id] = { blockingLabel: run.emptyState.blockingLabel };
+          } catch {
+            // skip this row only
+          }
+        }
+      }
+    } catch {
+      // leave the map empty — the list renders exactly as it did before.
+    }
+  }
+
   return (
     <main className="kf-account-page">
       <div className="kf-account-page__inner">
@@ -79,7 +110,7 @@ export default async function AccountPage() {
 
         <AccountForm initial={initial} />
 
-        <SavedSearches initial={savedSearches} />
+        <SavedSearches initial={savedSearches} emptyById={emptyById} />
 
         <AccountData />
 

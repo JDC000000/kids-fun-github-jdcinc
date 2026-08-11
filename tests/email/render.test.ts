@@ -8,6 +8,7 @@ function digest(overrides: Partial<WeeklyDigest> = {}): WeeklyDigest {
     userId: 'u-1',
     totalActivities: 2,
     shouldSend: true,
+    emptySearches: [],
     sections: [
       {
         savedSearchId: 'ss-1',
@@ -72,5 +73,59 @@ describe('renderWeeklyDigest', () => {
   it('includes a hidden preheader for the inbox preview line', () => {
     const { html } = renderWeeklyDigest(digest(), { unsubscribeUrl: '#' });
     expect(html).toMatch(/display:none[^>]*>[^<]*2 new kid-friendly activities/);
+  });
+
+  // ── Empty saved searches ────────────────────────────────────────────────────────
+  // One short factual line per saved search that matched nothing, naming the constraint
+  // and linking to that search. Rendered only inside an email that is being sent anyway
+  // (lib/email/weekly.ts returns before rendering when !shouldSend).
+  const withEmpties = () =>
+    digest({
+      emptySearches: [
+        {
+          savedSearchId: 'ss-2',
+          label: 'Weekend swim',
+          searchUrl: 'https://app.example/search?q=swim&when=weekend',
+          blockingConstraint: 'date',
+          blockingLabel: 'date',
+        },
+      ],
+    });
+
+  it('names the blocking constraint and links the search, in HTML and text', () => {
+    const { html, text } = renderWeeklyDigest(withEmpties(), { unsubscribeUrl: '#' });
+    for (const out of [html, text]) {
+      expect(out).toContain('Weekend swim');
+      expect(out).toContain('No matches right now — removing the date would show results.');
+      expect(out).toContain('https://app.example/search?q=swim&');
+    }
+    expect(html).toContain('Saved searches with no matches');
+    expect(text).toContain('Saved searches with no matches:');
+  });
+
+  it('says nothing at all when no saved search is empty', () => {
+    const { html, text } = renderWeeklyDigest(digest(), { unsubscribeUrl: '#' });
+    expect(html).not.toContain('Saved searches with no matches');
+    expect(text).not.toContain('Saved searches with no matches');
+    expect(html).not.toContain('No matches right now');
+    expect(text).not.toContain('No matches right now');
+  });
+
+  it('HTML-escapes an empty search label and URL too', () => {
+    const evil = withEmpties();
+    evil.emptySearches[0].label = '<img src=x onerror=1> & "co"';
+    const { html } = renderWeeklyDigest(evil, { unsubscribeUrl: '#' });
+    expect(html).not.toContain('<img src=x onerror=1>');
+    expect(html).toContain('&lt;img src=x onerror=1&gt; &amp; &quot;co&quot;');
+  });
+
+  it('falls back to the honest wording when no single filter unlocks results', () => {
+    const d = withEmpties();
+    d.emptySearches[0].blockingConstraint = null;
+    d.emptySearches[0].blockingLabel = null;
+    const { html, text } = renderWeeklyDigest(d, { unsubscribeUrl: '#' });
+    for (const out of [html, text]) {
+      expect(out).toContain('No matches right now — relaxing any single filter still shows none.');
+    }
   });
 });
