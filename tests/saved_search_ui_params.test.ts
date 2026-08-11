@@ -14,12 +14,11 @@ import {
   type SearchState,
 } from '@/app/search/_lib/params';
 
-// A rich, non-near-me state: text + non-default sort + explicit cost-off + regions
+// A rich, non-near-me state: text + non-default sort + regions
 // + date + quick filters + ages + saved-location (home) intent + non-default radius.
 const RICH_STATE: SearchState = {
   q: 'family swim',
   sort: 'soonest',
-  includeUnknownCost: false,
   includeRegistration: true,
   regions: ['van', 'bby'],
   when: 'weekend',
@@ -30,7 +29,6 @@ const RICH_STATE: SearchState = {
   rainyDay: false,
   dropIn: false,
   free: true,
-  costMaxCad: null,
   ages: ['2-4', '5-9'],
   lat: null,
   lng: null,
@@ -43,7 +41,6 @@ describe('serializeStateToParams', () => {
     expect(serializeStateToParams(RICH_STATE)).toEqual({
       q: 'family swim',
       sort: 'soonest',
-      includeUnknownCost: '0',
       // Default-off widener, so it is only written when the parent turned it on — and it MUST be
       // written, or re-running a saved course search would silently come back drop-in only.
       reg: '1',
@@ -57,10 +54,15 @@ describe('serializeStateToParams', () => {
     });
   });
 
-  it('omits includeUnknownCost when it is at its default (on)', () => {
+  it('never writes an includeUnknownCost or cost key — both controls are gone', () => {
+    // This used to test that the default-ON value was DROPPED from the envelope. That drop was
+    // safe only because every consumer re-parsed through parseSearchState, which restored the
+    // default; the /api/search route's own default was the opposite. Neither key exists now, so
+    // there is nothing to drop and nothing for two layers to disagree about.
     const params = serializeStateToParams({ ...DEFAULT_STATE, q: 'gym' });
     expect(params).toEqual({ q: 'gym' });
     expect('includeUnknownCost' in params).toBe(false);
+    expect('cost' in params).toBe(false);
   });
 
   it('NEVER persists raw near-me coordinates (privacy parity with analytics)', () => {

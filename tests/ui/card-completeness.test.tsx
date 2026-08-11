@@ -80,8 +80,12 @@ function requiredFacts(a: Activity): string[] {
     formatCost(a), // cost (honest)
     statusMeta(a.status, a.seasonLabel).label, // status (text, never colour-only)
     a.sourceName, // source
-    confidenceMeta(a.confidence).label, // SOURCE CONFIDENCE
     formatChecked(a.lastCheckedIso), // freshness
+    // SOURCE CONFIDENCE ("Official source" / "Editorial listing" / "Community-listed") is NO
+    // LONGER a required card-face fact. The badge that carried it was removed from the tile on
+    // Jon's beta feedback; see ActivityCard.tsx. It is asserted ABSENT below instead, so the
+    // removal is pinned rather than merely un-asserted — an un-asserted removal is exactly how
+    // a control creeps back.
   ];
 }
 
@@ -96,21 +100,29 @@ describe('ResultCard completeness (G-T22-4 / KPI #5)', () => {
     expect(html).toContain('kf-tile');
     // A keyboard-focusable link is the card (a11y: each card a focusable region).
     expect(html).toMatch(/<a[\s>]/);
-    // Confidence is a labelled Badge, not colour-only.
-    expect(html).toContain('Official source');
+    // The source-authority badge is gone from the tile.
+    expect(html).not.toContain('Official source');
   });
 
-  it('surfaces source confidence honestly by tier — never dressing candidate up as official', () => {
-    const off = renderToStaticMarkup(<ActivityCard activity={activity({ confidenceLabel: 'official' })} />);
-    expect(off).toContain('Official source');
-
-    const edi = renderToStaticMarkup(<ActivityCard activity={activity({ confidenceLabel: 'editorial' })} />);
-    expect(edi).toContain('Editorial listing');
-    expect(edi).not.toContain('Official source');
-
-    const cand = renderToStaticMarkup(<ActivityCard activity={activity({ confidenceLabel: 'inferred' })} />);
-    expect(cand).toContain('Community-listed');
-    expect(cand).not.toContain('Official source');
+  it('shows NO source-confidence badge on any tier — the badge was removed from the tile', () => {
+    // This replaces the by-tier assertion. The old contract (G-T22-2 / BR-13) was that the
+    // card face states WHO VOUCHES for a listing, honestly by tier. That badge is gone.
+    //
+    // The check runs across all three tiers on purpose: dropping only the 'official' assertion
+    // would have left a card that still printed "Community-listed" — the very label the old
+    // test existed to keep honest — with nothing asserting the group had gone as a unit.
+    //
+    // What this does NOT relax: the source is still NAMED on the card (FreshnessStamp), which
+    // is the attribution obligation tests/compliance/attribution.test.ts enforces, and that is
+    // a separate thing from the authority TIER this badge showed.
+    for (const tier of ['official', 'editorial', 'inferred'] as const) {
+      const html = renderToStaticMarkup(<ActivityCard activity={activity({ confidenceLabel: tier })} />);
+      expect(html, `${tier}: no authority badge`).not.toContain('Official source');
+      expect(html, `${tier}: no authority badge`).not.toContain('Editorial listing');
+      expect(html, `${tier}: no authority badge`).not.toContain('Community-listed');
+      // The source itself is still attributed on the card face, on every tier.
+      expect(html, `${tier}: source still named`).toContain(activity().sourceName);
+    }
   });
 
   it('handles unknown cost honestly (G-T22-3 / T-10): "Cost — check source", never "Free"', () => {
@@ -161,7 +173,8 @@ describe('ResultCard completeness (G-T22-4 / KPI #5)', () => {
       const html = renderToStaticMarkup(<ActivityCard activity={a} />);
       // Status label (text), confidence, when, age, distance, cost + CTA — all still there.
       expect(html, `${status}: status label`).toContain(statusMeta(status).label);
-      expect(html, `${status}: confidence`).toContain(confidenceMeta(a.confidence).label);
+      expect(html, `${status}: no authority badge`).not.toContain(confidenceMeta(a.confidence).label);
+      expect(html, `${status}: source still named`).toContain(a.sourceName);
       expect(html, `${status}: age`).toContain(formatAges(a.ageMin, a.ageMax));
       expect(html, `${status}: distance`).toContain(formatDistance(a));
       expect(html, `${status}: cost`).toContain(formatCost(a));

@@ -3,8 +3,8 @@ import { Button, Chip, Input } from '@/components/ui';
 import { SORT_OPTIONS, hiddenStateFields, hrefFor, type SearchState } from '../_lib/params';
 
 // The primary, always-visible search control (Blueprint Screen 1/2, UXR-01). A plain
-// GET <form> so a parent can type and search with zero client JavaScript; sort and the
-// unknown-cost toggle are tap-to-change chip links that preserve the rest of the state.
+// GET <form> so a parent can type and search with zero client JavaScript; the sort options are
+// tap-to-change chip links that preserve the rest of the state.
 // Everything is URL-driven, so a search is shareable and back-button-safe.
 
 export function SearchBar({ state }: { state: SearchState }) {
@@ -41,11 +41,18 @@ export function SearchBar({ state }: { state: SearchState }) {
         </Button>
       </form>
 
-      <div className="kf-sbar__controls" role="group" aria-label="Sort and cost options">
+      {/* Sort only. The "Include unknown cost" toggle that used to sit at the end of this row is
+          GONE (Jon's beta feedback): unknown-cost listings are always included now, so there is
+          nothing left to opt into. Removing the chip was the easy half — the behaviour is
+          enforced in lib/search/filters/cost.ts, because merely deleting the control would have
+          stopped the param being sent and the API's opposite default would then have started
+          EXCLUDING those listings. "Recently added" is likewise gone from the sort set
+          (params.ts SORT_OPTIONS). */}
+      <div className="kf-sbar__controls" role="group" aria-label="Sort options">
         <span className="kf-sbar__controls-label">Sort</span>
-        {/* Sort and the cost toggle are both real <a> links (role="link"), so selection is
-            conveyed with aria-current="true" — the only selected-state attribute ARIA allows on
-            a link. (aria-pressed is button-only and is invalid on an anchor: axe aria-allowed-attr
+        {/* Each sort option is a real <a> link (role="link"), so selection is conveyed with
+            aria-current="true" — the only selected-state attribute ARIA allows on a link.
+            (aria-pressed is button-only and is invalid on an anchor: axe aria-allowed-attr
             / WCAG 4.1.2 — fixed in Round 18.) Fill + ✓ owned by the chip. */}
         {SORT_OPTIONS.map((opt) => {
           const active = state.sort === opt.key;
@@ -62,15 +69,6 @@ export function SearchBar({ state }: { state: SearchState }) {
             </Chip>
           );
         })}
-        <Chip
-          as={Link}
-          size="sm"
-          href={hrefFor(state, { includeUnknownCost: !state.includeUnknownCost })}
-          selected={state.includeUnknownCost}
-          aria-current={state.includeUnknownCost ? 'true' : undefined}
-        >
-          Include unknown cost
-        </Chip>
       </div>
     </div>
   );

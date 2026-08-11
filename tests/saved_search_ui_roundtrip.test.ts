@@ -25,7 +25,6 @@ const hasUserDb = Boolean(process.env.DATABASE_URL) && Boolean(process.env.USER_
 const RICH_STATE: SearchState = {
   q: 'family swim',
   sort: 'soonest',
-  includeUnknownCost: false,
   includeRegistration: true,
   regions: ['van', 'bby'],
   when: 'weekend',
@@ -36,7 +35,6 @@ const RICH_STATE: SearchState = {
   rainyDay: false,
   dropIn: true,
   free: true,
-  costMaxCad: 20,
   ages: ['2-4', '5-9'],
   lat: null,
   lng: null,

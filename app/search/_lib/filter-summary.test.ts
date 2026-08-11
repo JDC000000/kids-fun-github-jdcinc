@@ -23,8 +23,8 @@ describe('activeFilterCount — the "⚙ N" badge on the sticky bar', () => {
     expect(activeFilterCount(DEFAULT_STATE)).toBe(0);
   });
 
-  it('ignores the text query, sort and the include-unknown-cost default — none of them narrow by facet', () => {
-    expect(activeFilterCount(st({ q: 'swim', sort: 'distance', includeUnknownCost: false }))).toBe(0);
+  it('ignores the text query and the sort — neither narrows by facet', () => {
+    expect(activeFilterCount(st({ q: 'swim', sort: 'distance' }))).toBe(0);
   });
 
   it('counts a GROUP once, however many chips inside it are selected', () => {
@@ -63,7 +63,7 @@ describe('activeFilterCount — the "⚙ N" badge on the sticky bar', () => {
   });
 
   it('sums across groups', () => {
-    const state = st({ when: 'today', ages: ['5-9'], regions: ['nvan'], free: true, costMaxCad: 20 });
+    const state = st({ when: 'today', ages: ['5-9'], regions: ['nvan'], free: true, dropIn: true });
     expect(activeFilterCount(state)).toBe(5);
   });
 
@@ -84,7 +84,7 @@ describe('activeFilterCount — the "⚙ N" badge on the sticky bar', () => {
       { timeOfDay: 'morning' },
       { ages: ['2-4'] },
       { regions: ['bby'] },
-      { costMaxCad: 50 },
+      { rainyDay: true },
       { dropIn: true },
       { useSavedLocation: true },
       { dateFrom: '2026-07-13', dateTo: '2026-07-15' },
@@ -220,7 +220,7 @@ describe('appliedFilterTokens — the query in words, each part removable', () =
       DEFAULT_STATE,
       st({ q: 'swim' }),
       st({ free: true }),
-      st({ when: 'today', ages: ['2-4'], regions: ['van'], costMaxCad: 20 }),
+      st({ when: 'today', ages: ['2-4'], regions: ['van'], dropIn: true }),
       st({ lat: 49.2, lng: -123.1 }),
     ];
     for (const state of cases) {
@@ -240,7 +240,7 @@ describe('appliedFilterTokens — the query in words, each part removable', () =
   });
 
   it('feeds the phone bar: otherFilterChips is exactly the "other" tokens, in the same order', () => {
-    const state = st({ when: 'today', regions: ['van'], timeOfDay: 'morning', ages: ['5-9'], free: true, costMaxCad: 20 });
+    const state = st({ when: 'today', regions: ['van'], timeOfDay: 'morning', ages: ['5-9'], free: true, dropIn: true });
     expect(otherFilterChips(state)).toEqual(
       appliedFilterTokens(state, null).filter((t) => t.scope === 'other').map((t) => t.label),
     );

@@ -17,8 +17,6 @@ export interface ParseOptions {
   defaultRadiusKm?: number;
   /** Explicit sort from the UI control; overrides any sort keyword in the text. */
   sort?: SortKey;
-  /** Explicit include-unknown-cost flag from the UI (FR-10); OR-ed with any text intent. */
-  includeUnknownCost?: boolean;
   /**
    * Explicit include-registration-courses flag from the UI. Structured only — deliberately NOT
    * parsed from `q`. It is an inclusion policy, not something a parent types, and keeping it out
@@ -60,7 +58,6 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
     radiusKm: opts.defaultRadiusKm ?? 10,
     nearMe: false,
     costFree: false,
-    includeUnknownCost: opts.includeUnknownCost ?? false,
     includeRegistration: opts.includeRegistration ?? false,
     costMaxCad: null,
     bookableNow: false,
@@ -88,10 +85,12 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
   }
 
   // --- Cost intent (FR-10/BR-11) ---
-  if (/\binclude unknown\b|\bunknown cost\b|\bcheck source\b|\bcheck-source\b/.test(s)) {
-    ctx.includeUnknownCost = true;
-    strip(/\binclude unknown\b|\bunknown cost\b|\bcheck source\b|\bcheck-source\b/g);
-  }
+  // "include unknown cost" / "check source" are still STRIPPED, but they no longer set
+  // anything: unknown-cost listings are always included now (lib/search/filters/cost.ts), so
+  // asking for them is a no-op. The strip stays because these are cost-intent words, not
+  // content — leaving them in the text would have them ranked as if a parent were looking for
+  // an activity called "check source".
+  strip(/\binclude unknown\b|\bunknown cost\b|\bcheck source\b|\bcheck-source\b/g);
   if (/\bfree\b|\bno cost\b|\bno charge\b/.test(s)) {
     ctx.costFree = true;
     strip(/\bfree\b|\bno cost\b|\bno charge\b/g);

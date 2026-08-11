@@ -2,11 +2,9 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Button, Chip as UIChip, Input } from '@/components/ui';
 import type { AgeBandKey } from '@/lib/search/types';
-import { facetCount, type FacetCounts } from '@/lib/search/facets';
 import {
   AGE_OPTIONS,
   CLEARED_FILTERS,
-  COST_MAX_OPTIONS,
   RADIUS_OPTIONS,
   REGION_CHIPS,
   TIME_OF_DAY_OPTIONS,
@@ -44,75 +42,44 @@ export interface SavedLocationInfo {
 // radio-like nuance is now carried by the group labels + the multi/single toggle behaviour of
 // the links, not by a link-invalid ARIA state. Rails scroll-snap horizontally for one-thumb use.
 //
-// ── TWO OPTIONAL EXTENSIONS (Round 31, desktop rail) ────────────────────────────────────
-// `facets` and `plan` are both optional and both default to OFF, so a caller that passes
-// neither — today's inline rail, and the mobile bottom sheet that wraps it — gets exactly
-// the markup it got before: all nine groups, in order, with no counts. The desktop rail
-// passes both:
-//   • `facets` puts a live result count on each chip (lib/search/facets.ts drop-one counts),
-//     so a parent can see that "Morning" leaves 5 and "Evening" leaves 0 before spending a
-//     click, and dead ends are visibly dead rather than discovered by trying them;
-//   • `plan` splits the groups into an up-front set and a folded "More filters" set
-//     (app/search/_lib/rail-groups.ts). This is what stops a persistent sidebar from being
-//     the same nine-group wall in a narrower column.
+// ── ONE OPTIONAL EXTENSION (Round 31, desktop rail) ─────────────────────────────────────
+// `plan` splits the groups into an up-front set and a folded "More filters" set
+// (app/search/_lib/rail-groups.ts). This is what stops a persistent sidebar from being the
+// same eight-group wall in a narrower column. It is optional and defaults to OFF, so a caller
+// that omits it — today's inline rail, and the mobile bottom sheet that wraps it — gets every
+// group, in order.
 // Folded groups are still RENDERED, inside a native <details> — every chip stays in the DOM
 // as a real <Link>, so the deep-link/back-button architecture and JS-off operability are
 // untouched, and a filter the parent has already applied is never folded.
-
-/** Where each rail group's counts live in the facet payload (`null` → the group has none). */
-const FACET_GROUP_FOR: Record<RailGroupId, string | null> = {
-  when: 'when',
-  dates: null,
-  timeOfDay: 'timeOfDay',
-  ages: 'ages',
-  areas: 'areas',
-  quick: 'quick',
-  courses: 'registration',
-  costMax: 'costMax',
-  nearMe: 'radius',
-};
+//
+// The rail used to take a second extension, `facets`, which put a live result count on every
+// chip. That is gone (see the Chip note below); the rail no longer reads the facet payload at
+// all. rail-groups.ts still does.
 
 // A URL-driven filter chip: a real <Link> (shareable, back-button-safe, works with JS
 // off) on the shared Chip primitive. Selection is fill + ✓ (owned by the primitive) plus
 // aria-current="true" — valid on the anchor's implicit role="link" for BOTH the radio-like
-// groups (When, Time of day, Max price, Radius) and the multi-select toggles (Ages, Areas,
+// groups (When, Time of day, Radius) and the multi-select toggles (Ages, Areas,
 // quick filters). aria-pressed is deliberately NOT used: it is button-only and invalid on a
 // link (axe aria-allowed-attr / WCAG 4.1.2 Name, Role, Value).
 //
-// `count` is the live facet count, when the caller supplied facets. It is rendered as a
-// numeral for sighted parents AND as a phrase for assistive tech — a bare trailing digit
-// beside a label is ambiguous read aloud ("Morning 5" could be a time). A zero-count chip
-// stays a real link and stays focusable: it is a legitimate destination (it clears back to
-// something) and removing it from the tab order for having no results would be a keyboard
-// trap of a different kind. It is marked `data-empty` so the CSS can mute it.
-function Chip({
-  href,
-  active,
-  count,
-  children,
-}: {
-  href: string;
-  active: boolean;
-  count?: number | null;
-  children: ReactNode;
-}) {
+// CHIPS CARRY NO COUNT. Each chip used to render a live facet count — a small numeral beside
+// the label, plus a ", N matching" phrase for assistive tech, plus a `data-empty` muting hook
+// on the zero-count ones. All of it is gone on Jon's beta feedback: label only.
+//
+// It is worth being precise about what that removes, because a count is not neutral furniture.
+// A number on every option turns a filter rail into a scoreboard the parent is invited to
+// optimise against, which is the same "make the user manage result visibility" pattern the
+// unknown-cost toggle and the price ceiling were removed for. The parent's job is to say what
+// they want; ours is to answer it.
+//
+// The counts are still COMPUTED (`&facets=1`) — they feed app/search/_lib/rail-groups.ts, whose
+// adaptive plan is separately gated off (see page.tsx, QA round 96 F1). Nothing here decides
+// that gate; this only stops the numbers being drawn.
+function Chip({ href, active, children }: { href: string; active: boolean; children: ReactNode }) {
   return (
-    <UIChip
-      as={Link}
-      href={href}
-      selected={active}
-      aria-current={active ? 'true' : undefined}
-      {...(count === 0 ? { 'data-empty': 'true' } : {})}
-    >
+    <UIChip as={Link} href={href} selected={active} aria-current={active ? 'true' : undefined}>
       {children}
-      {count != null && (
-        <>
-          <span className="kf-fchip__n" aria-hidden="true">
-            {count}
-          </span>
-          <span className="kf-visually-hidden">, {count} matching</span>
-        </>
-      )}
     </UIChip>
   );
 }
@@ -123,7 +90,7 @@ function Chip({
 // default behaviour; see app/search/_lib/params.ts DEFAULT_STATE + intentPhrases). It is the
 // unset-is-everything signal for the ONE group that can't use an "Any X" default pill — the
 // independent-toggle "Quick filters" group; every other group carries a leading "Any X" chip
-// instead (When/Time/Max price/Ages/Areas). The qualifier lives inside the labelledby target
+// instead (When/Time/Ages/Areas). The qualifier lives inside the labelledby target
 // so the group's accessible name becomes e.g. "Quick filters optional"; the middot separator
 // is decorative (aria-hidden) so AT never reads it. Sentence-case + muted tone keeps it a
 // quiet aside, not a second shouty micro-label.
@@ -219,56 +186,17 @@ export interface FilterRailProps {
   state: SearchState;
   savedLocation?: SavedLocationInfo | null;
   /**
-   * Live per-value result counts (`/api/search?…&facets=1`). Omit for no counts — the
-   * markup is then identical to the pre-count rail.
-   */
-  facets?: FacetCounts | null;
-  /**
    * Which groups sit up front and which fold into "More filters"
-   * (app/search/_lib/rail-groups.ts). Omit to render all nine in canonical order.
+   * (app/search/_lib/rail-groups.ts). Omit to render all of them in canonical order.
    */
   plan?: RailPlan | null;
 }
 
-export function FilterRail({ state, savedLocation, facets, plan }: FilterRailProps) {
+export function FilterRail({ state, savedLocation, plan }: FilterRailProps) {
   const savedActive = state.useSavedLocation && !!savedLocation;
   // Radius only matters once there's a REAL origin — browser coords, or a saved location
   // we could actually resolve (not merely a ?home=1 flag with no signed-in profile behind it).
   const originActive = hasNearMeCoords(state) || savedActive;
-
-  /** Facet count for one chip, or undefined when the caller supplied no counts. */
-  const countFor = (group: RailGroupId, value: string): number | undefined => {
-    if (!facets) return undefined;
-    const key = FACET_GROUP_FOR[group];
-    if (!key) return undefined;
-    return facetCount(facets, key, value) ?? undefined;
-  };
-
-  /**
-   * Areas is the ONE data-driven group, and it needs its own lookup.
-   *
-   * Every other group's facet values come from a fixed vocabulary shared with the URL
-   * ('today', '5-9', 'free'), so `value === chip id` always holds. Areas values come from the
-   * region hierarchy: in fixture mode they happen to be these same chip ids, but in DATABASE
-   * mode they are region UUIDs carrying a `label`. An id-only lookup therefore matches
-   * nothing in production while passing every local test — the Areas group would render with
-   * no counts at all, silently, on the one group a parent most needs numbers on.
-   *
-   * Matching falls back to the region's real name (REGION_CHIPS[].regionName) rather than the
-   * chip's short copy, because the two differ for North/West Vancouver.
-   *
-   * NOTE the direction of travel: the facet VALUE is never used to build a href. The links
-   * below are still built from the chip id, because `region=` is parsed against a
-   * fixed five-id vocabulary and a UUID round-tripped through it would be silently dropped.
-   */
-  const areaCountFor = (chip: { id: string; regionName: string }): number | undefined => {
-    if (!facets) return undefined;
-    const group = facets.groups.find((g) => g.key === 'areas');
-    const match = group?.values.find(
-      (v) => v.value === chip.id || v.label?.toLowerCase() === chip.regionName.toLowerCase(),
-    );
-    return match?.count;
-  };
 
   const groups: Record<RailGroupId, ReactNode> = {
     /* When — date quick-pick (radio-like: one at a time). Picking one clears any custom
@@ -280,7 +208,6 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
             key={opt.key}
             href={hrefFor(state, { when: opt.key, dateFrom: null, dateTo: null })}
             active={state.when === opt.key}
-            count={countFor('when', opt.key)}
           >
             {opt.label}
           </Chip>
@@ -304,7 +231,6 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
             key={opt.key}
             href={hrefFor(state, { timeOfDay: opt.key })}
             active={state.timeOfDay === opt.key}
-            count={countFor('timeOfDay', opt.key)}
           >
             {opt.label}
           </Chip>
@@ -319,7 +245,7 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
        phrase, so results span every age (params.ts intentPhrases). */
     ages: (
       <Group label="Ages" id="kf-fg-ages" key="ages">
-        <Chip href={hrefFor(state, { ages: [] })} active={state.ages.length === 0} count={countFor('ages', 'any')}>
+        <Chip href={hrefFor(state, { ages: [] })} active={state.ages.length === 0}>
           Any age
         </Chip>
         {AGE_OPTIONS.map((opt) => {
@@ -329,7 +255,6 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
               key={opt.key}
               href={hrefFor(state, { ages: toggleAge(state, opt.key as AgeBandKey) })}
               active={active}
-              count={countFor('ages', opt.key)}
             >
               {opt.label}
             </Chip>
@@ -347,7 +272,6 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
         <Chip
           href={hrefFor(state, { regions: [] })}
           active={state.regions.length === 0}
-          count={countFor('areas', 'any')}
         >
           Any area
         </Chip>
@@ -358,7 +282,6 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
               key={r.id}
               href={hrefFor(state, { regions: toggleRegion(state, r.id) })}
               active={active}
-              count={areaCountFor(r)}
             >
               {r.label}
             </Chip>
@@ -377,21 +300,19 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
         <Chip
           href={hrefFor(state, { bookableNow: !state.bookableNow })}
           active={state.bookableNow}
-          count={countFor('quick', 'bookableNow')}
         >
           Bookable now
         </Chip>
-        <Chip href={hrefFor(state, { dropIn: !state.dropIn })} active={state.dropIn} count={countFor('quick', 'dropIn')}>
+        <Chip href={hrefFor(state, { dropIn: !state.dropIn })} active={state.dropIn}>
           Drop-in
         </Chip>
         <Chip
           href={hrefFor(state, { rainyDay: !state.rainyDay })}
           active={state.rainyDay}
-          count={countFor('quick', 'rainyDay')}
         >
           Rainy-day
         </Chip>
-        <Chip href={hrefFor(state, { free: !state.free })} active={state.free} count={countFor('quick', 'free')}>
+        <Chip href={hrefFor(state, { free: !state.free })} active={state.free}>
           Free
         </Chip>
       </Group>
@@ -406,48 +327,30 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
        the page instead of being invisible. Nothing is unreachable — turning the right chip on
        brings every course back, each card labelled "Registration required".
 
-       Its counts are the one pair in the rail where the RIGHT-hand number is the larger one:
-       every other group narrows, this one widens. The gap between the two is exactly how much
-       course content this search is holding back, which is also how rail-groups.ts decides
-       whether the control is worth showing up front at all (no gap → nothing to opt into). */
+       It is the one group whose RIGHT-hand option widens rather than narrows, which is how
+       rail-groups.ts decides whether the control is worth showing up front at all (no course
+       content held back → nothing to opt into). */
     courses: (
       <Group label="Courses" id="kf-fg-courses" key="courses">
         <Chip
           href={hrefFor(state, { includeRegistration: false })}
           active={!state.includeRegistration}
-          count={countFor('courses', 'dropInOnly')}
         >
           Drop-in only
         </Chip>
         <Chip
           href={hrefFor(state, { includeRegistration: true })}
           active={state.includeRegistration}
-          count={countFor('courses', 'includeRegistration')}
         >
           Include registration courses
         </Chip>
       </Group>
     ),
 
-    /* Max price — cost ceiling (radio-like: one at a time). Sits alongside the binary
-       "Free" quick-filter so "cost range / free" is fully exposed (G-T21-4). Already leads
-       with an "Any price" default pill (costMaxCad null), so it needs no separate label — the
-       "Any X" pill is its unset-is-everything signal, consistent with When/Time/Ages/Areas. */
-    costMax: (
-      <Group label="Max price" id="kf-fg-cost" key="costMax">
-
-        {COST_MAX_OPTIONS.map((opt) => (
-          <Chip
-            key={opt.key}
-            href={hrefFor(state, { costMaxCad: opt.maxCad })}
-            active={state.costMaxCad === opt.maxCad}
-            count={countFor('costMax', opt.maxCad == null ? 'any' : String(opt.maxCad))}
-          >
-            {opt.label}
-          </Chip>
-        ))}
-      </Group>
-    ),
+    /* The "Max price" group (Any price / Under $20 / Under $50) used to sit here and is GONE
+       on Jon's beta feedback — see app/search/_lib/params.ts for why removing the chips was
+       only half the job, and why `cost=` is now an unrecognised URL param rather than a
+       ceiling with no visible control. The binary "Free" quick filter is unaffected. */
 
     /* Near me — origin + travel radius (radius shown once an origin is set). Two origins:
        browser geolocation (NearMeButton, anyone) and the signed-in user's saved location
@@ -480,7 +383,6 @@ export function FilterRail({ state, savedLocation, facets, plan }: FilterRailPro
               key={km}
               href={hrefFor(state, { radiusKm: km })}
               active={state.radiusKm === km}
-              count={countFor('nearMe', String(km))}
             >
               {km} km
             </Chip>

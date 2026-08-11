@@ -1175,42 +1175,14 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
- * FACET COUNTS ON CHIPS (Proposal C)
+ * FACET COUNTS ON CHIPS — REMOVED (Jon's beta feedback)
  *
- * The number is what turns a wall of controls into a navigable one: a parent can
- * see that "Morning" leaves 5 and "Evening" leaves 0 before spending a click.
- * A zero-count chip is muted but NEVER disabled or removed from the tab order —
- * it is still a real destination, and hiding it would make the filter set change
- * shape under the parent as they type.
+ * `.kf-fchip__n` (the numeral), its selected-state colour rule and the
+ * `[data-empty]` muting for zero-count chips all lived here. FilterRail no longer
+ * renders any of them — chips are label-only — so the rules are deleted rather than
+ * left as dead selectors that would silently restyle anything reusing the class.
+ * See app/search/_components/FilterRail.tsx for the reasoning.
  * ══════════════════════════════════════════════════════════════════════════ */
-
-.kf-fchip__n {
-  margin-left: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-secondary);
-}
-
-/* On a selected chip the numeral takes the chip's own foreground. NO opacity: the Chip
-   primitive's pairings are token-guarded for AA (components/ui/__tests__/contrast.test.ts),
-   and an opacity is precisely the thing that walks a guarded pair back under the threshold
-   without touching a single token. Verified with axe: 0.75 here failed on every selected
-   chip in both schemes. The numeral is already distinguished by size and weight. */
-[aria-current='true'] .kf-fchip__n {
-  color: inherit;
-}
-
-/* A zero-count chip must read as "this leads nowhere" WITHOUT becoming unreadable — it is
-   still a real, focusable link, and a parent who tabs to it deserves to be able to read it.
-   Dimming the whole chip with opacity: 0.45 did exactly the wrong thing (axe: serious
-   colour-contrast failures on every empty chip, both schemes), so the muting is carried by
-   the border and surface instead, with the text left on its guarded token. */
-.kf-filters [data-empty='true'] {
-  border-style: dashed;
-  border-color: var(--neutral-300);
-  background: transparent;
-}
 
 /* ══════════════════════════════════════════════════════════════════════════
  * "MORE FILTERS" DISCLOSURE
@@ -1431,10 +1403,6 @@
     gap: 4px;
     font-size: 11.75px;
     letter-spacing: 0.005em;
-  }
-  .kf .kf-srch .kf-filters .kf-fchip__n {
-    margin-left: 3px;
-    font-size: 10.5px;
   }
   .kf .kf-srch .kf-filters .kf-fgroup__label {
     padding: 0;

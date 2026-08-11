@@ -94,7 +94,7 @@ function searchQualityFindings(engine: SearchEngine, regime: 'fixture' | 'live-d
   const bench = summarizeUat(uatPairs.filter((p) => p.journey.tier === 'benchmark'));
 
   // KPI #5 — card completeness over a broad result set.
-  const broad = engine.search({ q: '', includeUnknownCost: true, minResults: 0, limit: 100 });
+  const broad = engine.search({ q: '', minResults: 0, limit: 100 });
   const cards = broad.results.map((r) => mapListingRecordToActivity(r.listing, r.distanceKm));
   const completeCards = cards.filter(cardComplete).length;
   const completePct = cards.length ? Math.round((completeCards / cards.length) * 100) : 0;

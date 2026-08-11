@@ -3,9 +3,8 @@
 //
 // Two kinds of param flow to the backend, and they are NOT the same:
 //   1. STRUCTURED params the /api/search route reads directly (app/api/search/route.ts
-//      `buildSearchRequest`): q, sort, includeUnknownCost, limit, minResults, region
-//      (csv region-chip ids), lat/lng (near-me origin), and from/to (a custom date RANGE,
-//      T26 / FR-04).
+//      `buildSearchRequest`): q, sort, limit, minResults, region (csv region-chip ids),
+//      lat/lng (near-me origin), and from/to (a custom date RANGE, T26 / FR-04).
 //   2. INTENT the route only understands as parent-language text inside `q`: the query
 //      parser (lib/search/parse.ts) extracts date / status / cost / age / radius from
 //      the free-text query and STRIPS those phrases so they never pollute text relevance.
@@ -23,8 +22,20 @@
 
 import type { AgeBandKey, DayPart } from '@/lib/search/types';
 
-/** Sort keys the search API validates (route.ts VALID_SORTS). */
-export const VALID_SORTS = ['best_match', 'distance', 'soonest', 'lowest_cost', 'newest'] as const;
+/**
+ * Sort keys the /search PAGE offers.
+ *
+ * This is deliberately a SUBSET of the engine's `SortKey` union and of route.ts's own
+ * VALID_SORTS: `newest` ("Recently added") was removed from the parent-facing nav on Jon's
+ * beta feedback. The engine still implements it (lib/search/sort.ts) — nothing was ripped
+ * out of the ranking layer — it simply is not offered here any more.
+ *
+ * Because this list is ALSO the parse vocabulary (`parseSearchState` accepts exactly these),
+ * a stale/shared `?sort=newest` link degrades to the default sort rather than 404-ing or
+ * resurrecting a control the page no longer renders. That is the deliberate direction: an
+ * unrecognised value is a no-op, never an error and never a hidden state.
+ */
+export const VALID_SORTS = ['best_match', 'distance', 'soonest', 'lowest_cost'] as const;
 export type SearchSort = (typeof VALID_SORTS)[number];
 
 /** Transparent sort (D6): each ordering is explainable, never a black box. */
@@ -33,7 +44,6 @@ export const SORT_OPTIONS: { key: SearchSort; label: string; sentence: string }[
   { key: 'distance', label: 'Closest', sentence: 'nearest first by travel distance' },
   { key: 'soonest', label: 'Soonest', sentence: 'earliest start time first' },
   { key: 'lowest_cost', label: 'Lowest cost', sentence: 'free and low-cost first; unknown cost last' },
-  { key: 'newest', label: 'Recently added', sentence: 'most recently added listings first' },
 ];
 
 // ── Region filter chips (FR-06/07, BR-07/08) ─────────────────────────────────────
@@ -99,12 +109,19 @@ export function hasDateRange(state: SearchState): boolean {
 // ── Age bands (BR-01..04) ────────────────────────────────────────────────────────
 // Multi-select. Each band maps to a SINGLE-band parent phrase so a selection resolves
 // to exactly that band (avoids e.g. "toddler" which the parser expands to two bands).
+/**
+ * The chip vocabulary is a deliberate SUBSET of the `AgeBandKey` data taxonomy: `15+` was
+ * removed from the parent-facing rail on Jon's beta feedback (this is a kids-activity index;
+ * a teen band was noise on every search he ran). The band still exists in the data and in
+ * `lib/search/facets.ts`'s age counts — removing the chip removes a way to NARROW, and can
+ * therefore never hide a listing. A stale `?age=15%2B` link is dropped by `parseOrderedCsv`
+ * (which keeps only values in AGE_ORDER), so no shared URL can re-apply a chip that is gone.
+ */
 export const AGE_OPTIONS: { key: AgeBandKey; label: string; phrase: string }[] = [
   { key: 'under2', label: 'Under 2', phrase: 'under 2' },
   { key: '2-4', label: '2–4', phrase: 'preschool' },
   { key: '5-9', label: '5–9', phrase: 'kids' },
   { key: '10-14', label: '10–14', phrase: 'tween' },
-  { key: '15+', label: '15+', phrase: 'teen' },
 ];
 const AGE_ORDER = AGE_OPTIONS.map((a) => a.key);
 
@@ -121,21 +138,43 @@ export const TIME_OF_DAY_OPTIONS: { key: TimeOfDayKey; label: string; phrase: st
 ];
 const TIME_OF_DAY_KEYS = new Set<string>(TIME_OF_DAY_OPTIONS.map((t) => t.key));
 
-// ── Max price / cost ceiling (P1 cost range, G-T21-4) ────────────────────────────
-// Radio-like single-select preset bands mapping to a max-price ceiling in CAD. Composed
-// into `q` as an "under $N" phrase the parser resolves to ctx.costMaxCad (lib/search/parse.ts
-// + filters/cost.ts `maxCad`). The binary "Free" quick-filter (costFree) is kept separate —
-// these bands are the ">$0 but capped" story that, together with Free, expose "cost range/free"
-// (G-T21-4). A preset-chip control (not a slider) keeps the whole rail one consistent, 44px /
-// AA-contrast Chip vocabulary. `costMaxCad` is the single source of truth (null → no ceiling).
-export const COST_MAX_OPTIONS: { key: string; label: string; maxCad: number | null }[] = [
-  { key: 'any', label: 'Any price', maxCad: null },
-  { key: '20', label: 'Under $20', maxCad: 20 },
-  { key: '50', label: 'Under $50', maxCad: 50 },
-];
-const COST_MAX_VALUES = new Set<number>(
-  COST_MAX_OPTIONS.map((c) => c.maxCad).filter((v): v is number => v != null),
-);
+// ── Max price / cost ceiling — REMOVED FROM THE PRODUCT (Jon's beta feedback) ─────
+//
+// There used to be a "Max price" preset group here (Any price / Under $20 / Under $50) that
+// composed an "under $N" phrase into `q`, which the parser resolved to `ctx.costMaxCad` and
+// filters/cost.ts turned into a price ceiling.
+//
+// REMOVING THE CONTROL WOULD NOT HAVE BEEN ENOUGH, and that is the whole point. `cost=20` is
+// a URL param: a shared link, a browser back-forward entry, a saved search or an /account row
+// written before this change all still carry it. Had `parseSearchState` gone on honouring
+// `cost=`, the ceiling would have kept applying with NO control left anywhere to see or clear
+// it — a filter suppressing listings invisibly. So the state field, the parse, the URL
+// serialization, the intent phrase and the analytics token are ALL gone: `cost=` is now an
+// unrecognised param, and `parseSearchState` ignores unrecognised params. No price ceiling can
+// reach the engine from any URL.
+//
+// What deliberately REMAINS is the free-text path: a parent who literally types "under $20"
+// still gets a ceiling (lib/search/parse.ts). That is a stated intent in their own words, not
+// a control silently managing what they can see, and it is the same reason the "Free" quick
+// filter survives. Flagged for Jon rather than decided silently.
+
+// ── "Include unknown cost" — REMOVED FROM THE PRODUCT (Jon's beta feedback) ───────
+//
+// There used to be an `includeUnknownCost` state field, a `?includeUnknownCost=` param and a
+// toggle chip in the search nav. Unknown/check-source-cost listings are now ALWAYS included.
+//
+// READ THIS BEFORE ADDING ANY INCLUSION FLAG BACK. The old design had the UI layer and the
+// API layer disagreeing about what an ABSENT param meant: `parseSearchState` treated absent as
+// TRUE (include) while `app/api/search/route.ts`'s `isOn()` treated absent as FALSE (exclude).
+// Deleting the toggle and letting the param simply stop being sent would therefore have made
+// the engine start EXCLUDING unknown-cost listings — the exact opposite of the ask — with no
+// control left to fix it, and with every existing test still green.
+//
+// The fix is therefore NOT "stop sending the param". The param, the state field and the whole
+// `includeUnknown` concept are gone from the filter itself: lib/search/filters/cost.ts no
+// longer has a switch to get wrong. There is now one behaviour, in one place, and no absent
+// value for two layers to disagree about. tests/search/cost-always-includes-unknown.test.ts
+// is the guard, and it is mutation-checked rather than merely green.
 
 // ── Distance / radius (BR-06, TSD §5B) ───────────────────────────────────────────
 export const RADIUS_OPTIONS = [5, 10, 20] as const;
@@ -145,15 +184,14 @@ export const DEFAULT_RADIUS: RadiusKm = 10;
 export interface SearchState {
   q: string;
   sort: SearchSort;
-  includeUnknownCost: boolean;
   /**
    * Show registration-required courses/camps/lessons (structured `reg=` param, off by default).
    *
-   * An inclusion WIDENER, in the same family as `includeUnknownCost` and deliberately not one of
-   * the narrowing quick filters: results exclude registered programmes unless a parent asks for
-   * them, and turning it on can only ever add cards — each labelled "Registration required".
-   * Structured rather than composed into `q` for the same reason includeUnknownCost is: it states
-   * a policy the caller chose, so it must not be inferrable from words the parent happened to type.
+   * An inclusion WIDENER, deliberately not one of the narrowing quick filters: results exclude
+   * registered programmes unless a parent asks for them, and turning it on can only ever add
+   * cards — each labelled "Registration required". Structured rather than composed into `q`
+   * because it states a policy the caller chose, so it must not be inferrable from words the
+   * parent happened to type.
    */
   includeRegistration: boolean;
   /** Additive region-chip ids (structured `region=` param). */
@@ -174,8 +212,6 @@ export interface SearchState {
   dropIn: boolean;
   /** Free-only quick filter (composed into `q`). */
   free: boolean;
-  /** Max-price ceiling in CAD (composed into `q` as "under $N"); null → no ceiling. */
-  costMaxCad: number | null;
   /** Selected age bands (composed into `q`). */
   ages: AgeBandKey[];
   /** Near-me origin coords (structured lat/lng). Radius search is active iff both set. */
@@ -208,7 +244,6 @@ export const CLEARED_FILTERS: Partial<SearchState> = {
   rainyDay: false,
   dropIn: false,
   free: false,
-  costMaxCad: null,
   ages: [],
   lat: null,
   lng: null,
@@ -219,7 +254,6 @@ export const CLEARED_FILTERS: Partial<SearchState> = {
 export const DEFAULT_STATE: SearchState = {
   q: '',
   sort: 'best_match',
-  includeUnknownCost: true,
   includeRegistration: false,
   regions: [],
   when: 'any',
@@ -230,7 +264,6 @@ export const DEFAULT_STATE: SearchState = {
   rainyDay: false,
   dropIn: false,
   free: false,
-  costMaxCad: null,
   ages: [],
   lat: null,
   lng: null,
@@ -287,10 +320,6 @@ export function parseSearchState(sp: RawParams): SearchState {
   const q = (first(sp.q) ?? '').trim();
   const sortRaw = first(sp.sort);
   const sort = (VALID_SORTS as readonly string[]).includes(sortRaw ?? '') ? (sortRaw as SearchSort) : DEFAULT_STATE.sort;
-  const costRaw = (first(sp.includeUnknownCost) ?? '').toLowerCase();
-  // Default ON (Blueprint filter group ③: "Include unknown cost default on"); only an
-  // explicit off-signal turns it off, so a bare /search browses inclusively.
-  const includeUnknownCost = costRaw === '' ? DEFAULT_STATE.includeUnknownCost : parseBool(costRaw);
 
   const whenRaw = first(sp.when) as WhenKey | undefined;
   const whenPick = whenRaw && WHEN_KEYS.has(whenRaw) ? whenRaw : 'any';
@@ -309,9 +338,6 @@ export function parseSearchState(sp: RawParams): SearchState {
   const timeRaw = first(sp.time);
   const timeOfDay = (timeRaw && TIME_OF_DAY_KEYS.has(timeRaw) ? timeRaw : 'any') as TimeOfDayKey;
 
-  const costMaxRaw = Number(first(sp.cost));
-  const costMaxCad = COST_MAX_VALUES.has(costMaxRaw) ? costMaxRaw : null;
-
   const lat = parseCoord(first(sp.lat));
   const lng = parseCoord(first(sp.lng));
   const bothCoords = lat != null && lng != null;
@@ -321,7 +347,6 @@ export function parseSearchState(sp: RawParams): SearchState {
   return {
     q,
     sort,
-    includeUnknownCost,
     // Absent/malformed → OFF. The default view is drop-in only; only an explicit opt-in turns
     // registration content on, so a hand-edited or truncated URL can never quietly re-enable it.
     includeRegistration: parseBool(first(sp.reg)),
@@ -334,7 +359,6 @@ export function parseSearchState(sp: RawParams): SearchState {
     rainyDay: parseBool(first(sp.rainy)),
     dropIn: parseBool(first(sp.dropin)),
     free: parseBool(first(sp.free)),
-    costMaxCad,
     ages: parseOrderedCsv(first(sp.age), AGE_ORDER as AgeBandKey[]),
     lat: bothCoords ? lat : null,
     lng: bothCoords ? lng : null,
@@ -364,8 +388,6 @@ function pageParams(state: SearchState): URLSearchParams {
   const p = new URLSearchParams();
   if (state.q) p.set('q', state.q);
   if (state.sort !== DEFAULT_STATE.sort) p.set('sort', state.sort);
-  // Cost is written explicitly (default-on / explicit-off), matching the toggle semantics.
-  p.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
   // Registration is default-OFF, so it is written only when on — a bare /search URL stays clean
   // and, more importantly, unambiguously means "drop-in only".
   if (state.includeRegistration) p.set('reg', '1');
@@ -382,7 +404,6 @@ function pageParams(state: SearchState): URLSearchParams {
   if (state.rainyDay) p.set('rainy', '1');
   if (state.dropIn) p.set('dropin', '1');
   if (state.free) p.set('free', '1');
-  if (state.costMaxCad != null) p.set('cost', String(state.costMaxCad));
   if (state.ages.length) p.set('age', state.ages.join(','));
   // Origin: near-me coords OR the saved-location intent flag (never the postal itself).
   if (hasNearMeCoords(state)) {
@@ -433,11 +454,8 @@ export function dateRangeFormFields(state: SearchState): { name: string; value: 
  * search's `params` envelope field (Task B, the "save this search" button).
  *
  * Same structured, non-default-only shape as the /search page URL (`pageParams`),
- * with two deliberate omissions so a saved search stays compact AND privacy-safe:
- *   1. `includeUnknownCost` at its default (on) is dropped — parseSearchState
- *      restores that default when the key is absent, so the search re-runs
- *      identically.
- *   2. Raw near-me coordinates (lat/lng, and their now-origin-less radius) are
+ * with one deliberate omission so a saved search stays privacy-safe:
+ *   - Raw near-me coordinates (lat/lng, and their now-origin-less radius) are
  *      NEVER persisted into a durable DB row — parity with the analytics layer,
  *      which likewise refuses to store a precise location. The saved-location
  *      *intent* (`home=1`) carries no coordinates and IS kept; a near-me search
@@ -447,7 +465,6 @@ export function dateRangeFormFields(state: SearchState): { name: string; value: 
  */
 export function serializeStateToParams(state: SearchState): Record<string, string> {
   const p = pageParams(state);
-  if (state.includeUnknownCost) p.delete('includeUnknownCost');
   if (p.has('lat') || p.has('lng')) {
     p.delete('lat');
     p.delete('lng');
@@ -497,9 +514,9 @@ export function hrefForParams(params: Record<string, unknown>): string {
 /**
  * Does the state carry any NARROWING structured/intent filter beyond a plain text query?
  *
- * Deliberately excludes `includeRegistration` (and, as before, `includeUnknownCost`): those only
- * ever ADD results. This predicate's job is to decide how hard the engine should broaden
- * (`apiQuery` minResults), and a widener being on is not a reason to stop filling a thin browse.
+ * Deliberately excludes `includeRegistration`: it only ever ADDS results. This predicate's job
+ * is to decide how hard the engine should broaden (`apiQuery` minResults), and a widener being
+ * on is not a reason to stop filling a thin browse.
  * For "is there anything the parent might want to clear?", use `hasClearableFilters`.
  */
 export function hasActiveFilters(state: SearchState): boolean {
@@ -512,7 +529,6 @@ export function hasActiveFilters(state: SearchState): boolean {
     state.rainyDay ||
     state.dropIn ||
     state.free ||
-    state.costMaxCad != null ||
     state.ages.length > 0 ||
     hasOrigin(state)
   );
@@ -538,8 +554,6 @@ export function intentPhrases(state: SearchState): string[] {
   if (state.rainyDay) phrases.push('rainy day');
   if (state.dropIn) phrases.push('drop-in');
   if (state.free) phrases.push('free');
-  // "under $N" — the parser strips the "$" (normalize) and reads N as the cost ceiling.
-  if (state.costMaxCad != null) phrases.push(`under $${state.costMaxCad}`);
   for (const band of state.ages) {
     const phrase = AGE_OPTIONS.find((a) => a.key === band)?.phrase;
     if (phrase) phrases.push(phrase);
@@ -570,7 +584,6 @@ export function analyticsFilterTokens(state: SearchState): string[] {
   // tells us whether the separate "browse courses" mode is worth building.
   if (state.includeRegistration) tokens.push('include_registration');
   if (state.free) tokens.push('free');
-  if (state.costMaxCad != null) tokens.push(`cost_max:${state.costMaxCad}`);
   for (const band of state.ages) tokens.push(`age:${band}`);
   if (hasNearMeCoords(state)) tokens.push('near_me');
   else if (state.useSavedLocation) tokens.push('saved_home');
@@ -607,7 +620,10 @@ export function apiQuery(
   params.set('q', q);
   if (options?.facets) params.set('facets', '1');
   params.set('sort', state.sort);
-  params.set('includeUnknownCost', state.includeUnknownCost ? '1' : '0');
+  // NB: there is deliberately no `includeUnknownCost` param any more. Unknown/check-source
+  // cost listings are now ALWAYS included, and that is enforced in lib/search/filters/cost.ts —
+  // the layer that actually filters — not by a param this page remembers to send. See the note
+  // on the removed toggle below.
   // Structured, never composed into `q` — the route reads it directly (route.ts buildSearchRequest).
   params.set('includeRegistration', state.includeRegistration ? '1' : '0');
   if (state.regions.length) params.set('region', state.regions.join(','));

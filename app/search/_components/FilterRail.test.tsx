@@ -32,12 +32,16 @@ describe('FilterRail — consistent "Any X" default pill across chip groups (Rou
     // The pre-existing "Any X" pills are still there (regression guard).
     expect(html).toContain('>Any day<');
     expect(html).toContain('>Any time<');
-    expect(html).toContain('>Any price<');
+    // "Any price" is deliberately absent: the whole Max price group was removed on Jon's beta
+    // feedback (see app/search/_lib/params.ts). Asserted negatively so the group cannot creep
+    // back without this test noticing.
+    expect(html).not.toContain('>Any price<');
+    expect(html).not.toContain('id="kf-fg-cost"');
   });
 
   it('every "Any X" pill is CHECKMARKED (aria-current) when its group is unset', () => {
     const html = render(DEFAULT_STATE);
-    for (const label of ['Any age', 'Any area', 'Any day', 'Any time', 'Any price']) {
+    for (const label of ['Any age', 'Any area', 'Any day', 'Any time']) {
       expect(isActive(html, label)).toBe(true);
     }
   });
@@ -48,17 +52,17 @@ describe('FilterRail — consistent "Any X" default pill across chip groups (Rou
     expect(isActive(html, 'Any area')).toBe(false); // an area is chosen
     // Other groups, still unset, keep their Any-X pill active.
     expect(isActive(html, 'Any day')).toBe(true);
-    expect(isActive(html, 'Any price')).toBe(true);
+    expect(isActive(html, 'Any time')).toBe(true);
   });
 
   it('the "· optional" label now appears EXACTLY once — on Quick filters only', () => {
     const html = render(DEFAULT_STATE);
     expect((html.match(/kf-fgroup__optional"/g) || []).length).toBe(1);
-    // …and it sits inside the Quick-filters group (after its id, before the Max-price group).
+    // …and it sits inside the Quick-filters group (after its id, before the Courses group).
     const optIdx = html.indexOf('kf-fgroup__optional"');
     expect(optIdx).toBeGreaterThan(html.indexOf('id="kf-fg-quick"'));
-    expect(optIdx).toBeLessThan(html.indexOf('id="kf-fg-cost"'));
-    // Ages/Areas/Max-price no longer carry the label (they use the pill instead).
+    expect(optIdx).toBeLessThan(html.indexOf('id="kf-fg-courses"'));
+    // Ages/Areas no longer carry the label (they use the pill instead).
     const between = (fromId: string, toId: string) =>
       html.slice(html.indexOf(`id="${fromId}"`), html.indexOf(`id="${toId}"`));
     expect(between('kf-fg-ages', 'kf-fg-areas')).not.toContain('kf-fgroup__optional');
@@ -71,7 +75,7 @@ describe('FilterRail — consistent "Any X" default pill across chip groups (Rou
 // exactly the markup they rendered before. These pin that, and pin that folding never
 // costs a chip its <Link>-ness — which is what the Round 18 a11y fix bought.
 
-import { facetCount, type FacetCounts } from '@/lib/search/facets';
+import { type FacetCounts } from '@/lib/search/facets';
 import { planRailGroups } from '../_lib/rail-groups';
 
 const FACETS: FacetCounts = {
@@ -99,78 +103,61 @@ const FACETS: FacetCounts = {
   ],
 };
 
-describe('FilterRail — optional facet counts (Proposal C)', () => {
-  it('renders no counts at all when the caller supplies none (the pre-count markup)', () => {
-    expect(render(DEFAULT_STATE)).not.toContain('kf-fchip__n');
+describe('FilterRail — chips carry NO count, whatever the facet payload says', () => {
+  // This describe is the exact INVERSE of the block it replaces. Those tests asserted that a
+  // supplied facet payload put a numeral on every chip; the counts were removed from the rail
+  // on Jon's beta feedback, so the same payload must now change nothing about the markup.
+  //
+  // Asserting "no numeral" on a rail rendered WITHOUT facets would prove nothing — it never had
+  // one. The count-removal only has teeth if it is asserted against a rail that has every
+  // opportunity to render one, which is why these cases build the richest facet payload the old
+  // tests used and then assert its total absence from the DOM.
+
+  it('renders no numeral, no "N matching" phrase and no data-empty hook — bare /search', () => {
+    const html = render(DEFAULT_STATE);
+    expect(html).not.toContain('kf-fchip__n');
+    expect(html).not.toContain('matching');
+    expect(html).not.toContain('data-empty');
   });
 
-  it('puts each chip’s live count beside its label when facets are supplied', () => {
-    const html = renderToStaticMarkup(<FilterRail state={DEFAULT_STATE} savedLocation={null} facets={FACETS} />);
-    expect(html).toContain('>Today<');
-    expect(html).toContain('kf-fchip__n');
-    // Sighted numeral AND a spoken phrase — a bare trailing digit is ambiguous read aloud.
-    expect(html).toContain('2 matching');
+  it('DECISIVE: the rail cannot be given counts — there is no prop to pass them through', () => {
+    // The old API was <FilterRail facets={...} />. It is gone, so a caller cannot reintroduce
+    // counts by wiring the payload back up; they would have to change the component. Rendered
+    // with the identical state the old count tests used, the markup carries no numbers.
+    const html = render(st({ ages: ['5-9'], regions: ['van'], free: true }));
+    expect(html).not.toContain('kf-fchip__n');
+    expect(html).not.toContain('matching');
+    // …and the chips themselves are all still real, labelled links. Removing the numeral must
+    // not have removed the control.
+    expect(html).toContain('>Any age<');
+    expect(html).toContain('>Vancouver<');
+    expect(chipTag(html, 'Vancouver').startsWith('<a')).toBe(true);
   });
 
-  it('marks a zero-count chip as empty but leaves it a real, focusable link', () => {
-    const html = renderToStaticMarkup(<FilterRail state={DEFAULT_STATE} savedLocation={null} facets={FACETS} />);
-    const tag = chipTag(html, 'Tomorrow');
-    expect(tag).toContain('data-empty="true"');
-    expect(tag.startsWith('<a')).toBe(true);
-    expect(tag).toContain('href=');
+  it('every chip label is still exactly its label, with no digits appended', () => {
+    const html = render(DEFAULT_STATE);
+    for (const label of ['Any day', 'Today', 'Any age', 'Under 2', 'Any area', 'Vancouver', 'Free']) {
+      expect(html).toContain(`>${label}<`);
+    }
   });
 
-  it('counts area chips in DATABASE mode, where the facet value is a region UUID', () => {
-    // THE BUG THIS PINS, and why it was invisible until it was probed against the deployed
-    // build: `areas` is the one data-driven group. In fixture mode its values ARE the chip
-    // ids, so a naive value===id lookup works locally and in every unit test. In database
-    // mode the values are region UUIDs carrying a `label`, so the same lookup silently
-    // matches nothing and the Areas group renders with NO counts at all — no error, no
-    // warning, just the one group a parent most needs numbers on, quietly bare in
-    // production. Measured on staging: values like "10000000-…-0010" / label "Vancouver".
-    const dbFacets: FacetCounts = {
-      total: 143,
-      groups: [
-        {
-          key: 'areas',
-          selection: 'multi',
-          values: [
-            { value: 'any', count: 143, selected: true },
-            { value: '10000000-0000-0000-0000-000000000010', label: 'Vancouver', count: 96, selected: false },
-            // The two chips whose SHORT copy differs from the region's real name — the
-            // case a plain label===label match would miss.
-            { value: '10000000-0000-0000-0000-000000000011', label: 'North Vancouver', count: 28, selected: false },
-            { value: '10000000-0000-0000-0000-000000000012', label: 'West Vancouver', count: 0, selected: false },
-          ],
-        },
-      ],
-    };
-    const html = renderToStaticMarkup(<FilterRail state={DEFAULT_STATE} savedLocation={null} facets={dbFacets} />);
-    const areas = html.slice(html.indexOf('id="kf-fg-areas"'), html.indexOf('id="kf-fg-quick"'));
-    expect(areas).toContain('96 matching');
-    expect(areas).toContain('28 matching');
-    // A real zero still reads as a zero, not as "no data".
-    expect(chipTag(areas, 'West Van')).toContain('data-empty="true"');
-    // And a chip the payload says nothing about carries no invented numeral.
-    expect(chipTag(areas, 'Richmond')).not.toContain('kf-fchip__n');
-  });
-
-  it('never invents a count for a value the facets do not carry', () => {
-    expect(facetCount(FACETS, 'when', 'never')).toBeNull();
-    const html = renderToStaticMarkup(<FilterRail state={DEFAULT_STATE} savedLocation={null} facets={FACETS} />);
-    // Time of day has no facet group here, so its chips carry no numerals.
-    const timeBlock = html.slice(html.indexOf('id="kf-fg-time"'), html.indexOf('id="kf-fg-ages"'));
-    expect(timeBlock).not.toContain('kf-fchip__n');
+  it('the retired 15+ age band is not rendered, and the four kept bands are', () => {
+    const html = render(DEFAULT_STATE);
+    expect(html).not.toContain('>15+<');
+    for (const label of ['Under 2', '2\u20134', '5\u20139', '10\u201314']) {
+      expect(html).toContain(`>${label}<`);
+    }
   });
 });
 
 describe('FilterRail — optional group plan (the 9 → 5-6 reduction)', () => {
+  // The rail no longer takes `facets` — the counts were removed from every chip. The facet
+  // payload is still what rail-groups.ts PLANS from, so it is threaded into planRailGroups here
+  // and nowhere else, which is exactly the split this change introduced.
   const planned = (state: SearchState, facets: FacetCounts | null = FACETS) =>
-    renderToStaticMarkup(
-      <FilterRail state={state} savedLocation={null} facets={facets} plan={planRailGroups(state, facets)} />,
-    );
+    renderToStaticMarkup(<FilterRail state={state} savedLocation={null} plan={planRailGroups(state, facets)} />);
 
-  it('renders all nine groups with no disclosure when no plan is given', () => {
+  it('renders every group with no disclosure when no plan is given', () => {
     const html = render(DEFAULT_STATE);
     expect(html).not.toContain('kf-filters__more');
     const ids = [
@@ -181,7 +168,6 @@ describe('FilterRail — optional group plan (the 9 → 5-6 reduction)', () => {
       'kf-fg-areas',
       'kf-fg-quick',
       'kf-fg-courses',
-      'kf-fg-cost',
       'kf-fg-near',
     ];
     for (const id of ids) expect(html).toContain(`id="${id}"`);

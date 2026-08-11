@@ -140,14 +140,16 @@ export interface SearchContext {
   nearMe: boolean; // "near me" phrase present
 
   // Cost intent.
+  // NB: there is no include-unknown-cost flag. Unknown/check-source listings are ALWAYS
+  // included — see lib/search/filters/cost.ts for why that is the absence of a switch rather
+  // than a switch defaulted to true.
   costFree: boolean; // "free" requested
-  includeUnknownCost: boolean; // explicit include unknown/check-source flag (FR-10)
   /**
    * Include registration-required courses/camps/lessons in results. Default FALSE: this product
    * answers "what can we do today", and multi-week registered programmes are not that, so they
    * are left out of the default result set entirely and a parent opts INTO them with a filter.
-   * An inclusion widener like `includeUnknownCost`, not a narrowing chip — turning it on can only
-   * ever ADD results, and every listing it adds is labelled as registration content on its card.
+   * An inclusion widener, not a narrowing chip — turning it on can only ever ADD results, and
+   * every listing it adds is labelled as registration content on its card.
    */
   includeRegistration: boolean;
   /** Optional max-price ceiling in CAD (P1 cost range, G-T21-4). null → no ceiling. */

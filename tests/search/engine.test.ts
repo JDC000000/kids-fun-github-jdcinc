@@ -35,10 +35,9 @@ describe('SearchEngine.search (FR-02)', () => {
     const free = engine.search({ q: 'storytime free', now: FIXTURE_NOW, minResults: 1 });
     const freeIds = free.results.map((r) => r.listing.id);
     expect(freeIds).toContain('l-storytime-van'); // genuinely free
-    expect(freeIds).not.toContain('l-storytime-unknown'); // unknown is never free
-
-    const withUnknown = engine.search({ q: 'storytime free', now: FIXTURE_NOW, includeUnknownCost: true, minResults: 1 });
-    expect(withUnknown.results.map((r) => r.listing.id)).toContain('l-storytime-unknown');
+    // An unknown-cost listing is still not CLASSIFIED as free, but it is no longer HIDDEN:
+    // there is no include-unknown flag to set any more (lib/search/filters/cost.ts).
+    expect(freeIds).toContain('l-storytime-unknown');
   });
 
   it('honours the max-price ceiling end-to-end — "under $N" drops pricier listings (G-T21-4)', () => {

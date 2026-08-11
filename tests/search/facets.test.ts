@@ -20,7 +20,6 @@ import type { FacetCounts } from '../../lib/search/facets';
 import { SearchEngine, type SearchRequest } from '../../lib/search/engine';
 import {
   AGE_OPTIONS,
-  COST_MAX_OPTIONS,
   RADIUS_OPTIONS,
   TIME_OF_DAY_OPTIONS,
   WHEN_OPTIONS,
@@ -31,7 +30,7 @@ const { engine } = makeFixtureEngine();
 
 /** A raw, un-broadened search (minResults 0 keeps the ladder out of the way). */
 function search(req: Partial<SearchRequest> = {}) {
-  return engine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, ...req });
+  return engine.search({ q: '', now: FIXTURE_NOW, minResults: 0, ...req });
 }
 
 function facetsFor(req: Partial<SearchRequest> = {}): FacetCounts {
@@ -229,7 +228,7 @@ describe('facet counts — group-specific behaviour', () => {
   });
 
   it('counts the primary result list only — the expected/seasonal section is not folded in', () => {
-    const res = engine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, facets: true });
+    const res = engine.search({ q: '', now: FIXTURE_NOW, minResults: 0, facets: true });
     expect(res.expected.length).toBeGreaterThanOrEqual(0);
     expect(res.facets?.total).toBe(res.results.length);
   });
@@ -302,7 +301,7 @@ describe('facet counts are in CARDS, like the list they sit next to', () => {
   });
 
   const run = (req: Partial<SearchRequest> = {}) =>
-    collapsingEngine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, ...req });
+    collapsingEngine.search({ q: '', now: FIXTURE_NOW, minResults: 0, ...req });
 
   it('counts a repeated series as one card per day, not one per time slot', () => {
     const res = run({ facets: true });
@@ -378,7 +377,7 @@ describe('facet counts — category breakdown is in CARDS (F4)', () => {
   });
 
   const run = (req: Partial<SearchRequest> = {}) =>
-    mixedCategoryEngine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, ...req });
+    mixedCategoryEngine.search({ q: '', now: FIXTURE_NOW, minResults: 0, ...req });
 
   it('collapses four mixed-category slots of one series on one day into ONE card', () => {
     const res = run({ facets: true });
@@ -456,7 +455,7 @@ describe('registration ("Courses") facet', () => {
       regionHierarchy: new RegionHierarchy(REGIONS),
       fixtureBacked: false,
     });
-    const res = engine.search({ q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, facets: true });
+    const res = engine.search({ q: '', now: FIXTURE_NOW, minResults: 0, facets: true });
     expect(res.total).toBe(1); // the course is excluded by default
     expect(facetCount(res.facets!, 'registration', 'dropInOnly')).toBe(1);
     expect(facetCount(res.facets!, 'registration', 'includeRegistration')).toBe(2);
@@ -477,12 +476,17 @@ describe('facet vocabulary parity with the filter UI', () => {
     expect(valuesOf('timeOfDay')).toEqual(TIME_OF_DAY_OPTIONS.map((o) => o.key));
   });
 
-  it('covers every age band', () => {
-    expect(valuesOf('ages')).toEqual(['any', ...AGE_OPTIONS.map((o) => o.key)]);
-  });
-
-  it('covers every max-price band', () => {
-    expect(valuesOf('costMax')).toEqual(COST_MAX_OPTIONS.map((o) => o.key));
+  it('counts the FULL age-band taxonomy, which is deliberately wider than the rail offers', () => {
+    // The facet group counts the data vocabulary (lib/search/types AgeBandKey, the age_bands
+    // seed). The rail's chip vocabulary (AGE_OPTIONS) is a strict SUBSET of it — '15+' was
+    // retired from the chips on Jon's beta feedback without touching the taxonomy underneath.
+    // Asserting them equal, as this test used to, would silently couple a product decision
+    // about chips to a schema-level list; asserting the SUBSET relation states the real rule.
+    const ages = valuesOf('ages');
+    expect(ages[0]).toBe('any');
+    for (const opt of AGE_OPTIONS) expect(ages).toContain(opt.key);
+    expect(ages).toContain('15+');
+    expect(AGE_OPTIONS.map((o) => o.key)).not.toContain('15+');
   });
 
   it('covers every radius option', () => {

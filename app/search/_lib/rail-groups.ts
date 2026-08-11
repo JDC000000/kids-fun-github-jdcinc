@@ -47,7 +47,6 @@ export type RailGroupId =
   | 'areas'
   | 'quick'
   | 'courses'
-  | 'costMax'
   | 'nearMe';
 
 /** Canonical render order. The plan re-sorts into this, so the rail never reshuffles. */
@@ -59,7 +58,6 @@ export const RAIL_GROUP_ORDER: RailGroupId[] = [
   'areas',
   'quick',
   'courses',
-  'costMax',
   'nearMe',
 ];
 
@@ -82,7 +80,7 @@ const ALWAYS_PRIMARY: RailGroupId[] = ['nearMe'];
 const NEVER_ADAPTIVE: RailGroupId[] = ['dates'];
 
 /** Fallback ordering when there are no counts to rank by. Mirrors expected parent usage. */
-const FALLBACK_PRIORITY: RailGroupId[] = ['when', 'areas', 'ages', 'quick', 'costMax', 'timeOfDay'];
+const FALLBACK_PRIORITY: RailGroupId[] = ['when', 'areas', 'ages', 'quick', 'timeOfDay'];
 
 /** Rail group → the facet group that scores it. `dates` has none; `nearMe` only with an origin. */
 const FACET_KEY_FOR: Partial<Record<RailGroupId, string>> = {
@@ -92,7 +90,6 @@ const FACET_KEY_FOR: Partial<Record<RailGroupId, string>> = {
   areas: 'areas',
   quick: 'quick',
   courses: 'registration',
-  costMax: 'costMax',
   nearMe: 'radius',
 };
 
@@ -121,7 +118,6 @@ export function pinnedGroups(state: SearchState): RailGroupId[] {
   // opted registration content in and cannot see the control has no way to opt back out, and no
   // explanation for why 12-week programmes appeared in a "what's on today" list.
   if (state.includeRegistration) pinned.push('courses');
-  if (state.costMaxCad != null) pinned.push('costMax');
   if (hasOrigin(state)) pinned.push('nearMe');
   return pinned;
 }

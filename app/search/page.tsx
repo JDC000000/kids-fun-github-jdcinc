@@ -317,7 +317,6 @@ export default async function SearchPage({
         regions: state.regions,
         filters: analyticsFilterTokens(state),
         radiusKm: realOrigin ? state.radiusKm : null,
-        includeUnknownCost: state.includeUnknownCost,
       },
       {
         total,
@@ -364,7 +363,7 @@ export default async function SearchPage({
           clearHref={hrefFor(state, CLEARED_FILTERS)}
           resultCount={total}
         >
-          <FilterRail state={state} savedLocation={savedLocation} facets={facets} plan={railPlan} />
+          <FilterRail state={state} savedLocation={savedLocation} plan={railPlan} />
         </MobileFilterSheet>
 
         <div className="kf-srch__main">

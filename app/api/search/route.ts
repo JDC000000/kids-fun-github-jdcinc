@@ -41,7 +41,7 @@ const fixtureBundle = makeFixtureEngine();
 
 export const GET = withObservedRoute(searchGet, { tags: { route: 'api/search' } });
 
-/** GET /api/search?q=open+gym&lat=..&lng=..&sort=..&region=van,bby&includeUnknownCost=1&includeRegistration=1&limit=20 */
+/** GET /api/search?q=open+gym&lat=..&lng=..&sort=..&region=van,bby&includeRegistration=1&limit=20 */
 async function searchGet(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const searchRequest = buildSearchRequest(url.searchParams);
@@ -159,9 +159,15 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   const sort = sortParam && (VALID_SORTS as string[]).includes(sortParam) ? (sortParam as SortKey) : undefined;
   const origin = buildOriginRequest(p);
   const regionChipIds = (p.get('region') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  const includeUnknownCost = isOn(p.get('includeUnknownCost'));
-  // Registration courses are OFF unless explicitly asked for. Structured, like includeUnknownCost:
-  // an inclusion policy the caller states, never something inferred from the text of `q`.
+  // NB: `includeUnknownCost` is GONE as a request parameter. It used to mean absent→exclude
+  // here while meaning absent→include in the /search state layer, so unknown-cost listings
+  // could be suppressed by nothing more than a caller omitting a param. They are now always
+  // included, decided once in lib/search/filters/cost.ts. A caller that still sends
+  // `includeUnknownCost=0` is ignored rather than obeyed — deliberately, since obeying it
+  // would restore the suppression the removal exists to end.
+  //
+  // Registration courses are OFF unless explicitly asked for: an inclusion policy the caller
+  // states, never something inferred from the text of `q`.
   const includeRegistration = isOn(p.get('includeRegistration'));
   // Facet counts for the filter UI (`facets=1`). Deliberately part of THIS request rather
   // than a second endpoint: the counts are derived from the candidate set this search has
@@ -179,7 +185,6 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
     signedIn: p.get('signedIn') === '1',
     regionChipIds,
     sort,
-    includeUnknownCost,
     includeRegistration,
     facets,
     ...(dateRange != null ? { dateRange } : {}),

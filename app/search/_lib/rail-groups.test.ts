@@ -62,7 +62,6 @@ describe('pinnedGroups — a filter the parent applied is never folded away', ()
     expect(pinnedGroups(st({ timeOfDay: 'morning' }))).toEqual(['timeOfDay']);
     expect(pinnedGroups(st({ ages: ['5-9'] }))).toEqual(['ages']);
     expect(pinnedGroups(st({ regions: ['van'] }))).toEqual(['areas']);
-    expect(pinnedGroups(st({ costMaxCad: 20 }))).toEqual(['costMax']);
     expect(pinnedGroups(st({ lat: 49.2, lng: -123.1 }))).toEqual(['nearMe']);
   });
 
@@ -159,7 +158,6 @@ describe('planRailGroups — the 9 → 5-6 reduction that makes the rail viable'
       regions: ['van'],
       free: true,
       includeRegistration: true,
-      costMaxCad: 20,
       lat: 49.2,
       lng: -123.1,
       dateFrom: '2026-07-13',
@@ -192,38 +190,50 @@ describe('planRailGroups — the 9 → 5-6 reduction that makes the rail viable'
         group('when', 12, [2, 3, 4]), // narrows
         group('ages', 12, [5, 9]), // narrows
         group('timeOfDay', 12, [12, 12, 12]), // narrows nothing
-        group('costMax', 12, [0, 0]), // all dead ends
+        group('courses', 12, [0, 0]), // all dead ends
       ]),
     );
     expect(plan.primary).toContain('when');
     expect(plan.primary).toContain('ages');
     expect(plan.secondary).toContain('timeOfDay');
-    expect(plan.secondary).toContain('costMax');
+    expect(plan.secondary).toContain('courses');
   });
 
   it('prefers the group that partitions this query best when it has to choose', () => {
     // Six scoreable candidates for five slots (nearMe always takes the sixth), so exactly
-    // one folds — and it must be the group that partitions this query least.
+    // one folds — and it must be the group that partitions this query least. `costMax` was one
+    // of the six until the Max price group was removed; `courses` takes its place here so the
+    // case still exercises a genuine six-into-five squeeze rather than degenerating to a
+    // five-candidate set where nothing has to fold and the ranking is never tested.
     const plan = planRailGroups(
       DEFAULT_STATE,
       facets(20, [
-        group('when', 20, [1]), // 1 discriminating option — the weakest
-        group('timeOfDay', 20, [1, 2]), // 2
-        group('ages', 20, [1, 2, 3, 4, 5]), // 5
-        group('areas', 20, [1, 2, 3]), // 3
+        group('when', 20, [1, 2, 3, 4, 5]), // 5
+        group('timeOfDay', 20, [1, 2, 3, 4]), // 4
+        group('ages', 20, [1, 2, 3]), // 3
+        group('areas', 20, [1, 2]), // 2
         group('quick', 20, [1, 2]), // 2
-        group('costMax', 20, [1, 2, 3, 4]), // 4
+        // Courses scores at most 1 by construction (it widens rather than narrows — see
+        // discriminationScore), so it is the strictly weakest candidate here and is the one
+        // that must fold. Using it as the loser keeps the case decided by SCORE rather than by
+        // the RAIL_GROUP_ORDER tie-break, which is what this test is actually about.
+        registrationGroup(12, 31), // 1
       ]),
     );
-    expect(plan.primary).toEqual(['timeOfDay', 'ages', 'areas', 'quick', 'costMax', 'nearMe']);
-    expect(plan.secondary).toEqual(['when', 'dates', 'courses']);
+    expect(plan.primary).toEqual(['when', 'timeOfDay', 'ages', 'areas', 'quick', 'nearMe']);
+    expect(plan.secondary).toEqual(['dates', 'courses']);
   });
 
-  it('degrades to a FIXED 6-group set — not to all nine — when counts are unavailable', () => {
+  it('degrades to a FIXED set — not to every group — when counts are unavailable', () => {
+    // FALLBACK_PRIORITY lost `costMax` with the Max price group, so the fixed set is now five
+    // (the four remaining priorities + the always-primary nearMe) rather than six. The point of
+    // the test is unchanged and is asserted explicitly below: the fallback must still be a
+    // REDUCTION, not a silent "show everything".
     const plan = planRailGroups(DEFAULT_STATE, null);
     expect(plan.adaptive).toBe(false);
-    expect(plan.primary).toEqual(['when', 'ages', 'areas', 'quick', 'costMax', 'nearMe']);
-    expect(plan.secondary).toEqual(['dates', 'timeOfDay', 'courses']);
+    expect(plan.primary).toEqual(['when', 'timeOfDay', 'ages', 'areas', 'quick', 'nearMe']);
+    expect(plan.secondary).toEqual(['dates', 'courses']);
+    expect(plan.secondary.length).toBeGreaterThan(0);
   });
 
   it('offers Courses up front only when this search is actually holding course content back', () => {

@@ -281,13 +281,20 @@ describe('T-09 — a winter seasonal listing reflects season + age constraints',
 // Unknown cost → the listing is not assumed free; the card/detail gives a source link and
 // acceptable "check source" handling.
 describe('T-10 — an unknown-cost listing is never assumed free', () => {
-  it('a Free filter excludes the unknown-cost storytime unless include-unknown is set', () => {
+  it('a Free filter SHOWS the unknown-cost storytime, but never labels it free', () => {
+    // T-10's requirement is "never ASSUMED free", and that is about the label, not about
+    // visibility. It used to be enforced by hiding unknown-cost listings behind an
+    // include-unknown flag; that flag was removed (Jon's beta feedback) because a source
+    // omitting a price is our data gap, not something a parent should have to opt out of.
+    // The honesty half is unchanged and is asserted directly below: the card still reads
+    // "Cost — check source", never "Free".
     const free = engine.search({ q: 'storytime free', now: FIXTURE_NOW, minResults: 1, limit: 20 });
     expect(ids(free.results)).toContain('l-storytime-van'); // genuinely free
-    expect(ids(free.results)).not.toContain('l-storytime-unknown'); // unknown ≠ free
-
-    const withUnknown = engine.search({ q: 'storytime free', now: FIXTURE_NOW, includeUnknownCost: true, minResults: 1, limit: 20 });
-    expect(ids(withUnknown.results)).toContain('l-storytime-unknown');
+    expect(ids(free.results)).toContain('l-storytime-unknown'); // shown, not hidden
+    const unknownCard = mapListingRecordToActivity(
+      makeListing({ id: 'l-storytime-unknown-card', costStatus: 'unknown' }),
+    );
+    expect(unknownCard.costStatus).toBe('unknown'); // and still not asserted to be free
   });
 
   it('the card mapping keeps unknown cost as "unknown" (not free) and still exposes a source', () => {

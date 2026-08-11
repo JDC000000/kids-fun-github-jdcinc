@@ -52,7 +52,6 @@ export interface SearchRequest {
   signedIn?: boolean;
   regionChipIds?: string[];
   sort?: SortKey;
-  includeUnknownCost?: boolean;
   /**
    * Opt into registration-required courses/camps/lessons. Off by default — the default result set
    * answers "what can we do today" and excludes registered programmes entirely; a parent turns
@@ -143,7 +142,6 @@ export class SearchEngine {
     const ctx0 = parseQuery(req.q, {
       now,
       sort: req.sort,
-      includeUnknownCost: req.includeUnknownCost,
       includeRegistration: req.includeRegistration,
     });
 

@@ -12,13 +12,11 @@
 // on the detail page, one tap away behind this card's own CTA.
 
 import Link from 'next/link';
-import { Badge } from '@/components/ui';
 import { CategoryTile } from './CategoryTile';
 import { FreshnessStamp } from './FreshnessStamp';
 import {
   REGISTRATION_REQUIRED_TAG,
   bookingTag,
-  confidenceMeta,
   formatAges,
   formatCost,
   formatDistance,
@@ -58,10 +56,7 @@ export function ActivityCard({ activity }: { activity: Activity }) {
   const slotSummary = formatSlotSummary(activity);
   const whenTime = slotSummary ?? when.time;
   const meta = statusMeta(activity.status, activity.seasonLabel);
-  // Source-authority read (BR-13) — surfaced on the card face so "source confidence" is
-  // visible with a text label + tone (never colour-only), G-T22-2.
-  const conf = confidenceMeta(activity.confidence);
-  const cardClass = ['kf-card', meta.tone === 'muted' ? 'kf-card--muted' : '', meta.tone === 'cancelled' ? 'kf-card--cancelled' : '']
+  const cardClass =['kf-card', meta.tone === 'muted' ? 'kf-card--muted' : '', meta.tone === 'cancelled' ? 'kf-card--cancelled' : '']
     .filter(Boolean)
     .join(' ');
   // External-source cards leave the site to the official listing; internal cards open the
@@ -69,17 +64,21 @@ export function ActivityCard({ activity }: { activity: Activity }) {
   // predictable destination (G-T22-1 "source CTA"; Blueprint screen-2 item 9).
   const external = Boolean(activity.detailUrl);
   const ctaLabel = external ? `View on ${activity.sourceName} ↗` : 'See details →';
+  // The accessible name mirrors what is VISIBLE on the card and nothing more. The old
+  // source-authority read ("Official source") was dropped from it along with the badge below —
+  // announcing a label a sighted parent can no longer see is exactly the kind of drift that
+  // makes an aria-label wrong over time.
   const label = [
     `${activity.activityName} at ${activity.venue}`,
     `${when.day} ${whenTime}`,
     formatAges(activity.ageMin, activity.ageMax),
     meta.label,
-    conf.label,
     // Screen-reader parity with the visible tag — a course must never read as a drop-in.
     activity.registrationRequired ? REGISTRATION_REQUIRED_TAG : null,
   ]
     .filter(Boolean)
     .join(', ');
+  const bookingLabel = activity.registrationRequired ? REGISTRATION_REQUIRED_TAG : bookingTag(activity.booking);
   const body = (
     <>
       <CategoryTile category={activity.category} />
@@ -95,10 +94,26 @@ export function ActivityCard({ activity }: { activity: Activity }) {
           </span>
           <span>{formatDistance(activity)}</span>
         </div>
-        <div className="kf-card__tags">
-          <BookingTag activity={activity} />
-          <Badge variant={conf.tone}>{conf.label}</Badge>
-        </div>
+        {/* THE "Official source" BADGE IS GONE (Jon's beta feedback on the search result tile).
+            It was the source-AUTHORITY read (BR-13 / G-T22-2) — "Official source" / "Editorial
+            listing" / "Community-listed" — rendered as a <Badge> right here. The whole card is a
+            single anchor, so it was also a second thing to click that went exactly where "See
+            details →" already goes; that CTA is now the only affordance in this zone.
+
+            WHAT IS DELIBERATELY STILL HERE: the <FreshnessStamp> below. It is the light-green,
+            dashed-border "✓ Confirmed · <source> · Checked today" chip, and it is the closest
+            thing on this card to what the feedback described — but removing it is NOT a styling
+            decision this component can take alone. On an INTERNAL card (no external detailUrl)
+            it is the only place the source is named, and naming the source on the rendered card
+            is a licensing obligation, not a preference: tests/compliance/attribution.test.ts
+            (G-T35-3, "attribute and summarise") asserts exactly that, and card-completeness
+            (G-T22-4 / KPI #5) requires the freshness field. Removing it needs a compliance
+            ruling and a replacement attribution, so it is flagged rather than quietly dropped. */}
+        {bookingLabel && (
+          <div className="kf-card__tags">
+            <BookingTag activity={activity} />
+          </div>
+        )}
         <FreshnessStamp activity={activity} />
         <span className="kf-card__cta">{ctaLabel}</span>
       </div>

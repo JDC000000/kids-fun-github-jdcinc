@@ -1,6 +1,5 @@
 import {
   AGE_OPTIONS,
-  COST_MAX_OPTIONS,
   DEFAULT_RADIUS,
   REGION_CHIPS,
   TIME_OF_DAY_OPTIONS,
@@ -57,7 +56,6 @@ export function activeFilterCount(state: SearchState): number {
   if (state.dropIn) n += 1;
   if (state.rainyDay) n += 1;
   if (state.free) n += 1;
-  if (state.costMaxCad != null) n += 1;
   // The radius is not a filter on its own — it only bites once there is an origin to
   // measure from, which is why origin+radius count as one constraint together.
   if (hasOrigin(state)) n += 1;
@@ -204,14 +202,6 @@ export function appliedFilterTokens(state: SearchState, savedLocation: SummaryLo
   }
   if (state.rainyDay) tokens.push({ key: 'rainyDay', label: 'Rainy-day', scope: 'other', clear: { rainyDay: false } });
   if (state.free) tokens.push({ key: 'free', label: 'Free', scope: 'other', clear: { free: false } });
-  if (state.costMaxCad != null) {
-    tokens.push({
-      key: 'costMax',
-      label: COST_MAX_OPTIONS.find((c) => c.maxCad === state.costMaxCad)?.label ?? `Under $${state.costMaxCad}`,
-      scope: 'other',
-      clear: { costMaxCad: null },
-    });
-  }
 
   return tokens;
 }

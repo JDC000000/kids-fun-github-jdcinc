@@ -15,11 +15,13 @@ describe('parseQuery', () => {
     expect(ctx.date?.weekday).toBe(6); // Saturday
   });
 
-  it('extracts radius, age bands and include-unknown flag', () => {
+  it('extracts radius and age bands, and still STRIPS the now-inert include-unknown phrase', () => {
     const ctx = parseQuery('toddler swim within 20km include unknown', { now: FIXTURE_NOW });
     expect(ctx.radiusKm).toBe(20);
     expect(ctx.ageBands).toEqual(expect.arrayContaining(['under2', '2-4']));
-    expect(ctx.includeUnknownCost).toBe(true);
+    // "include unknown" no longer sets anything — unknown-cost listings are always included —
+    // but it must still be stripped from the text, or a parent typing it would have "include"
+    // and "unknown" ranked as if they were the activity they were looking for.
     expect(ctx.terms).toEqual(['swim']);
   });
 

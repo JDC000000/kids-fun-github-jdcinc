@@ -113,7 +113,6 @@ function savedSearchToRequest(
       signedIn: origin != null,
       regionChipIds: state.regions,
       sort: state.sort,
-      includeUnknownCost: state.includeUnknownCost,
       minResults: 0, // never broaden — a digest must contain only genuine matches
       limit: 100, // generous; we filter to "new" and cap per-search below
     },

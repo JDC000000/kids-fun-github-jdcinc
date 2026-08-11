@@ -41,7 +41,6 @@ export interface GoldenRequest {
   origin?: NamedOrigin;
   regionChipIds?: string[];
   sort?: SortKey;
-  includeUnknownCost?: boolean;
   minResults?: number;
   limit?: number;
 }
@@ -102,7 +101,6 @@ export function toSearchRequest(req: GoldenRequest): SearchRequest {
         ? { mode: 'near_me', coords: { lat: EAST_VAN.lat, lng: EAST_VAN.lng } }
         : null,
     regionChipIds: req.regionChipIds ?? [],
-    includeUnknownCost: req.includeUnknownCost ?? false,
     minResults: req.minResults ?? 3,
     limit: req.limit ?? 20,
   };

@@ -68,7 +68,6 @@ const EAST_VAN = { lat: 49.26, lng: -123.07 };
 export function searchApiUrl(): string {
   const params = new URLSearchParams({
     q: '',
-    includeUnknownCost: '1',
     minResults: '100',
     limit: '100',
   });

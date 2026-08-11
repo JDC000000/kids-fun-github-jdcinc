@@ -68,8 +68,6 @@ export interface SearchPerformedContext {
   filters?: string[];
   /** Travel radius in km — only meaningful when a near-me origin was set. */
   radiusKm?: number | null;
-  /** Whether unknown-cost listings were included (the default-on cost toggle). */
-  includeUnknownCost?: boolean;
 }
 
 /** Result-shape summary for a `search_performed` event (counts only, no listing PII). */
@@ -109,7 +107,9 @@ export async function recordSearchPerformed(
       regions,
       filters,
       radiusKm: context.radiusKm ?? null,
-      includeUnknownCost: context.includeUnknownCost ?? null,
+      // `includeUnknownCost` was dropped from this payload when the toggle was removed:
+      // unknown-cost listings are now always included, so the field could only ever have
+      // recorded the constant `true` and would have read as a real signal in the dashboard.
     },
     {
       total: summary.total,

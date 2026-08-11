@@ -217,7 +217,7 @@ describe('facet counting cost', () => {
     const N = 1_000;
     const small = makeEngine(buildCatalogue(N));
     const large = makeEngine(buildCatalogue(N * 4));
-    const req = { q: '', now: FIXTURE_NOW, minResults: 0, includeUnknownCost: true, limit: 60 };
+    const req = { q: '', now: FIXTURE_NOW, minResults: 0, limit: 60 };
 
     // All four streams, interleaved. Subtracting the plain search leaves the facet cost alone;
     // the two subtractions are what the ratio is taken over.

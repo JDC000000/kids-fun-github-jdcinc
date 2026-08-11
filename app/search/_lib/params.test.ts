@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AGE_OPTIONS,
   DEFAULT_STATE,
+  SORT_OPTIONS,
   analyticsFilterTokens,
   apiQuery,
   dateRangeFormFields,
@@ -41,10 +42,31 @@ describe('parseSearchState', () => {
     expect(parseSearchState({ when: 'someday' }).when).toBe('any');
   });
 
-  it('includeUnknownCost defaults on, explicit off honoured', () => {
-    expect(parseSearchState({}).includeUnknownCost).toBe(true);
-    expect(parseSearchState({ includeUnknownCost: '0' }).includeUnknownCost).toBe(false);
-    expect(parseSearchState({ includeUnknownCost: 'yes' }).includeUnknownCost).toBe(true);
+  it('no longer carries an includeUnknownCost state at all — the key is inert', () => {
+    // The toggle was removed and unknown-cost listings are always included. What matters here
+    // is that an explicit OFF signal in a stale/shared URL cannot resurrect the suppression:
+    // the key is not parsed, so the state it produces is byte-identical to a bare /search.
+    expect(parseSearchState({ includeUnknownCost: '0' })).toEqual(parseSearchState({}));
+    expect('includeUnknownCost' in parseSearchState({ includeUnknownCost: '0' })).toBe(false);
+  });
+
+  it('ignores a stale `cost=` ceiling — no URL can reapply a control that is gone', () => {
+    // Same shape of guard as above, for the removed Max price group. `cost=20` used to parse
+    // into costMaxCad and compose "under $20" into the query; a shared link or a saved search
+    // written before the removal must now be a no-op, not an invisible price ceiling.
+    expect(parseSearchState({ cost: '20' })).toEqual(parseSearchState({}));
+    expect(intentPhrases(parseSearchState({ cost: '20' }))).toEqual([]);
+  });
+
+  it('ignores a stale `sort=newest` — "Recently added" degrades to the default sort', () => {
+    expect(parseSearchState({ sort: 'newest' }).sort).toBe(DEFAULT_STATE.sort);
+    expect(SORT_OPTIONS.map((o) => o.key)).not.toContain('newest');
+  });
+
+  it('drops a stale `age=15+` — the retired band cannot be reapplied from a URL', () => {
+    expect(parseSearchState({ age: '15+' }).ages).toEqual([]);
+    expect(parseSearchState({ age: '15+,5-9' }).ages).toEqual(['5-9']);
+    expect(AGE_OPTIONS.map((o) => o.key)).not.toContain('15+');
   });
 
   it('parses region csv, drops unknown ids, canonicalises order', () => {
@@ -52,7 +74,7 @@ describe('parseSearchState', () => {
   });
 
   it('parses age csv into canonical band order', () => {
-    expect(parseSearchState({ age: '15+,under2,5-9' }).ages).toEqual(['under2', '5-9', '15+']);
+    expect(parseSearchState({ age: 'under2,5-9,10-14' }).ages).toEqual(['under2', '5-9', '10-14']);
   });
 
   it('parses boolean quick filters', () => {
@@ -181,7 +203,7 @@ describe('custom date range (T26 / G-T26-1, FR-04)', () => {
 
 describe('hrefFor', () => {
   it('serialises only non-default params and keeps them shareable', () => {
-    expect(hrefFor(st())).toBe('/search?includeUnknownCost=1');
+    expect(hrefFor(st())).toBe('/search');
     const href = hrefFor(st({ q: 'swim', when: 'weekend', ages: ['5-9'], regions: ['van'], bookableNow: true }));
     const p = new URLSearchParams(href.split('?')[1]);
     expect(p.get('q')).toBe('swim');
@@ -209,7 +231,7 @@ describe('hiddenStateFields', () => {
     expect(names).not.toContain('q');
     expect(names).toContain('when');
     expect(names).toContain('bookable');
-    expect(names).toContain('includeUnknownCost');
+    expect(names).not.toContain('includeUnknownCost');
   });
 });
 
@@ -334,10 +356,12 @@ describe('Round 30 — an unset filter group means "no filter / show everything"
     expect(phrases).not.toContain('free');
   });
 
-  it('MAX PRICE: defaults to no ceiling (null) and composes no "under $N" phrase', () => {
-    expect(parseSearchState({}).costMaxCad).toBeNull();
-    expect(DEFAULT_STATE.costMaxCad).toBeNull();
+  it('MAX PRICE: no ceiling exists in the state at all, from any params', () => {
+    // Stronger than the old "defaults to null": the field is gone, so there is no default to
+    // get wrong and no params combination that produces an "under $N" phrase.
     expect(intentPhrases(DEFAULT_STATE).some((p) => p.startsWith('under $'))).toBe(false);
+    expect(intentPhrases(parseSearchState({ cost: '20' })).some((p) => p.startsWith('under $'))).toBe(false);
+    expect(intentPhrases(parseSearchState({ cost: '50' })).some((p) => p.startsWith('under $'))).toBe(false);
   });
 
   it('all groups unset together ⇒ zero filter tokens, empty q, and a full bare browse (minResults 60)', () => {
@@ -361,20 +385,21 @@ describe('Round 30 — an unset filter group means "no filter / show everything"
   });
 });
 
-describe('time-of-day, drop-in and max-price filters (Round 17 / T21 — G-T21-3/4)', () => {
-  it('parses ?time / ?cost / ?dropin and rejects invalid values', () => {
+describe('time-of-day and drop-in filters (Round 17 / T21 — G-T21-3/4)', () => {
+  // The max-price half of this group was removed on Jon's beta feedback. What remains here is
+  // the time-of-day / drop-in wiring, plus explicit proof that the price ceiling is gone from
+  // EVERY layer of the URL contract rather than just from the rail markup.
+  it('parses ?time / ?dropin and rejects invalid values', () => {
     expect(parseSearchState({ time: 'morning' }).timeOfDay).toBe('morning');
     expect(parseSearchState({ time: 'midnight' }).timeOfDay).toBe('any');
-    expect(parseSearchState({ cost: '20' }).costMaxCad).toBe(20);
-    expect(parseSearchState({ cost: '999' }).costMaxCad).toBeNull(); // not a preset band
     expect(parseSearchState({ dropin: '1' }).dropIn).toBe(true);
   });
 
-  it('serialises only non-default values into the shareable page URL', () => {
-    const p = new URLSearchParams(hrefFor(st({ timeOfDay: 'evening', costMaxCad: 50, dropIn: true })).split('?')[1]);
+  it('serialises only non-default values into the shareable page URL, and never a `cost=`', () => {
+    const p = new URLSearchParams(hrefFor(st({ timeOfDay: 'evening', dropIn: true })).split('?')[1]);
     expect(p.get('time')).toBe('evening');
-    expect(p.get('cost')).toBe('50');
     expect(p.get('dropin')).toBe('1');
+    expect(p.has('cost')).toBe(false);
     const bare = new URLSearchParams(hrefFor(st({})).split('?')[1] ?? '');
     expect(bare.has('time')).toBe(false);
     expect(bare.has('cost')).toBe(false);
@@ -382,33 +407,34 @@ describe('time-of-day, drop-in and max-price filters (Round 17 / T21 — G-T21-3
   });
 
   it('a page URL round-trips through serialise → parse identically', () => {
-    const state = st({ timeOfDay: 'afternoon', costMaxCad: 20, dropIn: true });
+    const state = st({ timeOfDay: 'afternoon', dropIn: true });
     const parsed = parseSearchState(Object.fromEntries(new URLSearchParams(hrefFor(state).split('?')[1])));
     expect(parsed.timeOfDay).toBe('afternoon');
-    expect(parsed.costMaxCad).toBe(20);
     expect(parsed.dropIn).toBe(true);
   });
 
-  it('counts each as an active filter and is reset by CLEARED_FILTERS shape', () => {
+  it('counts each as an active filter, and a stale `cost=` counts as nothing', () => {
     expect(hasActiveFilters(st({ timeOfDay: 'morning' }))).toBe(true);
-    expect(hasActiveFilters(st({ costMaxCad: 20 }))).toBe(true);
     expect(hasActiveFilters(st({ dropIn: true }))).toBe(true);
+    expect(hasActiveFilters(parseSearchState({ cost: '20' }))).toBe(false);
   });
 
-  it('emits stable, non-PII analytics tokens', () => {
-    const tokens = analyticsFilterTokens(st({ timeOfDay: 'evening', costMaxCad: 50, dropIn: true }));
-    expect(tokens).toEqual(expect.arrayContaining(['time:evening', 'cost_max:50', 'drop_in']));
+  it('emits stable, non-PII analytics tokens, and no cost_max token', () => {
+    const tokens = analyticsFilterTokens(st({ timeOfDay: 'evening', dropIn: true }));
+    expect(tokens).toEqual(expect.arrayContaining(['time:evening', 'drop_in']));
+    expect(analyticsFilterTokens(parseSearchState({ cost: '50' }))).toEqual([]);
   });
 
-  it('composes parent-language phrases the backend query parser resolves (full UI→API wiring)', () => {
-    const state = st({ q: 'swim', timeOfDay: 'morning', costMaxCad: 20, dropIn: true });
-    expect(intentPhrases(state)).toEqual(expect.arrayContaining(['morning', 'under $20', 'drop-in']));
-    // Decisive end-to-end check: the q string apiQuery builds parses back into the exact
-    // backend SearchContext fields the engine filters on (timeOfDay / costMaxCad / dropIn).
-    const q = new URLSearchParams(apiQuery(state)).get('q') ?? '';
+  it('DECISIVE: a `cost=` in the URL reaches the backend SearchContext as NO ceiling', () => {
+    // The end-to-end check that matters. Previously `?cost=20` composed "under $20" into `q`,
+    // which parseQuery turned into ctx.costMaxCad=20 and filters/cost.ts turned into a price
+    // ceiling. Following the identical path now must yield a null ceiling — proving the
+    // removal reaches the layer that filters, not merely the layer that renders chips.
+    const stale = parseSearchState({ q: 'swim', cost: '20', time: 'morning', dropin: '1' });
+    const q = new URLSearchParams(apiQuery(stale)).get('q') ?? '';
     const ctx = parseQuery(q);
+    expect(ctx.costMaxCad).toBeNull();
     expect(ctx.timeOfDay).toBe('morning');
-    expect(ctx.costMaxCad).toBe(20);
     expect(ctx.dropIn).toBe(true);
     expect(ctx.terms).toContain('swim');
   });

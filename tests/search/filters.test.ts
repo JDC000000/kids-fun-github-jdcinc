@@ -52,23 +52,32 @@ describe('cost filter (FR-10/BR-11, G-T16-5)', () => {
   const unknown = makeListing({ costStatus: 'unknown' });
   const paid = makeListing({ costStatus: 'known', costMinCad: 5, costMaxCad: 5 });
 
-  it('"free" excludes unknown-cost (unknown is never free)', () => {
+  it('unknown-cost is never CLASSIFIED as free — the honesty distinction survives', () => {
+    // This is about what we CLAIM, not about what we show. `isFree` must stay strict: we do
+    // not assert a price we were never given.
     expect(isFree(unknown)).toBe(false);
     expect(isUnknownCost(unknown)).toBe(true);
-    expect(matchesCost(free, { free: true, includeUnknown: false })).toBe(true);
-    expect(matchesCost(unknown, { free: true, includeUnknown: false })).toBe(false);
+    expect(matchesCost(free, { free: true })).toBe(true);
   });
 
-  it('include-unknown surfaces unknown-cost listings', () => {
-    expect(matchesCost(unknown, { free: true, includeUnknown: true })).toBe(true);
-    // with no free constraint, unknown is hidden unless included
-    expect(matchesCost(unknown, { free: false, includeUnknown: false })).toBe(false);
-    expect(matchesCost(unknown, { free: false, includeUnknown: true })).toBe(true);
+  it('unknown-cost listings are ALWAYS returned — with or without a free constraint', () => {
+    // The behaviour this replaces: unknown-cost listings were hidden unless an
+    // `includeUnknown` flag was set, and that flag defaulted differently in the /search state
+    // layer (on) and the /api/search route (off). See lib/search/filters/cost.ts.
+    expect(matchesCost(unknown, { free: false })).toBe(true);
+    expect(matchesCost(unknown, { free: true })).toBe(true);
   });
 
   it('applies a max-cost ceiling to known prices', () => {
-    expect(matchesCost(paid, { free: false, includeUnknown: false, maxCad: 3 })).toBe(false);
-    expect(matchesCost(paid, { free: false, includeUnknown: false, maxCad: 10 })).toBe(true);
+    expect(matchesCost(paid, { free: false, maxCad: 3 })).toBe(false);
+    expect(matchesCost(paid, { free: false, maxCad: 10 })).toBe(true);
+  });
+
+  it('a price ceiling can never exclude an unknown-cost listing', () => {
+    // The ceiling only applies to a KNOWN price. An unknown price is not "too expensive";
+    // it is unmeasured, and a ceiling must not become a second route to suppression.
+    expect(matchesCost(unknown, { free: false, maxCad: 1 })).toBe(true);
+    expect(matchesCost(makeListing({ costStatus: 'check_source' }), { free: false, maxCad: 1 })).toBe(true);
   });
 });
 
