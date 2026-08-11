@@ -307,9 +307,39 @@ describe('/healthz — an ABSENT scheduler is not a DISABLED one (D-A)', () => {
     }
     // …and a scheduler that IS reporting is never mistaken for an absent one, whichever way
     // its `enabled` flag happens to read.
+    //
+    // COMPARED AS A PREDICATE. Only the MATCHER changed — the claim is byte-difference, exactly
+    // as before — so this cannot have narrowed the guard. `expect(JSON.stringify(a)).not.toBe(
+    // JSON.stringify(b))`, which is what this line was, hands chai two whole serialised bodies
+    // and lets its formatter decide how much of a confirmed-public payload to print. MEASURED
+    // here, with a fake credential planted in `globalBreakersTripped` and this assertion forced
+    // to fail: at chai's default truncateThreshold — 40, measured, this repo sets no chaiConfig
+    // — the message truncates and the credential does NOT appear; with the threshold lifted to
+    // 0 it appears TWICE. So the old form's discretion was never a property of the assertion.
+    // It was a property of a global formatting default, and lifting that default is the
+    // ordinary way to read a full diff. The predicate collapses to a boolean before chai
+    // formats anything, so no setting can expose it: a failure prints `expected false to be
+    // true` and text this file already contains. Same form as the blind-at-boot pin at the
+    // bottom of this file; see the note above REPORTED_ARM_KEYS for why a guard over this
+    // endpoint must not echo what it catches.
+    //
+    // AND WHAT THIS LINE IS WORTH, MEASURED, SO THE NEXT READER DOES NOT MISTAKE IT FOR THE
+    // GUARD: byte-difference is a weak claim — the reported arm publishes 28 keys (count
+    // REPORTED_ARM_KEYS) and the unknown arm exactly one, so these two payloads differ for
+    // dozens of independent reasons and this line is satisfied by any of them.
+    // Under this block's OWN defect mutation (the historical `scheduler ?? { enabled:
+    // false }`) it is GREEN: isolated as the only live assertion in this test, with that
+    // mutation applied, it PASSED — `{"enabled":false}` and a full metrics object are not
+    // byte-identical. It never caught the bug this block is named for. What does catch it is
+    // the `enabled`/`known` pair above, which reddens 5 of 5 runs at the `enabled === false`
+    // line. Promoting this line into the guard is a separate decision needing its own
+    // evidence, not a drive-by alteration of a matcher.
     const reporting = (await get(state(metrics({ enabled: false })))).body.scheduler;
     const unknown = (await get(state(undefined))).body.scheduler;
-    expect(JSON.stringify(reporting)).not.toBe(JSON.stringify(unknown));
+    expect(
+      JSON.stringify(reporting) !== JSON.stringify(unknown),
+      'a reporting scheduler and an absent one are byte-identical on the wire — the distinction is gone',
+    ).toBe(true);
   });
 });
 
@@ -318,6 +348,22 @@ describe('/healthz — an empty globalSchedules is no longer ambiguous (D-B)', (
   // read has never succeeded, so I know nothing". `globalScheduleHealthAt` already carried
   // the difference, but only for a reader who happened to know the convention — and a reader
   // who does not know it treats blindness as a clean bill of health. It is now named.
+  //
+  // ── WHY ONE ASSERTION BELOW IS A PREDICATE AND ITS NEIGHBOURS ARE STILL `toEqual` ─────────
+  // Written down because it is NOT re-derivable from the code, and an unexplained exception
+  // decays: the next author cannot tell which assertions here are which, so they either
+  // "tidy" the predicate back into a `toEqual` or convert the key-set pins that must never be
+  // converted. THE LINE IS: an assertion may compare a value THIS FILE'S FIXTURE supplied, and
+  // may not compare one THE PAYLOAD supplied.
+  //   • `toEqual([])` and `toEqual(['corrections_retention'])` below are the first kind — the
+  //     `metrics({ … })` call earlier in that same `it` set that exact value, so a failure can
+  //     only print what this file already contains. Left alone deliberately.
+  //   • the cross-state comparison in "THE DEFECT ITSELF" is the second kind: both sides come
+  //     off the wire, so `toEqual` there prints producer-derived content. MEASURED, with a
+  //     credential in a snapshot's `jobType` — the one published value code does not bound, see
+  //     PublicGlobalScheduleSnapshot — the old `toEqual` form printed it at chai's DEFAULT
+  //     threshold, because a `- Expected/+ Received` diff is not truncated the way an inline
+  //     message is. That is the one that had to change, and it is the only one that did.
   it('empty + never read = unknown (the worker is BLIND, not idle)', async () => {
     const res = await get(state(metrics({ globalSchedules: [], globalScheduleHealthAt: null })));
     const scheduler = res.body.scheduler as Record<string, unknown>;
@@ -371,7 +417,19 @@ describe('/healthz — an empty globalSchedules is no longer ambiguous (D-B)', (
       .scheduler as Record<string, unknown>;
     const idle = (await get(state(metrics({ globalScheduleHealthAt: '2026-01-01T00:00:00.000Z' }))))
       .body.scheduler as Record<string, unknown>;
-    expect(blind.globalSchedules).toEqual(idle.globalSchedules); // identical payload…
+    // Both sides are off the wire, so this is the payload-derived comparison the block note
+    // above is about — a predicate, not `toEqual`. The claim is unchanged: these two bodies
+    // parsed from JSON, so JSON round-trip equality IS the deep equality `toEqual` asserted,
+    // and both arrays are produced by the same `.map(publicSnapshot)` call, so key order cannot
+    // differ between them. Any residual ordering surprise would fail this line, never pass it.
+    expect(
+      JSON.stringify(blind.globalSchedules) === JSON.stringify(idle.globalSchedules),
+      'the two empty-array cases differ on globalSchedules — the identity this block rests on is gone',
+    ).toBe(true); // identical payload…
+    // …and the LINE BELOW is this block's tooth, not the one above: under a mutation that
+    // collapses deriveGlobalScheduleHealthStatus to a single value, this test reddens at the
+    // line below on 5 of 5 runs, and the comparison above stays green. Changing the form of a
+    // green assertion cannot cost teeth it never had — which is why that was checked first.
     expect(blind.globalScheduleHealthStatus).not.toBe(idle.globalScheduleHealthStatus); // …different meaning
   });
 
@@ -1035,8 +1093,14 @@ describe('/healthz — the body carries no free text (D-D: the public-disclosure
     expect(blind.globalScheduleHealthStatus === 'unknown', 'blind should be "unknown" too').toBe(true); // same enum value…
     expect(booting.globalScheduleHealthReadFailed === false, 'booting should not be read-failed').toBe(true);
     expect(blind.globalScheduleHealthReadFailed === true, 'blind SHOULD be read-failed').toBe(true); // …legible difference
-    // Compared as a predicate: `expect(JSON.stringify(a)).not.toBe(JSON.stringify(b))` prints
-    // BOTH WHOLE BODIES when it fails, which is the largest possible echo in this file.
+    // Compared as a predicate. `expect(JSON.stringify(a)).not.toBe(JSON.stringify(b))` hands
+    // chai both whole serialised bodies and lets its formatter decide how much to print: at
+    // this repo's default truncateThreshold — 40, measured — the first 38 characters of each,
+    // and with the threshold lifted to 0 the WHOLE of both, which is the largest possible echo
+    // in this file. This comment said "prints BOTH WHOLE BODIES" flatly until the two D-A/D-B
+    // pins were converted to this same form and the number was actually measured; the bound is
+    // a global formatting default rather than anything the assertion does, which is exactly why
+    // the predicate is the form to use. It has no such dependence.
     expect(
       JSON.stringify(booting) !== JSON.stringify(blind),
       'the two blind-at-boot states are byte-identical on the wire — the distinction is gone',
