@@ -34,6 +34,16 @@
 -- unmeasured number — precisely the move that produced the defect this unit removes. The
 -- constant gets declared from `max(items_in_feed)` per tenant once there is data to read it
 -- off, which is a later, separately reviewable change.
+--
+-- DEPLOY NOTE FOR WHOEVER SHIPS THIS: apply to kids-fun-supabase-staging AND
+-- kids-fun-supabase-prod as two separate deliberate steps, per this project's own
+-- hard-learned rule (see 0027). ORDER MATTERS HERE SPECIFICALLY, MORE THAN USUAL:
+-- `finishCheckRun`'s UPDATE now names `items_in_feed`. If the worker build ships BEFORE
+-- this migration is applied, that UPDATE fails with "column does not exist" for EVERY
+-- source in EVERY family, not just library — no check run finalises anywhere. APPLY THIS
+-- MIGRATION FIRST, THEN SHIP THE WORKER. The reverse order is not safe; this direction is
+-- (additive/nullable, no lock beyond the catalogue update, safe to apply while the worker
+-- is running unmigrated — it simply won't populate the new column yet).
 ALTER TABLE source_check_run ADD COLUMN items_in_feed integer;
 
 COMMENT ON COLUMN source_check_run.items_in_feed IS
