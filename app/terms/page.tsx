@@ -15,6 +15,14 @@ import './terms.css';
 // is acceptable at all. Remove it only together with the draft status it describes —
 // i.e. when reviewed wording actually lands here.
 //
+// THE NOTICE'S SECOND PARAGRAPH IS NOT PADDING — DO NOT TRIM IT (QA F-3). This page
+// says the Privacy Policy "forms part of these Terms" and that together they are the
+// whole agreement. With an unqualified draft banner overhead, a reader can reasonably
+// infer the Privacy Policy is unreviewed too — and it is the one signed-off, approved
+// legal document on this site. A provisional document was lending an approved one its
+// own provisional status. The scope clause in the notice, and the matching sentence in
+// the "Privacy" section below, exist only to stop that leak. Keep both or neither.
+//
 // WHY THIS PAGE CARRIES A VISIBLE NOTICE AND /privacy DELIBERATELY DOES NOT:
 // the two pages are in OPPOSITE situations, so do not "harmonise" them by deleting
 // this one's notice. app/privacy/page.tsx avoids rendering an unresolved-placeholder
@@ -35,12 +43,13 @@ export const metadata = {
     'The terms that apply when you use KIDS FUN, including what we do and do not promise about the accuracy of activity listings gathered from other sources.',
 };
 
-// Same publish-time stamp mechanism as /privacy: null until the orchestrator sets it
-// at merge, and the line is omitted entirely rather than rendering a visible
-// unresolved placeholder. The draft notice above it, not a date, is what tells a
-// reader where this document stands — and the "Changes to these Terms" wording below
-// is true whether or not a date is showing.
-const EFFECTIVE_DATE: string | null = null;
+// Same publish-time stamp mechanism as /privacy. It stayed null through QA on purpose,
+// so the artifact under review could not move underneath it; the orchestrator set it
+// when the findings closed. If the push slips past this date, bump it — it is a
+// publish-time stamp, not a decision. The line is omitted entirely while null rather
+// than rendering a visible unresolved placeholder, and the "Changes to these Terms"
+// wording below is true whether or not a date is showing.
+const EFFECTIVE_DATE: string | null = '2026-08-11';
 
 export default function TermsPage() {
   return (
@@ -57,8 +66,13 @@ export default function TermsPage() {
             <p className="kf-terms__notice-body">
               These terms are a provisional draft. We have published them so that KIDS FUN has terms
               in place while the service is in beta, but they have not yet been reviewed by a lawyer
-              and we expect them to change. If something here matters to a decision you are making,
-              please check back — we will update this page once the reviewed version is ready.
+              and we expect them to change — so please do not treat this wording as final. If
+              something here matters to a decision you are making, ask us rather than relying on it,
+              and check back: we will update this page once the reviewed version is ready.
+            </p>
+            <p className="kf-terms__notice-body kf-terms__notice-scope">
+              This draft status applies to <strong>these Terms only</strong>. Our Privacy Policy is a
+              separate, finalised document and is in force as written.
             </p>
           </div>
 
@@ -164,8 +178,9 @@ export default function TermsPage() {
           <p>
             When you send us a problem report or other feedback, you keep whatever rights you have in
             it, and you give us permission to use it to operate and improve KIDS FUN — including to
-            correct a listing and to pass the correction on to the provider. Please do not send us
-            anything confidential, or anything you do not have the right to share. Personal
+            correct a listing and to pass the corrected listing information on to the provider,
+            without your personal details. Please do not send us anything confidential, or anything
+            you do not have the right to share. Personal
             information is handled as described in our{' '}
             <a href="/privacy">Privacy Policy</a>.
           </p>
@@ -183,8 +198,10 @@ export default function TermsPage() {
           <p>
             KIDS FUN is in active development and is offered on an &quot;as available&quot; basis. We
             may change, suspend, add, or remove features, listings, or the service as a whole at any
-            time. We do not promise any particular uptime or performance, or that data will be
-            retained.
+            time. We do not promise any particular uptime or performance, or that a listing or
+            feature you used before will still be there later. That is about the service and its
+            listings — the account information you give us is kept, and deleted, as described in our{' '}
+            <a href="/privacy">Privacy Policy</a>.
           </p>
 
           <h2>No warranty</h2>
@@ -246,7 +263,10 @@ export default function TermsPage() {
           <h2>Privacy</h2>
           <p>
             How we collect, use, and protect personal information is set out separately in our{' '}
-            <a href="/privacy">Privacy Policy</a>, which forms part of these Terms.
+            <a href="/privacy">Privacy Policy</a>, which forms part of these Terms. To be clear about
+            what that means: the Privacy Policy is a finalised document that is in force in its own
+            right. The draft status noted at the top of this page applies to these Terms, and does
+            not extend to it.
           </p>
 
           <h2>Governing law</h2>
@@ -269,8 +289,8 @@ export default function TermsPage() {
             Questions about these Terms? Email us at{' '}
             <strong>
               <a href="mailto:joncartwright00@gmail.com">joncartwright00@gmail.com</a>
-            </strong>
-            .
+            </strong>{' '}
+            <em>(interim contact — this will move to a dedicated address once a domain is registered).</em>
           </p>
         </main>
       </div>

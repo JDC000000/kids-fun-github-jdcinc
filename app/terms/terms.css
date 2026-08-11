@@ -89,6 +89,14 @@
   line-height: 1.55;
   color: var(--kf-expected-text);
 }
+/* The scope clause ("this applies to these Terms only; the Privacy Policy is finalised
+ * and in force"). Same size as the rest of the notice on purpose — it is a correction
+ * to what the banner would otherwise imply about a signed-off document, not small print.
+ * Selector is intentionally (0,2,0) so it beats .kf-terms__notice-body regardless of
+ * source order, since both classes sit on the same element. */
+.kf-terms__notice .kf-terms__notice-scope {
+  margin-top: var(--kf-space-3);
+}
 
 /* ── Prose ── */
 .kf-terms__prose {
