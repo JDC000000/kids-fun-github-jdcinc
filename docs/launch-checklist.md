@@ -20,6 +20,22 @@
 >    databases: applied to both (prod head 0027, staging head 0028 at last check).
 > Do not treat either of the original claims below as current without re-verifying against
 > live infra; this file is not self-updating.
+>
+> **THIRD KNOWN-STALE CLAIM, added 2026-08-11, and this one is operationally significant:**
+> 3. Line 59 (approx) claims "No separate `kids-fun` prod project/deploy. The only project's
+>    Vercel production target is still staging-wired," and names a different staging domain
+>    than `docs/infra.md` does. **False as of 2026-08-11** — Operator-verified directly
+>    against the Vercel API: `kids-fun` (`prj_Fj1RUODfCLbPDEavBNX6k778br5W`) is a genuinely
+>    separate production project, its production branch is `main`, and its verified custom
+>    domain is `kids-fun-psi.vercel.app` — matching `docs/infra.md`, not this file.
+>    **THE PART THAT MATTERS GOING FORWARD:** this project **auto-deploys to production on
+>    every push to `main`** — confirmed by matching production-deployment commit SHAs one
+>    for one against every push made on 2026-08-10/11 (`aa14057`, `3b36ebb`, `72b9e19`,
+>    `fa06c6b`, `f0356c7`, `8fe6268`, `ba8739f`, all present as their own production
+>    deployment). **This is unlike the Fly worker, which requires a manual, separately
+>    authorised `fly deploy`.** A merge to `main` is therefore a production release of the
+>    web app in the same action — there is currently no equivalent manual gate. Treat every
+>    future merge accordingly until/unless that changes.
 
 **Task:** Round 27 / G-T39-1 — production coverage seeded + monitored (verify real launch
 sources are live in **production**, not just staging; confirm Sentry + monitoring dashboards
