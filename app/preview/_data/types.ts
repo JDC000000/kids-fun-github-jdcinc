@@ -54,6 +54,21 @@ export type TimeOfDay = 'morning' | 'afternoon' | 'evening';
 export type ConfidenceLabel = 'confirmed' | 'official' | 'editorial' | 'candidate';
 
 /**
+ * One collapsed-card member's own cost.
+ *
+ * A card that stands for several same-day slots of one series states the GROUP's cost, not its
+ * representative's (`formatCost` → `readGroupCost`), so it needs all three cost fields from every
+ * member. The same three fields `Activity` carries, mirrored here rather than imported for the same
+ * reason this file mirrors the enums above: the fixture/demo layer stays self-contained, and the
+ * value set is identical to the search lib's.
+ */
+export interface SlotCost {
+  costStatus: CostStatus;
+  costMinCad?: number;
+  costMaxCad?: number;
+}
+
+/**
  * One dated activity occurrence — the unit a parent scans.
  * Field names track TSD §6 `activity_occurrence` where practical.
  */
@@ -97,6 +112,16 @@ export interface Activity {
   slotCount?: number;
   /** End of the LAST slot, when this card covers several — the closing edge of the displayed span. */
   slotEndIso?: string;
+  /**
+   * EVERY slot's own cost, carried only when this card stands for more than one (see `slotCount`).
+   * A collapsed card whose sessions disagree on price may not print one of them as if it spoke for
+   * all — `formatCost` reads this, not just the three fields above, to decide what may be said.
+   *
+   * ABSENT ON AN ORDINARY SINGLE-SLOT CARD, and that absence is load-bearing rather than an
+   * optimisation: `formatCost` falls back to the card's own three fields, so every card that never
+   * had this defect keeps exactly the label it had before.
+   */
+  slotCosts?: SlotCost[];
   /**
    * This listing needs registering/booking in advance; it is not something to turn up to today.
    * Only ever true on cards a parent asked to see (the registration filter is off by default), and

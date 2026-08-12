@@ -21,14 +21,26 @@
 // no single day, so there is nothing to collapse them ONTO. Each keeps its own card.
 
 import type { ScoredListing } from './rank';
-import type { ListingRecord } from './types';
+import type { CostStatus, ListingRecord } from './types';
 import { localIsoDate } from './time/vancouver';
 
-/** One occurrence inside a collapsed card — enough for the UI to render a time list. */
+/** One occurrence inside a collapsed card — enough for the UI to render a time list and a cost. */
 export interface OccurrenceSlot {
   id: string;
   startDatetimeUtc: string | null;
   endDatetimeUtc: string | null;
+  /**
+   * THIS occurrence's own cost, so a collapsed card can state what the GROUP costs rather than what
+   * its representative costs (lib/search/filters/cost.ts#readGroupCost). Members of one group do
+   * disagree in production — measured 2026-08-11 on the all-time set: 9 collapsed groups whose
+   * members render different cost strings, e.g. $21.25 beside $85 and $103 beside $240.
+   *
+   * A WIDENING, NOT A LOOKUP: `toSlot` below already holds the whole `ListingRecord`, so these three
+   * fields cost no extra query and no second round trip.
+   */
+  costStatus: CostStatus;
+  costMinCad: number | null;
+  costMaxCad: number | null;
 }
 
 /** A ranked result plus every same-series-same-day occurrence it now stands for. */
@@ -100,7 +112,14 @@ function safeLocalIsoDate(iso: string): string | null {
 
 function toSlot(item: ScoredListing): OccurrenceSlot {
   const l = item.candidate.listing;
-  return { id: l.id, startDatetimeUtc: l.startDatetimeUtc, endDatetimeUtc: l.endDatetimeUtc };
+  return {
+    id: l.id,
+    startDatetimeUtc: l.startDatetimeUtc,
+    endDatetimeUtc: l.endDatetimeUtc,
+    costStatus: l.costStatus,
+    costMinCad: l.costMinCad,
+    costMaxCad: l.costMaxCad,
+  };
 }
 
 /** Earliest start first; ties broken by id so the slot list is deterministic. */

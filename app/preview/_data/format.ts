@@ -2,7 +2,7 @@
 // Every number a parent reads (time, age, cost, distance, freshness) is formatted
 // here so it stays consistent and honest across card + detail (D2 tabular numerals).
 
-import { readCost } from '@/lib/search/filters/cost';
+import { readGroupCost } from '@/lib/search/filters/cost';
 import type { Activity, ConfidenceLabel, StatusMeta, StatusState } from './types';
 
 const VANCOUVER_TZ = 'America/Vancouver';
@@ -75,9 +75,20 @@ const COST_UNKNOWN = 'Cost — check source';
  * (known/min=null/max=0) was consequently never enumerated, so this card said "Cost — check
  * source" about a listing the Free filter was already returning as free. A hand-rolled mirror of
  * a rule owned elsewhere can be wrong in exactly this silent way; a call cannot.
+ *
+ * ONE CARD CAN STAND FOR SEVERAL SESSIONS, AND IT MAY NOT PRINT ONE OF THEM AS IF IT SPOKE FOR ALL.
+ * Collapsing (lib/search/collapse.ts) puts every same-series-same-day occurrence behind ONE card,
+ * and this formatter used to read only the representative's three cost fields — so a card standing
+ * for a $103 session and a $240 session said "$103". Measured 2026-08-11, all-time: 9 such groups.
+ * `readGroupCost` is therefore the authority here, and `activity.slotCosts` is the group; a card
+ * with no `slotCosts` passes itself as a group of one, which is why every single-slot card's label
+ * is unchanged to the byte. The words for a disagreeing group are BELOW and are deliberately not
+ * the `range` words — see the `group_range` arm.
  */
-export function formatCost(activity: Pick<Activity, 'costStatus' | 'costMinCad' | 'costMaxCad'>): string {
-  const read = readCost(activity);
+export function formatCost(
+  activity: Pick<Activity, 'costStatus' | 'costMinCad' | 'costMaxCad' | 'slotCosts'>,
+): string {
+  const read = readGroupCost(activity.slotCosts ?? [activity]);
   switch (read.kind) {
     case 'free':
       return 'Free';
@@ -85,6 +96,13 @@ export function formatCost(activity: Pick<Activity, 'costStatus' | 'costMinCad' 
       return `$${read.amount} approx.`;
     case 'range':
       return `$${read.min}–$${read.max}`;
+    case 'group_range':
+      // A GROUP's span, and it must not be readable as ONE session's bounds. `$103–$240` on the arm
+      // above already means a single session whose own price spans that; this card means one
+      // session at $103 and a different one at $240. Same string for both claims and the card is
+      // back to stating a price that is true of something other than what it stands for, which is
+      // the whole defect. The leading word is the difference, and it is a hard fence (Jon, 2026-08-12).
+      return `Varies: $${read.min}–$${read.max}`;
     case 'unstated':
       return COST_UNKNOWN;
     default: {

@@ -167,10 +167,19 @@ describe('a registration card says so', () => {
 });
 
 describe('a collapsed card is honest about how many slots it stands for', () => {
+  // Every slot carries its OWN cost now (lib/search/collapse.ts), and these three agree with the
+  // representative — three slots of one series at one price. Written as a spread of the listing's
+  // own cost rather than repeated literals so this fixture cannot drift into DISAGREEING and start
+  // exercising the group-cost path in tests that are about slot COUNTS and spans.
+  const slotCost = {
+    costStatus: listingDto.costStatus,
+    costMinCad: listingDto.costMinCad,
+    costMaxCad: listingDto.costMaxCad,
+  };
   const slots = [
-    { id: 'l1', startDatetimeUtc: '2026-08-08T22:15:00Z', endDatetimeUtc: '2026-08-08T22:30:00Z' },
-    { id: 'l2', startDatetimeUtc: '2026-08-08T22:30:00Z', endDatetimeUtc: '2026-08-08T22:45:00Z' },
-    { id: 'l3', startDatetimeUtc: '2026-08-09T02:15:00Z', endDatetimeUtc: '2026-08-09T02:30:00Z' },
+    { id: 'l1', startDatetimeUtc: '2026-08-08T22:15:00Z', endDatetimeUtc: '2026-08-08T22:30:00Z', ...slotCost },
+    { id: 'l2', startDatetimeUtc: '2026-08-08T22:30:00Z', endDatetimeUtc: '2026-08-08T22:45:00Z', ...slotCost },
+    { id: 'l3', startDatetimeUtc: '2026-08-09T02:15:00Z', endDatetimeUtc: '2026-08-09T02:30:00Z', ...slotCost },
   ];
 
   it('carries the slot count and the closing edge of the span onto the Activity', () => {

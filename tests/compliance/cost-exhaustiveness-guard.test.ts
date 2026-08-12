@@ -76,6 +76,33 @@
 // So the pattern stays wide and the COMMENTS are removed instead. (C) proves that decision by
 // feeding a two-line re-fusion of each real file's OWN source back through the scanner.
 //
+// >>> THE AUTHORITY IS NOW TWO FUNCTIONS, AND THE WIDENING IS EARNED RATHER THAN ASSUMED. <<<
+// (F5, 2026-08-12.) A collapsed search card stands for several occurrences that can disagree about
+// price, so the card formatter binds its CostRead from `readGroupCost()` — the group authority in
+// the same pinned module — while the digest still binds from `readCost()`. (A) therefore admits
+// EITHER, at all three sites that name the authority, and the widening rests on exactly one fact:
+//
+//     readGroupCost's DECLARED RETURN TYPE IS `CostRead`.
+//
+// That is what keeps the guard biting: the subject is still the real union, so it still narrows to
+// `never` only while every arm is covered. Nothing else in the repo pinned that fact, which would
+// have left a later signature change (`: CostRead | string`, or an inferred return) free to hollow
+// the guard out on BOTH surfaces silently — so (A) now pins the signature itself, in the same file
+// as the widening it justifies. Widening a detector without pinning its new premise is how a
+// detector quietly stops detecting, and this file has already argued that at length about itself.
+//
+// >>> ONE SHAPE THAT PASSES THIS FILE AND DEFEATS ITS INTENT — IDENTIFIED AND REJECTED, NOT USED. <<<
+// `subjectBindings` counts DECLARATIONS, not assignments. So this passes every check here:
+//
+//     let read = readCost(activity);
+//     if (group) read = readGroupCost(group);   // ← not a declaration; invisible to the count
+//
+// It was found while implementing F5 and deliberately NOT used, because it is a way past the guard
+// rather than a way through it — and this file's target is the benign author, who is exactly the
+// person who would copy it later as "the shape that keeps the compliance test green". Written down
+// here so the rejection outlives the conversation it was made in. If you need a second authority,
+// widen the patterns and pin the new function's return type, as F5 did; do not rebind the subject.
+//
 // SHAPE — the same shape as tests/compliance/venue-geo-authority-declared.test.ts, deliberately:
 //
 //   (A) THE GUARD IS PRESENT AND IN FORCE, per surface, located inside `formatCost`'s own body
@@ -83,9 +110,11 @@
 //       the value the switch discriminates on) rather than by the variable's name — so renaming
 //       `unhandledArm` or `read` is not a false alarm, while a guard fed from something other
 //       than the switched value does not count. Two things make "present" mean "in force":
-//       the subject must be bound exactly ONCE and from `readCost()` (a rebinding shadows the
-//       CostRead, and a guard fed from `undefined as never` type-checks while proving nothing),
-//       and no TS suppression directive may sit in the body (it silences the guard in place).
+//       the subject must be bound exactly ONCE and from one of the two cost authorities —
+//       `readCost()` or `readGroupCost()`, both declared to return `CostRead` (a rebinding shadows
+//       the CostRead, and a guard fed from `undefined as never` type-checks while proving nothing)
+//       — and no TS suppression directive may sit in the body (it silences the guard in place).
+//       The group authority's RETURN TYPE is pinned here too, since the widening rests on it.
 //
 //   (B) THE SPLIT SHAPE IS INTACT — the `unstated` arm still exists and is NOT fused onto
 //       `default:`, in the one-line spelling, the two-line spelling, or the reversed order
@@ -104,6 +133,26 @@ const ROOT = process.cwd();
 
 /** The two surfaces that turn a `CostRead` into words a parent reads. */
 const GUARDED_SURFACES = ['app/preview/_data/format.ts', 'lib/email/format.ts'];
+
+/** The module that owns both cost authorities and the `CostRead` union itself. */
+const COST_AUTHORITY_MODULE = 'lib/search/filters/cost.ts';
+
+/**
+ * The cost authorities a `formatCost` may bind its subject from: `readCost` for one listing,
+ * `readGroupCost` for a collapsed card's group. Both are declared to return `CostRead` — which is
+ * the whole reason either is admissible, and which `(A)`'s last test pins rather than assumes.
+ *
+ * Note `readGroupCost(` does NOT contain the substring `readCost(` — after `read` comes `G` — so
+ * the unanchored site below has to be widened too, not just the two anchored ones.
+ */
+const COST_AUTHORITY = /read(?:Group)?Cost\s*\(/;
+const COST_AUTHORITY_BINDING = /^read(?:Group)?Cost\s*\(/;
+
+/**
+ * `readGroupCost` declared to RETURN a `CostRead`, matched up to the opening brace so that widening
+ * the type (`: CostRead | string`) stops matching instead of still passing on the `CostRead` prefix.
+ */
+const GROUP_AUTHORITY_SIGNATURE = /export\s+function\s+readGroupCost\s*\([^)]*\)\s*:\s*CostRead\s*\{/;
 
 /**
  * Blank out comment content — and optionally string-literal content — preserving length and
@@ -339,7 +388,10 @@ describe('(A) both cost surfaces still carry the exhaustiveness guard', () => {
       const body = formatCostBody(readSurface(file));
       expect(body, `${file}: could not locate formatCost's body`).not.toBeNull();
       expect(body?.keys.length ?? 0, `${file}: formatCost's body is implausibly short`).toBeGreaterThan(200);
-      expect(body?.keys, `${file}: formatCost no longer delegates to readCost()`).toMatch(/readCost\s*\(/);
+      expect(
+        body?.keys,
+        `${file}: formatCost no longer delegates to a cost authority (readCost / readGroupCost)`
+      ).toMatch(COST_AUTHORITY);
       expect(body?.keys, `${file}: formatCost no longer switches on the CostRead`).toMatch(/switch\s*\(/);
       expect(body?.subject, `${file}: no \`switch (x.kind)\` — the guard's subject is unknown`).not.toBeNull();
     }
@@ -364,7 +416,7 @@ describe('(A) both cost surfaces still carry the exhaustiveness guard', () => {
     ).toEqual([]);
   });
 
-  it('the guard is fed by the real CostRead — the subject is bound ONCE, from readCost()', () => {
+  it('the guard is fed by the real CostRead — the subject is bound ONCE, from a cost authority', () => {
     // "Present" is not "in force". A guard fed from a shadow compiles forever and protects nothing.
     const shadowed: string[] = [];
     for (const file of GUARDED_SURFACES) {
@@ -376,14 +428,47 @@ describe('(A) both cost surfaces still carry the exhaustiveness guard', () => {
             `(${bindings.join(' | ') || 'none'}): a rebinding SHADOWS the CostRead, so the guard below it ` +
             'type-checks against the shadow and stops proving the switch is exhaustive'
         );
-      } else if (!/^readCost\s*\(/.test(bindings[0])) {
+      } else if (!COST_AUTHORITY_BINDING.test(bindings[0])) {
         shadowed.push(
-          `${file} — \`${body.subject}\` is no longer bound from readCost(); it is bound from ` +
-            `\`${bindings[0]}\`, so the guard no longer says anything about the real CostRead union`
+          `${file} — \`${body.subject}\` is no longer bound from a cost authority (readCost / ` +
+            `readGroupCost); it is bound from \`${bindings[0]}\`, so the guard no longer says ` +
+            'anything about the real CostRead union'
         );
       }
     }
     expect(shadowed, 'the value the exhaustiveness guard is fed is no longer the CostRead').toEqual([]);
+  });
+
+  it('the widening is EARNED: readGroupCost is declared to return a CostRead', () => {
+    // THE PREMISE OF THE F5 WIDENING, PINNED RATHER THAN ASSUMED. The two tests above admit
+    // `readGroupCost(` beside `readCost(` on one ground only: it returns the same `CostRead` union,
+    // so the `never` assignment below it still narrows to `never` only while every arm is covered.
+    // Change that signature and BOTH surfaces stop being guarded, with nothing anywhere saying so —
+    // the same silent-hollowing shape the rest of this file exists to catch, one level up.
+    expect(
+      existsSync(resolve(ROOT, COST_AUTHORITY_MODULE)),
+      `${COST_AUTHORITY_MODULE} is gone or has moved — repoint this test`
+    ).toBe(true);
+    const src = maskRegions(readSurface(COST_AUTHORITY_MODULE), { strings: true });
+    expect(
+      src,
+      `${COST_AUTHORITY_MODULE}: readGroupCost is gone, or no longer DECLARES a CostRead return ` +
+        'type. The card formatter binds the exhaustiveness guard from it, and this test admits it ' +
+        'there only because of that declaration — restore it, or narrow the patterns back.'
+    ).toMatch(GROUP_AUTHORITY_SIGNATURE);
+
+    // Tripwire, same run: the scanner must say NO when the return type is widened away. Without
+    // this, a pattern that had drifted into matching nothing would sit green forever.
+    const widened = src.replace(
+      /(export function readGroupCost\s*\([^)]*\)\s*:\s*)CostRead(\s*\{)/,
+      '$1CostRead | string$2'
+    );
+    expect(widened, 'the signature mutation did not apply — this tripwire proves nothing').not.toBe(src);
+    expect(
+      GROUP_AUTHORITY_SIGNATURE.test(widened),
+      'a WIDENED return type went undetected — the pattern is matching on the `CostRead` prefix ' +
+        'rather than on the whole declared type'
+    ).toBe(false);
   });
 
   it('no TypeScript suppression directive sits inside either formatCost body', () => {
@@ -713,7 +798,7 @@ export function formatCost(listing: ListingRecord): string {
       const subject = bodyOf(file).subject;
       const pristine = subjectBindings(bodyOf(file));
       expect(pristine.length, `${file}: the PRISTINE file must bind the subject exactly once`).toBe(1);
-      expect(pristine[0], `${file}: and bind it from readCost()`).toMatch(/^readCost\s*\(/);
+      expect(pristine[0], `${file}: and bind it from a cost authority`).toMatch(COST_AUTHORITY_BINDING);
       const mutated = plantAboveGuard(raw, `const ${subject} = undefined as never;`);
       expect(
         mutated,

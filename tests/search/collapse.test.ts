@@ -97,6 +97,8 @@ describe('slotSpanEnd', () => {
   });
 
   it('returns null when nothing in the group has a time at all', () => {
-    expect(slotSpanEnd([{ id: 'x', startDatetimeUtc: null, endDatetimeUtc: null }])).toBeNull();
+    expect(
+      slotSpanEnd([{ id: 'x', startDatetimeUtc: null, endDatetimeUtc: null, costStatus: 'unknown', costMinCad: null, costMaxCad: null }]),
+    ).toBeNull();
   });
 });

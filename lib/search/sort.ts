@@ -51,6 +51,16 @@ function lowestCostValue(s: ScoredListing): number | null {
       return cost.min; // it is the LOWEST-cost sort, and readCost has already ordered min <= max
     case 'unstated':
       return null;
+    case 'group_range':
+      // TYPE-REQUIRED, RUNTIME-DEAD — NOT live ordering policy, and nobody should read it as such.
+      // This function is fed `readCost()`, which cannot return the group arm; only `readGroupCost()`
+      // can, and that is called by the card formatter, long after this comparator has run
+      // (lib/search/engine.ts collapses AFTER applySort). A collapsed card needs no ordering change
+      // for the same reason: applySort orders per OCCURRENCE, so under lowest_cost a group's
+      // representative ALREADY is its cheapest member and the card already lands at the group's
+      // floor. The floor is still the right answer if that order ever changes, and the arm is
+      // written out rather than defaulted so a sixth `CostRead` arm still fails the build here.
+      return cost.min;
   }
 }
 

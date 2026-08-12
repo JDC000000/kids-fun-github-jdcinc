@@ -41,8 +41,19 @@ export interface ListingRecordDto {
 export interface SearchItemDto {
   listing: ListingRecordDto;
   distanceKm: number | null;
-  /** Same-series-same-day occurrences this result stands for (lib/search/collapse.ts). */
-  slots?: { id: string; startDatetimeUtc: string | null; endDatetimeUtc: string | null }[];
+  /**
+   * Same-series-same-day occurrences this result stands for (lib/search/collapse.ts). Each carries
+   * its OWN cost, so a collapsed card can state what the GROUP costs rather than what its
+   * representative costs — mirrors `OccurrenceSlot`, which is what the engine puts here.
+   */
+  slots?: {
+    id: string;
+    startDatetimeUtc: string | null;
+    endDatetimeUtc: string | null;
+    costStatus: ListingRecordDto['costStatus'];
+    costMinCad: number | null;
+    costMaxCad: number | null;
+  }[];
   /** End of the last slot, when the result covers several. */
   slotSpanEndUtc?: string | null;
   /** Engine's registration classification; recomputed locally when absent (fixture/detail paths). */
@@ -97,6 +108,18 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
   const tags = new Set([...(l.suitabilityTags ?? []), ...(l.categoryTags ?? [])]);
   const sourceUrl = l.sourceUrl ?? '#';
   const slotCount = item.slots?.length ?? 1;
+  // A collapsed card states the GROUP's cost, so the card formatter needs every member's own three
+  // cost fields and not just the representative's (app/preview/_data/format.ts#formatCost). Carried
+  // ONLY when the card really stands for several slots: a single-slot card's Activity keeps exactly
+  // the shape — and therefore exactly the cost label — it had before this field existed.
+  const slotCosts =
+    slotCount > 1
+      ? item.slots?.map((slot) => ({
+          costStatus: mapCost(slot.costStatus),
+          ...(slot.costMinCad != null ? { costMinCad: slot.costMinCad } : {}),
+          ...(slot.costMaxCad != null ? { costMaxCad: slot.costMaxCad } : {}),
+        }))
+      : undefined;
   // The engine classifies once and sends the answer; the fallback covers the paths that build an
   // Activity without going through search (the detail loader, fixtures) so a course is labelled
   // as one wherever it is rendered. Same pure predicate either way — one definition, two callers.
@@ -136,6 +159,7 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     lastCheckedIso: l.lastCheckedAtUtc ?? new Date().toISOString(),
     ...(slotCount > 1 ? { slotCount } : {}),
     ...(slotCount > 1 && item.slotSpanEndUtc ? { slotEndIso: item.slotSpanEndUtc } : {}),
+    ...(slotCosts ? { slotCosts } : {}),
     ...(registrationRequired ? { registrationRequired } : {}),
     indoor: tags.has('indoor') || ['open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play'].includes(l.primaryCategoryKey),
     rainyDay: tags.has('rainy_day') || tags.has('indoor') || ['open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play'].includes(l.primaryCategoryKey),

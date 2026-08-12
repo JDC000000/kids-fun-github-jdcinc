@@ -67,6 +67,21 @@ export function formatCost(listing: ListingRecord): string {
       return money(read.amount);
     case 'range':
       return `${money(read.min)}–${money(read.max)}`;
+    case 'group_range':
+      // A COLLAPSED CARD's span — different sessions at different prices — and deliberately NOT the
+      // words "Cost varies". `unstatedCostLabel` already returns that exact string for a `known`
+      // status that yields no printable number, which is a DIFFERENT claim: there, we hold no price
+      // at all; here, we hold two. Two near-identical strings for two different claims is the same
+      // collapsed-two-meanings-one-label defect the card's `group_range` wording is fenced against,
+      // and this is the channel that cannot take a wrong label back.
+      //
+      // TYPE-REQUIRED AND RUNTIME-DEAD TODAY — REAL WORDS ANYWAY, ON PURPOSE. Nothing in the digest
+      // path collapses: `lib/email/digest.ts#toActivity` maps a bare `ListingRecord`, and this file
+      // calls `readCost`, which cannot return this arm — only `readGroupCost` can. The words ship so
+      // that the day the digest does gain a group concept it is already honest, instead of shipping
+      // a placeholder that has to be noticed first. A stub here would be the guard's whole point
+      // wasted: it fired to ask this surface for words, not for a way past it.
+      return `Varies by session: ${money(read.min)}–${money(read.max)}`;
     case 'unstated':
       return unstatedCostLabel(listing.costStatus);
     default: {

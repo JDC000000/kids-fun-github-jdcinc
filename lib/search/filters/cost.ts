@@ -135,7 +135,18 @@ export type CostRead =
   /** Two numbers we were actually given, already ordered min <= max. */
   | { kind: 'range'; min: number; max: number }
   /** We hold no cost we can state. Each surface picks its own words from `costStatus`. */
-  | { kind: 'unstated' };
+  | { kind: 'unstated' }
+  /**
+   * A COLLAPSED CARD whose members do not agree on price, every one of which yields a cost we may
+   * state. `min`/`max` are the GROUP's floor and ceiling — different SESSIONS at different prices,
+   * already ordered min <= max.
+   *
+   * NO SURFACE MAY WORD THIS THE WAY IT WORDS `range`. "$103–$240" already means ONE session whose
+   * own bounds span that; for a group it means one session at $103 and another at $240. Printing
+   * the same string for both claims recreates the two-meanings-one-label defect this module exists
+   * to close, so the wording must be visibly distinct on every surface. (Jon's ruling, 2026-08-12.)
+   */
+  | { kind: 'group_range'; min: number; max: number };
 
 /**
  * A number is printable only if it is finite and not negative. Postgres holds both bounds as
@@ -176,4 +187,97 @@ export function readCost(cost: CostFacts): CostRead {
   const only = min ?? max;
   if (only == null || only === 0 || !isPrintableAmount(only)) return { kind: 'unstated' };
   return { kind: 'amount', amount: only };
+}
+
+/**
+ * Decide what may be said about the cost of a COLLAPSED CARD — one card standing for every
+ * same-series-same-day occurrence of one activity (lib/search/collapse.ts). Pure, and it consults
+ * `readCost()` per member rather than restating any part of it.
+ *
+ * THE DEFECT THIS CLOSES. A collapsed card printed its REPRESENTATIVE's cost as though that spoke
+ * for the whole group, so a group holding a $103 session and a $240 session said "$103" and stood
+ * for both. It is worst exactly where it hurts most: `applySort` runs per-OCCURRENCE BEFORE
+ * `collapseSameDaySeries` (lib/search/engine.ts) and collapse keeps the first member in sorted
+ * order, so under the lowest-cost sort the representative is systematically the CHEAPEST member of
+ * its group — the parent who is choosing on price is the one guaranteed to be shown the lowest
+ * number in a group they cannot see the rest of.
+ *
+ * THE RULE (Jon's ruling, 2026-08-12 — candidate D, branch (b)):
+ *   • the members AGREE on what may be said → say exactly that. This is the arm that keeps a
+ *     single-member card, and a group that happens to agree, byte-identical to what they printed
+ *     before this function existed — the fix must not touch a card that never had the defect.
+ *   • every member yields a statable cost and they DIFFER → the group's range, in its OWN arm so
+ *     that no surface can word it like one session's bounds.
+ *   • ANY member whose cost we cannot state → DECLINE (`unstated`). A range missing its floor or
+ *     its ceiling is not a range, and declining is the same honest under-claim `readCost` already
+ *     makes for contradictory bounds.
+ *
+ * A `free` MEMBER COUNTS AS $0 RATHER THAN BLOCKING THE RANGE, and that is deliberate. `isFree()`
+ * has already ruled that session genuinely free, so 0 is a number we HOLD about it, not the lone
+ * zero `readCost` refuses to print (that cell is a listing isFree() ruled NOT free, where "$0"
+ * would read as free on a card the Free filter drops — it cannot reach this path). It is also the
+ * value `lowestCostValue` (lib/search/sort.ts) has always ordered free at, so the aggregate and the
+ * ordering cannot come to disagree about what free is worth. A group whose members are ALL free
+ * still reads `free`, through the agreement rule above, and still prints each surface's free words.
+ */
+export function readGroupCost(slots: CostFacts[]): CostRead {
+  // No members is not a group. Nothing constructs one — `collapseSameDaySeries` always seats at
+  // least the representative — but declining costs nothing and is the honest answer if it ever does.
+  if (slots.length === 0) return { kind: 'unstated' };
+
+  const reads = slots.map(readCost);
+  const agreed = reads[0];
+  if (reads.every((read) => sameRead(read, agreed))) return agreed;
+
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const read of reads) {
+    const bounds = statableBounds(read);
+    // One member we cannot price is enough to decline: the group's true floor or ceiling might sit
+    // outside anything we could print, so any range we drew would be narrower than the truth.
+    if (bounds == null) return { kind: 'unstated' };
+    min = Math.min(min, bounds[0]);
+    max = Math.max(max, bounds[1]);
+  }
+
+  // Members that disagree can still share one number (a $10 amount beside a $10–$20 range floors
+  // and ceilings differently, but [$10,$10] beside [$10,$10] cannot arise here). Collapsing the
+  // degenerate span to `amount` is cheaper to state than to reason about, and it keeps the group
+  // arm meaning what it says: two DIFFERENT prices.
+  return min === max ? { kind: 'amount', amount: min } : { kind: 'group_range', min, max };
+}
+
+/**
+ * The [floor, ceiling] one member contributes to its group's span, or null when we hold no cost for
+ * it and the group must therefore decline.
+ */
+function statableBounds(read: CostRead): [number, number] | null {
+  switch (read.kind) {
+    case 'free':
+      return [0, 0];
+    case 'amount':
+      return [read.amount, read.amount];
+    case 'range':
+      return [read.min, read.max];
+    case 'unstated':
+      return null;
+    case 'group_range':
+      // Unreachable: collapse is one level deep, so a GROUP is never a MEMBER of another group and
+      // every read here comes from `readCost`, which cannot return this arm. Handled rather than
+      // defaulted so that a sixth `CostRead` arm still fails the build in this function too.
+      return [read.min, read.max];
+  }
+}
+
+/**
+ * Two members agree when the claim we may make about them is identical — same kind AND same
+ * numbers. Delegating the numbers to `statableBounds` keeps this exhaustive by construction
+ * instead of re-listing the union a second time.
+ */
+function sameRead(a: CostRead, b: CostRead): boolean {
+  if (a.kind !== b.kind) return false;
+  const ab = statableBounds(a);
+  const bb = statableBounds(b);
+  if (ab == null || bb == null) return true; // same kind, and neither states a number
+  return ab[0] === bb[0] && ab[1] === bb[1];
 }
