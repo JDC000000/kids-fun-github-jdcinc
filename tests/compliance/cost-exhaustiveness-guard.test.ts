@@ -9,6 +9,12 @@
 //   • a `@ts-ignore` / `@ts-expect-error` switches it OFF while leaving it in place;
 //   • `case 'unstated':` is RE-FUSED with `default:` — either order, either spelling.
 //
+// A SECOND, NARROWER GUARANTEE RIDES ALONG, added by the F5 addendum as section (D): the DIGEST's
+// `group_range` arm keeps wording a parent cannot mistake for the `range` arm's single-session span,
+// nor for the `'Cost varies'` that `unstatedCostLabel` returns for a `known` status. It is stated
+// separately from the four above because it is a different guarantee about the same two files, and
+// this header has already been bitten once for letting one claim absorb another.
+//
 // WHAT IT DOES NOT, AND CANNOT, ENFORCE. The first draft of this header claimed the broader
 // property — "the guard that makes a NEW `CostRead` arm a BUILD failure" — and independent QA
 // measured a third exit from that claim which no assertion here was watching (`// @ts-ignore` above
@@ -103,6 +109,35 @@
 // here so the rejection outlives the conversation it was made in. If you need a second authority,
 // widen the patterns and pin the new function's return type, as F5 did; do not rebind the subject.
 //
+// >>> THE OTHER HALF OF THE SAME F5 FENCE: THE DIGEST'S GROUP WORDING WAS PINNED BY A COMMENT. <<<
+// (F5 addendum, 2026-08-12.) Jon's fence — a collapsed card's span must not be readable as ONE
+// session's bounds — lands on two surfaces, and only one of them was ASSERTED. The card's leading
+// word is pinned behaviourally in tests/search/group-cost.test.ts (`'Varies: $103–$240'`, four
+// times). The digest's was pinned by prose: `git grep "Varies by session"` returned exactly one hit
+// in the whole repo — lib/email/format.ts:84, the source line itself — while the same grep for the
+// card's `Varies:` finds its source AND its tests, so the instrument does find assertions when they
+// exist. A fence asserted on one surface and merely narrated on the other is the asymmetry (D)
+// closes, and the digest is the half that cannot be taken back once it has been read.
+//
+// No BEHAVIOURAL test can reach that arm. lib/email/format.ts binds from `readCost`, which cannot
+// return `group_range` — only `readGroupCost` can, and nothing in the digest path collapses. The arm
+// is type-required and runtime-dead today, and it ships real words anyway, on purpose (its own
+// comment argues why). A source pin is therefore the available technique, and it is the same
+// technique and the same justification as `GROUP_AUTHORITY_SIGNATURE` above: a fact the guarantee
+// rests on, which nothing else in the repo would notice losing.
+//
+// (D) PINS THE PROPERTY, NOT THE STRING — it never mentions "Varies by session" anywhere. It reads
+// the `group_range` and `range` arms' literals out of the digest's own source, collapses `${…}` to a
+// placeholder so the comparison is about WORDS rather than about the expressions producing the
+// digits, and requires the group wording to be: (1) not identical to the range wording; (2) not a
+// prefix of it, in EITHER direction — `$5–$20 per session` opens with exactly what one session's
+// bounds look like; (3) carrying at least one letter outside the numbers, so a bare span with
+// cosmetic spacing does not slip past (1) and (2); and (4) not the same words as
+// `unstatedCostLabel`'s `known` label, which is the DIFFERENT claim "we hold no price at all".
+// Rewording the digest honestly stays green. What (D) cannot do is prove the RENDERED output —
+// there is no runtime path to render, which is precisely why the pin is textual rather than
+// behavioural, and why its scanner is watched failing on the real file in its own tripwire.
+//
 // SHAPE — the same shape as tests/compliance/venue-geo-authority-declared.test.ts, deliberately:
 //
 //   (A) THE GUARD IS PRESENT AND IN FORCE, per surface, located inside `formatCost`'s own body
@@ -125,6 +160,12 @@
 //       comment / string / wrong-subject cases. A scanner nobody has watched fail is a scanner
 //       nobody should trust — and one that has only ever been watched fail on toy snippets has
 //       not been watched fail on the file it actually polices.
+//
+//   (D) THE DIGEST'S `group_range` WORDING IS DISTINGUISHABLE — from the `range` arm's span and
+//       from `unstatedCostLabel`'s `known` label — read as a PROPERTY of the two arms' literals
+//       rather than as a hard-coded string. It sits after (C) rather than inside it because its
+//       tripwire rides in its own describe, exactly as (A)'s signature pin carries its own; (C)
+//       remains the self-check for the (A)/(B) scanners it was written for.
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -136,6 +177,14 @@ const GUARDED_SURFACES = ['app/preview/_data/format.ts', 'lib/email/format.ts'];
 
 /** The module that owns both cost authorities and the `CostRead` union itself. */
 const COST_AUTHORITY_MODULE = 'lib/search/filters/cost.ts';
+
+/**
+ * The digest — the irreversible channel, and the surface whose `group_range` WORDING (D) pins. The
+ * card's half of the same fence is asserted behaviourally in tests/search/group-cost.test.ts and is
+ * deliberately not re-pinned here: a second textual copy of a check that already runs the real code
+ * is the duplicated-cost-rule defect this whole area exists to end.
+ */
+const DIGEST_SURFACE = 'lib/email/format.ts';
 
 /**
  * The cost authorities a `formatCost` may bind its subject from: `readCost` for one listing,
@@ -153,6 +202,23 @@ const COST_AUTHORITY_BINDING = /^read(?:Group)?Cost\s*\(/;
  * the type (`: CostRead | string`) stops matching instead of still passing on the `CostRead` prefix.
  */
 const GROUP_AUTHORITY_SIGNATURE = /export\s+function\s+readGroupCost\s*\([^)]*\)\s*:\s*CostRead\s*\{/;
+
+/**
+ * (D)'s two patterns, beside the signature pin because they are the same kind of thing: a fact about
+ * source text that the guarantee rests on and nothing else in the repo watches.
+ *
+ * `INTERPOLATION` collapses `${…}` so two arms are compared on the WORDS a parent reads rather than
+ * on the expressions that produce the digits — `${money(read.min)}` and `$${read.min}` render the
+ * same thing and must not be treated as a difference. `WHOLE_LITERAL` is the admissibility test: an
+ * arm that no longer returns one string or template literal is a wording (D) cannot read, and that
+ * is reported as a PROBLEM rather than passed over, because a pin that has lost sight of its subject
+ * must never be silently green — the same anti-vacuity rule `formatCostBody` follows by returning
+ * null instead of an empty slice.
+ */
+const INTERPOLATION = /\$\{[^{}]*\}/g;
+const WHOLE_LITERAL = /^(['"`])[\s\S]*\1$/;
+/** What an interpolation collapses TO. A control character so no real wording can contain it. */
+const NUMBER_SLOT = String.fromCharCode(1);
 
 /**
  * Blank out comment content — and optionally string-literal content — preserving length and
@@ -222,6 +288,9 @@ interface FormatCostBody {
   readonly code: string;
   /** The identifier the switch discriminates on (`read` in both files today), or null. */
   readonly subject: string | null;
+  /** The body's start offset in the FILE, so an offset found in `keys` can be spliced into the
+   *  source it came from. Added for (D)'s tripwire; nothing above it reads this. */
+  readonly at: number;
 }
 
 /**
@@ -253,6 +322,7 @@ function formatCostBody(src: string): FormatCostBody | null {
     keys: keys.slice(start, end + 1),
     code: code.slice(start, end + 1),
     subject: SWITCH_SUBJECT.exec(code.slice(start, end + 1))?.[1] ?? null,
+    at: start,
   };
 }
 
@@ -367,6 +437,148 @@ function subjectBindings(body: FormatCostBody): string[] {
   const initialisers: string[] = [];
   for (let m = re.exec(body.code); m; m = re.exec(body.code)) initialisers.push(m[1].trim());
   return initialisers;
+}
+
+interface ArmReturn {
+  /** The returned expression's source text. */
+  readonly expr: string;
+  /** Its span within the view it was found in — `[from, to)`, `to` being the `;`. */
+  readonly from: number;
+  readonly to: number;
+}
+
+/**
+ * (D)'s reader. The expression a `case '<kind>':` arm returns, located in a COMMENT-MASKED view —
+ * string content survives there, which is the half (D) needs, whereas the string-masked view blanks
+ * exactly the words being compared. Comments between the label and the `return` are whitespace by
+ * then, so the digest's very long `group_range` comment is simply skipped over.
+ */
+function armReturn(keys: string, kind: string): ArmReturn | null {
+  const m = new RegExp(`case\\s*(['"\`])${kind}\\1\\s*:\\s*return\\s+([^;]+);`).exec(keys);
+  if (!m) return null;
+  const to = m.index + m[0].length - 1;
+  return { expr: m[2].trim(), from: to - m[2].length, to };
+}
+
+/**
+ * Rewrite one arm's returned expression, for (D)'s tripwire. Located in the COMMENT-MASKED view and
+ * spliced into the raw source by OFFSET — masking preserves length, so the two copies stay
+ * cross-referencable, the same property `codeMatches` relies on.
+ *
+ * MEASURED, NOT ASSUMED, AND THE REASON THIS IS NOT A `String.replace` ON RAW TEXT: the digest's
+ * `group_range` comment contains the words "cannot return this arm", and the first version of this
+ * tripwire — anchored on `case 'group_range': […] return …;` in raw source — matched THAT `return`
+ * and swallowed the rest of the comment plus the real return statement. The mutation "applied", the
+ * arm ceased to exist, and the tripwire reported the wrong failure. A raw-text anchor in a file this
+ * heavily commented is not safe, which is the same lesson the header records about the scanner.
+ */
+function setArmWording(src: string, kind: string, expr: string): string | null {
+  const body = formatCostBody(src);
+  if (!body) return null;
+  const arm = armReturn(body.keys, kind);
+  if (!arm) return null;
+  return src.slice(0, body.at + arm.from) + expr + src.slice(body.at + arm.to);
+}
+
+/**
+ * An arm's WORDING: delimiters dropped, `${…}` collapsed to `NUMBER_SLOT`. Null when the arm does
+ * not return a single literal — reported as a problem below rather than passed over.
+ */
+function wordingOf(expr: string | null): string | null {
+  if (expr === null || !WHOLE_LITERAL.test(expr)) return null;
+  return expr.slice(1, -1).replace(INTERPOLATION, NUMBER_SLOT);
+}
+
+/** A wording, printable — the collapsed bounds shown as what they are rather than as a control char. */
+function show(wording: string): string {
+  return wording.split(NUMBER_SLOT).join('${…}');
+}
+
+interface DigestWording {
+  /** Source text of each arm's returned expression, kept so a failure can QUOTE what it read
+   *  instead of only saying it could not read it. */
+  readonly groupExpr: string | null;
+  readonly rangeExpr: string | null;
+  readonly knownExpr: string | null;
+  /** The `group_range` arm's wording, bounds collapsed. */
+  readonly group: string | null;
+  /** The `range` arm's wording — ONE session whose own price spans that. */
+  readonly range: string | null;
+  /** `unstatedCostLabel`'s `known` label — the different claim "we hold no price at all". */
+  readonly known: string | null;
+}
+
+/**
+ * The three wordings (D) compares, read out of one surface's source. `known` is read from the whole
+ * file rather than from `formatCost`'s body because `unstatedCostLabel` is a sibling function; it is
+ * the only `case 'known':` in the digest, and the pin fails loudly below if it ever stops being read.
+ */
+function digestWording(src: string): DigestWording {
+  const body = formatCostBody(src);
+  const groupExpr = body ? armReturn(body.keys, 'group_range')?.expr ?? null : null;
+  const rangeExpr = body ? armReturn(body.keys, 'range')?.expr ?? null : null;
+  const knownExpr = armReturn(maskRegions(src, { strings: false }), 'known')?.expr ?? null;
+  return {
+    groupExpr,
+    rangeExpr,
+    knownExpr,
+    group: wordingOf(groupExpr),
+    range: wordingOf(rangeExpr),
+    known: wordingOf(knownExpr),
+  };
+}
+
+/**
+ * JON'S FENCE AS FAILURE MODES (2026-08-12, hard): a collapsed span must not be readable as ONE
+ * session's bounds, and must not be readable as "we hold no price". Empty list = still distinct.
+ *
+ * Deliberately NOT "the wording equals 'Varies by session: …'". A pin on the exact string would fail
+ * an honest rewording and would teach the next author that the string is the requirement, when the
+ * requirement is the DISTINCTION. Four ways to lose it, each named separately so a failure says
+ * which one happened.
+ */
+function wordingProblems(w: DigestWording): string[] {
+  const problems: string[] = [];
+  const unreadable = (what: string, expr: string | null): string =>
+    `${DIGEST_SURFACE} — the ${what} is no longer a readable string literal (\`${expr ?? 'arm not found'}\`), ` +
+    'so this pin can no longer see the wording it is meant to compare. Restore a literal, or move ' +
+    'this check to wherever the digest now decides its words — do not leave it green and blind.';
+  if (w.group === null) problems.push(unreadable('`group_range` arm', w.groupExpr));
+  if (w.range === null) problems.push(unreadable('`range` arm', w.rangeExpr));
+  if (w.known === null) problems.push(unreadable("`unstatedCostLabel` `known` label", w.knownExpr));
+  if (w.group === null || w.range === null || w.known === null) return problems;
+
+  if (w.group === w.range) {
+    problems.push(
+      `${DIGEST_SURFACE} — the \`group_range\` arm now says EXACTLY what the \`range\` arm says ` +
+        `(\`${show(w.group)}\`). Those are two different claims: the range arm means ONE session ` +
+        'whose own price spans that; this arm means one session at the low bound and a DIFFERENT ' +
+        "session at the high one. Jon's fence is that a parent must not be able to confuse them."
+    );
+  } else if (w.group.startsWith(w.range) || w.range.startsWith(w.group)) {
+    problems.push(
+      `${DIGEST_SURFACE} — the \`group_range\` wording (\`${show(w.group)}\`) and the \`range\` ` +
+        `wording (\`${show(w.range)}\`) are a PREFIX collision: one BEGINS with the other, so the ` +
+        'digest opens with exactly the characters that mean one session\'s bounds and only ' +
+        'disambiguates later — in the channel that has already been read by the time anyone notices.'
+    );
+  }
+  if (!/[A-Za-z]/.test(w.group.split(NUMBER_SLOT).join(''))) {
+    problems.push(
+      `${DIGEST_SURFACE} — the \`group_range\` wording (\`${show(w.group)}\`) carries no WORDS at ` +
+        'all outside the two bounds; it is a bare span, which is what one session\'s price looks ' +
+        'like. Cosmetic spacing is not a distinction — the leading word is (card formatter, line 104).'
+    );
+  }
+  if (w.group === w.known) {
+    problems.push(
+      `${DIGEST_SURFACE} — the \`group_range\` arm now says the same words as \`unstatedCostLabel\`'s ` +
+        `\`known\` label (\`${show(w.group)}\`). That label means we hold NO printable price; this ` +
+        'arm means we hold TWO. Same string, two meanings, is the collapsed-claims defect this ' +
+        'whole area exists to end — and the digest is the surface that cannot take it back.'
+    );
+  }
+  return problems;
 }
 
 function readSurface(file: string): string {
@@ -830,5 +1042,72 @@ export function formatCost(listing: ListingRecord): string {
       expect(body, `${file}: the mutated file must still HAVE a formatCost body`).not.toBeNull();
       expect(body ? fusedArms(body) : false, `${file}: the reversed re-fusion went UNDETECTED`).toBe(true);
     }
+  });
+});
+
+describe("(D) the digest's group_range wording cannot be misread as one session's price", () => {
+  it('the three wordings this section compares are actually readable from the digest', () => {
+    // ANTI-VACUITY, and it is the whole risk here: every assertion below is a DIFFERENCE claim, and
+    // two nulls differ from nothing. If the arms stopped being literals, `wordingProblems` would say
+    // so — this test says it first, and in terms of what was read rather than what was not.
+    const w = digestWording(readSurface(DIGEST_SURFACE));
+    expect(w.group, `${DIGEST_SURFACE}: the \`group_range\` arm's wording could not be read`).not.toBeNull();
+    expect(w.range, `${DIGEST_SURFACE}: the \`range\` arm's wording could not be read`).not.toBeNull();
+    expect(w.known, `${DIGEST_SURFACE}: \`unstatedCostLabel\`'s \`known\` label could not be read`).not.toBeNull();
+    // …and both spans really did interpolate their bounds. Without this, a wording that had lost its
+    // `${…}` would compare as plain prose and the prefix test in particular would mean nothing.
+    expect(w.group ?? '', 'the group wording must still interpolate its two bounds').toContain(NUMBER_SLOT);
+    expect(w.range ?? '', 'the range wording must still interpolate its two bounds').toContain(NUMBER_SLOT);
+  });
+
+  it("the group_range wording is distinct from the range arm's and from the `known` label", () => {
+    // THE HALF OF JON'S FENCE NOTHING WAS WATCHING. The card's half is asserted behaviourally in
+    // tests/search/group-cost.test.ts; this one had a comment and no test, and `git grep` for its
+    // string found only the source line. The property is pinned, not the string — see the header.
+    expect(
+      wordingProblems(digestWording(readSurface(DIGEST_SURFACE))),
+      "the digest's collapsed-span wording has collided with one of the two claims it must stay " +
+        'distinct from. Reword it so it still differs — do NOT relax this check; the digest is the ' +
+        'channel a parent has already acted on by the time a wrong label is noticed.'
+    ).toEqual([]);
+  });
+
+  it('tripwire: each way of losing the distinction is caught in the REAL digest source', () => {
+    // A pin nobody has watched fail is decoration. Anchored on the ARM LABEL rather than on today's
+    // words, so an honest rewording does not quietly stop the mutations from applying.
+    const raw = readSurface(DIGEST_SURFACE);
+    const collisions: ReadonlyArray<readonly [string, string, RegExp]> = [
+      ['collapsed to the range arm\'s bare span', '`${money(read.min)}–${money(read.max)}`', /says EXACTLY what the `range` arm says/],
+      ['reworded to the `known` label', "'Cost varies'", /the same words as `unstatedCostLabel`/],
+      ['opened with the range arm\'s span', '`${money(read.min)}–${money(read.max)} per session`', /PREFIX collision/],
+    ];
+
+    for (const [name, expr, expected] of collisions) {
+      const mutated = setArmWording(raw, 'group_range', expr);
+      expect(
+        mutated,
+        `${name}: the arm could not be located, so this tripwire proves nothing`
+      ).not.toBeNull();
+      expect(
+        mutated,
+        `${name}: the mutation changed nothing, so this tripwire proves nothing — either the arm has ` +
+          'moved or its shape has drifted from what this rewrite expects'
+      ).not.toBe(raw);
+      // The mutation LANDED WHERE IT WAS AIMED — the arm still exists and now returns exactly the
+      // colliding wording. Without this the next assertion could pass on a mangled file for reasons
+      // that have nothing to do with the collision being detected. (An earlier draft did exactly
+      // that: it ate the arm and reported "not a readable literal" as if it were a catch.)
+      expect(
+        digestWording(mutated ?? '').groupExpr,
+        `${name}: the mutation did not land on the group_range arm`
+      ).toBe(expr);
+      expect(
+        wordingProblems(digestWording(mutated ?? '')).join('\n'),
+        `${name} went UNDETECTED — the pin does not reach this way of losing the distinction`
+      ).toMatch(expected);
+    }
+
+    // The control, in the same run: the pristine digest is clean under the very same scanner.
+    expect(wordingProblems(digestWording(raw)), 'the scanner fires on the PRISTINE digest').toEqual([]);
   });
 });
