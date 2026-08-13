@@ -20,6 +20,7 @@ import {
   ACTIVENET_TENANTS,
   ACTIVENET_PORTAL_VERSION,
   ActiveNetAdapter,
+  DEFAULT_WINDOW_DAYS,
   getTenantConfig,
   ingestableTenants,
   loadActiveNetAdapters,
@@ -835,6 +836,44 @@ const NO_SLEEP = { sleepImpl: async () => {} };
 /** A single-calendar tenant so the stubbed run is small and its request count exact. */
 const ONE_CALENDAR_TENANT = { ...VANCOUVER, dropInCalendarIds: [5] };
 
+/**
+ * The wall clock is the one input to these captured fixtures that nobody controls, and it
+ * broke two tests silently. Every `fetchTenant` call above is handed an explicit window,
+ * but `ActiveNetAdapter.fetch()` builds its own from `new Date()` — and parse.ts drops
+ * every occurrence outside it. The captured events run 2026-07-27…2026-08-07, so from
+ * 2026-08-08 the two adapter-level runs below parsed all 24 events and emitted 0 records
+ * (`stats.skippedOutsideWindow: 24`). Nothing was wrong with the adapter or the alerting
+ * path; the harness had simply lost the ability to stage the scenario, and the assertions
+ * those tests exist for — the collapse signal fires, an induced phone-format change comes
+ * out of ingestSource as an alerting verdict — stopped being reached at all.
+ *
+ * So pin the clock to the fixtures' OWN first day instead of to today. DERIVED FROM THE
+ * CAPTURED BYTES, not written down beside them: re-capturing the fixtures moves it
+ * automatically, where a fresh hard-coded date would just rot again on the next capture.
+ * (worker/adapters/perfectmind's equivalent test avoids this by generating its fake portal
+ * relative to the window; ActiveNet asserts on real captured payloads, so it pins instead.)
+ */
+function fixtureEraStart(...names: string[]): Date {
+  const days = names
+    .flatMap((n) => readFileSync(join(FIXTURES, n), 'utf8').match(/\d{4}-\d{2}-\d{2}(?=[ T]\d{2}:)/g) ?? [])
+    .sort();
+  if (days.length === 0) throw new Error(`no event datetimes found in ${names.join(', ')}`);
+  // Noon UTC on that day is 05:00 in every North American tenant zone, so the window's
+  // LOCAL start date is that same day and the whole capture sits inside it.
+  const first = Date.parse(`${days[0]}T12:00:00Z`);
+  const spanDays = (Date.parse(`${days[days.length - 1]}T12:00:00Z`) - first) / 86_400_000;
+  if (spanDays > DEFAULT_WINDOW_DAYS) {
+    // A re-capture wider than one window needs a deliberate second pin, not a silent gap.
+    throw new Error(
+      `${names[0]} spans ${spanDays}d — wider than the ${DEFAULT_WINDOW_DAYS}d default window`
+    );
+  }
+  return new Date(first);
+}
+
+/** The clock the stubbed-portal runs below execute under. */
+const FIXTURE_ERA_CLOCK = fixtureEraStart('vancouver.events.calendar-5.json');
+
 describe('G-T7R-2 live fetch client', () => {
   it('paginates by calendar × centre-set: 1 calendars + 1 filters + 1 events + 1 centerdetails', async () => {
     const { calls, impl } = stubPortal();
@@ -1126,6 +1165,7 @@ describe('G-T7R-6 health: breakage and thinning are both observable', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(impl);
     const adapter = new ActiveNetAdapter(ONE_CALENDAR_TENANT);
     vi.useFakeTimers();
+    vi.setSystemTime(FIXTURE_ERA_CLOCK); // fetch() windows on new Date() — see fixtureEraStart
     const pending = adapter.fetch();
     await vi.advanceTimersByTimeAsync(120_000);
     const records = adapter.extract(await pending);
@@ -1269,6 +1309,7 @@ describe('G-T7R-6 health: breakage and thinning are both observable', () => {
       vi.spyOn(globalThis, 'fetch').mockImplementation(impl);
       const adapter = new ActiveNetAdapter(ONE_CALENDAR_TENANT);
       vi.useFakeTimers();
+      vi.setSystemTime(FIXTURE_ERA_CLOCK); // fetch() windows on new Date() — see fixtureEraStart
       const pending = adapter.fetch();
       await vi.advanceTimersByTimeAsync(120_000);
       const records = adapter.extract(await pending);
