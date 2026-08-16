@@ -259,11 +259,11 @@
   text-align: left;
 }
 
-/* Date-relaxation notice: the results below are filtered to a WIDER window than the parent
-   asked for (lib/search/broaden.ts). It borrows the "expected" palette on purpose — the same
-   visual language the product already uses for "this is adjacent to what you asked for, not
-   the thing itself" — so a widened result set can never be mistaken for an exact one. */
-.kf-daterelax {
+/* Broadening notice: the results below answer a WIDER question than the parent
+   asked (lib/search/broaden.ts relaxed dates, times, ages or a chip). It borrows the "expected"
+   palette on purpose — the language the product already uses for "adjacent to what you asked,
+   not the thing itself" — so a widened result set is never mistaken for an exact one. */
+.kf-broadened {
   margin: 10px 0 0;
   padding: 10px 12px;
   font-size: 13px;
@@ -274,7 +274,7 @@
   text-align: left;
 }
 
-.kf-daterelax__lede {
+.kf-broadened__lede {
   font-weight: 700;
 }
 

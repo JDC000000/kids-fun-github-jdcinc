@@ -192,7 +192,7 @@ export class SearchEngine {
       emptyState = explainEmptyState(ctx0, (v) => primaryOf(v).scored.length);
     }
     if (tooFew) {
-      for (const rung of buildBroadeningLadder(ctx0)) {
+      for (const rung of buildBroadeningLadder(ctx0, { hasOrigin: origin != null })) {
         applied.push(rung);
         working = rung.context;
         run = primaryOf(rung.context);

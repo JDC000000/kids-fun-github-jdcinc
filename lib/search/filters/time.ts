@@ -15,9 +15,36 @@ export const DAY_PART_WINDOWS: Record<DayPart, { startMin: number; endMin: numbe
   evening: { startMin: 17 * 60, endMin: 22 * 60 }, // 17:00–22:00
 };
 
+/**
+ * Each day-part's NEIGHBOURING parts, itself included — the bounded relaxation behind the
+ * broadening ladder's "adjacent_time" rung (lib/search/broaden.ts).
+ *
+ * That rung used to set `timeOfDay: null`, which is not "other times of day", it is ALL times
+ * of day: a parent who asked for a morning activity was silently handed evening ones. Morning
+ * and evening are not adjacent to each other, so neither can reach the other here — the only
+ * band with two neighbours is the one in the middle.
+ */
+export const ADJACENT_DAY_PARTS: Record<DayPart, DayPart[]> = {
+  morning: ['morning', 'afternoon'],
+  afternoon: ['morning', 'afternoon', 'evening'],
+  evening: ['afternoon', 'evening'],
+};
+
 /** Half-open interval overlap: [aStart,aEnd) ∩ [bStart,bEnd) ≠ ∅. */
 function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
   return aStart < bEnd && bStart < aEnd;
+}
+
+/**
+ * The contiguous window spanning a day-part and its neighbours. The three parts abut
+ * (05:00–12:00–17:00–22:00), so their union is always one interval — no gap to reason about.
+ */
+function adjacentWindow(part: DayPart): { startMin: number; endMin: number } {
+  const parts = ADJACENT_DAY_PARTS[part].map((p) => DAY_PART_WINDOWS[p]);
+  return {
+    startMin: Math.min(...parts.map((w) => w.startMin)),
+    endMin: Math.max(...parts.map((w) => w.endMin)),
+  };
 }
 
 /**
@@ -26,9 +53,13 @@ function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): b
  * - Open-hours attraction → overlap its daily open window (or, if unknown, treated as
  *   available all day and therefore matching any day-part).
  */
-export function matchesTimeOfDay(listing: ListingRecord, timeOfDay: DayPart | null): boolean {
+export function matchesTimeOfDay(
+  listing: ListingRecord,
+  timeOfDay: DayPart | null,
+  opts: { includeAdjacent?: boolean } = {},
+): boolean {
   if (!timeOfDay) return true;
-  const window = DAY_PART_WINDOWS[timeOfDay];
+  const window = opts.includeAdjacent ? adjacentWindow(timeOfDay) : DAY_PART_WINDOWS[timeOfDay];
 
   if (listing.openHours) {
     if (!listing.openHoursLocal) return true; // unknown hours → don't hide it

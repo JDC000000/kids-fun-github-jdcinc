@@ -75,7 +75,7 @@ export function passesAllFilters(
   if (mode === 'primary') {
     // Strict temporal + cost + status chips for the primary list.
     if (!matchesDate(listing, ctx.date)) return false;
-    if (!matchesTimeOfDay(listing, ctx.timeOfDay)) return false;
+    if (!matchesTimeOfDay(listing, ctx.timeOfDay, { includeAdjacent: ctx.timeOfDayAdjacent })) return false;
     if (!matchesCost(listing, { free: ctx.costFree })) {
       return false;
     }

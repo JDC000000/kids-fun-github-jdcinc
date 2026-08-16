@@ -8,6 +8,17 @@
 
 import type { DateIntent, SearchContext } from './types';
 import { addDaysIso } from './time/vancouver';
+import { ADJACENT_DAY_PARTS } from './filters/time';
+import { adjacentAgeBands } from './filters/age';
+
+/** What the engine knows about the request that the context alone cannot express. */
+export interface BroadeningOptions {
+  /**
+   * Whether a geo origin was resolved. Default true (offer the rung) so existing callers are
+   * unchanged; the engine passes the real answer. See the radius rung for why it matters.
+   */
+  hasOrigin?: boolean;
+}
 
 export type ConstraintKey =
   | 'text'
@@ -28,6 +39,7 @@ export type BroadenRungKey =
   | 'radius_expand'
   | 'adjacent_time'
   | 'adjacent_date'
+  | 'adjacent_age'
   | 'drop_chip'
   | 'expected_section';
 
@@ -35,6 +47,13 @@ export interface BroadenRung {
   rung: number;
   key: BroadenRungKey;
   label: string;
+  /**
+   * Which constraint this rung acted on, when the rung's key alone does not say. Set for
+   * `drop_chip`, whose whole job is picking ONE of several chips — without it a consumer would
+   * have to parse the human label to find out which filter was set aside, and a notice that
+   * misnames the filter it dropped is the same class of defect as one that says nothing.
+   */
+  constraint?: ConstraintKey;
   /** Cumulative broadened context to re-run search with. */
   context: SearchContext;
 }
@@ -93,8 +112,22 @@ export function widenDateIntent(date: DateIntent, days: number = ADJACENT_DATE_D
   };
 }
 
-/** Chips ordered most-restrictive → least, for "drop the most restrictive chip" (rung 4). */
-const CHIP_RESTRICTIVENESS: ConstraintKey[] = ['bookableNow', 'dropIn', 'rainyDay', 'costFree', 'ageBands'];
+/**
+ * Chips ordered most-restrictive → least, for "drop the most restrictive chip".
+ *
+ * Every entry is an OPT-IN BOOLEAN the parent switched on. Off is the only relaxation a
+ * boolean has, so dropping one is the only move available here — which is why this rung stays
+ * a drop while the graded constraints (date, time of day, age) each got a bounded widen
+ * instead. What changes is that it can no longer do it silently: the rung is disclosed by the
+ * /search broadening notice like every other rung that fired.
+ *
+ * `ageBands` USED TO BE THE LAST ENTRY and no longer is. It is not a boolean — it is an
+ * ordered scale with a middle ground — and relaxing it here meant `ageBands: []`, handing a
+ * parent filtering for an under-2 the whole catalogue including teen programming. It now has
+ * its own bounded `adjacent_age` rung (filters/age.ts adjacentAgeBands), so the ladder can
+ * never empty an age selection again.
+ */
+const CHIP_RESTRICTIVENESS: ConstraintKey[] = ['bookableNow', 'dropIn', 'rainyDay', 'costFree'];
 
 /** Which constraints are actually active (present) in this context. */
 export function activeConstraints(ctx: SearchContext): ConstraintKey[] {
@@ -170,25 +203,37 @@ export function explainEmptyState(
  * Build the deterministic, CUMULATIVE broadening ladder (§5A.5). Each rung's `context`
  * includes all prior relaxations, so the engine can walk rungs until it has enough results.
  */
-export function buildBroadeningLadder(ctx: SearchContext): BroadenRung[] {
+export function buildBroadeningLadder(ctx: SearchContext, opts: BroadeningOptions = {}): BroadenRung[] {
   const rungs: BroadenRung[] = [];
   let cur = ctx;
   let n = 0;
 
-  // (1) synonym / category widen
+  // (1) synonym / category widen. INERT — `widenText` is read by nothing (see types.ts). Kept
+  // because the rung is spec'd (TSD §5A.5 / PRD T-11); it adds no results and is deliberately
+  // excluded from the parent-facing notice so it cannot claim a widen that did not happen.
   if (ctx.terms.length > 0) {
     cur = { ...cur, widenText: true };
     rungs.push({ rung: ++n, key: 'synonym_widen', label: 'Widened to related categories and synonyms', context: cur });
   }
-  // (2) radius expand
-  if (ctx.radiusKm < 20) {
+  // (2) radius expand — a genuine bounded widen already (5→10→20km, capped), left as designed.
+  // It is only OFFERED when there is an origin to measure from: with no origin no radius filter
+  // runs at all (see filters/predicate.ts), so the rung could not change a single result while
+  // still reporting "Expanded distance to 20km" to anyone reading the applied rungs.
+  if (ctx.radiusKm < 20 && opts.hasOrigin !== false) {
     cur = { ...cur, radiusKm: nextRadius(cur.radiusKm) };
     rungs.push({ rung: ++n, key: 'radius_expand', label: `Expanded distance to ${cur.radiusKm}km`, context: cur });
   }
-  // (3) adjacent times, then dates
+  // (3) adjacent times — the NEIGHBOURING day-parts, never `timeOfDay: null`. Morning widens
+  // into the afternoon; it does not widen into the evening, which is not an adjacent time.
   if (ctx.timeOfDay) {
-    cur = { ...cur, timeOfDay: null };
-    rungs.push({ rung: ++n, key: 'adjacent_time', label: 'Included other times of day', context: cur });
+    cur = { ...cur, timeOfDayAdjacent: true };
+    const parts = ADJACENT_DAY_PARTS[ctx.timeOfDay];
+    rungs.push({
+      rung: ++n,
+      key: 'adjacent_time',
+      label: `Included adjacent times of day (${parts.join(', ')})`,
+      context: cur,
+    });
   }
   // Nearby dates — a bounded window around the request, NEVER `date: null`. See widenDateIntent.
   const nearbyDates = ctx.date ? widenDateIntent(ctx.date) : null;
@@ -203,13 +248,31 @@ export function buildBroadeningLadder(ctx: SearchContext): BroadenRung[] {
       context: cur,
     });
   }
-  // (4) drop the most restrictive chip
+  // (4) adjacent ages — the neighbouring bands, never `ageBands: []`. See filters/age.ts for
+  // why age is graded rather than a chip, and therefore widened rather than dropped.
+  const nearbyAges = adjacentAgeBands(ctx.ageBands);
+  if (nearbyAges.length > ctx.ageBands.length) {
+    cur = { ...cur, ageBands: nearbyAges };
+    rungs.push({
+      rung: ++n,
+      key: 'adjacent_age',
+      label: `Included adjacent age groups (${nearbyAges.join(', ')})`,
+      context: cur,
+    });
+  }
+  // (5) drop the most restrictive chip — booleans only; a drop is their only relaxation.
   const chip = CHIP_RESTRICTIVENESS.find((c) => activeConstraints(ctx).includes(c));
   if (chip) {
     cur = relaxSingle(cur, chip);
-    rungs.push({ rung: ++n, key: 'drop_chip', label: `Dropped the ${CONSTRAINT_LABELS[chip]}`, context: cur });
+    rungs.push({
+      rung: ++n,
+      key: 'drop_chip',
+      label: `Dropped the ${CONSTRAINT_LABELS[chip]}`,
+      constraint: chip,
+      context: cur,
+    });
   }
-  // (5) expected / seasonal / evergreen in a separate section
+  // (6) expected / seasonal / evergreen in a separate section
   cur = { ...cur, includeExpected: true };
   rungs.push({ rung: ++n, key: 'expected_section', label: 'Showing expected & seasonal activities separately', context: cur });
 

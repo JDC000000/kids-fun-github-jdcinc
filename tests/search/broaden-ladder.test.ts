@@ -1,28 +1,33 @@
-// tests/search/broaden-date.test.ts
+// tests/search/broaden-ladder.test.ts
 //
-// The `adjacent_date` rung of the broadening ladder used to read:
+// THE DEFECT, which ran through most of the broadening ladder rather than one rung of it:
+// several rungs "relaxed" a constraint by DELETING it, under labels that promised a widen.
 //
-//     if (ctx.date) { cur = { ...cur, date: null };
-//                     rungs.push({ key: 'adjacent_date', label: 'Included nearby dates', ... }) }
+//     if (ctx.date)      { cur = { ...cur, date: null };      label: 'Included nearby dates' }
+//     if (ctx.timeOfDay) { cur = { ...cur, timeOfDay: null }; label: 'Included other times of day' }
+//     drop_chip          → relaxSingle(ageBands) === { ageBands: [] }
 //
-// The LABEL said "nearby dates". The CODE removed the date constraint outright. Because an
-// unconstrained query trivially clears `minResults`, the ladder then stopped on that rung —
-// so a parent who asked for one sparse day was handed the ENTIRE catalogue, filtered by
-// nothing, with no indication their date had been discarded. Measured on production
+// An unconstrained query trivially clears `minResults`, so the ladder stopped on the first
+// such rung having discarded the parent's request. A parent who asked for one sparse day was
+// handed the ENTIRE catalogue with no indication their date had gone. Measured on production
 // 2026-08-16: `?from=2026-09-14&to=2026-09-14` returned total 4070 (the global unfiltered
 // count) with `context.date: null`, while the neighbouring `2026-09-13` (dense) and a
-// 3.5-month range (wide enough to clear the threshold) both worked correctly. The defect was
-// never "the date filter is broken" — it was "the date filter is silently abandoned exactly
+// 3.5-month range (wide enough to clear the threshold) both answered correctly. The defect was
+// never "the date filter is broken" — it was "the constraint is silently abandoned exactly
 // when the answer is thin", which is the case a parent is least able to detect.
 //
-// These are the guards. Each asserts the property that the old code violated: the ladder may
-// WIDEN a date request by a bounded amount, and must never substitute an unfiltered set for it.
+// These are the guards. Every one asserts the property the old code violated: a graded
+// constraint (date, time of day, age) may be WIDENED by a bounded amount and must never be
+// deleted; the boolean chips may still be dropped, but must say which one.
 import { describe, expect, it } from 'vitest';
 import { makeFixtureEngine, FIXTURE_NOW } from '@/lib/search/__fixtures__/engine';
 import { ADJACENT_DATE_DAYS, buildBroadeningLadder, widenDateIntent } from '@/lib/search/broaden';
+import { ADJACENT_DAY_PARTS, matchesTimeOfDay } from '@/lib/search/filters/time';
+import { adjacentAgeBands } from '@/lib/search/filters/age';
+import { makeListing } from '@/lib/search/__fixtures__/factory';
 import { parseQuery } from '@/lib/search/parse';
 import { localIsoDate } from '@/lib/search/time/vancouver';
-import type { DateIntent, SearchContext } from '@/lib/search/types';
+import type { DateIntent, ListingRecord, SearchContext } from '@/lib/search/types';
 
 const { engine } = makeFixtureEngine();
 
@@ -83,14 +88,103 @@ describe('broaden: the date rung widens, it does not delete', () => {
     expect(buildBroadeningLadder(ctxWithDate(null)).some((r) => r.key === 'adjacent_date')).toBe(false);
   });
 
-  it('leaves the other rungs alone (radius / text / chip ladders are out of scope)', () => {
+  it('keeps the radius ladder exactly as designed (a real bounded widen, 10→20km)', () => {
     const ctx = { ...ctxWithDate(range(SPARSE_FAR_DAY, SPARSE_FAR_DAY)), terms: ['swim'], radiusKm: 10, dropIn: true };
     const keys = buildBroadeningLadder(ctx).map((r) => r.key);
     expect(keys).toEqual(['synonym_widen', 'radius_expand', 'adjacent_date', 'drop_chip', 'expected_section']);
-    const radius = buildBroadeningLadder(ctx).find((r) => r.key === 'radius_expand')!;
-    expect(radius.context.radiusKm).toBe(20);
+    expect(buildBroadeningLadder(ctx).find((r) => r.key === 'radius_expand')!.context.radiusKm).toBe(20);
     expect(buildBroadeningLadder(ctx).find((r) => r.key === 'drop_chip')!.context.dropIn).toBe(false);
   });
+
+  it('does not offer a radius rung when there is no origin to measure from', () => {
+    // With no origin no radius filter runs at all, so the rung cannot change a result — but it
+    // WOULD still have reported "Expanded distance to 20km" to anyone reading the applied rungs.
+    const ctx = { ...ctxWithDate(range(SPARSE_FAR_DAY, SPARSE_FAR_DAY)), radiusKm: 10 };
+    expect(buildBroadeningLadder(ctx, { hasOrigin: false }).map((r) => r.key)).not.toContain('radius_expand');
+    expect(buildBroadeningLadder(ctx, { hasOrigin: true }).map((r) => r.key)).toContain('radius_expand');
+  });
+});
+
+describe('broaden: the time-of-day rung widens to ADJACENT bands, it does not delete', () => {
+  it('DECISIVE: the ladder never produces a null timeOfDay', () => {
+    for (const part of ['morning', 'afternoon', 'evening'] as const) {
+      const rungs = buildBroadeningLadder({ ...ctxWithDate(null), timeOfDay: part });
+      for (const rung of rungs) {
+        expect(rung.context.timeOfDay, `rung ${rung.key} dropped the time constraint`).toBe(part);
+      }
+      expect(rungs.find((r) => r.key === 'adjacent_time')!.context.timeOfDayAdjacent).toBe(true);
+    }
+  });
+
+  it('morning reaches the afternoon and NEVER the evening — that is not an adjacent time', () => {
+    expect(ADJACENT_DAY_PARTS.morning).toEqual(['morning', 'afternoon']);
+    expect(ADJACENT_DAY_PARTS.evening).toEqual(['afternoon', 'evening']);
+    expect(ADJACENT_DAY_PARTS.afternoon).toEqual(['morning', 'afternoon', 'evening']);
+  });
+
+  it('the widened predicate accepts the neighbouring band but still refuses the far one', () => {
+    // America/Vancouver is UTC−7 in July; 19:00 local lands on the following UTC day.
+    const at = (utc: string): ListingRecord => makeListing({ startDatetimeUtc: utc });
+    const morningClass = at('2026-07-13T16:00:00Z'); // 09:00 local
+    const afternoonClass = at('2026-07-13T21:00:00Z'); // 14:00 local
+    const eveningClass = at('2026-07-14T02:00:00Z'); // 19:00 local
+
+    // Exact: morning only.
+    expect(matchesTimeOfDay(afternoonClass, 'morning')).toBe(false);
+    // Widened: the neighbour is in...
+    expect(matchesTimeOfDay(afternoonClass, 'morning', { includeAdjacent: true })).toBe(true);
+    expect(matchesTimeOfDay(morningClass, 'morning', { includeAdjacent: true })).toBe(true);
+    // ...and the far band is still out. A full drop would have let this through.
+    expect(matchesTimeOfDay(eveningClass, 'morning', { includeAdjacent: true })).toBe(false);
+  });
+});
+
+describe('broaden: age is widened to neighbouring bands, never emptied', () => {
+  it('DECISIVE: the ladder never empties an age selection', () => {
+    const rungs = buildBroadeningLadder({ ...ctxWithDate(null), ageBands: ['under2'] });
+    for (const rung of rungs) {
+      expect(rung.context.ageBands.length, `rung ${rung.key} emptied the age filter`).toBeGreaterThan(0);
+    }
+  });
+
+  it('an under-2 search reaches 2–4 and NEVER teen programming', () => {
+    expect(adjacentAgeBands(['under2'])).toEqual(['under2', '2-4']);
+    expect(adjacentAgeBands(['under2'])).not.toContain('15+');
+    expect(adjacentAgeBands(['5-9'])).toEqual(['2-4', '5-9', '10-14']);
+    expect(adjacentAgeBands(['15+'])).toEqual(['10-14', '15+']);
+  });
+
+  it('a multi-band selection widens to the union of its neighbours, in band order', () => {
+    expect(adjacentAgeBands(['under2', '10-14'])).toEqual(['under2', '2-4', '5-9', '10-14', '15+']);
+  });
+
+  it('leaves an unset age filter alone — there is nothing to widen', () => {
+    expect(adjacentAgeBands([])).toEqual([]);
+    expect(buildBroadeningLadder(ctxWithDate(null)).some((r) => r.key === 'adjacent_age')).toBe(false);
+  });
+
+  it('age is no longer droppable by the chip rung — it has its own bounded rung instead', () => {
+    const ctx = { ...ctxWithDate(null), ageBands: ['under2' as const], costFree: true };
+    const rungs = buildBroadeningLadder(ctx);
+    // The chip rung fires (Free is a boolean and a drop is its only relaxation)...
+    const chip = rungs.find((r) => r.key === 'drop_chip')!;
+    expect(chip.constraint).toBe('costFree');
+    expect(chip.context.costFree).toBe(false);
+    // ...and it took the boolean, not the age scale.
+    expect(chip.context.ageBands).toEqual(['under2', '2-4']);
+  });
+});
+
+describe('broaden: the chip rung still drops, but names what it dropped', () => {
+  it.each(['bookableNow', 'dropIn', 'rainyDay', 'costFree'] as const)(
+    'carries the constraint key so a notice cannot misname it: %s',
+    (chipKey) => {
+      const rung = buildBroadeningLadder({ ...ctxWithDate(null), [chipKey]: true }).find((r) => r.key === 'drop_chip');
+      expect(rung).toBeDefined();
+      expect(rung!.constraint).toBe(chipKey);
+      expect(rung!.context[chipKey]).toBe(false);
+    },
+  );
 });
 
 describe('engine: a thin dated search widens honestly instead of going unfiltered', () => {

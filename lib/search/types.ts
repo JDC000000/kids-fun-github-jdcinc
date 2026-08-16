@@ -169,8 +169,27 @@ export interface SearchContext {
   sort: SortKey;
 
   // --- Broadening hints (set by the empty-state ladder, G-T20; default false/absent) ---
-  /** Widen text matching (category-only / relaxed) when the exact terms return nothing. */
+  /**
+   * UNIMPLEMENTED — nothing reads this flag. Stated here rather than deleted because the
+   * synonym/category widen is a spec'd ladder rung (TSD §5A.5, pinned by the T-11 PRD
+   * scenario), so removing it is a product decision, not a cleanup.
+   *
+   * Note what the rung would have to ADD, because it is less than it sounds: alias/synonym
+   * expansion is already unconditional — SearchEngine.match() runs `aliases.expand(ctx.terms)`
+   * on every query, broadened or not. What is missing is a genuine relevance-threshold
+   * relaxation, and lib/search/match.ts's constants are measured against the live corpus and
+   * carry explicit "tested, not assumed" warnings, so widening there needs measurement rather
+   * than a guess. Until then the rung is INERT — which is why the /search broadening notice
+   * lists only rungs that actually changed the query (app/search/_lib/broadening-notice.ts):
+   * an inert rung must never tell a parent their search was widened when it was not.
+   */
   widenText?: boolean;
+  /**
+   * Accept the day-parts ADJACENT to `timeOfDay` as well as `timeOfDay` itself — the bounded
+   * relaxation the ladder's `adjacent_time` rung applies (lib/search/filters/time.ts
+   * ADJACENT_DAY_PARTS). Never widens morning into evening; that is not an adjacent time.
+   */
+  timeOfDayAdjacent?: boolean;
   /** Include expected/seasonal/evergreen listings in a separate section (ladder rung 5). */
   includeExpected?: boolean;
 }
