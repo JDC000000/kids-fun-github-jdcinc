@@ -259,6 +259,25 @@
   text-align: left;
 }
 
+/* Date-relaxation notice: the results below are filtered to a WIDER window than the parent
+   asked for (lib/search/broaden.ts). It borrows the "expected" palette on purpose — the same
+   visual language the product already uses for "this is adjacent to what you asked for, not
+   the thing itself" — so a widened result set can never be mistaken for an exact one. */
+.kf-daterelax {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--expected-text);
+  background: var(--expected-bg);
+  border-radius: 12px;
+  text-align: left;
+}
+
+.kf-daterelax__lede {
+  font-weight: 700;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Map view — list/map toggle + Mapbox surface (Task 37, G4).
  * Civic field-guide: warm-paper chrome, hairline rules, Leaf reserved for the

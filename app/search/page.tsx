@@ -27,6 +27,7 @@ import { ResumeSearch } from './_components/ResumeSearch';
 import { buildMarkers, geoIndex } from './_lib/markers';
 import { distanceAvailability, distanceNote } from './_lib/distance-note';
 import { groupActivitiesByDay, formatRangeLabel, type DayGroup } from './_lib/day-groups';
+import { describeDateBroadening } from './_lib/date-broadening';
 import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
   CLEARED_FILTERS,
@@ -61,7 +62,14 @@ export const dynamic = 'force-dynamic';
 /** The /api/search JSON, plus the broadening block the route returns but the preview DTO doesn't type. */
 type SearchApiResponse = SearchResponseDto & {
   broadening?: {
-    applied: Array<{ rung: number; key: string; label: string }>;
+    // Each rung carries the cumulative context it applied. The date rung's window is what the
+    // "we widened your dates" notice reports — see _lib/date-broadening.ts.
+    applied: Array<{
+      rung: number;
+      key: string;
+      label: string;
+      context?: { date?: { isoDate: string | null; endIsoDate?: string | null } | null } | null;
+    }>;
     emptyState: { blockingConstraint: string | null; message: string } | null;
   };
 };
@@ -248,6 +256,10 @@ export default async function SearchPage({
   // to geocode is origin-asking-for and origin-less, and the parent deserves the second answer.
   const distanceExplanation = distanceNote(distanceAvailability(result.body));
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
+  // The date constraint may have been WIDENED to fill the page (lib/search/broaden.ts). When it
+  // was, the results on screen answer a slightly different question from the one that was asked,
+  // and the page has to say so — silently substituting dates is the defect this notice closes.
+  const dateBroadening = describeDateBroadening(state, result.body?.broadening?.applied);
   // The applied query in plain language. One derivation shared with the mobile sticky bar,
   // so the phone and the desktop can never disagree about what is filtering.
   const appliedTokens = appliedFilterTokens(state, savedLocation);
@@ -408,6 +420,21 @@ export default async function SearchPage({
             clearHref={hrefFor(state, CLEARED_FILTERS)}
             countsKnown={result.ok}
           />
+
+          {/* Rendered OUTSIDE the results branch, like QuerySummary and for the same reason:
+              a search that widened the dates and STILL came back empty is exactly when a
+              parent most needs to know the dates moved. `role="status"` so the substitution
+              is announced after the navigation rather than found by accident. */}
+          {dateBroadening && (
+            <p className="kf-daterelax" role="status">
+              <b className="kf-daterelax__lede">
+                {dateBroadening.requested
+                  ? `Not much on ${dateBroadening.requested}.`
+                  : 'Not much on the dates you asked for.'}
+              </b>{' '}
+              Showing nearby dates too — <b>{dateBroadening.shown}</b>.
+            </p>
+          )}
 
           <div className="kf-results">
         {!result.ok ? (

@@ -6,7 +6,8 @@
 // The UX must always explain WHICH constraint caused zero results (Flow 5); `explainEmptyState`
 // probes single-constraint relaxations to name the blocking one.
 
-import type { SearchContext } from './types';
+import type { DateIntent, SearchContext } from './types';
+import { addDaysIso } from './time/vancouver';
 
 export type ConstraintKey =
   | 'text'
@@ -54,6 +55,42 @@ export const CONSTRAINT_LABELS: Record<ConstraintKey, string> = {
 const RADIUS_LADDER: Record<number, number> = { 5: 10, 10: 20 };
 function nextRadius(km: number): number {
   return RADIUS_LADDER[km] ?? Math.max(km, 20);
+}
+
+/**
+ * How far the `adjacent_date` rung (rung 3) reaches on either side of the window the parent
+ * actually asked for. A BOUNDED widen, mirroring the radius ladder's shape — 10km→20km is
+ * "further", not "anywhere", and "nearby dates" has to mean the same kind of thing.
+ *
+ * Three days is the smallest window that reaches the next weekend from a weekday and the
+ * previous/next weekday from a weekend, which is the real substitution a parent is willing to
+ * make ("not Wednesday then — what about Saturday?"). Wider than that stops being an answer to
+ * the question that was asked.
+ */
+export const ADJACENT_DATE_DAYS = 3;
+
+/**
+ * Widen a date intent to the inclusive window [start − days, end + days].
+ *
+ * THIS RUNG USED TO SET `date: null`. That is not a widen, it is a removal: the parent's date
+ * request was discarded wholesale, the query became date-unconstrained, and the ladder then
+ * stopped because an unfiltered catalogue trivially clears `minResults`. A parent who asked for
+ * one sparse day got the entire catalogue back, silently, under a label that said "Included
+ * nearby dates" — the label described a behaviour the code did not have. The fix is to make the
+ * code do what the label always claimed.
+ *
+ * Returns null when there is nothing to widen AROUND (`isoDate` unset) — such an intent already
+ * filters nothing (see filters/time.ts matchesDate), so there is no rung to offer.
+ */
+export function widenDateIntent(date: DateIntent, days: number = ADJACENT_DATE_DAYS): DateIntent | null {
+  if (!date.isoDate) return null;
+  const end = date.endIsoDate ?? date.isoDate;
+  return {
+    kind: 'range',
+    isoDate: addDaysIso(date.isoDate, -days),
+    endIsoDate: addDaysIso(end, days),
+    weekday: null,
+  };
 }
 
 /** Chips ordered most-restrictive → least, for "drop the most restrictive chip" (rung 4). */
@@ -153,9 +190,18 @@ export function buildBroadeningLadder(ctx: SearchContext): BroadenRung[] {
     cur = { ...cur, timeOfDay: null };
     rungs.push({ rung: ++n, key: 'adjacent_time', label: 'Included other times of day', context: cur });
   }
-  if (ctx.date) {
-    cur = { ...cur, date: null };
-    rungs.push({ rung: ++n, key: 'adjacent_date', label: 'Included nearby dates', context: cur });
+  // Nearby dates — a bounded window around the request, NEVER `date: null`. See widenDateIntent.
+  const nearbyDates = ctx.date ? widenDateIntent(ctx.date) : null;
+  if (nearbyDates && nearbyDates.endIsoDate) {
+    cur = { ...cur, date: nearbyDates };
+    rungs.push({
+      rung: ++n,
+      key: 'adjacent_date',
+      // The label states the window it actually applied, so a rung can never again describe
+      // one behaviour while performing another.
+      label: `Included nearby dates (${nearbyDates.isoDate} to ${nearbyDates.endIsoDate})`,
+      context: cur,
+    });
   }
   // (4) drop the most restrictive chip
   const chip = CHIP_RESTRICTIVENESS.find((c) => activeConstraints(ctx).includes(c));
