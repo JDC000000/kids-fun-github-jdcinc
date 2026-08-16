@@ -25,6 +25,7 @@ import { SearchResultsView } from './_components/SearchResultsView';
 import { SaveSearchButton } from './_components/SaveSearchButton';
 import { ResumeSearch } from './_components/ResumeSearch';
 import { buildMarkers, geoIndex } from './_lib/markers';
+import { distanceAvailability, distanceNote } from './_lib/distance-note';
 import { groupActivitiesByDay, formatRangeLabel, type DayGroup } from './_lib/day-groups';
 import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
@@ -241,6 +242,11 @@ export default async function SearchPage({
   const markers = buildMarkers(confirmed, expected, geo);
   const mapToken = (process.env.NEXT_PUBLIC_MAP_KEY ?? process.env.GEOCODING_API_KEY ?? '').trim();
   const sortLabel = SORT_OPTIONS.find((o) => o.key === state.sort)?.label ?? '';
+  // Read from the RESPONSE's resolved origin, not from `realOrigin` above. The two disagree in
+  // exactly the case that matters: `realOrigin` says "this request asked for an origin", while
+  // the response says whether the engine could actually resolve one. A saved postal that fails
+  // to geocode is origin-asking-for and origin-less, and the parent deserves the second answer.
+  const distanceExplanation = distanceNote(distanceAvailability(result.body));
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
   // The applied query in plain language. One derivation shared with the mobile sticky bar,
   // so the phone and the desktop can never disagree about what is filtering.
@@ -444,6 +450,18 @@ export default async function SearchPage({
                 one QuerySummary line above the results (see the component's own note). Only
                 the provenance line stays: it is about the DATA, not the query. */}
             {result.body && <p className="kf-section__note">Source: {sourceNote(result.body)}</p>}
+
+            {/* Why these cards say "Distance unavailable", and what to do about it — stated ONCE,
+                here, rather than sixty times down the list. The cards state the fact; this states
+                the reason, because the reason is a property of the REQUEST (no origin was
+                resolved), not of any individual listing. See _lib/distance-note.ts for why those
+                are provably the same thing on this surface. `role="status"` matches the counts
+                line: a parent using a screen reader hears it after a filter navigation. */}
+            {distanceExplanation && (
+              <p className="kf-section__note" role="status">
+                {distanceExplanation}
+              </p>
+            )}
 
             <SearchResultsView markers={markers} token={mapToken} totalResults={total}>
               {rangeActive ? (

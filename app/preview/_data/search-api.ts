@@ -71,6 +71,20 @@ export interface SearchResponseDto {
    * see lib/search/facets.ts for the drop-one semantics.
    */
   facets?: FacetCounts;
+  /**
+   * The origin the engine actually RESOLVED for this request (lib/geo/origin.ts), or null when
+   * it had none to work from. This is the AUTHORITATIVE answer, not "did the caller send
+   * coordinates": a request that asks for an origin it cannot resolve (a saved postal that
+   * won't geocode, an unknown area chip, saved-home while signed out) lands here as `null` with
+   * `originError` set, and its results are measured from nothing just like a bare browse.
+   *
+   * It is what makes "why is there no distance?" answerable. `distanceKm` is null on every
+   * result iff this is null — see app/search/_lib/distance-note.ts for the proof and the
+   * consequences. Optional because responses assembled by hand in fixtures/tests omit it.
+   */
+  origin?: { geo: { lat: number; lng: number }; mode: 'near_me' | 'saved_home' | 'area_chip'; label: string } | null;
+  /** Why origin resolution failed, when the request asked for one and it could not be given. */
+  originError?: string | null;
   meta: { fixtureBacked: boolean; sort: string; backend?: 'fixture' | 'database'; fallbackReason?: string };
 }
 
