@@ -116,7 +116,11 @@ test.describe('mobile /search — the sheet is a real dialog', () => {
     // ADAPTIVE_RAIL_ENABLED in app/search/page.tsx), so the sheet is once again the full static
     // stack and visibility is the right thing to assert. If the flag is ever flipped back on,
     // this is one of the tests that must be revisited, not quietly relaxed.
-    for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price', 'Near me']) {
+    // ('Max price' sat between 'Quick filters' and 'Near me' until the cost-ceiling group was
+    // removed from FilterRail.tsx on Jon's beta feedback (2026-08-11). Dropping it here is NOT a
+    // quiet relaxation of the kind the paragraph above warns against — the group is gone from the
+    // product, so asserting it would test a control no parent can see.)
+    for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Near me']) {
       await expect(dialog.getByRole('group', { name })).toHaveCount(1);
     }
     // Nothing is folded away: the disclosure does not exist while the plan is gated.
@@ -379,7 +383,9 @@ test.describe('desktop /search — untouched by the mobile work', () => {
     // Still the same single FilterRail instance, still server-rendered, still visible.
     await expect(page.locator('.kf-filters')).toBeVisible();
     // Every group is visible at this width again, with the adaptive plan gated (F1).
-    for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price']) {
+    // ('Max price' is absent by design — the cost-ceiling group was removed from FilterRail.tsx
+    // on Jon's beta feedback, 2026-08-11.)
+    for (const name of ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters']) {
       await expect(page.getByRole('group', { name })).toHaveCount(1);
     }
 

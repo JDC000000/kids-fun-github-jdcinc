@@ -177,7 +177,17 @@ test.describe('the rail while the adaptive plan is GATED (QA round 96 / F1)', ()
 
     expect(g.groupsFolded, 'a disclosure exists — is the plan wired up again?').toBe(0);
     expect(g.groupsUpFront).toBe(g.groupsTotal);
-    expect(g.groupsUpFront).toBeGreaterThanOrEqual(9);
+    // A FLOOR, deliberately, not an equality — the same inequality-over-exact-value discipline
+    // the header sets out for the geometry numbers. Two jobs: it stops the line above passing
+    // trivially when BOTH counts are 0 (a rail that rendered nothing satisfies `toBe` perfectly),
+    // and it lets a future group be ADDED without a browser test failing over a product decision
+    // it has no stake in. Removing one still trips it, which is the coverage worth keeping.
+    //
+    // Was 9. Now 8: the "Max price" cost-ceiling group was deliberately removed from
+    // FilterRail.tsx on Jon's beta feedback (2026-08-11) and this spec was never updated, so the
+    // bound had been asserting a rail that no longer exists. RAIL_GROUP_ORDER in
+    // app/search/_lib/rail-groups.ts is the live inventory — 8 groups — if this needs revisiting.
+    expect(g.groupsUpFront).toBeGreaterThanOrEqual(8);
   });
 
   test('the rail is IDENTICAL across queries — nothing can reshuffle, which is the point of the gate', async ({

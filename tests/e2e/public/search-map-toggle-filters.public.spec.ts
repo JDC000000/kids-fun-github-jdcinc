@@ -34,7 +34,11 @@ import { test, expect, type Page } from '@playwright/test';
 // Deleting the phone case and calling the desktop one "the" guard would have quietly
 // dropped coverage on the surface most parents use.
 
-const GROUP_NAMES = ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters', 'Max price'] as const;
+// 'Max price' (Any price / Under $20 / Under $50) used to close this list and is GONE — the
+// cost-ceiling group was removed from FilterRail.tsx on Jon's beta feedback (2026-08-11), chips
+// and the `cost=` param together (see app/search/_lib/params.ts). It is intended, shipped
+// behaviour, not a rendering regression: there is no such group left for these loops to find.
+const GROUP_NAMES = ['When', 'Time of day', 'Ages', 'Areas', 'Quick filters'] as const;
 
 async function toggleControls(page: Page) {
   const toggle = page.getByRole('group', { name: 'Choose how to view results' });
