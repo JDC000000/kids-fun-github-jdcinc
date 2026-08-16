@@ -36,6 +36,37 @@ describe('parseAgeText — deterministic age wording', () => {
     expect(parseAgeText('6-18 months')).toMatchObject({ ageMinMonths: 6, ageMaxMonths: 19, resolved: true });
   });
 
+  // A rec-centre title's most common number is a SKILL RATING, not an age. Reading a digit out
+  // of a decimal produced the worst outcome the age facet can produce, in both directions:
+  // "Pickleball - 3.0+" resolved to 0+ (all five bands — an adult session answering a search
+  // for a baby), and "Pickleball 3.0-4.0" resolved to ages 0-4 (adult programming wearing a
+  // toddler-only label). Confirmed live on 2 production listings, 2026-08-16.
+  it('never reads an age out of a decimal skill rating', () => {
+    for (const title of [
+      'Pickleball - 3.0+',
+      'Pickleball - 3.5+',
+      'Badminton 2.0+',
+      'Pickleball 3.0-4.0',
+      'Volleyball 2.5 - 3.5',
+    ]) {
+      expect(parseAgeText(title), title).toMatchObject({
+        ageMinMonths: null,
+        ageMaxMonths: null,
+        resolved: false,
+      });
+      expect(computeAgeBandMatches(parseAgeText(title), BANDS), title).toEqual([]);
+    }
+  });
+
+  it('still finds a real age range in a title that also carries a decimal', () => {
+    // The guard skips the decimal, it does not abandon the string.
+    expect(parseAgeText('Level 2.0 Swim ages 3-5')).toMatchObject({
+      ageMinMonths: 36,
+      ageMaxMonths: 72,
+      resolved: true,
+    });
+  });
+
   it('resolves open-ended minimums and "under N"', () => {
     expect(parseAgeText('ages 5+')).toMatchObject({ ageMinMonths: 60, ageMaxMonths: null, resolved: true });
     expect(parseAgeText('5 years and up')).toMatchObject({ ageMinMonths: 60, ageMaxMonths: null, resolved: true });

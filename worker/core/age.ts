@@ -52,11 +52,30 @@ const KEYWORD_BANDS: Array<{ re: RegExp; min: number; max: number | null }> = [
 // "all ages" / "family" / "everyone" / "all welcome" → open range [0, ∞).
 const ALL_AGES_RE = /\ball[-\s]?ages?\b|\bfamil(?:y|ies)\b|\beveryone\b|\ball\s+welcome\b/;
 
+// NOT PART OF A DECIMAL. Both numeric rules below run over titles as well as prose, and a
+// title's most common number is not an age — it is a skill rating. "Pickleball - 3.0+" was
+// resolving to `0+` (the "0" of "3.0"), i.e. ages ZERO AND UP, matching all five bands and
+// putting an adult pickleball session in front of a parent searching for a baby; "Pickleball
+// 3.0-4.0" read the "0-4" across the decimal point and published the session as "ages 0-4",
+// a TODDLER-ONLY label on adult programming. Both directions are the same mistake — a digit
+// that belongs to a decimal is not a standalone number — so the guard is shared rather than
+// patched onto whichever rule was noticed first.
+//
+// Verified against production 2026-08-16: 2 live listings held the 0+/all-five-bands form.
+// The count is small and the failure is not: this is the exact "?age=under2 returns
+// pickleball" harm the effectiveness review reported, and it recurs for ANY decimal in a
+// title, which rec-centre skill ratings supply endlessly (2.5, 3.0, 3.5, 4.0).
+const NOT_DECIMAL_BEFORE = /(?<![\d.,])/.source; // no digit or decimal point immediately before
+const NOT_DECIMAL_AFTER = /(?![.,]\d)/.source; //  not the integer part of a decimal
+
 // Explicit numeric year/month ranges: "ages 0-2", "0 - 2 years", "2 to 4", "6-18 months".
-const RANGE_RE =
-  /(?:ages?\s*)?(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\s*(years?|yrs?|yr|months?|mos?|mo)?/;
+const RANGE_RE = new RegExp(
+  `(?:ages?\\s*)?${NOT_DECIMAL_BEFORE}(\\d{1,2})${NOT_DECIMAL_AFTER}\\s*(?:-|–|—|to)\\s*(\\d{1,2})${NOT_DECIMAL_AFTER}\\s*(years?|yrs?|yr|months?|mos?|mo)?`
+);
 // "5+", "5 years and up", "18 months+".
-const MIN_ONLY_RE = /(\d{1,2})\s*(years?|yrs?|yr|months?|mos?|mo)?\s*(?:\+|and\s+up|&\s*up|and\s+older|plus)/;
+const MIN_ONLY_RE = new RegExp(
+  `${NOT_DECIMAL_BEFORE}(\\d{1,2})${NOT_DECIMAL_AFTER}\\s*(years?|yrs?|yr|months?|mos?|mo)?\\s*(?:\\+|and\\s+up|&\\s*up|and\\s+older|plus)`
+);
 // "under 5", "under 2 years".
 const UNDER_RE = /under\s*(\d{1,2})\s*(years?|yrs?|yr|months?|mos?|mo)?/;
 // "grades K-3", "grade 2-5", "gr K–3". Grade g → ages [g+5, g+6]; K = 0.
