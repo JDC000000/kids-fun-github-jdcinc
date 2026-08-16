@@ -47,6 +47,31 @@ export interface LibrarySystemConfig {
   rssEventsUrl?: string;
   /** Hard cap per request for live approved-source dry-runs. */
   liveEventsLimit?: number;
+  /**
+   * Which of THIS tenant's RSS `<category>` values are genuine AUDIENCE tags, as anchored
+   * patterns. Only these are read as claims about who a programme is for.
+   *
+   * AN ALLOWLIST, NOT A DENYLIST, AND NOT "JUST USE THE TAGS". The `<category>` list is a flat
+   * mixture of audiences, topics, languages, programme brands and series names, and the two
+   * live tenants do NOT share a vocabulary. Reading the raw list as an audience taxonomy is a
+   * measured defect, not a hypothetical: Richmond publishes the TOPIC tag "Child Development"
+   * (it sits beside "Parenting" and "Literacy, Reading, Writing"), and it contains the word
+   * "child", so the age normaliser's broad kids/children rule scores it 5-11. RPL's own
+   * Babytime and Play & Learn — both genuinely 0-24 months, both correctly tagged "Baby" —
+   * were consequently ALSO published as matching 5-9 and 10-14.
+   *
+   * Vancouver never showed this because its audience tags happen to be the only child-shaped
+   * strings in its vocabulary. Richmond's real audience tags carry a distinct `Children-`
+   * prefix that "Child Development" does not share, which is precisely what a topic tag cannot
+   * be trusted to respect. Ground-truthed against both live feeds on 2026-08-16.
+   *
+   * DIRECTION OF FAILURE IS THE POINT. An allowlist that misses a NEW audience tag loses a
+   * signal and falls back to the description prose — the behaviour that shipped before any of
+   * this. A denylist that misses a NEW topic tag publishes a wrong age band to a parent. The
+   * two are not symmetric, so the safe default is "not an audience tag unless named", and a
+   * system with NO patterns configured is treated as having no audience taxonomy at all.
+   */
+  audienceTagPatterns?: RegExp[];
   /** Deterministic branch/location metadata used for venue rows; no live geocoder. */
   branchLocations?: Record<string, LibraryBranchLocation>;
 }
@@ -192,6 +217,24 @@ export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
     liveCapable: true,
     rssEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/vpl/rss/events',
     liveEventsLimit: 25,
+    // VPL's audience vocabulary, verbatim from the live feed (2026-08-16). Everything else it
+    // publishes is a topic, a language or a series — "Storytimes", "English", "Summer Reading
+    // Club", "Activities & Games", "Meetups", "Computer & Technology Training", "Inspiration
+    // Lab", "Advisory Groups", "Book Clubs & Reading Circles", "ESL Learners", "Newcomers".
+    // Anchored so "Preschool Age Children" and "School Age Children" match as whole tags while
+    // a topic that merely CONTAINS "children" cannot.
+    audienceTagPatterns: [
+      /^babies$/i,
+      /^toddlers?$/i,
+      /^preschool age children$/i,
+      /^school age children$/i,
+      /^teens?$/i,
+      /^tweens?$/i,
+      /^adults?$/i,
+      /^seniors?$/i,
+      /^families$/i,
+      /^all ages$/i,
+    ],
   },
   {
     systemKey: 'rpl',
@@ -214,6 +257,26 @@ export const LIBRARY_SYSTEMS: LibrarySystemConfig[] = [
     liveCapable: true,
     rssEventsUrl: 'https://gateway.bibliocommons.com/v2/libraries/yourlibrary/rss/events',
     liveEventsLimit: 20,
+    // Richmond's audience vocabulary, verbatim from the live feed (2026-08-16). The `Children-`
+    // prefix carries all three child audiences ("Children-All Ages", "Children-Preschool",
+    // "Children-School Age") and is the exact distinction that keeps the TOPIC tag "Child
+    // Development" out — it names a subject the programme is about, not who may attend, and
+    // admitting it published RPL's 0-24-month Babytime and Play & Learn as 5-11 as well.
+    //
+    // `/^adults?$/i` is anchored for a reason of its own: RPL also publishes the SERIES tag
+    // "Adult Summer Reading", which is a reading programme's name. Anchoring keeps the audience
+    // "Adults" and rejects the series. "55+/Seniors" is matched as the tenant writes it.
+    audienceTagPatterns: [
+      /^children-/i,
+      /^bab(?:y|ies|ytime)$/i,
+      /^toddlers?$/i,
+      /^teens?$/i,
+      /^tweens?$/i,
+      /^adults?$/i,
+      /^(?:55\+\/)?seniors?$/i,
+      /^families$/i,
+      /^all ages$/i,
+    ],
     // Deterministic Steveston fallback retained for reference; the live RSS path
     // derives venue geo directly from the feed's bc:location block per item.
     branchLocations: {

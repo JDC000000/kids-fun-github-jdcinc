@@ -365,11 +365,17 @@ const AGE_HINT_RE =
  * strictly more precise than any tag — and is why that check stays first rather than being
  * folded in.
  *
- * The tag list is passed through UNFILTERED: it mixes audiences with event types and languages
- * ("Storytimes", "English"), and `parseAudienceLabels` resolves non-age tags to nothing, so
- * pre-filtering here would only be a second, driftable copy of that judgement. Tags are only
- * claimed when they resolve to something — an all-noise list is silence and falls through to
- * the prose hint, exactly as before.
+ * `audienceLabels` MUST ALREADY BE GENUINE AUDIENCE TAGS — this function does not vet them.
+ * The RSS path gets there through `audienceTagsOf` (per-tenant allowlist); the JSON gateway
+ * path is vetted by construction, since its names come from BiblioCommons' `eventAudiences`
+ * entity map rather than from the flat `<category>` mixture.
+ *
+ * AN EARLIER VERSION OF THIS PASSED THE RAW `<category>` LIST STRAIGHT IN, on the reasoning
+ * that non-age tags "resolve to nothing" so filtering would be a redundant second judgement.
+ * That was measured false on Richmond: "Child Development" is a TOPIC tag that resolves to
+ * 5-11 because it contains the word "child". True of Vancouver, whose audience tags are the
+ * only child-shaped strings it publishes; not true in general, and generalising from one
+ * tenant's vocabulary is what let it through. See `audienceTagsOf`.
  */
 export function resolveBiblioCommonsAgeSignal(
   descriptionText: string,
@@ -377,9 +383,33 @@ export function resolveBiblioCommonsAgeSignal(
 ): Pick<BiblioEvent, 'ages' | 'audienceLabels'> {
   const explicitRange = descriptionText.match(AGE_RANGE_RE)?.[0]?.trim();
   if (explicitRange) return { ages: explicitRange };
-  if (parseAudienceLabels(audienceLabels).resolved) return { audienceLabels };
+  if (audienceLabels.length && parseAudienceLabels(audienceLabels).resolved) return { audienceLabels };
   const proseHint = descriptionText.match(AGE_HINT_RE)?.[0]?.trim();
   return proseHint ? { ages: proseHint } : {};
+}
+
+/**
+ * The subset of a feed item's `<category>` values that are genuine AUDIENCE tags for this
+ * tenant (LibrarySystemConfig.audienceTagPatterns).
+ *
+ * THIS FILTER IS THE FIX for a regression QA measured on live Richmond data: 4 of 50 sampled
+ * items came out WIDER than before, because the raw category list was being handed to the age
+ * normaliser wholesale. Richmond's topic tag "Child Development" contains "child", so the
+ * normaliser's broad kids rule scored it 5-11, and because a tag list resolves to the UNION of
+ * its tags that vote rode along on every item carrying it — publishing RPL's Babytime and
+ * Play & Learn (both genuinely 0-24 months, both correctly tagged "Baby") as ALSO matching
+ * 5-9 and 10-14. Under the previous first-match-wins ordering the topic tag could never win,
+ * so the union is what gave it a voice it never had; the union is right, but only over tags
+ * that are actually audiences.
+ *
+ * A system with NO patterns configured returns nothing, so its items fall back to the
+ * description prose rather than trusting a vocabulary no one has checked. See the field's
+ * comment in ./config.ts for why the safe default points that way.
+ */
+export function audienceTagsOf(system: LibrarySystemConfig, categories: string[]): string[] {
+  const patterns = system.audienceTagPatterns;
+  if (!patterns?.length) return [];
+  return categories.filter((c) => patterns.some((re) => re.test(c.trim())));
 }
 
 /** Case/punctuation-insensitive key so a feed branch name matches a config key. */
@@ -552,10 +582,10 @@ export function parseBiblioCommonsRss(
       branch,
       startsAt: start,
       endsAt: toUtcIso(firstTag(item, 'bc:end_date')),
-      // `<category>` IS this feed's audience taxonomy (mixed in with event types and
-      // languages) — the item's own claim about who it is for, and it now outranks a keyword
-      // pulled out of the description prose.
-      ...resolveBiblioCommonsAgeSignal(descriptionText, categories),
+      // `<category>` is a flat MIXTURE — audiences, topics, languages, series names — so the
+      // per-tenant allowlist decides which of them are claims about who the programme is for,
+      // and only those outrank a keyword pulled out of the description prose.
+      ...resolveBiblioCommonsAgeSignal(descriptionText, audienceTagsOf(system, categories)),
       url: link,
       registrationRequired: /registration\s+required/i.test(descriptionText),
       registrationSignal: 'description-prose',

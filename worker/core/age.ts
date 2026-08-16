@@ -26,6 +26,19 @@ export interface AgeParse {
   ageMaxMonths: number | null; // exclusive upper; null = open-ended
   resolved: boolean;
   notes?: string;
+  /**
+   * The SEPARATE ranges this parse was built from, when it came from more than one independent
+   * claim (a structured audience tag list). Absent for an ordinary single-phrase parse.
+   *
+   * WHY THE BOUNDS ABOVE ARE NOT ENOUGH. `ageMinMonths`/`ageMaxMonths` are the CONVEX HULL of
+   * those ranges — the lowest low and the highest high — and a hull silently fills in the gap
+   * between two disjoint claims. Tags ["Babies", "Adults"] hull to [0, ∞), which matches all
+   * five bands when the source claimed exactly two of them. The hull is still the honest answer
+   * for the DISPLAYED min/max (a listing spanning babies and adults does start at 0 and has no
+   * ceiling), but it must not decide band MEMBERSHIP. `computeAgeBandMatches` uses these
+   * components when present, so bands are the true union of what was actually claimed.
+   */
+  components?: Array<{ ageMinMonths: number | null; ageMaxMonths: number | null }>;
 }
 
 export interface AgeBandRow {
@@ -227,29 +240,73 @@ const ADULT_AUDIENCE_RE = /^\s*(?:adults?|seniors?|older\s+adults?)\b/i;
 const ADULT_MIN_MONTHS = 18 * YEARS;
 
 /**
+ * A tag that names CHILDREN and then says "all ages" — Richmond publishes exactly this, as
+ * "Children-All Ages". Taken at face value the "all ages" half wins (ALL_AGES_RE is checked
+ * before the keyword table) and the tag resolves to [0, ∞), so a children's bookmark contest
+ * claims the 15+ band. The tenant's own prefix says otherwise: the audience is children.
+ *
+ * Bounded at the seeded taxonomy's teen boundary (180 months = the lower edge of `15+`) rather
+ * than at a number I picked — "all child ages" is exactly "every band below the teen band", so
+ * this reads the ceiling off the same table the bands come from instead of inventing one.
+ */
+const CHILD_ALL_AGES_RE = /\b(?:children|child|kids?)\b/i;
+const CHILD_MAX_MONTHS = 15 * YEARS;
+
+/**
  * Resolve a source's structured audience tags into the UNION of every range they
  * claim. Returns { resolved:false } when no tag carries an age signal, which is
  * the caller's cue to fall back to whatever weaker wording it has — an unresolved
  * audience list is silence, not a claim.
  */
 export function parseAudienceLabels(labels: Array<string | null | undefined>): AgeParse {
+  // Resolve every tag first, then decide which ones SPEAK — because a catch-all tag sitting
+  // beside a specific one must not drown it. Richmond tags its preschool storytime
+  // ["Children-Preschool", "Families"]: both are real audience tags, but "Families" means
+  // caregivers are welcome, not that the programme suits a fifteen-year-old. Unioned flat it
+  // resolves to [0, ∞) and matches every band, throwing away the only tag that said anything
+  // specific. Same principle as the rest of this fix: the more specific claim wins.
+  const resolvedTags: Array<{ label: string; min: number | null; max: number | null; catchAll: boolean }> = [];
+  for (const raw of labels) {
+    const label = raw?.trim();
+    if (!label) continue;
+    if (ADULT_AUDIENCE_RE.test(label)) {
+      resolvedTags.push({ label, min: ADULT_MIN_MONTHS, max: null, catchAll: false });
+      continue;
+    }
+    const parsed = parseAgeText(label);
+    if (!parsed.resolved) continue;
+    // `notes === 'all-ages'` is set by exactly one branch of parseAgeText — the ALL_AGES_RE
+    // one — so it is a reliable marker for "this tag named no age group at all".
+    const catchAll = parsed.notes === 'all-ages';
+    const boundedToChildren = catchAll && CHILD_ALL_AGES_RE.test(label);
+    resolvedTags.push({
+      label,
+      min: parsed.ageMinMonths,
+      max: boundedToChildren ? CHILD_MAX_MONTHS : parsed.ageMaxMonths,
+      // A children-bounded tag IS a real audience claim, so it is not a catch-all any more.
+      catchAll: catchAll && !boundedToChildren,
+    });
+  }
+
+  const specific = resolvedTags.filter((t) => !t.catchAll);
+  const speaking = specific.length > 0 ? specific : resolvedTags;
+
   let min: number | null = null;
   let max: number | null = null;
   let openEnded = false;
   const contributing: string[] = [];
+  const components: Array<{ ageMinMonths: number | null; ageMaxMonths: number | null }> = [];
 
-  for (const raw of labels) {
-    const label = raw?.trim();
-    if (!label) continue;
-    const parsed = ADULT_AUDIENCE_RE.test(label)
-      ? { ageMinMonths: ADULT_MIN_MONTHS, ageMaxMonths: null, resolved: true }
-      : parseAgeText(label);
-    if (!parsed.resolved) continue;
-    contributing.push(label);
-    const lo = parsed.ageMinMonths ?? 0;
+  for (const tag of speaking) {
+    contributing.push(tag.label);
+    // Each tag's own range is kept intact for band matching; the running hull below is only
+    // for the displayed min/max. Collapsing them into one range here is what let two disjoint
+    // tags claim every band in between.
+    components.push({ ageMinMonths: tag.min, ageMaxMonths: tag.max });
+    const lo = tag.min ?? 0;
     min = min === null ? lo : Math.min(min, lo);
-    if (parsed.ageMaxMonths === null) openEnded = true;
-    else max = max === null ? parsed.ageMaxMonths : Math.max(max, parsed.ageMaxMonths);
+    if (tag.max === null) openEnded = true;
+    else max = max === null ? tag.max : Math.max(max, tag.max);
   }
 
   if (!contributing.length) return { ...UNRESOLVED };
@@ -258,6 +315,7 @@ export function parseAudienceLabels(labels: Array<string | null | undefined>): A
     ageMaxMonths: openEnded ? null : max,
     resolved: true,
     notes: `audience: ${contributing.join(', ')}`,
+    components,
   };
 }
 
@@ -269,17 +327,28 @@ export function parseAudienceLabels(labels: Array<string | null | undefined>): A
  * (unresolved) → no matches, and the search filter's "empty → don't hide" rule
  * keeps the listing visible.
  */
-export function computeAgeBandMatches(parse: Pick<AgeParse, 'ageMinMonths' | 'ageMaxMonths'>, bands: AgeBandRow[]): string[] {
-  const { ageMinMonths: min, ageMaxMonths: max } = parse;
-  if (min === null && max === null) return [];
-  const lo = min ?? 0;
-  const hiExcl = max ?? Number.POSITIVE_INFINITY;
-  return bands
-    .filter((b) => {
+export function computeAgeBandMatches(
+  parse: Pick<AgeParse, 'ageMinMonths' | 'ageMaxMonths'> & Pick<Partial<AgeParse>, 'components'>,
+  bands: AgeBandRow[]
+): string[] {
+  // Several independent claims (audience tags) → the UNION of each one's bands, never the
+  // bands of their hull. See AgeParse.components: hulling first invents membership in every
+  // band that happens to sit in the gap between two disjoint claims.
+  const ranges = parse.components?.length ? parse.components : [parse];
+  const matched = new Set<string>();
+  for (const range of ranges) {
+    const { ageMinMonths: min, ageMaxMonths: max } = range;
+    if (min === null && max === null) continue;
+    const lo = min ?? 0;
+    const hiExcl = max ?? Number.POSITIVE_INFINITY;
+    for (const b of bands) {
       const bandHi = b.upperMonthsExclusive ?? Number.POSITIVE_INFINITY;
-      return lo < bandHi && b.lowerMonthsInclusive < hiExcl;
-    })
-    .map((b) => b.id);
+      if (lo < bandHi && b.lowerMonthsInclusive < hiExcl) matched.add(b.id);
+    }
+  }
+  // Preserve the seeded band ORDER rather than Set insertion order, so the stored array is
+  // stable regardless of the order the source happened to list its tags in.
+  return bands.filter((b) => matched.has(b.id)).map((b) => b.id);
 }
 
 /** Load the seeded age bands once per ingest run. */

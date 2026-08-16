@@ -186,12 +186,13 @@ describe('BiblioCommons age precedence — structured audience tags beat descrip
     for (const r of records) {
       expect(Boolean(r.ageText) && Boolean(r.ageAudienceLabels)).toBe(false);
     }
+    // Only the AUDIENCE tags are forwarded, not the raw `<category>` mixture. This assertion
+    // used to expect the unfiltered list including "Storytimes" and "English"; that was the
+    // behaviour QA measured as a live regression on Richmond, where the topic tag "Child
+    // Development" rode the union and widened 0-24-month programmes to 5-11. Vancouver never
+    // showed it, which is exactly why the contract is now "vetted tags only" rather than
+    // "harmless tags resolve to nothing". See tests/adapters/library-rpl-audience-tags.test.ts.
     const storytime = records.find((r) => r.title === 'Family Storytime')!;
-    expect(storytime.ageAudienceLabels).toEqual([
-      'Storytimes',
-      'Preschool Age Children',
-      'Toddlers',
-      'English',
-    ]);
+    expect(storytime.ageAudienceLabels).toEqual(['Preschool Age Children', 'Toddlers']);
   });
 });
