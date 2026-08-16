@@ -78,8 +78,19 @@ const ALL_AGES_RE = /\ball[-\s]?ages?\b|\bfamil(?:y|ies)\b|\beveryone\b|\ball\s+
 // The count is small and the failure is not: this is the exact "?age=under2 returns
 // pickleball" harm the effectiveness review reported, and it recurs for ANY decimal in a
 // title, which rec-centre skill ratings supply endlessly (2.5, 3.0, 3.5, 4.0).
-const NOT_DECIMAL_BEFORE = /(?<![\d.,])/.source; // no digit or decimal point immediately before
-const NOT_DECIMAL_AFTER = /(?![.,]\d)/.source; //  not the integer part of a decimal
+// `:` IS IN THE CLASS BECAUSE A CLOCK TIME IS THE SAME MISTAKE WITH A DIFFERENT SEPARATOR, and
+// it is the worse one. A decimal rating usually leaves the string unresolvable; a clock time
+// forms a plausible RANGE, and RANGE_RE runs BEFORE the keyword fallback — so it does not merely
+// fail, it OVERRIDES a correct audience word sitting in the same title:
+//   "teens 6:00-8:00pm"        was 0-108 months  — a TEEN programme claiming BABIES, its own
+//                                                  correct [10-14, 15+] thrown away
+//   "toddler time 10:00-11:00" was 0-144 months  — same shape, same loss
+//   "Adult Swim 6:00-7:00pm"   was 0-96  months  — a session titled "Adult Swim", claiming babies
+//   "Pickleball 1:00-2:00"     was 0-36  months  — the pickleball harm again, via ':' not '.'
+// Found by QA fuzzing the decimal guard. Rec-centre titles carry a session time far more often
+// than they carry a skill rating, so this is the commoner half of the same defect.
+const NOT_DECIMAL_BEFORE = /(?<![\d.,:])/.source; // not preceded by a digit, decimal or clock colon
+const NOT_DECIMAL_AFTER = /(?![.,:]\d)/.source; //  not the leading part of a decimal or clock time
 
 // Explicit numeric year/month ranges: "ages 0-2", "0 - 2 years", "2 to 4", "6-18 months".
 const RANGE_RE = new RegExp(

@@ -58,6 +58,46 @@ describe('parseAgeText — deterministic age wording', () => {
     }
   });
 
+  // A CLOCK TIME IS THE SAME MISTAKE WITH A DIFFERENT SEPARATOR, and the worse one. A decimal
+  // rating usually leaves the string unresolvable; a clock time forms a plausible RANGE, and
+  // RANGE_RE runs BEFORE the keyword fallback — so it does not merely fail, it OVERRIDES a
+  // correct audience word sitting in the same title. Found by QA fuzzing the decimal guard.
+  it('never reads an age out of a clock time, and no longer overrides a correct keyword', () => {
+    // The override cases: the audience word is right there and was being thrown away.
+    expect(parseAgeText('teens 6:00-8:00pm')).toMatchObject({
+      ageMinMonths: 144, // was 0-108 — a TEEN programme claiming BABIES
+      ageMaxMonths: 216,
+      resolved: true,
+    });
+    expect(parseAgeText('toddler time 10:00-11:00')).toMatchObject({
+      ageMinMonths: 12, // was 0-144
+      ageMaxMonths: 36,
+      resolved: true,
+    });
+    // The no-keyword cases: unresolved is the honest answer, and is not a claim about babies.
+    for (const title of ['Pickleball 1:00-2:00', 'Adult Swim 6:00-7:00pm', '$2 Lane Swim Delbrook Tuesday 1:30-3:30pm']) {
+      expect(parseAgeText(title), title).toMatchObject({ ageMinMonths: null, ageMaxMonths: null, resolved: false });
+      expect(computeAgeBandMatches(parseAgeText(title), BANDS), title).toEqual([]);
+    }
+  });
+
+  it('finds the REAL age range in live titles that carry a clock time as well', () => {
+    // Verbatim live titles (2026-08-16). Rec-centre titles routinely carry both, so the guard
+    // has to skip the clock WITHOUT losing the age beside it.
+    expect(parseAgeText('$2 Parent Participation Playtime 0-5yrs Lynn Creek Sunday 12:15pm-2:00pm')).toMatchObject({
+      ageMinMonths: 0,
+      ageMaxMonths: 72,
+    });
+    expect(parseAgeText('Youth Badminton Drop-In (13-18 yrs) Tuesday 4:00-6:00pm')).toMatchObject({
+      ageMinMonths: 156,
+      ageMaxMonths: 228,
+    });
+    expect(parseAgeText("$2 Women's Only Swim 12yrs+ Ron Andrews Sunday 8:15-9:45pm")).toMatchObject({
+      ageMinMonths: 144,
+      ageMaxMonths: null,
+    });
+  });
+
   it('still finds a real age range in a title that also carries a decimal', () => {
     // The guard skips the decimal, it does not abandon the string.
     expect(parseAgeText('Level 2.0 Swim ages 3-5')).toMatchObject({
