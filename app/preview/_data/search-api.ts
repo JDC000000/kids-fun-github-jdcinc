@@ -1,6 +1,7 @@
 import type { ListingRecord } from '@/lib/search/types';
 import type { FacetCounts } from '@/lib/search/facets';
 import { isRegistrationShaped } from '@/lib/search/filters/registration';
+import { formatOpenHoursWindow } from './format';
 import type { Activity, BookingType, Category, ConfidenceLabel, CostStatus, StatusState, TimeOfDay } from './types';
 
 export interface ListingRecordDto {
@@ -14,6 +15,13 @@ export interface ListingRecordDto {
   suitabilityTags?: string[];
   startDatetimeUtc: string | null;
   endDatetimeUtc: string | null;
+  /** `open_hours_state` verbatim — the standing-hours sentence a dateless listing has INSTEAD
+   *  of a start time. Optional/absent for every dated occurrence. */
+  openHoursLabel?: string | null;
+  /** True when this is a standing open-hours record rather than a dated occurrence. */
+  openHours?: boolean;
+  /** Parsed daily opening window in America/Vancouver minutes-past-midnight, when one is held. */
+  openHoursLocal?: { startMin: number; endMin: number } | null;
   costStatus: 'known' | 'free' | 'unknown' | 'check_source';
   costMinCad: number | null;
   costMaxCad: number | null;
@@ -114,8 +122,19 @@ export function mapListingRecordToActivity(listing: ListingRecord, distanceKm: n
 
 export function mapSearchItemToActivity(item: SearchItemDto): Activity {
   const l = item.listing;
-  const startIso = l.startDatetimeUtc ?? new Date().toISOString();
-  const endIso = l.endDatetimeUtc ?? l.startDatetimeUtc ?? startIso;
+  // Carried VERBATIM, nulls included. A standing open-hours listing has no start instant, and
+  // substituting one (this used to be `?? new Date().toISOString()`) is how the H.R. MacMillan
+  // Space Centre's general admission came to render as a zero-length event at page-load time,
+  // and how the same null read through a bare `new Date()` elsewhere came out as 1969-12-31.
+  // `formatWhen` prints the venue's published hours for this case; nothing needs a stand-in.
+  const startIso = l.startDatetimeUtc;
+  const endIso = l.endDatetimeUtc ?? l.startDatetimeUtc;
+  // What a dateless listing says instead of a date. Two shapes hold the same fact — the live read
+  // model carries the venue's own sentence, a parsed record carries a numeric window — so both are
+  // collapsed here into the one string the when-line prints.
+  const openHoursLabel =
+    l.openHoursLabel?.trim() ||
+    (l.openHoursLocal ? formatOpenHoursWindow(l.openHoursLocal) : undefined);
   // THE ENGINE'S ANSWER, PASSED THROUGH — never a stand-in for it.
   //
   // `item.distanceKm` is null exactly when nothing honest can be measured: no origin (the
@@ -170,7 +189,8 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     ageMax: monthsToMaxYears(l.ageMaxMonths),
     startIso,
     endIso,
-    timeOfDay: timeOfDay(startIso),
+    timeOfDay: startIso ? timeOfDay(startIso) : null,
+    ...(openHoursLabel ? { openHoursLabel } : {}),
     costStatus: mapCost(l.costStatus),
     ...(l.costMinCad != null ? { costMinCad: l.costMinCad } : {}),
     ...(l.costMaxCad != null ? { costMaxCad: l.costMaxCad } : {}),

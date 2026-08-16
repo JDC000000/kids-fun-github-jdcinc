@@ -68,6 +68,15 @@ export interface ListingRecord {
   openHours: boolean;
   /** For open-hours attractions: daily opening window in America/Vancouver minutes-past-midnight. */
   openHoursLocal: { startMin: number; endMin: number } | null;
+  /**
+   * `activity_occurrence.open_hours_state` verbatim — the venue's OWN published standing-hours
+   * sentence, e.g. "Daily 10:00 AM–5:00 PM". Optional/null for every dated occurrence.
+   *
+   * Carried because it is the only true answer to "when is this on?" for a record that has no
+   * date. Without it the UI has a listing it must describe and nothing truthful to describe it
+   * with, which is exactly how a dateless row ends up wearing an invented timestamp.
+   */
+  openHoursLabel?: string | null;
 
   // Cost (BR-11).
   costStatus: CostStatus;

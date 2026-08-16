@@ -48,7 +48,7 @@ export interface ActivityDetailProps {
 }
 
 export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: ActivityDetailProps) {
-  const when = formatWhen(activity.startIso, activity.endIso);
+  const when = formatWhen(activity.startIso, activity.endIso, activity.openHoursLabel);
   const meta = statusMeta(activity.status, activity.seasonLabel);
   const isBookable = activity.status === 'confirmed' || activity.status === 'bookable_open';
   const isBlocked = activity.status === 'cancelled' || activity.status === 'postponed';

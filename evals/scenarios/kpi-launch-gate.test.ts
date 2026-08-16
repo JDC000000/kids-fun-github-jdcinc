@@ -74,8 +74,13 @@ function cardComplete(a: Activity): boolean {
     !!a.activityName &&
     !!a.venue &&
     !!a.area &&
-    !!a.startIso &&
-    !!a.endIso &&
+    // A complete card can tell a parent WHEN it is on. For a dated occurrence that means both
+    // edges of the span; for a standing open-hours listing it means the venue's published hours,
+    // because such a listing has no start instant by construction. Demanding `startIso` of every
+    // card is what pushed the mapper into inventing one (`?? new Date().toISOString()`), which is
+    // how a dateless record came to render as a zero-length event at page-load time. A dateless
+    // card with no hours either states nothing true about when, and stays incomplete.
+    (a.startIso ? !!a.endIso : !!a.openHoursLabel) &&
     (a.ageMin != null || a.ageMax != null) &&
     !!a.costStatus &&
     !!a.status &&

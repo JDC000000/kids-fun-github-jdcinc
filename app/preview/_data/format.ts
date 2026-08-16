@@ -3,6 +3,7 @@
 // here so it stays consistent and honest across card + detail (D2 tabular numerals).
 
 import { readGroupCost } from '@/lib/search/filters/cost';
+import { formatRangeLabel, localIsoDate, localMinutesOfDay } from '@/lib/search/time/vancouver';
 import type { Activity, ConfidenceLabel, StatusMeta, StatusState } from './types';
 
 const VANCOUVER_TZ = 'America/Vancouver';
@@ -10,20 +11,107 @@ const VANCOUVER_TZ = 'America/Vancouver';
 /** Reference "now" for the static fixtures (matches the sprint date). */
 export const FIXTURE_NOW = '2026-07-13T09:00:00-07:00';
 
-/** Format a start/end ISO pair into a Vancouver-local day + time range. */
-export function formatWhen(startIso: string, endIso: string): { day: string; time: string } {
+/** The when-line a card and a detail page both print: a day (or span) plus a time (or hours). */
+export interface WhenLine {
+  day: string;
+  time: string;
+}
+
+/** Heading for a listing the source publishes with no fixed date. Matches the day-group bucket. */
+export const NO_FIXED_DATE_DAY = 'Available any day';
+/** Fallback when a dateless listing's source did not publish its hours either. */
+const NO_FIXED_DATE_TIME = 'Check opening hours';
+/** A multi-day span whose edges are not whole days: the per-day times are not ours to invent. */
+const MULTI_DAY_TIME = 'See listing for times';
+/** A multi-day span that covers its days end to end. */
+const ALL_DAY_TIME = 'All day';
+/** Local minute at/after which an end instant is treated as closing out its whole day. */
+const END_OF_DAY_MIN = 23 * 60 + 58;
+
+/**
+ * The Vancouver-local when-line for an occurrence — the one place "when is this on?" is turned
+ * into words. Three shapes, because occurrences genuinely come in three shapes:
+ *
+ *  1. NO FIXED DATE (`startIso === null`) → "Available any day · Daily 10 AM–5 PM". A standing
+ *     open-hours record has no start instant; printing the venue's own hours is the only honest
+ *     answer. Previously the mapper substituted `new Date()` to satisfy a non-nullable type, so
+ *     these rendered as a zero-length event at page-load time (and as 1969-12-31 anywhere the
+ *     null reached `new Date()` directly).
+ *
+ *  2. MULTI-DAY SPAN (end lands on a LATER local day than start) → "Jul 8 – Sep 2 · All day".
+ *     This is the defect the effectiveness testing caught: Richmond Public Library publishes
+ *     summer programmes as single occurrences spanning weeks (Summer Scavenger Hunt, verified
+ *     live: 2026-07-08 → 2026-09-03). Taking the day from `start` and the clock from both ends
+ *     printed "Wed, Jul 8 · 12 AM–11:59 PM" — a parent on 16 August reads a one-day event that
+ *     finished five weeks ago, stamped "Confirmed · Checked today". The listing was never
+ *     expired and the data was never wrong; only this line was.
+ *
+ *  3. SINGLE DAY → "Wed, Jul 8 · 2 PM–4:30 PM", unchanged.
+ *
+ * Pure and deterministic: it never consults the clock, so it states what the occurrence IS, not
+ * how it relates to now.
+ */
+export function formatWhen(
+  startIso: string | null,
+  endIso: string | null,
+  openHoursLabel?: string | null,
+): WhenLine {
+  if (!startIso) {
+    return { day: NO_FIXED_DATE_DAY, time: openHoursLabel?.trim() || NO_FIXED_DATE_TIME };
+  }
   const start = new Date(startIso);
-  const end = new Date(endIso);
+  const end = new Date(endIso ?? startIso);
+  if (Number.isNaN(start.getTime())) {
+    return { day: NO_FIXED_DATE_DAY, time: openHoursLabel?.trim() || NO_FIXED_DATE_TIME };
+  }
+  // An unparseable or backwards end must never widen the span; fall back to a single-day read.
+  const usableEnd = Number.isNaN(end.getTime()) || end < start ? start : end;
+
+  const startDay = localIsoDate(start);
+  const endDay = localIsoDate(usableEnd);
+  if (endDay > startDay) {
+    return {
+      day: formatRangeLabel(startDay, endDay),
+      time: coversWholeDays(start, usableEnd) ? ALL_DAY_TIME : MULTI_DAY_TIME,
+    };
+  }
+
   const day = new Intl.DateTimeFormat('en-CA', {
     timeZone: VANCOUVER_TZ,
     weekday: 'short',
     month: 'short',
     day: 'numeric',
   }).format(start);
-  const startTime = formatClock(start);
-  const endTime = formatClock(end);
-  return { day, time: `${startTime}–${endTime}` }; // en-dash range
+  return { day, time: `${formatClock(start)}–${formatClock(usableEnd)}` }; // en-dash range
 }
+
+/**
+ * "Open 10 AM–5 PM" from a daily opening window in local minutes-past-midnight.
+ *
+ * The second of the two shapes a standing-hours record can hold: the live read model carries the
+ * venue's sentence verbatim (`open_hours_state`), while a parsed record carries a numeric window
+ * (`openHoursLocal`). Either is a real published fact about when the place is open; both must
+ * reach the when-line, because a dateless listing with neither is a listing we cannot honestly
+ * say anything about.
+ */
+export function formatOpenHoursWindow(window: { startMin: number; endMin: number }): string {
+  return `Open ${clockFromMinutes(window.startMin)}–${clockFromMinutes(window.endMin)}`;
+}
+
+function clockFromMinutes(minutes: number): string {
+  const wrapped = ((Math.round(minutes) % 1440) + 1440) % 1440;
+  const hour24 = Math.floor(wrapped / 60);
+  const minute = wrapped % 60;
+  const meridiem = hour24 < 12 ? 'AM' : 'PM';
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return minute === 0 ? `${hour12} ${meridiem}` : `${hour12}:${String(minute).padStart(2, '0')} ${meridiem}`;
+}
+
+/** Does a multi-day span run from the very start of its first local day to the end of its last? */
+function coversWholeDays(start: Date, end: Date): boolean {
+  return localMinutesOfDay(start) === 0 && localMinutesOfDay(end) >= END_OF_DAY_MIN;
+}
+
 
 function formatClock(d: Date): string {
   const parts = new Intl.DateTimeFormat('en-US', {

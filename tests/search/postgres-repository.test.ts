@@ -326,4 +326,84 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       await query(`DELETE FROM source WHERE id = $1`, [source.id]);
     }
   });
+
+  /**
+   * The visibility predicate, against real rows.
+   *
+   * `visibleOccurrenceWhereSql` used to let ANY row carrying `open_hours_state` skip the date
+   * check. Migration 0004's constraint is `CHECK (start_datetime_utc IS NOT NULL OR
+   * open_hours_state IS NOT NULL)` — an OR, not an exclusive one — so a row can legally carry
+   * both, and such a row would have stayed visible for ever behind a long-dead date.
+   * `assertSeparation()` (worker/adapters/venue/separate.ts) enforces the split for the venue
+   * family only, so any other adapter can still produce one. Inserted directly here for exactly
+   * that reason: the point is what the READ PATH does with a row the SCHEMA permits.
+   */
+  it('excludes an expired dated occurrence even when it also carries an open-hours string', async () => {
+    const pool = getPool();
+    const suffix = crypto.randomUUID();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
+      [`Visibility Test Source ${suffix}`]
+    );
+    const [series] = await query<{ id: string }>(
+      `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
+      [`Visibility Fixtures — Test Venue ${suffix}`, source.id]
+    );
+
+    const insert = async (
+      key: string,
+      startSql: string,
+      endSql: string,
+      openHoursState: string | null
+    ): Promise<string> => {
+      const [row] = await query<{ id: string }>(
+        `INSERT INTO activity_occurrence (
+           series_id, source_record_id, activity_name,
+           start_datetime_utc, end_datetime_utc, open_hours_state,
+           cost_status, source_url, status_state, confidence_label, last_checked_at
+         ) VALUES ($1,$2,$3,${startSql},${endSql},$4,'free',$5,'confirmed','high',now())
+         RETURNING id`,
+        [series.id, `vis-${key}-${suffix}`, `Visibility ${key} ${suffix}`, openHoursState, 'https://example.org/vis']
+      );
+      return row.id;
+    };
+
+    try {
+      // A dated occurrence that finished a week ago AND carries an hours string. The stale date
+      // must win: this is "a wrong/leftover date wearing an hours label", not a dateless record.
+      const expiredWithHours = await insert('expired-hours', `now() - interval '8 days'`, `now() - interval '7 days'`, 'Daily 10am-5pm');
+      // The same row without the hours string — the plain expired case.
+      const expiredPlain = await insert('expired-plain', `now() - interval '8 days'`, `now() - interval '7 days'`, null);
+      // A start in the past but an END in the future: a multi-week programme MID-RUN. This is
+      // what Richmond Public Library's summer programmes look like, and it must stay visible.
+      const runningSpan = await insert('running-span', `now() - interval '40 days'`, `now() + interval '17 days'`, null);
+      // A genuinely dateless standing record: no start at all. Visible indefinitely, by design.
+      const standing = await insert('standing', 'NULL', 'NULL', 'Daily 10am-5pm');
+
+      const visible = new Set((await loadPostgresListings(pool, { limit: 1000 })).map((l) => l.id));
+
+      expect(visible.has(expiredWithHours)).toBe(false);
+      expect(visible.has(expiredPlain)).toBe(false);
+      expect(visible.has(runningSpan)).toBe(true);
+      expect(visible.has(standing)).toBe(true);
+
+      // The detail path shares the predicate, so a stale link cannot resurrect an expired row.
+      expect(await loadPostgresListingById(pool, expiredWithHours)).toBeNull();
+      expect(await loadPostgresListingById(pool, expiredPlain)).toBeNull();
+      expect((await loadPostgresListingById(pool, runningSpan))?.id).toBe(runningSpan);
+
+      // The standing record keeps its hours text and never acquires a date.
+      const standingListing = await loadPostgresListingById(pool, standing);
+      expect(standingListing?.startDatetimeUtc).toBeNull();
+      expect(standingListing?.openHours).toBe(true);
+      expect(standingListing?.openHoursLabel).toBe('Daily 10am-5pm');
+    } finally {
+      await query(
+        `DELETE FROM activity_occurrence WHERE series_id IN (SELECT id FROM activity_series WHERE source_id = $1)`,
+        [source.id]
+      );
+      await query(`DELETE FROM activity_series WHERE source_id = $1`, [source.id]);
+      await query(`DELETE FROM source WHERE id = $1`, [source.id]);
+    }
+  });
 });

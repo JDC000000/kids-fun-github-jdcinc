@@ -90,8 +90,18 @@ describe('sortActivities', () => {
   it('orders by soonest start ascending', () => {
     const sorted = sortActivities(ACTIVITIES, 'soonest');
     for (let i = 1; i < sorted.length; i += 1) {
-      expect(sorted[i].startIso >= sorted[i - 1].startIso).toBe(true);
+      expect(sorted[i].startIso).not.toBeNull();
+      expect(sorted[i]!.startIso! >= sorted[i - 1]!.startIso!).toBe(true);
     }
+  });
+
+  it('sorts a listing with no fixed date LAST under soonest, not first', () => {
+    // An open-hours attraction has no start instant at all. Comparing the raw field would put
+    // every one of them at the head of a "soonest" list; they belong at the tail, with the
+    // dated results a parent actually asked to see first.
+    const dateless = { ...ACTIVITIES[0], id: 'open-hours-1', startIso: null, endIso: null };
+    const sorted = sortActivities([dateless, ...ACTIVITIES], 'soonest');
+    expect(sorted[sorted.length - 1].id).toBe('open-hours-1');
   });
 
   it('puts free first and unknown cost last for lowest-cost', () => {

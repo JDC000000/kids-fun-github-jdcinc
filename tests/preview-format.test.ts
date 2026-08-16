@@ -10,6 +10,7 @@ import {
   formatCost,
   formatDistance,
   formatDistanceValue,
+  formatOpenHoursWindow,
   formatWhen,
   practicalFacts,
   statusMeta,
@@ -171,6 +172,87 @@ describe('formatWhen (America/Vancouver)', () => {
     const when = formatWhen('2026-07-19T10:00:00-07:00', '2026-07-19T11:30:00-07:00');
     expect(when.time).toBe('10 AM–11:30 AM');
   });
+
+  // ── Multi-day spans ─────────────────────────────────────────────────────────────────────────
+  // The defect the first effectiveness measurement caught. Richmond Public Library publishes its
+  // summer programmes as ONE occurrence spanning weeks; taking the day from `start` and the clock
+  // from both ends printed "Wed, Jul 8 · 12 AM–11:59 PM" for a programme running until 2 September.
+  // On 16 August a parent read a one-day event that had finished five weeks earlier — stamped
+  // "Confirmed · Checked today". The row was never expired; this line was.
+
+  it('prints a multi-day programme as the span it is, not as its first day', () => {
+    // Summer Scavenger Hunt, verbatim from live production on 2026-08-16.
+    const when = formatWhen('2026-07-08T07:00:00.000Z', '2026-09-03T06:59:59.000Z');
+    expect(when.day).toBe('Jul 8 – Sep 2');
+    expect(when.time).toBe('All day');
+    // The precise regression: no weekday-prefixed single day, and no same-day clock range.
+    expect(when.day.startsWith('Wed')).toBe(false);
+    expect(when.time).not.toContain('11:59');
+  });
+
+  it('refuses to invent per-day times for a multi-day span that is not whole-day', () => {
+    const when = formatWhen('2026-08-17T13:00:00-07:00', '2026-08-19T18:30:00-07:00');
+    expect(when.day).toBe('Aug 17 – Aug 19');
+    expect(when.time).toBe('See listing for times');
+  });
+
+  it('treats an occurrence that merely crosses UTC midnight as the single local day it is', () => {
+    // 2026-08-17 06:00 → 21:45 Vancouver, stored as two different UTC days. Local days decide.
+    const when = formatWhen('2026-08-17T13:00:00.000Z', '2026-08-18T04:45:00.000Z');
+    expect(when.day.startsWith('Mon')).toBe(true);
+    expect(when.time).toBe('6 AM–9:45 PM');
+  });
+
+  it('never lets a backwards or unparseable end widen the span', () => {
+    const backwards = formatWhen('2026-08-16T21:00:00.000Z', '2026-06-01T00:00:00.000Z');
+    expect(backwards.day.startsWith('Sun')).toBe(true);
+    expect(backwards.time).toBe('2 PM–2 PM');
+    const unparseable = formatWhen('2026-08-16T21:00:00.000Z', 'not-a-date');
+    expect(unparseable.day.startsWith('Sun')).toBe(true);
+  });
+
+  // ── Listings with no fixed date ──────────────────────────────────────────────────────────────
+  // A standing open-hours record genuinely has no start instant. The when-line must say so and
+  // print the venue's published hours instead of a manufactured timestamp.
+
+  it('states a dateless listing as available any day, with the venue\'s published hours', () => {
+    const when = formatWhen(null, null, 'Daily 10 AM–5 PM');
+    expect(when.day).toBe('Available any day');
+    expect(when.time).toBe('Daily 10 AM–5 PM');
+  });
+
+  it('says so plainly when a dateless listing has no published hours either', () => {
+    const when = formatWhen(null, null);
+    expect(when.day).toBe('Available any day');
+    expect(when.time).toBe('Check opening hours');
+    expect(when.time).not.toMatch(/\d{4}|AM|PM/); // no invented clock, no invented year
+  });
+
+  it('never renders a null start as epoch zero (1969-12-31) or as the current moment', () => {
+    // Both historical symptoms of the same defect: `new Date(null)` lands on 1969-12-31 in
+    // Vancouver, and the mapper's `?? new Date().toISOString()` stand-in rendered the H.R.
+    // MacMillan Space Centre's general admission as a zero-length event at page-load time.
+    const when = formatWhen(null, null, 'Daily 10 AM–5 PM');
+    const line = `${when.day} ${when.time}`;
+    expect(line).not.toContain('1969');
+    expect(line).not.toContain('Dec 31');
+    const nowYear = String(new Date().getFullYear());
+    expect(line).not.toContain(nowYear);
+  });
+
+  it('falls back to the no-fixed-date shape rather than printing an unparseable start', () => {
+    const when = formatWhen('not-a-date', 'not-a-date', 'Daily 10 AM–5 PM');
+    expect(when.day).toBe('Available any day');
+    expect(when.time).toBe('Daily 10 AM–5 PM');
+  });
+});
+
+describe('formatOpenHoursWindow', () => {
+  it('renders a parsed daily window as a human opening line', () => {
+    expect(formatOpenHoursWindow({ startMin: 10 * 60, endMin: 17 * 60 })).toBe('Open 10 AM–5 PM');
+    expect(formatOpenHoursWindow({ startMin: 9 * 60 + 30, endMin: 12 * 60 })).toBe('Open 9:30 AM–12 PM');
+    expect(formatOpenHoursWindow({ startMin: 0, endMin: 23 * 60 + 59 })).toBe('Open 12 AM–11:59 PM');
+  });
 });
 
 describe('statusMeta', () => {
@@ -291,6 +373,80 @@ describe('confidenceMeta', () => {
       expect(m.label.trim().length, `${c} label`).toBeGreaterThan(0);
       expect(VALID_TONES.has(m.tone), `${c} tone`).toBe(true);
     }
+  });
+});
+
+describe('search API mapping — a dateless listing keeps its null', () => {
+  /** The H.R. MacMillan Space Centre general-admission row, as live production returns it. */
+  const standingAdmission: ListingRecordDto = {
+    id: 'oh-1',
+    activityName: 'General Admission',
+    primaryCategoryKey: 'museum_venue',
+    categoryTags: [],
+    venueName: 'H.R. MacMillan Space Centre',
+    organisation: 'H.R. MacMillan Space Centre',
+    descriptionSnippet: '',
+    suitabilityTags: ['indoor'],
+    startDatetimeUtc: null,
+    endDatetimeUtc: null,
+    openHours: true,
+    openHoursLabel: 'Daily 10 AM–5 PM',
+    costStatus: 'check_source',
+    costMinCad: null,
+    costMaxCad: null,
+    statusState: 'confirmed',
+    confidenceLabel: 'official_recent',
+    lastCheckedAtUtc: '2026-08-16T01:00:00.000Z',
+    ageMinMonths: null,
+    ageMaxMonths: null,
+    geo: { lat: 49.2765, lng: -123.1447 },
+    displayArea: 'Vanier Park',
+    neighbourhood: null,
+    municipalityId: null,
+    sourceUrl: 'https://example.org/admission',
+    bookingUrl: null,
+    locationUrl: null,
+  };
+
+  it('never substitutes a manufactured start/end for a listing that has none', () => {
+    // This mapping used to read `l.startDatetimeUtc ?? new Date().toISOString()`, because
+    // `Activity.startIso` was non-nullable. The type forced the lie: the Space Centre's standing
+    // admission rendered as a zero-length event at whatever moment the page was requested, and
+    // the same null read through a bare `new Date()` elsewhere came out as 1969-12-31.
+    const activity = mapSearchItemToActivity({ distanceKm: 1, listing: standingAdmission });
+
+    expect(activity.startIso).toBeNull();
+    expect(activity.endIso).toBeNull();
+    expect(activity.timeOfDay).toBeNull();
+    expect(activity.openHoursLabel).toBe('Daily 10 AM–5 PM');
+  });
+
+  it('derives the hours label from a parsed window when the source text is absent', () => {
+    const activity = mapSearchItemToActivity({
+      distanceKm: 1,
+      listing: { ...standingAdmission, openHoursLabel: null, openHoursLocal: { startMin: 600, endMin: 1020 } },
+    });
+
+    expect(activity.startIso).toBeNull();
+    expect(activity.openHoursLabel).toBe('Open 10 AM–5 PM');
+  });
+
+  it('leaves a dated occurrence untouched, both edges of its span carried verbatim', () => {
+    const activity = mapSearchItemToActivity({
+      distanceKm: 1,
+      listing: {
+        ...standingAdmission,
+        id: 'rmd-scavenger-hunt',
+        openHours: false,
+        openHoursLabel: null,
+        startDatetimeUtc: '2026-07-08T07:00:00.000Z',
+        endDatetimeUtc: '2026-09-03T06:59:59.000Z',
+      },
+    });
+
+    expect(activity.startIso).toBe('2026-07-08T07:00:00.000Z');
+    expect(activity.endIso).toBe('2026-09-03T06:59:59.000Z');
+    expect(activity.openHoursLabel).toBeUndefined();
   });
 });
 

@@ -5,6 +5,7 @@
 // "when" strings follow the brand rule: pair every signal with a plain-language
 // label, never colour/emoji alone.
 import { readCost } from '@/lib/search/filters/cost';
+import { formatRangeLabel, localIsoDate } from '@/lib/search/time/vancouver';
 import type { ListingRecord } from '@/lib/search/types';
 
 const TZ = 'America/Vancouver';
@@ -21,18 +22,35 @@ const TIME_FMT = new Intl.DateTimeFormat('en-CA', {
   minute: '2-digit',
 });
 
-/** Human "when" line for a listing, in Vancouver local time. Open-hours attractions
- *  show their opening-window string; timed occurrences show day + start time. */
+/**
+ * Human "when" line for a listing, in Vancouver local time.
+ *
+ * Three shapes, matching the card's (app/preview/_data/format.ts#formatWhen) — an email a parent
+ * has already acted on is the one channel where a wrong date cannot be taken back, so it must not
+ * describe an occurrence differently from the page it links to:
+ *   · open hours → the venue's own published sentence, verbatim, when we hold one;
+ *   · multi-day span → "Jun 24 – Sep 1", never the first day dressed up as the only day;
+ *   · single day → day + start time, unchanged.
+ */
 export function formatWhen(listing: ListingRecord): string {
   if (listing.openHours) {
-    return listing.openHoursLocal
-      ? 'Open daily'
-      : 'Open hours — see listing';
+    return listing.openHoursLabel?.trim() || 'Open hours — see listing';
   }
   if (!listing.startDatetimeUtc) return 'Date to be confirmed';
   const start = new Date(listing.startDatetimeUtc);
   if (Number.isNaN(start.getTime())) return 'Date to be confirmed';
+  const spanEndDay = multiDayEndDay(listing, start);
+  if (spanEndDay) return formatRangeLabel(localIsoDate(start), spanEndDay);
   return `${DAY_FMT.format(start)}, ${TIME_FMT.format(start)}`;
+}
+
+/** The occurrence's last local day when it runs past its first one; null for a single-day event. */
+function multiDayEndDay(listing: ListingRecord, start: Date): string | null {
+  if (!listing.endDatetimeUtc) return null;
+  const end = new Date(listing.endDatetimeUtc);
+  if (Number.isNaN(end.getTime())) return null;
+  const endDay = localIsoDate(end);
+  return endDay > localIsoDate(start) ? endDay : null;
 }
 
 /** Money as the digest prints it: whole dollars bare, part-dollars to the cent. */

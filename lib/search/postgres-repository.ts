@@ -149,9 +149,29 @@ function normalizeLimit(value: number | undefined): number | null {
   return Math.max(1, Math.min(Math.trunc(value), 1000));
 }
 
+/**
+ * The rows a parent may be shown: not archived, and either genuinely dateless or not yet over.
+ *
+ * THE `open_hours_state` ARM IS DELIBERATELY NARROWER THAN THE COLUMN'S NULLABILITY.
+ * `open_hours_state IS NOT NULL` alone is NOT a safe "this record has no date" test, because
+ * migration 0004's constraint is `CHECK (start_datetime_utc IS NOT NULL OR open_hours_state IS
+ * NOT NULL)` — an OR, not an exclusive one. Nothing in the schema stops a row carrying BOTH a
+ * standing-hours sentence AND a real (possibly long-past) start time; `assertSeparation()`
+ * (worker/adapters/venue/separate.ts) enforces the split for the venue family only, so a bug in
+ * any other adapter can produce one. Such a row would take the open-hours arm and skip the date
+ * check entirely — a stale date hidden behind an hours string.
+ *
+ * So the dateless arm requires the date to be ACTUALLY ABSENT. A pool or drop-in gym with no
+ * fixed date (open_hours_state set, start_datetime_utc null) stays visible indefinitely, which
+ * is correct and unchanged; a row that has a date is judged on that date no matter what else it
+ * carries.
+ */
 function visibleOccurrenceWhereSql(): string {
   return `o.archived_at IS NULL
-       AND (o.open_hours_state IS NOT NULL OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now())`;
+       AND (
+         (o.start_datetime_utc IS NULL AND o.open_hours_state IS NOT NULL)
+         OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now()
+       )`;
 }
 
 function listingGroupBySql(): string {
@@ -183,6 +203,12 @@ function rowToListing(row: ListingRow): ListingRecord {
     endDatetimeUtc: iso(row.end_datetime_utc),
     openHours: Boolean(row.open_hours_state),
     openHoursLocal: null,
+    // The venue's own standing-hours sentence, verbatim. `openHoursLocal` above stays null
+    // because nothing parses this free text into a numeric window yet — but the SENTENCE is
+    // still the only honest "when" a dateless listing has, so it must reach the UI rather than
+    // being selected and dropped here (which left the card with no date and no hours, and so
+    // with nothing to print but a fabricated one).
+    openHoursLabel: cleanText(row.open_hours_state),
     costStatus: row.cost_status,
     costMinCad: money(row.cost_min_cad),
     costMaxCad: money(row.cost_max_cad),

@@ -79,18 +79,37 @@ export function matchesTimeOfDay(
  * Does a listing occur on the requested local date (or within a local date RANGE)?
  * Open-hours attractions are available every day → always match a date filter.
  *
- * A range intent (`kind === 'range'` with an `endIsoDate`, T26 / FR-04) matches every
- * occurrence whose local day falls in the inclusive interval [isoDate, endIsoDate].
- * YYYY-MM-DD strings compare lexicographically identically to chronologically, so the
- * range test needs no Date arithmetic.
+ * AN OCCURRENCE IS A SPAN, NOT AN INSTANT. Most occurrences start and end on the same local
+ * day, and for those this is exactly the old start-day equality test. But a source may publish
+ * a genuinely multi-day programme as ONE occurrence — Richmond Public Library's summer
+ * programmes run 24 Jun → 1 Sep as a single row — and such a listing IS on today, every day it
+ * runs. Testing only the start day answered "did it begin today?", which is a different
+ * question, and it answered "no" for every day of a running programme but its first.
+ *
+ * Both the point query and the range intent (`kind === 'range'` with an `endIsoDate`, T26 /
+ * FR-04) therefore ask the same thing: do the occurrence's local days and the requested local
+ * days overlap? YYYY-MM-DD strings compare lexicographically identically to chronologically, so
+ * the overlap test needs no Date arithmetic.
  */
 export function matchesDate(listing: ListingRecord, date: DateIntent | null): boolean {
   if (!date || !date.isoDate) return true;
   if (listing.openHours) return true;
   if (!listing.startDatetimeUtc) return false;
-  const day = localIsoDate(new Date(listing.startDatetimeUtc));
-  if (date.kind === 'range' && date.endIsoDate) {
-    return day >= date.isoDate && day <= date.endIsoDate;
-  }
-  return day === date.isoDate;
+  const firstDay = localIsoDate(new Date(listing.startDatetimeUtc));
+  const lastDay = occurrenceLastDay(listing, firstDay);
+  const wantedFrom = date.isoDate;
+  const wantedTo = date.kind === 'range' && date.endIsoDate ? date.endIsoDate : date.isoDate;
+  return firstDay <= wantedTo && lastDay >= wantedFrom;
+}
+
+/**
+ * Last local day the occurrence runs on. Falls back to the start day when there is no end, and
+ * when the stored end precedes the start — a backwards row must never widen what it matches.
+ */
+function occurrenceLastDay(listing: ListingRecord, firstDay: string): string {
+  if (!listing.endDatetimeUtc) return firstDay;
+  const end = new Date(listing.endDatetimeUtc);
+  if (Number.isNaN(end.getTime())) return firstDay;
+  const endDay = localIsoDate(end);
+  return endDay > firstDay ? endDay : firstDay;
 }

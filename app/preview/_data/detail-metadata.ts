@@ -33,7 +33,7 @@ export function activityTitle(activity: Activity): string {
  * it stays inside the ~160–200 char window search/social previews respect.
  */
 export function describeActivity(activity: Activity): string {
-  const when = formatWhen(activity.startIso, activity.endIso);
+  const when = formatWhen(activity.startIso, activity.endIso, activity.openHoursLabel);
   const lead = [
     formatAges(activity.ageMin, activity.ageMax),
     `${when.day} · ${when.time}`,

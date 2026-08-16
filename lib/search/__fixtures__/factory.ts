@@ -21,6 +21,7 @@ export function makeListing(partial: Partial<ListingRecord> & { id?: string }): 
     endDatetimeUtc: partial.endDatetimeUtc ?? null,
     openHours: partial.openHours ?? false,
     openHoursLocal: partial.openHoursLocal ?? null,
+    openHoursLabel: partial.openHoursLabel ?? null,
     costStatus: partial.costStatus ?? 'known',
     costMinCad: partial.costMinCad ?? null,
     costMaxCad: partial.costMaxCad ?? null,

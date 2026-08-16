@@ -82,6 +82,26 @@ export function localIsoDate(instant: Date): string {
   return toVancouverParts(instant).isoDate;
 }
 
+const SHORT_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'UTC',
+  month: 'short',
+  day: 'numeric',
+});
+
+/**
+ * Short "Jul 18 – Jul 20" label for two local YYYY-MM-DD dates (collapses when they are equal).
+ *
+ * Lives beside the other local-date helpers because three surfaces now print a date range in
+ * these words — the searched range in the results summary, a multi-day occurrence's own
+ * when-line on the card/detail, and the same occurrence's when-line in the weekly email — and
+ * one label with three definitions is a wording drift waiting to happen. Anchored at UTC-noon
+ * so the calendar day is exact regardless of the server's own timezone.
+ */
+export function formatRangeLabel(fromIso: string, toIso: string): string {
+  const short = (iso: string) => SHORT_DATE_FMT.format(new Date(`${iso}T12:00:00Z`));
+  return fromIso === toIso ? short(fromIso) : `${short(fromIso)} – ${short(toIso)}`;
+}
+
 /** Add whole days to a local ISO date string, returning a new YYYY-MM-DD (UTC-noon anchored to avoid DST edges). */
 export function addDaysIso(isoDate: string, days: number): string {
   const [y, m, d] = isoDate.split('-').map(Number);

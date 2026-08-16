@@ -127,6 +127,18 @@ function effectiveCost(a: Activity): number {
   return a.costMinCad ?? 0;
 }
 
+/**
+ * Soonest-first ordering. A listing with no fixed date sorts LAST rather than first — the same
+ * choice lib/search/sort.ts makes for the live engine. Comparing `startIso` directly would have
+ * put every open-hours listing at the head of a "soonest" list once the field became nullable.
+ */
+function compareSoonest(a: Activity, b: Activity): number {
+  if (!a.startIso && !b.startIso) return 0;
+  if (!a.startIso) return 1;
+  if (!b.startIso) return -1;
+  return a.startIso.localeCompare(b.startIso);
+}
+
 /** Stable sort within an already-sectioned list. Best-match = closest then soonest. */
 export function sortActivities(activities: Activity[], key: SortKey): Activity[] {
   const copy = [...activities];
@@ -135,14 +147,14 @@ export function sortActivities(activities: Activity[], key: SortKey): Activity[]
       case 'distance':
         return byDistance(a, b);
       case 'soonest':
-        return a.startIso.localeCompare(b.startIso);
+        return compareSoonest(a, b);
       case 'lowest_cost':
         return effectiveCost(a) - effectiveCost(b);
       case 'recently_checked':
         return b.lastCheckedIso.localeCompare(a.lastCheckedIso);
       case 'best_match':
       default:
-        return byDistance(a, b) || a.startIso.localeCompare(b.startIso);
+        return byDistance(a, b) || compareSoonest(a, b);
     }
   });
   return copy;

@@ -50,7 +50,7 @@ function BookingTag({ activity }: { activity: Activity }) {
 }
 
 export function ActivityCard({ activity }: { activity: Activity }) {
-  const when = formatWhen(activity.startIso, activity.endIso);
+  const when = formatWhen(activity.startIso, activity.endIso, activity.openHoursLabel);
   // One card can stand for several same-day slots of the same series; when it does, the when-line
   // becomes "15 slots, 3:15 PM–7:30 PM" instead of fifteen near-identical cards (search/collapse.ts).
   const slotSummary = formatSlotSummary(activity);

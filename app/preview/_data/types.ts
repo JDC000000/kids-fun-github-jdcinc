@@ -103,9 +103,31 @@ export interface Activity {
    */
   ageMin: number | null;
   ageMax: number | null;
-  startIso: string; // America/Vancouver, explicit offset
-  endIso: string;
-  timeOfDay: TimeOfDay;
+  /**
+   * When the occurrence starts / ends. NULLABLE, and the null is the point.
+   *
+   * A standing "open hours" listing (a museum's general admission, a drop-in pool with no fixed
+   * date) genuinely HAS no start instant — `activity_occurrence.start_datetime_utc` is null and
+   * `open_hours_state` carries the truth instead. These fields used to be non-nullable, so the
+   * mapper had to invent a value to satisfy the type, and it invented `new Date()`: the H.R.
+   * MacMillan Space Centre's general admission rendered as "Sun, Aug 16 · 12:21 PM–12:21 PM", a
+   * zero-length event at whatever moment the page happened to be requested. Read through a bare
+   * `new Date(x)` the same null lands on 1969-12-31 (epoch zero in Vancouver). Both are the same
+   * defect: a type that could not say "no date" forced every caller to make one up.
+   *
+   * `endIso` is the occurrence's real end, which for a multi-week programme is WEEKS after
+   * `startIso`. Consumers must treat the pair as a span, not as a clock range on one day —
+   * see `formatWhen`.
+   */
+  startIso: string | null; // America/Vancouver, explicit offset
+  endIso: string | null;
+  /** Null for a listing with no fixed date — there is no day-part to place it in. */
+  timeOfDay: TimeOfDay | null;
+  /**
+   * The venue's own published standing-hours sentence ("Daily 10 AM–5 PM"), when this listing is
+   * a dateless open-hours record. This is what the when-line prints INSTEAD of a date.
+   */
+  openHoursLabel?: string;
   costStatus: CostStatus;
   costMinCad?: number;
   costMaxCad?: number;
