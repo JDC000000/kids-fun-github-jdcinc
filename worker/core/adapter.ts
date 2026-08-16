@@ -47,6 +47,27 @@ export interface StructuredRecord {
   costMaxCad?: number;
   costStatus?: 'known' | 'free' | 'unknown' | 'check_source';
   ageText?: string; // raw free-text age wording — ambiguous, resolved by normalizeHook / T13
+  /**
+   * The source's OWN structured audience tags, verbatim and unfiltered (e.g. VPL's
+   * ["Storytimes", "Preschool Age Children", "Toddlers", "English"]). Set ONLY when the
+   * source publishes an audience taxonomy as discrete tags — never a prose keyword scraped
+   * out of a description, which is what `ageText` is for.
+   *
+   * SEPARATE FROM `ageText` BECAUSE IT IS A DIFFERENT KIND OF CLAIM, and collapsing the two
+   * is the defect this field exists to prevent. A tag list is N independent assertions and
+   * resolves to their UNION (worker/core/age.ts `parseAudienceLabels`); a prose phrase is one
+   * assertion and resolves first-match-wins (`parseAgeText`). Joining tags into a string and
+   * feeding them to the prose parser returns whichever tag the keyword table reaches first —
+   * "Toddlers, Preschool Age Children" would land on toddlers alone and silently drop the
+   * preschool half of what the library actually said.
+   *
+   * PRECEDENCE IS THE ADAPTER'S CALL, not ingest's. An adapter sets whichever signal WON for
+   * that record; ingest simply prefers this field when it is present, because only the
+   * adapter knows whether its source's description carries something stronger (an explicit
+   * "Grades K-7" beats a broad "School Age Children" tag; a bare "children" in prose does not
+   * beat "Toddlers").
+   */
+  ageAudienceLabels?: string[];
   categoryHint?: string;
   sourceUrl: string;
   bookingUrl?: string;

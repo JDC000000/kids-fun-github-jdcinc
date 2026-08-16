@@ -12,6 +12,10 @@
 // approval; the live path uses the public BiblioCommons gateway events endpoint,
 // one paginated request, no login, no headless browser, no CAPTCHA bypass.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
+// The union-of-tags resolver for a source's own audience taxonomy. Imported rather than
+// re-implemented for the same reason the eventbrite adapter imports extractAgeWording: the rule
+// for reading a structured tag list is a property of the age model, not of this feed.
+import { parseAudienceLabels } from '../../core/age';
 import { politeFetch } from '../../health/policy';
 import { VENUE_GEO_AUTHORITY } from '../../core/venue-geo-authority';
 // Shared, DST-correct local-wall-clock -> UTC conversion. BiblioCommons publishes
@@ -46,7 +50,16 @@ interface BiblioEvent {
   branch: string;
   startsAt: string;
   endsAt?: string;
-  ages: string;
+  /**
+   * Free-text age WORDING, when the description carried some. Optional: an item whose prose
+   * says nothing about age now carries nothing, rather than the old `'See event details'`
+   * placeholder — that string parsed as "wording present but unresolvable", which downgrades
+   * `parse_quality.ageResolved` from null (0.6, no claim made) to false (0.4, we tried and
+   * failed) for every silent item. Silence is not a failed parse.
+   */
+  ages?: string;
+  /** BiblioCommons' own audience tags for this item — see StructuredRecord.ageAudienceLabels. */
+  audienceLabels?: string[];
   url: string;
   registrationRequired: boolean;
   /**
@@ -257,9 +270,6 @@ function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommon
     const audienceNames = (def.audienceIds ?? []).map((a) => audiences[a]?.name).filter(Boolean) as string[];
     const typeNames = (def.typeIds ?? []).map((t) => types[t]?.name).filter(Boolean) as string[];
     const descriptionText = stripHtml(def.description);
-    const ageText = [audienceNames.join(', '), descriptionText.match(/(?:ages?|children)[^.]{0,80}/i)?.[0]]
-      .filter(Boolean)
-      .join(' — ');
     const detailUrl = `${new URL(system.feedBaseUrl).origin}/v2/events/${event.id}`;
 
     return [
@@ -269,7 +279,12 @@ function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommon
         branch: branch ?? `${system.systemName} branch`,
         startsAt: zonedLocalToUtcIso(def.start) ?? def.start,
         endsAt: zonedLocalToUtcIso(def.end),
-        ages: ageText || audienceNames.join(', ') || 'See event details',
+        // Same precedence as the RSS path, from the same helper. The gateway's mistake was the
+        // mirror image of the RSS one: it CONCATENATED the audience names with a prose match
+        // ("Toddlers, Preschool Age Children — children ages …") into a single phrase, which
+        // hands the prose parser a string containing both claims and lets its keyword ordering,
+        // not the source, decide which one is heard.
+        ...resolveBiblioCommonsAgeSignal(descriptionText, audienceNames),
         url: detailUrl,
         // Both halves from ONE rule — see gatewayRegistrationVerdict for why they can no
         // longer be derived separately.
@@ -326,6 +341,46 @@ function eventIdFromLink(link: string): string {
 const AGE_RANGE_RE = /(?:ages?|grades?)\s*[\dK][^.<\n]{0,40}/i;
 const AGE_HINT_RE =
   /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers)?|kindergarten|family|all ages)[^.<\n]{0,40}/i;
+
+/**
+ * Which age signal this BiblioCommons item actually offers, in strength order.
+ *
+ * THE BUG THIS REPLACES, and why the ordering is the whole fix. Both feed paths used to reach
+ * for the description's prose keyword BEFORE the item's own audience tags, so VPL's
+ *
+ *   tags: ["Storytimes", "Preschool Age Children", "Toddlers", "English"]
+ *   desc: "A program for parents and caregivers with young children. …"
+ *
+ * resolved on the bare word "children" — which worker/core/age.ts's broad, deliberately-last
+ * KEYWORD_BANDS entry reads as 60–144 months. Family Storytime, a programme the library
+ * explicitly tags for toddlers and preschoolers, was published as "Ages 5–11" and filtered out
+ * of every toddler search. Babytime survived only by accident: its description happens to say
+ * "babies" before it says anything broader, so the first keyword hit was the right one. Same
+ * feed, same parser, correct by luck on one row and wrong on the next — which is what a
+ * precedence bug looks like from the outside.
+ *
+ * The library's own audience taxonomy is a deliberate, curated claim about who a programme is
+ * for. A word appearing in a sentence about caregivers is not. The only thing allowed to
+ * outrank the tags is the source stating ages OUTRIGHT ("Grades K-7", "ages 0-2"), which is
+ * strictly more precise than any tag — and is why that check stays first rather than being
+ * folded in.
+ *
+ * The tag list is passed through UNFILTERED: it mixes audiences with event types and languages
+ * ("Storytimes", "English"), and `parseAudienceLabels` resolves non-age tags to nothing, so
+ * pre-filtering here would only be a second, driftable copy of that judgement. Tags are only
+ * claimed when they resolve to something — an all-noise list is silence and falls through to
+ * the prose hint, exactly as before.
+ */
+export function resolveBiblioCommonsAgeSignal(
+  descriptionText: string,
+  audienceLabels: string[]
+): Pick<BiblioEvent, 'ages' | 'audienceLabels'> {
+  const explicitRange = descriptionText.match(AGE_RANGE_RE)?.[0]?.trim();
+  if (explicitRange) return { ages: explicitRange };
+  if (parseAudienceLabels(audienceLabels).resolved) return { audienceLabels };
+  const proseHint = descriptionText.match(AGE_HINT_RE)?.[0]?.trim();
+  return proseHint ? { ages: proseHint } : {};
+}
 
 /** Case/punctuation-insensitive key so a feed branch name matches a config key. */
 function normalizeBranchKey(value: string): string {
@@ -491,19 +546,16 @@ export function parseBiblioCommonsRss(
     const categories = tagBlocks(item, 'category').map((c) => decodeXmlText(c)).filter(Boolean);
     const location = rssLocation(system, item);
     const branch = firstTag(tagBlocks(item, 'bc:location')[0] ?? '', 'bc:name') || `${system.systemName} branch`;
-    const ageText =
-      descriptionText.match(AGE_RANGE_RE)?.[0]?.trim() ||
-      descriptionText.match(AGE_HINT_RE)?.[0]?.trim() ||
-      categories.join(', ') ||
-      'See event details';
-
     events.push({
       id: eventIdFromLink(link),
       title,
       branch,
       startsAt: start,
       endsAt: toUtcIso(firstTag(item, 'bc:end_date')),
-      ages: ageText,
+      // `<category>` IS this feed's audience taxonomy (mixed in with event types and
+      // languages) — the item's own claim about who it is for, and it now outranks a keyword
+      // pulled out of the description prose.
+      ...resolveBiblioCommonsAgeSignal(descriptionText, categories),
       url: link,
       registrationRequired: /registration\s+required/i.test(descriptionText),
       registrationSignal: 'description-prose',
@@ -794,7 +846,11 @@ export class LibraryAdapter implements Adapter {
         startDatetimeUtc: e.startsAt,
         endDatetimeUtc: e.endsAt,
         costStatus: 'free' as const,
+        // Exactly one of these two is ever set (resolveBiblioCommonsAgeSignal picks the winner);
+        // both are forwarded so ingest resolves the structured tags by their own union rule
+        // rather than by the prose parser's first-keyword-wins ordering.
         ageText: e.ages,
+        ageAudienceLabels: e.audienceLabels,
         categoryHint: e.categoryHint ?? categoryHint(e.title),
         sourceUrl: e.url,
         // Two DIFFERENT things, deliberately both emitted. `bookingUrl` is a link, and its

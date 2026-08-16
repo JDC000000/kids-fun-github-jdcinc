@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { loadLibraryAdapters, LIBRARY_SYSTEMS, LibraryAdapter, getLibrarySystem } from '../../worker/adapters/library';
 import type { LibrarySystemConfig } from '../../worker/adapters/library/config';
+import { parseAgeText } from '../../worker/core/age';
 
 // G-T9-1/2 — Library adapter scaffold (TSD §5.1 Adapter B).
 describe('Library adapter scaffold (G-T9-1/2)', () => {
@@ -179,6 +180,22 @@ describe('Library adapter scaffold (G-T9-1/2)', () => {
       categoryHint: 'indoor_play',
       sourceUrl: 'https://gwonly.bibliocommons.com/v2/events/evt-1',
     });
-    expect(records[0].ageText).toContain('Children-Preschool');
+    // WAS `expect(records[0].ageText).toContain('Children-Preschool')`, which pinned the old
+    // MECHANISM (audience names concatenated onto a prose match into one string) rather than
+    // any outcome. That concatenation is what let a generic prose keyword outrank a specific
+    // audience tag, so it is gone; the two signals are now separate fields and exactly one is
+    // set per record.
+    //
+    // Here the description states "ages 2-5" outright, which is strictly more precise than the
+    // "Children-Preschool" tag — so the range wins and the tags are not claimed. The resolved
+    // months are unchanged from the old path (24–72), which is the point: this case was already
+    // right and the precedence fix must not move it.
+    expect(records[0].ageText).toContain('ages 2-5');
+    expect(records[0].ageAudienceLabels).toBeUndefined();
+    expect(parseAgeText(records[0].ageText!)).toMatchObject({
+      ageMinMonths: 24,
+      ageMaxMonths: 72,
+      resolved: true,
+    });
   });
 });

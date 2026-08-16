@@ -180,6 +180,68 @@ export function parseAgeText(ageText?: string | null): AgeParse {
   return { ageMinMonths: null, ageMaxMonths: null, resolved: false, notes: `unresolved: ${ageText.trim()}` };
 }
 
+// ── structured audience labels (a source's OWN taxonomy, not prose) ──────────
+//
+// parseAgeText() reads ONE free-text phrase and, past the numeric/grade rules,
+// takes the FIRST matching KEYWORD_BANDS entry — most-specific-first ordering
+// that exists to stop the broad `children` rule stealing a phrase containing a
+// narrower word. That ordering is correct for prose and WRONG for a list of
+// discrete audience tags, where every tag is an independent claim by the source
+// and the honest answer is their UNION: VPL tags a Family Storytime
+// ["Storytimes", "Preschool Age Children", "Toddlers", "English"] and means
+// toddlers THROUGH preschoolers ([12,60) months), not whichever one the keyword
+// table happens to reach first.
+//
+// Hence a separate entry point rather than a widened parseAgeText: prose keeps
+// first-match-wins, structured lists get the union. Non-age tags ("Storytimes",
+// "English", "Summer Reading Club") resolve to nothing and contribute nothing,
+// so the caller can pass the source's whole tag list unfiltered.
+
+/**
+ * Audience words that are only ever a RELIABLE age claim when the source states
+ * them as a structured tag. Deliberately NOT added to KEYWORD_BANDS: "adults"
+ * inside "Adults accompanying children under 9 must stay in the library" is
+ * prose about supervision, not an audience, and a keyword table cannot tell the
+ * difference. A tag literally reading "Adults" can.
+ */
+const ADULT_AUDIENCE_RE = /^\s*(?:adults?|seniors?|older\s+adults?)\b/i;
+const ADULT_MIN_MONTHS = 18 * YEARS;
+
+/**
+ * Resolve a source's structured audience tags into the UNION of every range they
+ * claim. Returns { resolved:false } when no tag carries an age signal, which is
+ * the caller's cue to fall back to whatever weaker wording it has — an unresolved
+ * audience list is silence, not a claim.
+ */
+export function parseAudienceLabels(labels: Array<string | null | undefined>): AgeParse {
+  let min: number | null = null;
+  let max: number | null = null;
+  let openEnded = false;
+  const contributing: string[] = [];
+
+  for (const raw of labels) {
+    const label = raw?.trim();
+    if (!label) continue;
+    const parsed = ADULT_AUDIENCE_RE.test(label)
+      ? { ageMinMonths: ADULT_MIN_MONTHS, ageMaxMonths: null, resolved: true }
+      : parseAgeText(label);
+    if (!parsed.resolved) continue;
+    contributing.push(label);
+    const lo = parsed.ageMinMonths ?? 0;
+    min = min === null ? lo : Math.min(min, lo);
+    if (parsed.ageMaxMonths === null) openEnded = true;
+    else max = max === null ? parsed.ageMaxMonths : Math.max(max, parsed.ageMaxMonths);
+  }
+
+  if (!contributing.length) return { ...UNRESOLVED };
+  return {
+    ageMinMonths: min ?? 0,
+    ageMaxMonths: openEnded ? null : max,
+    resolved: true,
+    notes: `audience: ${contributing.join(', ')}`,
+  };
+}
+
 /**
  * Ids of every seeded age_band whose [lower, upper) interval overlaps the
  * listing's [min, maxExclusive) range. Both intervals are half-open, so the

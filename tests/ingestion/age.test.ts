@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import {
   parseAgeText,
+  parseAudienceLabels,
   computeAgeBandMatches,
   type AgeBandRow,
 } from '../../worker/core/age';
@@ -77,6 +78,65 @@ describe('computeAgeBandMatches — half-open overlap, no band bleed', () => {
   it('all-ages matches every band; unknown matches none', () => {
     expect(bandsFor('All ages')).toEqual(['10-14', '15+', '2-4', '5-9', 'under2']);
     expect(computeAgeBandMatches(parseAgeText('See event details'), BANDS)).toEqual([]);
+  });
+});
+
+// A source's own structured audience tags are N independent claims and resolve to their
+// UNION — unlike prose, which is one claim and resolves first-keyword-wins. Keeping the two
+// entry points separate is what lets prose keep its most-specific-first ordering (which exists
+// to stop the broad `children` rule stealing a phrase containing a narrower word) while a tag
+// list gets the answer the source actually meant.
+describe('parseAudienceLabels — structured tags resolve to their union', () => {
+  const bandsForLabels = (labels: string[]) =>
+    computeAgeBandMatches(parseAudienceLabels(labels), BANDS).sort();
+
+  it('unions every tag rather than taking the first keyword hit', () => {
+    // VPL's Family Storytime: Toddlers [12,36) ∪ Preschool [36,60). parseAgeText over the same
+    // words joined into one string would stop at "Toddlers" and silently drop the preschool
+    // half — which is the whole reason this is a separate function.
+    expect(parseAudienceLabels(['Storytimes', 'Preschool Age Children', 'Toddlers', 'English'])).toMatchObject({
+      ageMinMonths: 12,
+      ageMaxMonths: 60,
+      resolved: true,
+    });
+    expect(parseAgeText('Storytimes, Preschool Age Children, Toddlers, English')).toMatchObject({
+      ageMaxMonths: 36, // first-keyword-wins: correct for prose, lossy for a tag list
+    });
+  });
+
+  it('an open-ended tag opens the whole range, and a genuine all-ages tag matches every band', () => {
+    expect(parseAudienceLabels(['Babies', 'Adults'])).toMatchObject({
+      ageMinMonths: 0,
+      ageMaxMonths: null,
+      resolved: true,
+    });
+    expect(bandsForLabels(['Family', 'Storytimes'])).toEqual(['10-14', '15+', '2-4', '5-9', 'under2']);
+  });
+
+  it('recognises adult/senior audiences, which prose keywords deliberately do not', () => {
+    // "Adults" as a TAG is an audience. "Adults" in "Adults accompanying children under 9 must
+    // stay in the library" is prose about supervision — which is exactly why this lives here
+    // and not in KEYWORD_BANDS.
+    expect(bandsForLabels(['Meetups', 'Adults', 'Newcomers'])).toEqual(['15+']);
+    expect(bandsForLabels(['Seniors'])).toEqual(['15+']);
+    expect(parseAgeText('Adults accompanying children under 9 must stay')).toMatchObject({
+      ageMinMonths: 0,
+      ageMaxMonths: 108, // "under 9" — the prose parser is untouched by the adult tag rule
+    });
+  });
+
+  it('a tag list carrying no age signal is silence, not a claim', () => {
+    expect(parseAudienceLabels(['Meetups', 'English', 'Book Clubs & Reading Circles'])).toMatchObject({
+      ageMinMonths: null,
+      ageMaxMonths: null,
+      resolved: false,
+    });
+    expect(parseAudienceLabels([])).toMatchObject({ resolved: false });
+    expect(parseAudienceLabels([null, undefined, '  '])).toMatchObject({ resolved: false });
+  });
+
+  it('names the tags it believed, so a wrong band can be traced to a claim', () => {
+    expect(parseAudienceLabels(['Storytimes', 'Toddlers', 'English']).notes).toBe('audience: Toddlers');
   });
 });
 

@@ -23,7 +23,13 @@ import {
   statusForIngestedRecord,
 } from './confidence';
 import { isTermsApprovedForProduction } from './terms-gate';
-import { parseAgeText, computeAgeBandMatches, loadAgeBands, upsertOccurrenceAge } from './age';
+import {
+  parseAgeText,
+  parseAudienceLabels,
+  computeAgeBandMatches,
+  loadAgeBands,
+  upsertOccurrenceAge,
+} from './age';
 
 export interface IngestSummary {
   checkRunId: string;
@@ -205,7 +211,15 @@ export async function ingestSource(
         // (The occurrence_age row itself needs the occurrenceId, so it's written
         // after the upsert.) Ambiguous wording resolves to null bounds; absent
         // wording is a neutral parse signal, not a failure.
-        const ageParse = record.ageText ? parseAgeText(record.ageText) : null;
+        // A source's own structured audience tags outrank free-text wording, and they resolve
+        // by a different rule (union of every tag, not first-keyword-wins) — see
+        // StructuredRecord.ageAudienceLabels. The adapter has already decided which signal
+        // won for this record, so there is no precedence logic here beyond "structured first".
+        const ageParse = record.ageAudienceLabels?.length
+          ? parseAudienceLabels(record.ageAudienceLabels)
+          : record.ageText
+            ? parseAgeText(record.ageText)
+            : null;
 
         // BR-13: real confidence = authority × parse_quality × freshness × volatility.
         // The gate routes low/unscored records to needs_review (hidden until reviewed)
