@@ -77,8 +77,20 @@ export interface Activity {
   activityName: string; // e.g. "Public skate"
   venue: string; // e.g. "Trout Lake Rink"
   area: string; // e.g. "Trout Lake"
-  driveMinutes: number;
-  distanceKm: number;
+  /**
+   * Travel from the PARENT'S origin — both `null` whenever no distance is knowable, which is
+   * the DEFAULT state, not an edge case: a search with no near-me coordinates and no saved
+   * location has no origin to measure from, and the engine returns `distanceKm: null` for
+   * every result (lib/search/rank.ts). An un-geocoded venue is null for the same reason.
+   *
+   * Nullable rather than "0" or "distance from some assumed point": the mapper used to
+   * synthesise a number off a hardcoded East Vancouver coordinate whenever the real one was
+   * null, so every card stated a confident travel distance from a place the parent had never
+   * told us about (P0 — fabricated distances). A number a parent can act on must be measured,
+   * and when it cannot be measured the surfaces say so — see `formatDistance`.
+   */
+  driveMinutes: number | null;
+  distanceKm: number | null;
   category: Category;
   ageMin: number;
   ageMax: number;

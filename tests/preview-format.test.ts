@@ -8,6 +8,7 @@ import {
   formatChecked,
   formatCost,
   formatDistance,
+  formatDistanceValue,
   formatWhen,
   practicalFacts,
   statusMeta,
@@ -89,6 +90,32 @@ describe('formatDistance', () => {
     expect(formatDistance({ area: 'Trout Lake', driveMinutes: 12, distanceKm: 4.1 })).toBe(
       'Trout Lake · 12 min drive · 4.1 km',
     );
+  });
+
+  it('states that the distance is unavailable rather than printing a number, when none was measured', () => {
+    expect(formatDistance({ area: 'Steveston', driveMinutes: null, distanceKm: null })).toBe(
+      'Steveston · Distance unavailable',
+    );
+  });
+
+  it('never renders "0.0 km" or a drive time for an unmeasured distance', () => {
+    const line = formatDistance({ area: 'Metro Vancouver', driveMinutes: null, distanceKm: null });
+    expect(line).not.toContain('km');
+    expect(line).not.toContain('drive');
+    expect(line).not.toContain('0.0');
+  });
+
+  it('keeps the area in BOTH readings, so the meta line never collapses', () => {
+    expect(formatDistance({ area: 'Trout Lake', driveMinutes: null, distanceKm: null })).toContain('Trout Lake');
+  });
+});
+
+describe('formatDistanceValue (detail stat row)', () => {
+  it('renders the measured distance', () => {
+    expect(formatDistanceValue({ distanceKm: 4.14 })).toBe('4.1 km');
+  });
+  it('reads "Unavailable" under its own Distance label rather than a fabricated 0.0 km', () => {
+    expect(formatDistanceValue({ distanceKm: null })).toBe('Unavailable');
   });
 });
 
@@ -282,7 +309,12 @@ describe('search API mapping', () => {
     expect(activity.detailUrl).toBeUndefined();
     expect(activity.sourceUrl).toBe('https://yourlibrary.bibliocommons.com/v2/events/live-1');
     expect(activity.area).toBe('Steveston');
-    expect(activity.distanceKm).toBeGreaterThan(10);
+    // This used to assert `> 10` — the haversine from a hardcoded East Vancouver point to this
+    // Richmond venue. It was asserting the FABRICATION: the API said null (no origin), and the
+    // mapper invented a confident number anyway. A venue's own coordinates are not a distance;
+    // a distance needs an origin the parent gave us, and this request had none.
+    expect(activity.distanceKm).toBeNull();
+    expect(activity.driveMinutes).toBeNull();
     expect(activity.ageNotes).toBeUndefined(); // absent when the source has none
   });
 
@@ -407,5 +439,54 @@ describe('search API mapping', () => {
     expect(
       mapSearchItemToActivity({ distanceKm: 1, listing: listingWith('confirmed', 'https://book.example') }).booking,
     ).toBe('registration');
+  });
+
+  // ── Distance honesty (P0) ──────────────────────────────────────────────────
+  // The engine returns `distanceKm: null` whenever there is no origin to measure from — no
+  // near-me coordinates, no saved location — which is the DEFAULT for an anonymous search.
+  // The mapper used to fill that null in from a hardcoded East Vancouver point, so every card
+  // stated a confident distance from a place the parent never gave us.
+
+  it('carries a REAL measured distance through unchanged, with a drive time derived from it', () => {
+    const activity = mapSearchItemToActivity({ distanceKm: 3.2, listing: listingWith('confirmed') });
+    expect(activity.distanceKm).toBe(3.2);
+    expect(activity.driveMinutes).toBe(13);
+    expect(formatDistance(activity)).toBe('Kitsilano · 13 min drive · 3.2 km');
+  });
+
+  it('holds the drive time at the 4-minute floor for a very close listing', () => {
+    expect(mapSearchItemToActivity({ distanceKm: 0.2, listing: listingWith('confirmed') }).driveMinutes).toBe(4);
+  });
+
+  it('reports NO distance when the search had no origin, even though the venue is geocoded', () => {
+    const listing = listingWith('confirmed');
+    expect(listing.geo).not.toBeNull(); // the venue's own coordinates are not a distance
+    const activity = mapSearchItemToActivity({ distanceKm: null, listing });
+    expect(activity.distanceKm).toBeNull();
+    expect(activity.driveMinutes).toBeNull();
+    expect(formatDistance(activity)).toBe('Kitsilano · Distance unavailable');
+  });
+
+  it('reports NO distance — not 0 km — for an un-geocoded venue', () => {
+    const activity = mapSearchItemToActivity({
+      distanceKm: null,
+      listing: { ...listingWith('confirmed'), geo: null },
+    });
+    expect(activity.distanceKm).toBeNull();
+    expect(activity.distanceKm).not.toBe(0);
+    expect(activity.driveMinutes).toBeNull();
+    expect(formatDistance(activity)).not.toContain('0.0 km');
+  });
+
+  it('does not vary an unmeasured distance by venue location — there is nothing to vary', () => {
+    // The old fabrication produced a DIFFERENT invented number per venue, which is exactly what
+    // made it read as real. Two venues 20 km apart, same missing origin, same honest answer.
+    const near = mapSearchItemToActivity({ distanceKm: null, listing: listingWith('confirmed') });
+    const far = mapSearchItemToActivity({
+      distanceKm: null,
+      listing: { ...listingWith('confirmed'), geo: { lat: 49.05, lng: -122.32 } }, // Abbotsford
+    });
+    expect(near.distanceKm).toBeNull();
+    expect(far.distanceKm).toBeNull();
   });
 });

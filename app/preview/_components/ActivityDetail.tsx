@@ -9,6 +9,8 @@ import {
   formatAges,
   formatChecked,
   formatCost,
+  formatDistance,
+  formatDistanceValue,
   formatWhen,
   practicalFacts,
   statusMeta,
@@ -67,9 +69,10 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
       <div className="kf-detail__hero">
         <p className="kf-detail__type">{activity.activityName}</p>
         <h1 className="kf-detail__title">{activity.venue}</h1>
-        <p className="kf-detail__venue">
-          {activity.area} · {activity.driveMinutes} min drive · {activity.distanceKm.toFixed(1)} km
-        </p>
+        {/* Was a hand-rolled copy of formatDistance's string, which meant the card and the
+            detail page could drift — and did, both stating a distance that had been invented
+            when none was measurable. One formatter, one reading, both surfaces. */}
+        <p className="kf-detail__venue">{formatDistance(activity)}</p>
 
         {/* Venue phone — in the hero, above the fold, on purpose (Jon, 2026-08-01: "make
             those phone numbers prominent and easily available"). Renders only when the
@@ -113,7 +116,7 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
         <Stat label="When" value={`${when.day} · ${when.time}`} />
         <Stat label="Cost" value={formatCost(activity)} />
         <Stat label="Booking" value={bookingTag(activity.booking) || meta.label} />
-        <Stat label="Distance" value={`${activity.distanceKm.toFixed(1)} km`} />
+        <Stat label="Distance" value={formatDistanceValue(activity)} />
         <Stat label="Status" value={meta.label} />
       </div>
 

@@ -12,8 +12,15 @@ import type { SortKey } from './types';
 const idTiebreak = (a: ScoredListing, b: ScoredListing) =>
   a.candidate.listing.id.localeCompare(b.candidate.listing.id);
 
-/** Push nulls to the end regardless of asc/desc. Returns comparator result or null if both present. */
-function nullsLast(av: number | null, bv: number | null): number | null {
+/**
+ * Push nulls to the end regardless of asc/desc. Returns comparator result or null if both present.
+ *
+ * Exported so the preview/demo shell's own client-side sort (app/preview/_data/filter.ts) orders
+ * unknown distances by the SAME rule this file's header states, rather than re-deciding it — a
+ * null distance that lands first (which `a.distanceKm - b.distanceKm` yields via NaN-ish
+ * coercion) reads as "closest", the exact claim we have no basis for.
+ */
+export function nullsLast(av: number | null, bv: number | null): number | null {
   if (av == null && bv == null) return 0;
   if (av == null) return 1;
   if (bv == null) return -1;

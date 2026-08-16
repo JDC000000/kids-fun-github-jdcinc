@@ -126,10 +126,35 @@ export function formatCost(
   }
 }
 
-/** "Trout Lake · 12 min drive · 4.1 km" — geography as a practical travel radius. */
+/**
+ * The card's one not-a-number distance read — the sibling of COST_UNKNOWN above, and used for
+ * the same reason: a missing measurement is stated, never filled in. Reached whenever the search
+ * had no origin to measure from (no near-me coordinates, no saved location — the DEFAULT for an
+ * anonymous search) or the venue is un-geocoded. Both are true of "unavailable"; naming a cause
+ * ("set your location") would be a guess, and would be wrong for the un-geocoded half.
+ */
+const DISTANCE_UNKNOWN = 'Distance unavailable';
+
+/**
+ * "Trout Lake · 12 min drive · 4.1 km" — geography as a practical travel radius — or
+ * "Trout Lake · Distance unavailable" when there is no measured distance to state.
+ *
+ * The AREA is kept in both readings on purpose. It is the one piece of geography we always
+ * hold, it is what the line is for once the number is gone, and keeping it means the meta row
+ * neither collapses nor changes height between the two states.
+ */
 export function formatDistance(activity: Pick<Activity, 'area' | 'driveMinutes' | 'distanceKm'>): string {
+  if (activity.distanceKm == null) return `${activity.area} · ${DISTANCE_UNKNOWN}`;
   const km = activity.distanceKm.toFixed(1);
   return `${activity.area} · ${activity.driveMinutes} min drive · ${km} km`;
+}
+
+/**
+ * The bare distance for the detail page's stat row — "4.1 km", or "Unavailable" under the
+ * row's own "Distance" label (which is already the noun, so the label is not repeated).
+ */
+export function formatDistanceValue(activity: Pick<Activity, 'distanceKm'>): string {
+  return activity.distanceKm == null ? 'Unavailable' : `${activity.distanceKm.toFixed(1)} km`;
 }
 
 /** Whole-day difference between a checked date and "now", in the Vancouver day frame. */

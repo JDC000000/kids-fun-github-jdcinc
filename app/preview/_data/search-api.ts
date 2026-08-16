@@ -74,8 +74,6 @@ export interface SearchResponseDto {
   meta: { fixtureBacked: boolean; sort: string; backend?: 'fixture' | 'database'; fallbackReason?: string };
 }
 
-const EAST_VAN = { lat: 49.26, lng: -123.07 };
-
 export function searchApiUrl(): string {
   const params = new URLSearchParams({
     q: '',
@@ -104,7 +102,18 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
   const l = item.listing;
   const startIso = l.startDatetimeUtc ?? new Date().toISOString();
   const endIso = l.endDatetimeUtc ?? l.startDatetimeUtc ?? startIso;
-  const distanceKm = item.distanceKm ?? (l.geo ? distance(EAST_VAN, l.geo) : 0);
+  // THE ENGINE'S ANSWER, PASSED THROUGH — never a stand-in for it.
+  //
+  // `item.distanceKm` is null exactly when nothing honest can be measured: no origin (the
+  // parent gave no near-me coordinates and has no saved location — the DEFAULT for an
+  // anonymous search) or an un-geocoded venue. lib/search/rank.ts already draws that line.
+  //
+  // This line used to fill the null in: `?? (l.geo ? distance(EAST_VAN, l.geo) : 0)` measured
+  // from a hardcoded Clark & Broadway coordinate, and fell back to a flat 0 when even the
+  // venue had no geo. Both were fabrications rendered with full confidence — "2.1 km", "0.0 km"
+  // — on every card and detail page, for every parent, wherever they actually live. A distance
+  // is only true relative to an origin we were given, so with no origin there is no number.
+  const distanceKm = item.distanceKm;
   const tags = new Set([...(l.suitabilityTags ?? []), ...(l.categoryTags ?? [])]);
   const sourceUrl = l.sourceUrl ?? '#';
   const slotCount = item.slots?.length ?? 1;
@@ -137,7 +146,10 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     activityName: l.activityName,
     venue: l.venueName,
     area: labelArea(l),
-    driveMinutes: Math.max(4, Math.round(distanceKm * 4)),
+    // Derived from the distance, so it inherits the distance's honesty: no measured distance,
+    // no drive time. (The 15 km/h constant behind `km * 4` is crude, but it is at least crude
+    // about a real number.)
+    driveMinutes: distanceKm == null ? null : Math.max(4, Math.round(distanceKm * 4)),
     distanceKm,
     category: mapCategory(l.primaryCategoryKey),
     ageMin: monthsToMinYears(l.ageMinMonths),
@@ -284,16 +296,7 @@ function hostLabel(url: string): string {
   }
 }
 
-function distance(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  const R = 6371;
-  const dLat = rad(b.lat - a.lat);
-  const dLng = rad(b.lng - a.lng);
-  const lat1 = rad(a.lat);
-  const lat2 = rad(b.lat);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
-
-function rad(deg: number): number {
-  return (deg * Math.PI) / 180;
-}
+// The local haversine that used to live here is GONE with its only caller. Distance is measured
+// once, by the engine, against an origin the parent actually supplied (lib/geo/radius.ts —
+// `distanceKm`/`distanceFromOrigin`); this mapper's job is to carry that answer, including when
+// the answer is "we don't know". A second implementation here only ever existed to invent one.

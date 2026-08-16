@@ -9,20 +9,36 @@ import {
 } from '../app/preview/_data/filter';
 import { statusMeta } from '../app/preview/_data/format';
 import type { FilterState } from '../app/preview/_data/filter';
+import type { Activity } from '../app/preview/_data/types';
 
 const withFilters = (patch: Partial<FilterState>): FilterState => ({ ...DEFAULT_FILTERS, ...patch });
+
+/** A card the search could measure no distance for — the DEFAULT state when no origin was given. */
+const NO_DISTANCE: Activity = { ...ACTIVITIES[0], id: 'no-distance', distanceKm: null, driveMinutes: null };
+
+/** Nulls-last ordering key: an unmeasured distance is never "closest". */
+const distanceKey = (a: Activity): number => a.distanceKm ?? Number.POSITIVE_INFINITY;
 
 describe('applyFilters', () => {
   it('defaults to a 20 km radius and drops farther listings', () => {
     const results = applyFilters(ACTIVITIES, DEFAULT_FILTERS);
-    expect(results.every((a) => a.distanceKm <= 20)).toBe(true);
-    expect(results.some((a) => a.distanceKm > 20)).toBe(false);
+    expect(results.every((a) => a.distanceKm == null || a.distanceKm <= 20)).toBe(true);
+    expect(results.some((a) => a.distanceKm != null && a.distanceKm > 20)).toBe(false);
   });
 
   it('tightens to 5 km', () => {
     const results = applyFilters(ACTIVITIES, withFilters({ radiusKm: 5 }));
-    expect(results.every((a) => a.distanceKm <= 5)).toBe(true);
+    expect(results.every((a) => a.distanceKm == null || a.distanceKm <= 5)).toBe(true);
     expect(results.length).toBeGreaterThan(0);
+  });
+
+  it('keeps a card whose distance is unknown, at every radius', () => {
+    // "We could not measure this" is not evidence that it is far. Excluding unknowns would
+    // empty the list on any search with no origin, which is the common case.
+    for (const radiusKm of [5, 10, 20] as const) {
+      const results = applyFilters([...ACTIVITIES, NO_DISTANCE], withFilters({ radiusKm }));
+      expect(results.map((a) => a.id)).toContain('no-distance');
+    }
   });
 
   it('bookable-now only returns bookable_now listings', () => {
@@ -60,7 +76,14 @@ describe('sortActivities', () => {
   it('orders by distance ascending', () => {
     const sorted = sortActivities(ACTIVITIES, 'distance');
     for (let i = 1; i < sorted.length; i += 1) {
-      expect(sorted[i].distanceKm).toBeGreaterThanOrEqual(sorted[i - 1].distanceKm);
+      expect(distanceKey(sorted[i])).toBeGreaterThanOrEqual(distanceKey(sorted[i - 1]));
+    }
+  });
+
+  it('sorts an unknown distance LAST, never first — under "distance" and "best match" alike', () => {
+    for (const key of ['distance', 'best_match'] as const) {
+      const sorted = sortActivities([NO_DISTANCE, ...ACTIVITIES], key);
+      expect(sorted[sorted.length - 1].id).toBe('no-distance');
     }
   });
 

@@ -2,6 +2,7 @@
 // Chips map to parent intent (UXR-03): Bookable now, Drop-in, Rainy-day, Free,
 // Indoors, Toddler, plus time-of-day and a travel radius.
 
+import { nullsLast } from '@/lib/search/sort';
 import { statusMeta } from './format';
 import type { Activity, TimeOfDay } from './types';
 
@@ -51,7 +52,12 @@ export const RADIUS_OPTIONS: FilterState['radiusKm'][] = [5, 10, 20];
 /** AND across groups; a card must satisfy every active filter. */
 export function applyFilters(activities: Activity[], state: FilterState): Activity[] {
   return activities.filter((a) => {
-    if (a.distanceKm > state.radiusKm) return false;
+    // A radius can only exclude a card whose distance we actually measured. With no origin
+    // there is no distance for ANY card (distanceKm === null), so a null-excluding radius
+    // would empty the list on a default browse — and "we don't know how far this is" is not
+    // evidence that it is far. Mirrors the server-side rule, which applies the radius only
+    // when an origin exists (lib/search/filters/predicate.ts: `if (origin && !withinRadius…)`).
+    if (a.distanceKm != null && a.distanceKm > state.radiusKm) return false;
     if (state.bookableNow && a.booking !== 'bookable_now') return false;
     if (state.dropIn && a.booking !== 'drop_in' && !a.dropIn) return false;
     if (state.rainyDay && !a.rainyDay) return false;
@@ -99,6 +105,17 @@ export const SORT_OPTIONS: { key: SortKey; label: string; sentence: string }[] =
   { key: 'recently_checked', label: 'Recently checked', sentence: 'most recently verified first' },
 ];
 
+/**
+ * Distance comparator: nearest first, unknown distance LAST — never first.
+ *
+ * Same rule the engine's own distance sort uses (lib/search/sort.ts), shared rather than
+ * restated so "Closest" cannot mean two different things on two surfaces. Returns 0 for a
+ * pair that is equally unknown, leaving the caller's tiebreak in charge.
+ */
+function byDistance(a: Activity, b: Activity): number {
+  return nullsLast(a.distanceKm, b.distanceKm) ?? a.distanceKm! - b.distanceKm!;
+}
+
 /** Effective cost for ordering: free = 0, unknown sorts last. */
 function effectiveCost(a: Activity): number {
   if (a.costStatus === 'free') return 0;
@@ -112,7 +129,7 @@ export function sortActivities(activities: Activity[], key: SortKey): Activity[]
   copy.sort((a, b) => {
     switch (key) {
       case 'distance':
-        return a.distanceKm - b.distanceKm;
+        return byDistance(a, b);
       case 'soonest':
         return a.startIso.localeCompare(b.startIso);
       case 'lowest_cost':
@@ -121,7 +138,7 @@ export function sortActivities(activities: Activity[], key: SortKey): Activity[]
         return b.lastCheckedIso.localeCompare(a.lastCheckedIso);
       case 'best_match':
       default:
-        return a.distanceKm - b.distanceKm || a.startIso.localeCompare(b.startIso);
+        return byDistance(a, b) || a.startIso.localeCompare(b.startIso);
     }
   });
   return copy;
