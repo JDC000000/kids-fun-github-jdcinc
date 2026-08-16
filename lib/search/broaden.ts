@@ -121,13 +121,28 @@ export function widenDateIntent(date: DateIntent, days: number = ADJACENT_DATE_D
  * instead. What changes is that it can no longer do it silently: the rung is disclosed by the
  * /search broadening notice like every other rung that fired.
  *
- * `ageBands` USED TO BE THE LAST ENTRY and no longer is. It is not a boolean — it is an
- * ordered scale with a middle ground — and relaxing it here meant `ageBands: []`, handing a
- * parent filtering for an under-2 the whole catalogue including teen programming. It now has
- * its own bounded `adjacent_age` rung (filters/age.ts adjacentAgeBands), so the ladder can
- * never empty an age selection again.
+ * TWO CONSTRAINTS WERE REMOVED FROM THIS LIST, for different reasons.
+ *
+ * `ageBands` is not a boolean at all — it is an ordered scale with a middle ground — and
+ * relaxing it here meant `ageBands: []`, handing a parent filtering for an under-2 the whole
+ * catalogue including teen programming. It now has its own bounded `adjacent_age` rung
+ * (filters/age.ts adjacentAgeBands), so the ladder can never empty an age selection again.
+ *
+ * `costFree` IS a boolean, and it is still not droppable, because what it constrains is
+ * different in kind. Measured on production 2026-08-16: `?q=free&region=bby` returned two
+ * confirmed $21.25 hockey sessions with `context.costFree: false`, while the same query with
+ * `minResults=0` — broadening declined — returned NOTHING. The honest answer was "there is
+ * nothing free in Burnaby"; this rung turned it into an invoice. The other three chips are
+ * conveniences, and dropping one still shows a parent something they can do. A parent
+ * filtering for free may be unable to pay, so relaxing cost does not widen their search, it
+ * discards the only part of it that was binding. Nothing here may bill a parent who asked for
+ * free — the ladder pads a thin answer, and a price is not padding.
+ *
+ * This does NOT touch Jon's unknown-cost ruling (filters/cost.ts): listings whose price the
+ * source never published stay visible under the Free filter, labelled honestly. That ruling is
+ * about a cost we DO NOT HOLD. $21.25 is a cost we hold, know, and print.
  */
-const CHIP_RESTRICTIVENESS: ConstraintKey[] = ['bookableNow', 'dropIn', 'rainyDay', 'costFree'];
+const CHIP_RESTRICTIVENESS: ConstraintKey[] = ['bookableNow', 'dropIn', 'rainyDay'];
 
 /** Which constraints are actually active (present) in this context. */
 export function activeConstraints(ctx: SearchContext): ConstraintKey[] {

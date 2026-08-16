@@ -164,19 +164,19 @@ describe('broaden: age is widened to neighbouring bands, never emptied', () => {
   });
 
   it('age is no longer droppable by the chip rung — it has its own bounded rung instead', () => {
-    const ctx = { ...ctxWithDate(null), ageBands: ['under2' as const], costFree: true };
+    const ctx = { ...ctxWithDate(null), ageBands: ['under2' as const], dropIn: true };
     const rungs = buildBroadeningLadder(ctx);
-    // The chip rung fires (Free is a boolean and a drop is its only relaxation)...
+    // The chip rung fires (Drop-in is a boolean and a drop is its only relaxation)...
     const chip = rungs.find((r) => r.key === 'drop_chip')!;
-    expect(chip.constraint).toBe('costFree');
-    expect(chip.context.costFree).toBe(false);
+    expect(chip.constraint).toBe('dropIn');
+    expect(chip.context.dropIn).toBe(false);
     // ...and it took the boolean, not the age scale.
     expect(chip.context.ageBands).toEqual(['under2', '2-4']);
   });
 });
 
 describe('broaden: the chip rung still drops, but names what it dropped', () => {
-  it.each(['bookableNow', 'dropIn', 'rainyDay', 'costFree'] as const)(
+  it.each(['bookableNow', 'dropIn', 'rainyDay'] as const)(
     'carries the constraint key so a notice cannot misname it: %s',
     (chipKey) => {
       const rung = buildBroadeningLadder({ ...ctxWithDate(null), [chipKey]: true }).find((r) => r.key === 'drop_chip');
@@ -185,6 +185,25 @@ describe('broaden: the chip rung still drops, but names what it dropped', () => 
       expect(rung!.context[chipKey]).toBe(false);
     },
   );
+
+  it('DECISIVE: costFree is NOT in the rung — the ladder may not bill a parent who asked for free', () => {
+    // Deliberately changed from the earlier revision of this file, which asserted costFree WAS
+    // droppable. See tests/search/broaden-never-drops-free.test.ts for the production case
+    // ($21.25 hockey returned under `?q=free&region=bby`) that made that the wrong behaviour.
+    const rungs = buildBroadeningLadder({ ...ctxWithDate(null), costFree: true });
+    expect(rungs.some((r) => r.key === 'drop_chip')).toBe(false);
+    for (const rung of rungs) {
+      expect(rung.context.costFree, `rung ${rung.key} dropped the Free filter`).toBe(true);
+    }
+  });
+
+  it('drops only the ONE most-restrictive chip, leaving Free untouched beside it', () => {
+    const rungs = buildBroadeningLadder({ ...ctxWithDate(null), bookableNow: true, dropIn: true, costFree: true });
+    const chip = rungs.find((r) => r.key === 'drop_chip')!;
+    expect(chip.constraint).toBe('bookableNow');
+    expect(chip.context.dropIn).toBe(true); // only one chip per rung, as before
+    expect(chip.context.costFree).toBe(true); // and never this one
+  });
 });
 
 describe('engine: a thin dated search widens honestly instead of going unfiltered', () => {
