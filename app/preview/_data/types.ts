@@ -92,8 +92,17 @@ export interface Activity {
   driveMinutes: number | null;
   distanceKm: number | null;
   category: Category;
-  ageMin: number;
-  ageMax: number;
+  /**
+   * Whole-year age bounds, or null where the source stated none.
+   *
+   * NULLABLE ON PURPOSE (P0 "age data corrupted", 2026-08-16). These used to be plain numbers
+   * with a 0/18 fallback baked into the DTO mapper, so a listing whose source never mentioned
+   * an age was indistinguishable from one explicitly open to everyone — and rendered as
+   * "All ages" either way. `ageMax: null` with a non-null `ageMin` still means open-ended
+   * ("5 and up"); BOTH null means unknown, and `formatAges` says so in words.
+   */
+  ageMin: number | null;
+  ageMax: number | null;
   startIso: string; // America/Vancouver, explicit offset
   endIso: string;
   timeOfDay: TimeOfDay;

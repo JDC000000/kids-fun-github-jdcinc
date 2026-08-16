@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  AGE_NOT_STATED,
   ageGuide,
   bookingTag,
   confidenceMeta,
@@ -30,6 +31,21 @@ describe('formatAges', () => {
     expect(formatAges(0, 99)).toBe('All ages');
     expect(formatAges(16, 99)).toBe('Ages 16+');
   });
+
+  // P0 — absent data must render as absent, never as a permissive default. A missing age used
+  // to arrive here as an invented (0, 18) and print "All ages"; 41 of 100 listings sampled from
+  // the live API on 2026-08-16 held null bounds and every one of them said so to parents.
+  it('says the source stated nothing, rather than claiming "All ages"', () => {
+    expect(formatAges(null, null)).toBe(AGE_NOT_STATED);
+    expect(formatAges(null, null)).not.toBe('All ages');
+  });
+
+  it('still says "All ages" when the source genuinely did — open-ended is not unknown', () => {
+    // (0, null) is a source that stated a floor of zero and no ceiling: a real all-ages claim.
+    // Only BOTH bounds missing means unknown, which is what keeps the legitimate case working.
+    expect(formatAges(0, null)).toBe('All ages');
+    expect(formatAges(5, null)).toBe('Ages 5+');
+  });
 });
 
 describe('ageGuide', () => {
@@ -54,6 +70,17 @@ describe('ageGuide', () => {
     const g = ageGuide(5, 12); // school-age kids + tweens
     expect(g.band).toBe('School-age kids to tweens');
     expect(g.siblingFit).toContain('two age groups');
+  });
+  it('offers no band and no sibling read when the source stated no age', () => {
+    // The old (0, 18) fallback reached this function and answered "Babies to teens · Wide age
+    // range — one outing that can work for siblings of different ages" about a listing whose
+    // source never mentioned age at all.
+    const g = ageGuide(null, null);
+    expect(g.range).toBe(AGE_NOT_STATED);
+    expect(g.band).toBe('Not stated');
+    expect(g.band).not.toContain('Babies');
+    expect(g.siblingFit).toContain("doesn't state who this is for");
+    expect(g.unspecified).toBe(true);
   });
 });
 
@@ -316,6 +343,12 @@ describe('search API mapping', () => {
     expect(activity.distanceKm).toBeNull();
     expect(activity.driveMinutes).toBeNull();
     expect(activity.ageNotes).toBeUndefined(); // absent when the source has none
+
+    // P0 — null months must reach the card as null, not as the invented 0/18 that made every
+    // age-less listing read "All ages". This is the DTO boundary where that claim was minted.
+    expect(activity.ageMin).toBeNull();
+    expect(activity.ageMax).toBeNull();
+    expect(formatAges(activity.ageMin, activity.ageMax)).toBe(AGE_NOT_STATED);
   });
 
   it('surfaces source-authored age_notes verbatim when present', () => {

@@ -7,6 +7,20 @@
 // Geo layout vs an East-Van origin (49.26,-123.07) with a 10km radius:
 //   van / van-east / van-westside / North Van / Burnaby  → within 10km
 //   Richmond                                             → outside 10km (~11km)
+//
+// AGE BOUNDS ARE STATED, NOT IMPLIED (added 2026-08-16 with the P0 age fix). Every listing
+// here used to declare `ageBandMatches` and NOTHING ELSE, leaving `ageMinMonths`/`ageMaxMonths`
+// at the factory's null default — a state the real pipeline never produces, because
+// worker/core/age.ts derives the bands FROM the bounds and writes the two together or not at
+// all. The gap was invisible while app/preview/_data/search-api.ts silently substituted 0–18
+// for a null, which is exactly the fabrication that P0 removed.
+//
+// It was not harmless. KPI #5 "card completeness" (evals/scenarios/kpi-launch-gate.test.ts)
+// requires `ageMin != null && ageMax != null` and reported 100% MET over this catalogue — on
+// 16 of 16 listings that carried no age data whatsoever. The KPI was measuring the substitution
+// rather than the data. Each bound below is derived from that listing's own declared bands
+// (lowest band's lower bound → highest band's upper bound, null when the set reaches 15+), so
+// the pair round-trips exactly back through computeAgeBandMatches to the bands already stated.
 
 import type { ListingRecord } from '../types';
 import { makeListing } from './factory';
@@ -41,6 +55,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official_recent',
     lastCheckedAtUtc: '2026-07-12T00:00:00Z',
     ageBandMatches: ['under2', '2-4', '5-9'],
+    ageMinMonths: 0,
+    ageMaxMonths: 120,
     geo: P.eastVan,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanEast,
@@ -68,6 +84,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-11T00:00:00Z',
     ageBandMatches: ['2-4', '5-9'],
+    ageMinMonths: 24,
+    ageMaxMonths: 120,
     geo: P.northVan,
     municipalityId: REGION_IDS.northVan,
   }),
@@ -88,6 +106,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-10T00:00:00Z',
     ageBandMatches: ['under2', '2-4'],
+    ageMinMonths: 0,
+    ageMaxMonths: 60,
     geo: P.burnaby,
     municipalityId: REGION_IDS.burnaby,
   }),
@@ -105,6 +125,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'stale',
     lastCheckedAtUtc: '2026-06-01T00:00:00Z',
     ageBandMatches: ['5-9'],
+    ageMinMonths: 60,
+    ageMaxMonths: 120,
     geo: P.eastVan,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanEast,
@@ -126,6 +148,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official_recent',
     lastCheckedAtUtc: '2026-07-12T00:00:00Z',
     ageBandMatches: ['5-9'],
+    ageMinMonths: 60,
+    ageMaxMonths: 120,
     geo: P.eastVan,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanEast,
@@ -145,6 +169,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'stale',
     lastCheckedAtUtc: '2026-07-12T00:00:00Z',
     ageBandMatches: ['5-9'],
+    ageMinMonths: 60,
+    ageMaxMonths: 120,
     geo: P.eastVan,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanEast,
@@ -167,6 +193,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official_recent',
     lastCheckedAtUtc: '2026-07-12T00:00:00Z',
     ageBandMatches: ['under2', '2-4', '5-9', '10-14', '15+'],
+    ageMinMonths: 0,
+    ageMaxMonths: null,
     geo: P.westSide,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanWestSide,
@@ -188,6 +216,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-09T00:00:00Z',
     ageBandMatches: ['5-9', '10-14', '15+'],
+    ageMinMonths: 60,
+    ageMaxMonths: null,
     geo: P.northVan,
     municipalityId: REGION_IDS.northVan,
   }),
@@ -208,6 +238,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-08T00:00:00Z',
     ageBandMatches: ['2-4', '5-9', '10-14', '15+'],
+    ageMinMonths: 24,
+    ageMaxMonths: null,
     geo: P.richmond,
     municipalityId: REGION_IDS.richmond,
   }),
@@ -227,6 +259,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-12T00:00:00Z',
     ageBandMatches: ['under2', '2-4'],
+    ageMinMonths: 0,
+    ageMaxMonths: 60,
     geo: P.westSide,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanWestSide,
@@ -244,6 +278,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'editorial',
     lastCheckedAtUtc: '2026-07-05T00:00:00Z',
     ageBandMatches: ['under2', '2-4', '5-9'],
+    ageMinMonths: 0,
+    ageMaxMonths: 120,
     geo: P.eastVan,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanEast,
@@ -266,6 +302,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-11T00:00:00Z',
     ageBandMatches: ['under2', '2-4', '5-9'],
+    ageMinMonths: 0,
+    ageMaxMonths: 120,
     geo: P.burnaby,
     municipalityId: REGION_IDS.burnaby,
   }),
@@ -287,6 +325,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-10T00:00:00Z',
     ageBandMatches: ['under2', '2-4', '5-9', '10-14', '15+'],
+    ageMinMonths: 0,
+    ageMaxMonths: null,
     geo: P.stanleyPark,
     municipalityId: REGION_IDS.vancouver,
   }),
@@ -308,6 +348,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official_recent',
     lastCheckedAtUtc: '2026-07-12T00:00:00Z',
     ageBandMatches: ['under2', '2-4', '5-9', '10-14', '15+'],
+    ageMinMonths: 0,
+    ageMaxMonths: null,
     geo: P.stanleyPark,
     municipalityId: REGION_IDS.vancouver,
   }),
@@ -325,6 +367,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'inferred',
     lastCheckedAtUtc: '2026-05-01T00:00:00Z',
     ageBandMatches: ['2-4', '5-9', '10-14', '15+'],
+    ageMinMonths: 24,
+    ageMaxMonths: null,
     geo: P.northShoreMtn,
     municipalityId: REGION_IDS.northVan,
   }),
@@ -343,6 +387,8 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-12T00:00:00Z',
     ageBandMatches: ['under2', '2-4', '5-9'],
+    ageMinMonths: 0,
+    ageMaxMonths: 120,
     geo: P.eastVan,
     municipalityId: REGION_IDS.vancouver,
     displayArea: REGION_IDS.vanEast,

@@ -63,7 +63,11 @@ export function applyFilters(activities: Activity[], state: FilterState): Activi
     if (state.rainyDay && !a.rainyDay) return false;
     if (state.free && a.costStatus !== 'free') return false;
     if (state.indoors && !a.indoor) return false;
-    if (state.toddler && a.ageMin > 3) return false;
+    // `ageMin === null` is "the source stated no age", not "age 0" — so it is not a POSITIVE
+    // toddler match, but it is not grounds for hiding either. Same rule the search-side band
+    // filter applies (lib/search/filters/age.ts: empty matches → don't hide): we only ever
+    // exclude on an age the source actually gave us.
+    if (state.toddler && a.ageMin !== null && a.ageMin > 3) return false;
     if (state.timeOfDay !== 'any' && a.timeOfDay !== state.timeOfDay) return false;
     return true;
   });

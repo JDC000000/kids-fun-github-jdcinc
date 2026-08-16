@@ -39,14 +39,43 @@ function formatClock(d: Date): string {
   return minute === '00' ? `${hour} ${meridiem}` : `${hour}:${minute} ${meridiem}`;
 }
 
-/** "Ages 5–9", "Under 6", "Ages 16+", or "All ages" for open-ended bands. */
-export function formatAges(min: number, max: number): string {
-  const allAges = max >= 18; // no meaningful upper kids-band bound past this
-  if (min <= 0 && allAges) return 'All ages';
-  if (allAges) return `Ages ${min}+`;
-  if (min <= 0) return `Under ${max + 1}`;
-  if (min === max) return `Age ${min}`;
-  return `Ages ${min}–${max}`;
+/**
+ * The words for a listing whose source never stated an age. NOT "All ages" — see formatAges.
+ * One constant so the card, the detail stat row, the "Who it's for" panel and the share
+ * meta-description cannot drift into three different phrasings of the same absence.
+ */
+export const AGE_NOT_STATED = 'Age not stated by source';
+
+/**
+ * "Ages 5–9", "Under 6", "Ages 16+", "All ages", or — when the source stated nothing —
+ * "Age not stated by source".
+ *
+ * WHY THE LAST CASE EXISTS, AND WHY IT IS NOT "All ages". A missing age used to reach this
+ * function as the concrete pair (0, 18) — a fallback invented one layer up in search-api.ts —
+ * and fell straight into the "All ages" arm. Measured on the live API 2026-08-16: 41 of 100
+ * sampled listings held null bounds and every one of them told parents "All ages". That is a
+ * permissive claim manufactured out of silence, and it is the reason the age facet read as
+ * inert: a parent filtering for a two-year-old saw lane swim, adult programmes and
+ * "Sauna and Whirlpool Only" all wearing the same reassuring label.
+ *
+ * Absent data must render as absent. The listing is still SHOWN under every age filter — an
+ * honestly-unknown age is not grounds for hiding a listing (lib/search/filters/age.ts's
+ * "empty → don't hide" rule is deliberate and stays) — it is simply no longer allowed to claim
+ * it suits everybody.
+ *
+ * A `max` of null means OPEN-ENDED when `min` is known, and unknown only when `min` is null
+ * too, so a source that genuinely does say "all ages" (min 0, no upper bound) keeps saying so.
+ */
+export function formatAges(min: number | null, max: number | null): string {
+  if (min === null && max === null) return AGE_NOT_STATED;
+  const lower = min ?? 0;
+  // null = the source set no ceiling; 18+ = past any meaningful kids-band bound.
+  const openEnded = max === null || max >= 18;
+  if (lower <= 0 && openEnded) return 'All ages';
+  if (openEnded) return `Ages ${lower}+`;
+  if (lower <= 0) return `Under ${max! + 1}`;
+  if (lower === max) return `Age ${lower}`;
+  return `Ages ${lower}–${max}`;
 }
 
 /** The card's one not-a-number cost read. Unknown cost gets THIS, never a price and never "Free". */
@@ -362,12 +391,28 @@ function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export function ageGuide(min: number, max: number): AgeGuide {
+export function ageGuide(min: number | null, max: number | null): AgeGuide {
   const range = formatAges(min, max);
-  const unspecified = min <= 0 && max >= 15; // source gave no meaningful narrower bound
 
-  const lo = bandIndex(Math.max(0, min));
-  const hi = bandIndex(max);
+  // Nothing to map onto a band, and nothing honest to say about siblings. The old code
+  // reached here with the invented (0, 18) and confidently answered "Babies to teens · Wide
+  // age range — one outing that can work for siblings of different ages" about a listing whose
+  // source never mentioned age at all.
+  if (min === null && max === null) {
+    return {
+      range,
+      band: 'Not stated',
+      siblingFit: "The source doesn't state who this is for — check the official listing before you go.",
+      unspecified: true,
+    };
+  }
+
+  const lower = min ?? 0;
+  const upper = max ?? 18; // open-ended: treat as reaching the top band for the span read
+  const unspecified = lower <= 0 && upper >= 15; // source gave no meaningful narrower bound
+
+  const lo = bandIndex(Math.max(0, lower));
+  const hi = bandIndex(upper);
   const spanned = hi - lo + 1;
   const band =
     lo === hi ? capitalise(AGE_BANDS[lo].label) : `${capitalise(AGE_BANDS[lo].label)} to ${AGE_BANDS[hi].label}`;

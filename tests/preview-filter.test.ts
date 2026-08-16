@@ -47,9 +47,9 @@ describe('applyFilters', () => {
     expect(results.every((a) => a.booking === 'bookable_now')).toBe(true);
   });
 
-  it('toddler only returns bands that reach age 3 or under', () => {
+  it('toddler only returns bands that reach age 3 or under (or state no age at all)', () => {
     const results = applyFilters(ACTIVITIES, withFilters({ toddler: true }));
-    expect(results.every((a) => a.ageMin <= 3)).toBe(true);
+    expect(results.every((a) => a.ageMin === null || a.ageMin <= 3)).toBe(true);
   });
 
   it('rainy-day only returns rainy-day-friendly listings', () => {

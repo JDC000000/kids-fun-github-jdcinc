@@ -54,7 +54,21 @@ function finding(n: number, status: KpiStatus, actual: string, note: string): La
   return { number: kpi.number, key: kpi.key, name: kpi.name, target: kpi.target, status, actual, note };
 }
 
-/** Every required parent-facing fact present on a mapped card (KPI #5 data-level completeness). */
+/**
+ * Every required parent-facing fact present on a mapped card (KPI #5 data-level completeness).
+ *
+ * THE AGE CHECK IS `ageMin != null || ageMax != null`, NOT `&&`, and the change is a
+ * correction rather than a relaxation. Until the P0 age fix, `ageMax` was never null: a
+ * listing with no age at all was substituted to 0–18 one layer up in search-api.ts, so this
+ * predicate answered "complete" for every card in the catalogue — including, as it turned out,
+ * all 16 fixture listings, none of which carried any age data. The KPI was measuring the
+ * substitution.
+ *
+ * With the substitution gone, `ageMax === null` carries two meanings and only one of them is
+ * an absence: on its own it means OPEN-ENDED ("5 and up", "all ages"), which is a complete
+ * fact a parent can act on. BOTH bounds null is the real incomplete case — the source said
+ * nothing — and that is what this now catches, for the first time.
+ */
 function cardComplete(a: Activity): boolean {
   return (
     !!a.activityName &&
@@ -62,8 +76,7 @@ function cardComplete(a: Activity): boolean {
     !!a.area &&
     !!a.startIso &&
     !!a.endIso &&
-    a.ageMin != null &&
-    a.ageMax != null &&
+    (a.ageMin != null || a.ageMax != null) &&
     !!a.costStatus &&
     !!a.status &&
     !!a.sourceName &&

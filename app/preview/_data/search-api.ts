@@ -285,13 +285,34 @@ function mapConfidence(confidence: string): ConfidenceLabel {
   return 'candidate';
 }
 
-function monthsToMinYears(months: number | null): number {
-  if (months == null) return 0;
+/**
+ * Months → whole years for display, PRESERVING the difference between "the source told us
+ * nothing" and "the source said no upper bound".
+ *
+ * THE FABRICATED RANGE THAT USED TO LIVE HERE. `monthsToMinYears` returned 0 and
+ * `monthsToMaxYears` returned 18 for a null, so an occurrence_age row of (null, null) — which
+ * worker/core/age.ts writes, correctly and deliberately, for wording it could not resolve —
+ * arrived at the card as the concrete range 0–18 and rendered as **"All ages"**. Measured
+ * 2026-08-16 against the live API: of 100 sampled listings, 41 held (null, null) and every one
+ * of them was published to parents as "All ages".
+ *
+ * That is the single most misleading string the product can put on a listing it knows nothing
+ * about, and it is not what the data said. The data was honest; this boundary invented a claim
+ * for it. Nulls now pass through as nulls and `formatAges` states the absence in words.
+ *
+ * NOTE THE ASYMMETRY, which is the reason these are two functions and not one. A null MINIMUM
+ * only ever means unknown. A null MAXIMUM means unknown when the minimum is also null, and
+ * OPEN-ENDED ("5 and up", "all ages") when it is not — a distinction the old sentinel 18
+ * flattened away and that `formatAges` needs in order to keep saying "All ages" for the 24
+ * sampled listings whose sources genuinely do say so.
+ */
+function monthsToMinYears(months: number | null): number | null {
+  if (months == null) return null;
   return Math.max(0, Math.floor(months / 12));
 }
 
-function monthsToMaxYears(months: number | null): number {
-  if (months == null) return 18;
+function monthsToMaxYears(months: number | null): number | null {
+  if (months == null) return null;
   return Math.max(0, Math.floor(Math.max(0, months - 1) / 12));
 }
 
