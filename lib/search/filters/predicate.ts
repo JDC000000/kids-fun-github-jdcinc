@@ -72,13 +72,34 @@ export function passesAllFilters(
   // Age (orthogonal).
   if (!matchesAge(listing, ctx.ageBands)) return false;
 
+  // COST APPLIES IN BOTH MODES, and this is the one constraint in the block below that used
+  // to be here by accident rather than by argument.
+  //
+  // The expected section relaxes exactly the dimensions that are UNKNOWABLE for a listing that
+  // has not been posted yet: its date, its time of day, and whether it is bookable/drop-in
+  // right now. A `seasonal_preseason` swim session has no published schedule — that is what
+  // puts it in this section — so filtering it on the parent's date would empty the section by
+  // construction. Cost is not that kind of dimension. A preseason listing carries the same
+  // costStatus/costMinCad the card will print, and every other non-temporal attribute (region,
+  // radius, age) is already enforced in both modes for precisely this reason.
+  //
+  // Leaving cost out meant a known-priced $85 seasonal row was returned under `q=free` with
+  // `costFree: true` and no notice — the exact substitution the chip-drop rung was narrowed to
+  // prevent (see broaden.ts CHIP_RESTRICTIVENESS), arriving through the section next door.
+  //
+  // This does NOT narrow the section in the ordinary case: matchesCost's free branch admits
+  // unknown/check_source (Jon's unknown-cost ruling, filters/cost.ts), and an unpublished price
+  // is the common shape here. Only a KNOWN, non-zero price is excluded — the one thing the Free
+  // filter exists to prevent.
+  if (!matchesCost(listing, { free: ctx.costFree })) return false;
+
   if (mode === 'primary') {
-    // Strict temporal + cost + status chips for the primary list.
+    // Strict temporal + status chips for the primary list. Deliberately NOT applied to the
+    // expected section: a not-yet-posted listing has no date, no time of day, and cannot be
+    // `bookable_open` (that status is primary-class), so any of these would empty the section
+    // rather than filter it.
     if (!matchesDate(listing, ctx.date)) return false;
     if (!matchesTimeOfDay(listing, ctx.timeOfDay, { includeAdjacent: ctx.timeOfDayAdjacent })) return false;
-    if (!matchesCost(listing, { free: ctx.costFree })) {
-      return false;
-    }
     if (!matchesStatus(listing, { bookableNow: ctx.bookableNow, rainyDay: ctx.rainyDay, dropIn: ctx.dropIn })) {
       return false;
     }

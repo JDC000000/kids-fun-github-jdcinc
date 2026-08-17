@@ -430,6 +430,22 @@ export default async function SearchPage({
             </p>
           )}
 
+          {/* WHICH constraint is narrowing the search — also outside the results branch, and
+              for a sharper version of the same reason. This used to render ONLY inside the
+              `total === 0` arm, but `total` counts the expected/seasonal section too, so a
+              query whose CONFIRMED results were emptied by a filter went entirely unexplained
+              the moment the expected section had anything in it: /search?free=1&region=nvan
+              returned a full explanation in the API payload and rendered a page of expected
+              cards with no reason given. The engine already gates this — `emptyState` is
+              non-null only when the primary run came back empty or thin — so rendering it
+              whenever it exists is the correct condition, and the message states the real
+              count ("No exact matches" / "Only 2 exact matches") rather than assuming zero. */}
+          {emptyExplain && (
+            <p className="kf-browse__empty-explain" role="status">
+              {emptyExplain}
+            </p>
+          )}
+
           <div className="kf-results">
         {!result.ok ? (
           <div className="kf-empty" role="alert">
@@ -455,7 +471,8 @@ export default async function SearchPage({
               Schedules around Metro Vancouver usually post 2–4 weeks ahead. Try a broader word (like “swim” or
               “gym”), or clear your search to browse everything on.
             </p>
-            {emptyExplain && <p className="kf-browse__empty-explain">{emptyExplain}</p>}
+            {/* The constraint explanation is NOT repeated here — it now renders above the
+                results branch, so it survives a page that the expected section filled. */}
             {clearableFilters && (
               <p className="kf-empty__body" style={{ margin: '10px 0 0' }}>
                 <Link className="kf-browse__clear" href={hrefFor(state, CLEARED_FILTERS)}>

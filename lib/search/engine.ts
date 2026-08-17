@@ -189,7 +189,30 @@ export class SearchEngine {
     // run came back genuinely EMPTY; broaden only when the caller asked for a minimum.
     const tooFew = run.scored.length < minResults;
     if (tooFew || run.scored.length === 0) {
-      emptyState = explainEmptyState(ctx0, (v) => primaryOf(v).scored.length);
+      // `baseline` is how many results the parent can see before any relaxation. It is
+      // `run.scored.length` and not 0 because this branch ALSO fires for a THIN set, not only
+      // an empty one, and "relaxing it shows N more" has to be an addition to what is already
+      // on screen — reporting the relaxed TOTAL there overstated the remedy by exactly the
+      // number of results the parent already had.
+      const explained = explainEmptyState(ctx0, (v) => primaryOf(v).scored.length, {
+        baseline: run.scored.length,
+        hasOrigin: origin != null,
+      });
+
+      // PUBLISH ONLY WHAT A PARENT CAN ACT ON. This block fires whenever the primary run is
+      // short of `minResults`, which for a caller with a large minimum (the browse page asks
+      // for 60) is the ORDINARY state of a perfectly good page — 14 results and nothing wrong.
+      // Consumers render this as "here is what is holding your search back", so emitting it
+      // when nothing is holding the search back turns a remedy into a complaint about a page
+      // that is working. Two cases are worth saying out loud, and no others:
+      //   • a genuinely EMPTY result set — always explain it, even if no single relaxation
+      //     helps ("nothing matches, and widening one filter will not change that" is the
+      //     honest answer to a blank page); and
+      //   • a thin set where some constraint would GENUINELY unlock more (`addsResults > 0`,
+      //     which is what leaves `blockingConstraint` non-null).
+      // Deciding it here rather than in each consumer means the digest, /account and /search
+      // cannot drift about when a search counts as needing an explanation.
+      emptyState = run.scored.length === 0 || explained.blockingConstraint != null ? explained : null;
     }
     if (tooFew) {
       for (const rung of buildBroadeningLadder(ctx0, { hasOrigin: origin != null })) {

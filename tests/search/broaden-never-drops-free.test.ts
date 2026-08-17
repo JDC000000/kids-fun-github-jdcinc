@@ -60,12 +60,36 @@ const PAID_HOCKEY = makeListing({
 });
 const PAID_HOCKEY_2 = makeListing({ ...PAID_HOCKEY, id: 'thin-hockey-2', seriesId: 'thin-hockey-2-series' });
 
+/**
+ * A known-priced row in the EXPECTED/seasonal class — the other door into the same defect.
+ *
+ * `allShown` below spans both sections precisely because a parent does not experience them as
+ * two products, and the assertions were written to cover both. But every catalogue in this file
+ * held only primary-class rows, so the expected-section half of every one of those assertions
+ * was vacuous — it ranged over an empty array and could not have failed. Seeding this row is
+ * what makes those assertions mean what they say.
+ *
+ * It is not a hypothetical shape: the expected section ran with cost filtering bypassed
+ * entirely (filters/predicate.ts gated matchesCost on `mode === 'primary'`), so this $85 row
+ * came back under `q=free` with `context.costFree: true`, in a section the page renders with no
+ * price-related caveat. Reverting that gate reddens the DECISIVE test below.
+ */
+const PAID_PRESEASON = makeListing({
+  id: 'thin-preseason',
+  activityName: 'Outdoor Pool Season Pass',
+  costStatus: 'known',
+  costMinCad: 85,
+  costMaxCad: 85,
+  statusState: 'seasonal_preseason',
+  startDatetimeUtc: '2026-07-13T20:00:00Z',
+});
+
 /** Every result a parent can see, primary list and expected section alike. */
 const allShown = (res: { results: { listing: ListingRecord }[]; expected: { listing: ListingRecord }[] }) =>
   [...res.results, ...res.expected].map((r) => r.listing);
 
 describe('broaden: a Free-filtered search is never answered with a priced activity', () => {
-  const engine = thinCatalogueEngine([PAID_HOCKEY, PAID_HOCKEY_2]);
+  const engine = thinCatalogueEngine([PAID_HOCKEY, PAID_HOCKEY_2, PAID_PRESEASON]);
 
   it('DECISIVE: the production case — thin scope, free intent, known-priced pool', () => {
     const res = engine.search({ q: 'free', now: FIXTURE_NOW, minResults: 3, limit: 100 });
@@ -121,6 +145,28 @@ describe('broaden: a Free-filtered search is never answered with a priced activi
     expect(shown).not.toContain('thin-hockey-1'); // known price: still excluded
   });
 
+  it('the unknown-cost ruling reaches the EXPECTED section too — cost filtering is not a purge', () => {
+    // Applying the Free filter to the expected section must exclude a KNOWN price and nothing
+    // else. An unpublished price is the section's ordinary shape (a listing is "expected"
+    // precisely because its details are not posted yet), so if this row vanished the fix would
+    // have emptied the section instead of filtering it.
+    const unknownPreseason = makeListing({
+      id: 'thin-preseason-unknown',
+      activityName: 'Wading Pool Summer Season',
+      costStatus: 'unknown',
+      statusState: 'seasonal_preseason',
+      startDatetimeUtc: '2026-07-13T20:00:00Z',
+    });
+    const res = thinCatalogueEngine([PAID_PRESEASON, unknownPreseason]).search({
+      q: 'free',
+      now: FIXTURE_NOW,
+      minResults: 3,
+      limit: 100,
+    });
+    expect(res.expected.map((r) => r.listing.id)).toEqual(['thin-preseason-unknown']);
+    expect(allShown(res).map((l) => l.id)).not.toContain('thin-preseason');
+  });
+
   it('a genuinely free listing is returned, so the filter is enforced and not merely empty', () => {
     const free = makeListing({
       id: 'thin-free',
@@ -128,7 +174,7 @@ describe('broaden: a Free-filtered search is never answered with a priced activi
       costStatus: 'free',
       startDatetimeUtc: '2026-07-13T20:00:00Z',
     });
-    const res = thinCatalogueEngine([PAID_HOCKEY, free]).search({
+    const res = thinCatalogueEngine([PAID_HOCKEY, PAID_PRESEASON, free]).search({
       q: 'free',
       now: FIXTURE_NOW,
       minResults: 3,
@@ -136,6 +182,7 @@ describe('broaden: a Free-filtered search is never answered with a priced activi
     });
     expect(allShown(res).map((l) => l.id)).toContain('thin-free');
     expect(allShown(res).map((l) => l.id)).not.toContain('thin-hockey-1');
+    expect(allShown(res).map((l) => l.id)).not.toContain('thin-preseason');
   });
 
   it('the OTHER chips are still droppable — this narrows the rung, it does not delete it', () => {

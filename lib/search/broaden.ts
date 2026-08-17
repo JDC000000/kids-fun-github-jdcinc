@@ -144,11 +144,25 @@ export function widenDateIntent(date: DateIntent, days: number = ADJACENT_DATE_D
  */
 const CHIP_RESTRICTIVENESS: ConstraintKey[] = ['bookableNow', 'dropIn', 'rainyDay'];
 
-/** Which constraints are actually active (present) in this context. */
-export function activeConstraints(ctx: SearchContext): ConstraintKey[] {
+/**
+ * Which constraints are actually active (present) in this context.
+ *
+ * `hasOrigin` defaults to true so existing callers are unchanged, exactly as
+ * `BroadeningOptions.hasOrigin` does — and for the same reason. A radius filters NOTHING
+ * without an origin to measure from (filters/predicate.ts only applies `withinRadius` when
+ * one resolved), so on an originless search `radiusKm < 20` describes a setting, not a
+ * constraint.
+ *
+ * THIS IS THE SIBLING HALF OF A FIX THAT ONLY LANDED ON ONE SIDE. The radius RUNG was gated on
+ * `hasOrigin` so the ladder could not report "Expanded distance to 20km" for a widen that
+ * could not matter; this function sat next to it, ungated, still handing `explainEmptyState` a
+ * radius to probe — so the empty state went on naming "distance" as the thing blocking searches
+ * that were never distance-filtered. Same false disclosure, same query, one function over.
+ */
+export function activeConstraints(ctx: SearchContext, opts: BroadeningOptions = {}): ConstraintKey[] {
   const active: ConstraintKey[] = [];
   if (ctx.terms.length > 0) active.push('text');
-  if (ctx.radiusKm < 20) active.push('radius');
+  if (ctx.radiusKm < 20 && opts.hasOrigin !== false) active.push('radius');
   if (ctx.timeOfDay) active.push('timeOfDay');
   if (ctx.date) active.push('date');
   if (ctx.bookableNow) active.push('bookableNow');
@@ -174,42 +188,106 @@ export function relaxSingle(ctx: SearchContext, key: ConstraintKey): SearchConte
   }
 }
 
+export interface SingleRelaxation {
+  constraint: ConstraintKey;
+  label: string;
+  /** TOTAL results the query would return with just this constraint relaxed. */
+  wouldYield: number;
+  /**
+   * How many results relaxing this constraint would ADD to what the parent can see now
+   * (`wouldYield − baseline`, floored at zero). This — not `wouldYield` — is the honest
+   * "shows N more", and the two only coincide when the current result count is zero.
+   */
+  addsResults: number;
+}
+
 export interface ConstraintExplanation {
-  /** The single constraint whose removal yields the most results (the thing to explain). */
+  /** The single constraint whose removal adds the most results (the thing to explain). */
   blockingConstraint: ConstraintKey | null;
   message: string;
-  /** Per-constraint: how many results removing just that one would yield. */
-  singleRelaxations: Array<{ constraint: ConstraintKey; label: string; wouldYield: number }>;
+  /** Per-constraint: what relaxing just that one would yield, in total and as an addition. */
+  singleRelaxations: SingleRelaxation[];
+}
+
+/**
+ * Deterministic tie-break ONLY, for constraints that would add exactly the same number of
+ * results. It is not the ranking: ranking is by measured yield (see below). Ordering ties by a
+ * fixed list keeps the explanation stable across runs rather than dependent on the order
+ * `activeConstraints` happens to emit.
+ */
+const TIE_BREAK_ORDER: ConstraintKey[] = [
+  'radius', 'timeOfDay', 'date', 'bookableNow', 'dropIn', 'rainyDay', 'costFree', 'ageBands', 'text',
+];
+
+export interface ExplainOptions extends BroadeningOptions {
+  /** Results the parent can see before any relaxation. Default 0 (the zero-result case). */
+  baseline?: number;
 }
 
 /**
  * Name the blocking constraint by probing each active constraint's single relaxation.
  * `probe(ctx)` returns the result count for a context (engine-supplied, fixture or DB).
+ *
+ * `opts.baseline` is how many results the parent can see RIGHT NOW (the unrelaxed count). It
+ * defaults to 0 — the classic zero-result empty state — and matters whenever the caller
+ * explains a THIN result set rather than an empty one.
+ *
+ * `opts.hasOrigin` is forwarded to `activeConstraints` so a radius that cannot filter anything
+ * is never probed, never ranked, and never named.
+ *
+ * RANKING IS BY MEASURED YIELD, NOT BY A FIXED LIST. This function's contract has always been
+ * "the constraint whose removal unlocks the most", but the implementation sorted by a
+ * hard-coded priority ordering and used yield only to break ties. With radius ahead of
+ * costFree in that list, a query blocked almost entirely by the Free filter but incidentally
+ * narrowed by radius named "distance" as the reason and never mentioned Free at all — the
+ * docstring described the intended behaviour and the code did something else. Now the list
+ * survives only as a deterministic tie-break.
+ *
+ * `text` remains a LAST RESORT rather than a competitor on yield, and that is a different kind
+ * of rule: relaxing the search terms abandons the question the parent asked instead of
+ * unblocking it, and it almost always "wins" on raw count (an unfiltered catalogue beats every
+ * real answer). It is named only when no filter relaxation adds anything.
  */
 export function explainEmptyState(
   ctx: SearchContext,
   probe: (variant: SearchContext) => number,
+  opts: ExplainOptions = {},
 ): ConstraintExplanation {
-  const active = activeConstraints(ctx);
-  const singleRelaxations = active.map((constraint) => ({
-    constraint,
-    label: CONSTRAINT_LABELS[constraint],
-    wouldYield: probe(relaxSingle(ctx, constraint)),
-  }));
-  // Blocking = the highest-priority FILTER whose relaxation unlocks results. Relaxing the
-  // search terms ('text') abandons the query rather than unblocking it, so it ranks last —
-  // only named when no filter relaxation helps.
-  const priority: ConstraintKey[] = ['radius', 'timeOfDay', 'date', 'bookableNow', 'dropIn', 'rainyDay', 'costFree', 'ageBands', 'text'];
-  const helpful = singleRelaxations
-    .filter((r) => r.wouldYield > 0)
-    .sort((a, b) => priority.indexOf(a.constraint) - priority.indexOf(b.constraint) || b.wouldYield - a.wouldYield);
+  const baseline = opts.baseline ?? 0;
+  const active = activeConstraints(ctx, opts);
+  const singleRelaxations: SingleRelaxation[] = active.map((constraint) => {
+    const wouldYield = probe(relaxSingle(ctx, constraint));
+    return {
+      constraint,
+      label: CONSTRAINT_LABELS[constraint],
+      wouldYield,
+      addsResults: Math.max(0, wouldYield - baseline),
+    };
+  });
 
-  const blocking = helpful[0]?.constraint ?? null;
-  const message = blocking
-    ? `No exact matches. The ${CONSTRAINT_LABELS[blocking]} is the main thing narrowing your results — relaxing it shows ${helpful[0].wouldYield} more.`
+  const byYield = (a: SingleRelaxation, b: SingleRelaxation) =>
+    b.addsResults - a.addsResults ||
+    TIE_BREAK_ORDER.indexOf(a.constraint) - TIE_BREAK_ORDER.indexOf(b.constraint);
+
+  // A relaxation that adds nothing is not a remedy, however much it would "yield" in total.
+  const helpful = singleRelaxations.filter((r) => r.addsResults > 0);
+  const filters = helpful.filter((r) => r.constraint !== 'text').sort(byYield);
+  const best = filters[0] ?? helpful.filter((r) => r.constraint === 'text')[0] ?? null;
+
+  const blocking = best?.constraint ?? null;
+  const lede = baseline === 0 ? 'No exact matches.' : `Only ${baseline} exact ${baseline === 1 ? 'match' : 'matches'}.`;
+  // The constraint is the OBJECT of the sentence, never its subject, so the copy stays
+  // grammatical across all nine labels: "The search terms is the main thing narrowing your
+  // results" was the old template's output whenever text was the blocking constraint. Rare
+  // enough to survive unnoticed while this rendered only at total===0; not rare enough now
+  // that the page shows it for thin results too.
+  const message = best
+    ? `${lede} Relaxing the ${best.label} shows ${best.addsResults} more — it is the main thing narrowing your results.`
     : active.length > 0
-      ? `No matches even after relaxing individual filters — try broadening your search.`
-      : `No activities found.`;
+      ? `${lede} Relaxing any single filter adds nothing — try broadening your search.`
+      : baseline === 0
+        ? `No activities found.`
+        : lede;
 
   return { blockingConstraint: blocking, message, singleRelaxations };
 }
