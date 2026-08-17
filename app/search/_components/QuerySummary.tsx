@@ -120,6 +120,31 @@ export function QuerySummary({
           {sortLabel && <span className="kf-qsum__sort"> · sorted by {sortLabel.toLowerCase()}</span>}
         </p>
       )}
+
+      {/* Option C step 2c (Jon's ruling 2026-08-17): the Free-filter honesty disclosure. The
+          standing ruling is that unpriced/unknown-cost listings are never hidden from a Free
+          search (lib/search/filters/cost.ts) — this line is what makes that uncertainty visible
+          BEFORE a parent opens any card, not just on the individual card face (2a) or in the
+          sort order (2b).
+
+          GATED ON `state.free`, NOT on the Free chip being visible in the rail: a parent hasn't
+          committed to Free until the filter is actually applied, so the caveat isn't relevant
+          before then — showing it any earlier would be noise on every other search. Placed here
+          (QuerySummary), not on the FilterRail's chip, because this line renders once, above
+          every result, on the one component every result-bearing render of /search already goes
+          through — the rail's Free chip is one candidate among several places a parent's eye
+          might land, and "before a parent even opens a card" means the top of the page, not
+          inside a control they may not be looking at.
+
+          GATED ON `countsKnown`, NOT on whether an unpriced listing is actually IN the current
+          result set: the brief is explicit that a disclosure which sometimes appears and
+          sometimes doesn't, based on an invisible-to-the-parent count, is its own honesty
+          problem. `countsKnown` only screens out the one case where nothing is being stated as
+          fact yet (the search itself failed) — it is not a proxy for "there happens to be an
+          unpriced listing this time". */}
+      {countsKnown && state.free && (
+        <p className="kf-qsum__caveat">Some results have unconfirmed pricing.</p>
+      )}
     </div>
   );
 }

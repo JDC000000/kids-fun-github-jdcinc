@@ -287,7 +287,7 @@ describe('T-10 — an unknown-cost listing is never assumed free', () => {
     // include-unknown flag; that flag was removed (Jon's beta feedback) because a source
     // omitting a price is our data gap, not something a parent should have to opt out of.
     // The honesty half is unchanged and is asserted directly below: the card still reads
-    // "Cost — check source", never "Free".
+    // "Price not confirmed — check source", never "Free".
     const free = engine.search({ q: 'storytime free', now: FIXTURE_NOW, minResults: 1, limit: 20 });
     expect(ids(free.results)).toContain('l-storytime-van'); // genuinely free
     expect(ids(free.results)).toContain('l-storytime-unknown'); // shown, not hidden

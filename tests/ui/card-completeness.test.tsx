@@ -127,11 +127,11 @@ describe('ResultCard completeness (G-T22-4 / KPI #5)', () => {
     }
   });
 
-  it('handles unknown cost honestly (G-T22-3 / T-10): "Cost — check source", never "Free"', () => {
+  it('handles unknown cost honestly (G-T22-3 / T-10): "Price not confirmed — check source", never "Free"', () => {
     const html = renderToStaticMarkup(
       <ActivityCard activity={activity({ costStatus: 'unknown', costMinCad: null, costMaxCad: null })} />,
     );
-    expect(html).toContain('Cost — check source');
+    expect(html).toContain('Price not confirmed — check source');
     expect(html).not.toContain('Free');
   });
 

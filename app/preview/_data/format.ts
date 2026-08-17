@@ -166,8 +166,17 @@ export function formatAges(min: number | null, max: number | null): string {
   return `Ages ${lower}–${max}`;
 }
 
-/** The card's one not-a-number cost read. Unknown cost gets THIS, never a price and never "Free". */
-const COST_UNKNOWN = 'Cost — check source';
+/**
+ * The card's one not-a-number cost read. Unknown cost gets THIS, never a price and never "Free".
+ *
+ * STRENGTHENED FROM "Cost — check source" (Option C, Jon's ruling 2026-08-17). User testing
+ * flagged that admitting unpriced listings under the Free filter "looks like a lie" — the
+ * standing ruling (this module, and lib/search/filters/cost.ts) is that unpriced listings must
+ * NEVER be hidden, so the fix is honesty, not suppression: the label itself has to read as a
+ * clear statement of uncertainty ("we don't know"), not a neutral pointer ("go look elsewhere").
+ * "check source" stays, because a parent still needs to know where to find the real number.
+ */
+const COST_UNKNOWN = 'Price not confirmed — check source';
 
 /**
  * Cost copy for the card face — unknown is never presented as free (BR-11, TSD §6.2;
@@ -226,7 +235,7 @@ export function formatCost(
       // EXHAUSTIVENESS GUARD — `unstated` and `default` are deliberately NOT fused.
       //
       // Fused (`case 'unstated': default:`), a NEW `CostRead` arm is swallowed as "we hold no
-      // price": this card would print "Cost — check source" for a listing we DO have cost
+      // price": this card would print COST_UNKNOWN's words for a listing we DO have cost
       // information for, which is the same shape of silent mislabel the hand-rolled mirror above
       // this function was deleted for. Split, the assignment below stops compiling the moment
       // `CostRead` grows an arm this switch does not handle (`read` narrows to `never` here only

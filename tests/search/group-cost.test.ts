@@ -35,7 +35,7 @@ import { mapSearchItemToActivity, type ListingRecordDto } from '../../app/previe
 import type { SlotCost } from '../../app/preview/_data/types';
 
 /** The card's one not-a-number read, restated here so a silent wording change fails loudly. */
-const COST_UNKNOWN = 'Cost — check source';
+const COST_UNKNOWN = 'Price not confirmed — check source';
 
 const known = (min: number | null, max: number | null = null): CostFacts => ({
   costStatus: 'known',

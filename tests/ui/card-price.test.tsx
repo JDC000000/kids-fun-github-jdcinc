@@ -61,7 +61,7 @@ function cardHtml(overrides: Partial<ListingRecordDto> = {}): string {
 }
 
 /** The card's one honest not-a-number cost read. */
-const NOT_A_NUMBER = 'Cost — check source';
+const NOT_A_NUMBER = 'Price not confirmed — check source';
 
 describe('ActivityCard price on the face — cost we genuinely have', () => {
   it('renders a single known price', () => {

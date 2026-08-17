@@ -5,7 +5,7 @@
 // WHY A MATRIX AND NOT MORE EXAMPLES. The card and the weekly digest each carried their own
 // hand-rolled mirror of `isFree()`, and each was right exactly where the other was wrong:
 //   • known/min=null/max=0 — isFree TRUE, Free filter INCLUDES it. Email said "Free"; the CARD
-//     said "Cost — check source", denying a price the filter had already claimed.
+//     said "Price not confirmed — check source", denying a price the filter had already claimed.
 //   • known/min=0/max=null — isFree FALSE, Free filter EXCLUDES it. Card said "check source";
 //     the EMAIL said "Free", in the one channel that cannot be taken back.
 //   • known/min=7/max=0 — both surfaces printed "$7–$0". Nothing validates min <= max.
@@ -148,7 +148,7 @@ function cardCostLabel(cell: Cell): string {
 // being classified generously: a new word must be added here deliberately, where its claim has
 // to be declared, instead of slipping through the invariant as an unclassified string.
 
-const CARD_UNKNOWN = 'Cost — check source';
+const CARD_UNKNOWN = 'Price not confirmed — check source';
 const EMAIL_UNKNOWN = ['Cost varies', 'Check source for cost', 'Cost not listed'];
 const FREE = 'Free';
 
@@ -285,7 +285,7 @@ describe('the four defect cells, by name', () => {
   it('known/null/0 — the CARD no longer denies a price the Free filter already claimed', () => {
     const { card, email } = label('known', null, 0);
     expect(isFree(makeListing({ costStatus: 'known', costMinCad: null, costMaxCad: 0 }))).toBe(true);
-    expect(card).toBe(FREE); // was 'Cost — check source'
+    expect(card).toBe(FREE); // was 'Price not confirmed — check source'
     expect(email).toBe(FREE);
   });
 
@@ -313,7 +313,7 @@ describe('the four defect cells, by name', () => {
 
 describe('OUT OF SCOPE, PINNED NOT FIXED: known-with-no-usable-bounds vs genuinely unknown', () => {
   // WHAT QA FOUND, AND WHY IT IS STILL HERE. known/null/null and known/0/null now print exactly
-  // the same words to a parent as a genuinely-unknown listing ("Cost — check source" on the
+  // the same words to a parent as a genuinely-unknown listing ("Price not confirmed — check source" on the
   // card), yet the Free filter EXCLUDES them while INCLUDING the true-unknown row. A parent ticks
   // Free, watches one card vanish and an identically-worded one stay.
   //

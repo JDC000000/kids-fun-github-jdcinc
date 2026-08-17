@@ -109,7 +109,7 @@ describe('formatCost', () => {
     expect(formatCost({ costStatus: 'known', costMinCad: 3, costMaxCad: 4 })).toBe('$3–$4');
   });
   it('never presents unknown cost as free', () => {
-    expect(formatCost({ costStatus: 'unknown' })).toBe('Cost — check source');
+    expect(formatCost({ costStatus: 'unknown' })).toBe('Price not confirmed — check source');
   });
 });
 

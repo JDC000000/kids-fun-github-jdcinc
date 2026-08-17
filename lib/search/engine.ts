@@ -25,7 +25,7 @@ import { passesAllFilters, type ResultMode } from './filters/predicate';
 import { isRegistrationShaped } from './filters/registration';
 import { computeFacetCounts, type FacetCounts } from './facets';
 import { rankCandidates } from './rank';
-import { applySort } from './sort';
+import { applySort, prioritizeConfirmedFreeWhenFreeActive } from './sort';
 import { collapseSameDaySeries, slotSpanEnd, type CollapsedListing, type OccurrenceSlot } from './collapse';
 import {
   buildBroadeningLadder,
@@ -276,7 +276,14 @@ export class SearchEngine {
     const candidates = this.match(ctx);
     const filtered = candidates.filter((c) => this.passesFilters(c.listing, ctx, origin, chips, 'primary'));
     const scored = rankCandidates(filtered, this.rankContext(ctx, origin, now));
-    return { scored: collapseSameDaySeries(applySort(scored, ctx.sort)), candidates };
+    const sorted = applySort(scored, ctx.sort);
+    // Option C step 2b (Jon's ruling 2026-08-17): an ORDERING change only, gated on the Free
+    // quick filter being active. Confirmed-free listings move ahead of unpriced ones so a
+    // parent's first impression of a Free search is confirmed-free items — nothing is dropped,
+    // reclassified or excluded; see prioritizeConfirmedFreeWhenFreeActive's own header for why
+    // this is a stable partition and not a second cost predicate.
+    const prioritized = ctx.costFree ? prioritizeConfirmedFreeWhenFreeActive(sorted) : sorted;
+    return { scored: collapseSameDaySeries(prioritized), candidates };
   }
 
   /** Expected/seasonal/evergreen suggestions: relaxed status class, loose filters. */

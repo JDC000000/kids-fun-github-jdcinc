@@ -5,7 +5,7 @@
 // searches. Every comparator has a stable id tiebreak so ordering is reproducible.
 // Missing values (no distance, no date, unknown cost) sort last, never first.
 
-import { readCost } from './filters/cost';
+import { isFree, readCost } from './filters/cost';
 import type { ScoredListing } from './rank';
 import type { SortKey } from './types';
 
@@ -109,4 +109,43 @@ export function applySort(results: ScoredListing[], sort: SortKey): ScoredListin
         return (n ?? (bv! - av!)) || idTiebreak(a, b); // most-recent first
       });
   }
+}
+
+/**
+ * Option C ("Free filter honesty fix", Jon's ruling 2026-08-17), step 2b — a stable partition,
+ * NOT a filter. When a parent has the Free quick filter active, confirmed-free listings
+ * (`isFree()` true) should read as the first impression of the search, not a wall of
+ * "Price not confirmed" cards — but the standing ruling (lib/search/filters/cost.ts) is that
+ * unpriced/unknown-cost listings are NEVER hidden from a Free search, so this function must
+ * never drop, truncate or reclassify anything. It only moves confirmed-free members ahead of
+ * everything else, preserving whatever order `applySort` already produced WITHIN each group.
+ *
+ * WHY THIS ISN'T INSIDE `applySort`'s switch. That switch dispatches on SORT KEY (best_match,
+ * distance, …); this is a FILTER-STATE-aware step layered on top, applied only when the Free
+ * quick filter is active, regardless of which sort key is chosen. `lowest_cost` already reads
+ * free-first through `lowestCostValue`'s own derivation — this function still runs after it (the
+ * caller in lib/search/engine.ts gates on `ctx.costFree`, not on `sort`), but a partition that is
+ * ALREADY free-then-not-free is a no-op in every way that matters: `Array#sort`'s relative order
+ * within an already-correctly-ordered set is exactly what a stable partition preserves anyway.
+ *
+ * WHY `isFree()`, NOT a hand-rolled distinction. `isFree()` (lib/search/filters/cost.ts) is the
+ * one authority every surface — the card label, the Free filter predicate, the email digest —
+ * reads for "what counts as free". A second, sort-local mirror of that rule is the exact defect
+ * this codebase has already been bitten by once (see cost.ts's own header comment on the
+ * "email said Free, card said check source" incident); this function has no opinion of its own.
+ */
+export function prioritizeConfirmedFreeWhenFreeActive(results: ScoredListing[]): ScoredListing[] {
+  const free: ScoredListing[] = [];
+  const rest: ScoredListing[] = [];
+  for (const result of results) {
+    // Under the Free filter, `matchesCost` only ever admits `isFree()` or unknown-cost listings
+    // (matchesCost's own `free` branch) — so "not free" here means "unpriced/unstated", never a
+    // known paid listing sneaking through. Written as `isFree() ? free : rest` rather than also
+    // testing `isUnknownCost()` because the LATTER classification isn't this function's to make:
+    // it partitions into "confirmed-free" and "everything else determined by the filter that ran
+    // before it", and reclassifying "everything else" would be a second, needless mirror of a
+    // distinction `matchesCost` already enforced.
+    (isFree(result.candidate.listing) ? free : rest).push(result);
+  }
+  return [...free, ...rest];
 }

@@ -40,7 +40,7 @@ describe('describeActivity', () => {
   });
   it('never invents a price when cost is unknown', () => {
     const desc = describeActivity(unknownCost);
-    expect(desc).toContain('Cost — check source');
+    expect(desc).toContain('Price not confirmed — check source');
     expect(desc).not.toMatch(/\$\d/);
   });
   it('stays within the social/search preview window', () => {

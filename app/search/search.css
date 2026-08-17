@@ -1193,6 +1193,17 @@
   font-weight: 700;
 }
 
+/* Option C step 2c (Jon's ruling 2026-08-17) — the Free-filter honesty disclosure. A plain,
+   quiet line (the same secondary-note weight as .kf-section__note), not a boxed notice: unlike
+   .kf-broadened above it isn't reporting that the query was silently changed, it's stating a
+   standing fact about the catalogue whenever the Free filter is active. */
+.kf-qsum__caveat {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-secondary);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * FACET COUNTS ON CHIPS — REMOVED (Jon's beta feedback)
  *
