@@ -147,6 +147,28 @@ export const TEST_INCLUDE = [
   'components/**/*.test.{ts,tsx}',
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// A THIRD LANE — the metamorphic/invariant suite, and why it lives OUTSIDE `tests/`.
+//
+// invariants/ holds property-style invariants over the combinatorial filter space (region × age
+// × date × time-of-day × cost × chips), run at four pinned clocks. It is deliberately NOT under
+// `tests/`, and that is a routing decision rather than a filing one:
+//
+//   • It must NOT run in `scripts/test.sh`. That script is the BLOCKING `ci` job, and this suite
+//     is commissioned as report-only (.github/workflows/ci.yml's e2e lane, Jon's ruling
+//     2026-08-16, reaffirmed 2026-08-18). test.sh invokes `--project unit` and `--project db`
+//     explicitly, so a lane that is neither is out of the gate by construction — no exclude list
+//     to keep in sync, and no way for a future edit to make it blocking by accident.
+//   • Everything under `tests/` is routed into exactly one of unit/db by
+//     tests/vitest-lane-split.test.ts, whose partition assertion is a real drift guard for the
+//     shared-Postgres race it exists to prevent. Adding a third destination inside its walk would
+//     mean rewriting that guard to know about a lane it has no stake in.
+//
+// It still runs on a bare `npx vitest run` (the workspace includes it), which is what keeps it
+// from rotting the way an unrun Playwright suite did — see the e2e job's own header.
+// ─────────────────────────────────────────────────────────────────────────────
+export const INVARIANT_INCLUDE = ['invariants/**/*.test.ts'];
+
 export default defineWorkspace([
   {
     extends: './vitest.config.ts',
@@ -161,6 +183,17 @@ export default defineWorkspace([
     test: {
       name: 'db',
       include: DB_INTEGRATION_SUITES,
+    },
+  },
+  {
+    extends: './vitest.config.ts',
+    test: {
+      name: 'invariants',
+      include: INVARIANT_INCLUDE,
+      // No `fileParallelism` here on purpose — it is a vitest NON-project option (see the note
+      // in vitest.config.ts). npm's `test:invariants` passes --fileParallelism on the command
+      // line instead; this suite opens no connection and each file builds its own in-memory
+      // catalogue, so nothing it does is observable by a neighbour.
     },
   },
 ]);

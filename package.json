@@ -15,6 +15,7 @@
     "test": "bash scripts/test.sh",
     "test:unit": "vitest run --project unit --fileParallelism",
     "test:db": "vitest run --project db",
+    "test:invariants": "vitest run --project invariants --fileParallelism",
     "test:watch": "vitest",
     "migrate": "bash scripts/migrate.sh",
     "seed": "bash scripts/seed.sh",

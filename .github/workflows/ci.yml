@@ -150,6 +150,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ── Metamorphic / invariant suite over the combinatorial filter space ──────────────
+      #
+      # WHY IT IS IN THIS JOB RATHER THAN THE `ci` JOB ABOVE. It is commissioned as REPORT-ONLY,
+      # for the same reason the Playwright suite below it is: it asserts properties over a
+      # 752,640-selection space that the product is still actively changing, and a property that
+      # turns out to encode an assumption rather than a rule must not be able to hold a merge
+      # hostage. It runs here, it reports, and it never gates. The `ci` job's `bash scripts/test.sh`
+      # invokes `--project unit` and `--project db` explicitly and therefore cannot pick this lane
+      # up by accident — see the note in vitest.workspace.ts.
+      #
+      # It runs FIRST in this job, before the Supabase stack and the Chromium download, because it
+      # needs neither: it is pure in-memory logic over a generated catalogue, it takes seconds, and
+      # putting it ahead of the expensive setup means its result is in the log even on a run where
+      # a cold image pull later eats the 20-minute budget.
+      #
+      # The `||` fallback is the SAME two-layer guarantee the Playwright step documents below, for
+      # the same reason and with the same reasoning — job-level continue-on-error already forces
+      # this job's conclusion to success, but a red step still paints the run and feeds the PR's
+      # "Some checks were not successful" banner, which reads as "CI broke" for an outcome that is
+      # expected and tolerated here. Do not "tidy away" either layer.
+      - name: Filter invariants (metamorphic, pinned clocks) — report only
+        run: |
+          npm run test:invariants \
+            || echo "::warning title=Filter invariants failed::A metamorphic invariant over the region × age × date × cost × time filter space was violated. This lane is REPORT-ONLY and never blocks the build — the step log above names the exact query, the pinned clock and the invariant."
+
       # chromium ONLY — playwright.config.ts uses devices['Desktop Chrome'] for every
       # project (setup / public / authed / a11y, light and dark). Installing the other
       # engines would add minutes to every run for browsers no spec ever opens.
