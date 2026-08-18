@@ -28,8 +28,12 @@ import {
   ADJACENT_DAY_PART,
   CLOCKS,
   DAY_PART,
+  allItems,
   expectInvariant,
   localDaySpan,
+  primaryItems,
+  primarySlotIds,
+  slotIds,
   localMinuteSpan,
   overlaps,
   pinClock,
@@ -38,7 +42,7 @@ import {
   weekdayOf,
   type Violation,
 } from './_harness';
-import { casesFor, searchAt } from './_run';
+import { casesFor, runFor, searchAt } from './_run';
 import { DEFAULT_QUERY, queryKey, spine } from './_space';
 
 /** The ladder's stated reach on either side of the requested window (broaden.ts ADJACENT_DATE_DAYS). */
@@ -98,7 +102,10 @@ describe('DISCLOSURE — date: containment OR declared broadening (never strict 
     for (const { clock, query, response } of casesFor(3)) {
       const declared = windowOf(response.context.date);
       if (!declared) continue;
-      for (const item of response.results) {
+      // Both primary sections. The age split changes which HEADING a primary result sits under,
+      // never which filters it passed, so a date claim that must hold for the confirmed list
+      // holds identically for the age-not-stated one.
+      for (const item of primaryItems(response)) {
         const span = localDaySpan(item.listing);
         // Open-hours attractions belong to no single day and the product documents them as
         // available every day — exempt, not a violation.
@@ -232,7 +239,7 @@ describe('DISCLOSURE — time of day', () => {
       const part = response.context.timeOfDay;
       if (!part) continue;
       const window = response.context.timeOfDayAdjacent ? ADJACENT_DAY_PART[part] : DAY_PART[part];
-      for (const item of response.results) {
+      for (const item of primaryItems(response)) {
         const span = localMinuteSpan(item.listing);
         // An open-hours row with NO published hours is documented as "don't hide it" — exempt.
         if (!span) continue;
@@ -276,7 +283,7 @@ describe('DISCLOSURE — time of day', () => {
     // someone changes the windows, they read this and know what it was hiding.
     for (const clock of CLOCKS) {
       const late = searchAt(clock, { ...DEFAULT_QUERY, timeOfDay: 'evening' }, 0);
-      for (const item of late.results) {
+      for (const item of primaryItems(late)) {
         const span = localMinuteSpan(item.listing);
         if (!span) continue;
         expect(
@@ -301,7 +308,7 @@ describe('DISCLOSURE — time of day', () => {
       if (requested !== 'morning' && requested !== 'evening') continue;
       const forbidden = requested === 'morning' ? DAY_PART.evening : DAY_PART.morning;
       const allowed = ADJACENT_DAY_PART[requested];
-      for (const item of response.results) {
+      for (const item of primaryItems(response)) {
         const span = localMinuteSpan(item.listing);
         if (!span) continue;
         checked += 1;
@@ -328,7 +335,7 @@ describe('DISCLOSURE — age', () => {
     for (const { clock, query, response } of casesFor(3)) {
       const bands = response.context.ageBands;
       if (bands.length === 0) continue;
-      for (const item of [...response.results, ...response.expected]) {
+      for (const item of allItems(response)) {
         const listingBands = item.listing.ageBandMatches;
         if (listingBands.length === 0) {
           allAgesAdmitted += 1;
@@ -347,6 +354,117 @@ describe('DISCLOSURE — age', () => {
       allAgesAdmitted,
       'no all-ages/unknown-age listing survived any age filter. That is NOT this invariant passing — ' +
         'matchesAge deliberately does not hide them (lib/search/filters/age.ts).',
+    ).toBeGreaterThan(0);
+  });
+
+  it('the primary sections partition on the ONE fact that names them: a genuine band intersection', () => {
+    // Jon's ruling 2026-08-18, option b. `matchesAge` still admits a listing whose source stated
+    // no age under every age filter — that permissiveness is correct and is NOT what changed. What
+    // changed is that those listings no longer sit inside the confirmed list pretending to be
+    // matches: the engine puts them in `ageUnconfirmed`, under a heading that says so.
+    //
+    // The rule has to hold in BOTH directions or the heading is worthless. A confirmed-list card
+    // with no stated age is the original defect back again; an `ageUnconfirmed` card that DOES
+    // intersect the selection is a genuine match being demoted for no reason, which is its own
+    // kind of dishonesty and would quietly bury correct results.
+    //
+    // Stated per CARD, and a card is confirmed when ANY slot it stands for intersects — the same
+    // rule engine.ts's `splitAgeUnconfirmed` applies, restated here rather than imported, because
+    // an oracle that calls the implementation asserts only that the implementation equals itself.
+    const violations: Violation[] = [];
+    let checked = 0;
+    let confirmedCards = 0;
+    let unconfirmedCards = 0;
+    for (const { clock, query, response } of casesFor(3)) {
+      const bands = response.context.ageBands;
+      const corpus = runFor(clock).byId;
+      // Does any occurrence behind this card declare a band the selection asked for?
+      const intersects = (item: (typeof response.results)[number]) =>
+        item.slots.some((slot) => (corpus.get(slot.id)?.ageBandMatches ?? []).some((b) => bands.includes(b)));
+
+      if (bands.length === 0) {
+        // No age filter → nothing to qualify, so the section must not exist at all. A stray card
+        // here would be a listing separated out for a selection nobody made.
+        checked += 1;
+        if (response.ageUnconfirmed.length > 0) {
+          violations.push(
+            violation(clock, query, `${response.ageUnconfirmed.length} card(s) were filed as age-unconfirmed with NO age filter active`),
+          );
+        }
+        continue;
+      }
+
+      for (const item of response.results) {
+        checked += 1;
+        confirmedCards += 1;
+        if (!intersects(item)) {
+          violations.push(
+            violation(clock, query, `"${item.listing.id}" is in the CONFIRMED list under selection [${bands.join(', ')}] but no slot of it declares any of those bands`),
+          );
+        }
+      }
+      for (const item of response.ageUnconfirmed) {
+        checked += 1;
+        unconfirmedCards += 1;
+        if (intersects(item)) {
+          violations.push(
+            violation(clock, query, `"${item.listing.id}" is in the AGE-UNCONFIRMED section but a slot of it genuinely declares a band in [${bands.join(', ')}]`),
+          );
+        }
+      }
+    }
+    expectInvariant('the age split is exactly the confirmed/unconfirmed partition it claims to be', violations, checked);
+    expect(confirmedCards, 'no card was ever filed as a confirmed age match — the corpus cannot exercise the split').toBeGreaterThan(0);
+    expect(
+      unconfirmedCards,
+      'no card was ever filed as age-unconfirmed anywhere in the space. That is NOT this invariant ' +
+        'passing — it means either the corpus holds no unstated-age listing, or the "unknown → do ' +
+        'not hide" rule has been inverted (which Jon ruled against: lib/search/filters/age.ts).',
+    ).toBeGreaterThan(0);
+  });
+
+  it('turning on an age filter SECTIONS the page — it never silently deletes a listing', () => {
+    // The whole promise of option (b) over option (a). Everything an un-aged search could reach,
+    // an aged search must still be able to reach SOMEWHERE — under the confirmed heading if it
+    // genuinely matches, under the age-not-stated heading if the source never said, and nowhere
+    // at all only if its own declared bands really are disjoint from the selection (which is the
+    // filter doing its job, not the split hiding anything).
+    //
+    // Compared by SLOT ID and with the ladder declined, for the reasons algebra.test.ts's header
+    // gives. The check is a REACHABILITY one, so it reads every section of both responses.
+    const violations: Violation[] = [];
+    let checked = 0;
+    let rescued = 0;
+    for (const clock of CLOCKS) {
+      const corpus = runFor(clock).byId;
+      for (const base of spine()) {
+        if (base.ageBands.length > 0) continue;
+        const unaged = searchAt(clock, base, 0);
+        for (const bands of [['under2'], ['2-4'], ['5-9'], ['10-14']] as AgeBandKey[][]) {
+          const aged = searchAt(clock, { ...base, ageBands: bands }, 0);
+          const reachable = new Set([...primarySlotIds(aged), ...slotIds(aged.expected)]);
+          for (const id of new Set([...primarySlotIds(unaged), ...slotIds(unaged.expected)])) {
+            const listing = corpus.get(id);
+            if (!listing) continue;
+            // A listing with declared bands that miss the selection is legitimately filtered out.
+            if (listing.ageBandMatches.length > 0) continue;
+            checked += 1;
+            if (!reachable.has(id)) {
+              violations.push(
+                violation(clock, { ...base, ageBands: bands }, `"${id}" states no age and was reachable without an age filter, but selecting [${bands.join(', ')}] made it unreachable in EVERY section`),
+              );
+            } else if (slotIds(aged.ageUnconfirmed).has(id)) {
+              rescued += 1;
+            }
+          }
+        }
+      }
+    }
+    expectInvariant('an age filter re-sections unstated-age listings, it does not drop them', violations, checked);
+    expect(
+      rescued,
+      'no unstated-age listing was ever observed landing in the age-not-stated section — the ' +
+        'reachability check above is passing on listings that never needed rescuing',
     ).toBeGreaterThan(0);
   });
 

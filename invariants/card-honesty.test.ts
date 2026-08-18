@@ -13,7 +13,7 @@
 import { describe, it, afterAll, beforeAll, expect } from 'vitest';
 import { facetGroup } from '../lib/search/facets';
 import { localDay } from './_time';
-import { CLOCKS, expectInvariant, pinClock, unpinClock, violation, type Violation } from './_harness';
+import { CLOCKS, allItems, expectInvariant, pinClock, primaryItems, unpinClock, violation, type Violation } from './_harness';
 import { casesFor, runFor, searchAt } from './_run';
 import { spine } from './_space';
 
@@ -29,7 +29,7 @@ describe('CARD HONESTY — distance', () => {
     let checked = 0;
     for (const { clock, query, response } of casesFor(3)) {
       if (response.origin != null) continue;
-      for (const item of [...response.results, ...response.expected]) {
+      for (const item of allItems(response)) {
         checked += 1;
         if (item.distanceKm != null) {
           violations.push(violation(clock, query, `"${item.listing.id}" carries distanceKm=${item.distanceKm} but the response resolved no origin`));
@@ -45,7 +45,9 @@ describe('CARD HONESTY — distance', () => {
     for (const { clock, query, response } of casesFor(3)) {
       if (response.origin == null) continue;
       const radius = response.context.radiusKm;
-      for (const item of response.results) {
+      // Both primary sections: the radius filter applies to every primary result, and the
+      // age split decides which HEADING a result sits under, never which filters it survived.
+      for (const item of primaryItems(response)) {
         checked += 1;
         if (item.distanceKm == null) {
           violations.push(violation(clock, query, `"${item.listing.id}" survived a radius search but carries no distance (geo=${JSON.stringify(item.listing.geo)})`));
@@ -92,7 +94,7 @@ describe('CARD HONESTY — a collapsed card stands only for its own occurrences'
     let collapsedCards = 0;
     for (const { clock, query, response } of casesFor(3)) {
       const corpus = runFor(clock).byId;
-      for (const item of [...response.results, ...response.expected]) {
+      for (const item of allItems(response)) {
         checked += 1;
         if (item.slots.length > 1) collapsedCards += 1;
         const repDay = item.listing.startDatetimeUtc ? localDay(new Date(item.listing.startDatetimeUtc)) : null;
@@ -127,7 +129,7 @@ describe('CARD HONESTY — a collapsed card stands only for its own occurrences'
     const violations: Violation[] = [];
     let checked = 0;
     for (const { clock, query, response } of casesFor(3)) {
-      for (const item of [...response.results, ...response.expected]) {
+      for (const item of allItems(response)) {
         const starts = item.slots.map((s) => (s.startDatetimeUtc ? Date.parse(s.startDatetimeUtc) : null));
         checked += 1;
         for (let i = 1; i < starts.length; i += 1) {
@@ -152,7 +154,7 @@ describe('CARD HONESTY — a collapsed card stands only for its own occurrences'
     let checked = 0;
     for (const { clock, query, response } of casesFor(3)) {
       const corpus = runFor(clock).byId;
-      for (const item of [...response.results, ...response.expected]) {
+      for (const item of allItems(response)) {
         checked += 1;
         if (!corpus.has(item.listing.id)) {
           violations.push(violation(clock, query, `card "${item.listing.id}" is not in the catalogue the engine was given`));
@@ -163,12 +165,27 @@ describe('CARD HONESTY — a collapsed card stands only for its own occurrences'
   });
 
   it('`total` counts the cards the caller was actually handed (no limit is in play)', () => {
+    // THE PRIMARY PAGE IS TWO ARRAYS, and `total` counts both.
+    //
+    // Under an active age filter the engine splits the primary list into `results` (a genuine
+    // band intersection) and `ageUnconfirmed` (admitted by matchesAge's "unknown → don't hide"
+    // rule, held under their own heading — Jon's ruling 2026-08-18, option b). Nothing is
+    // dropped by that split, so the count it describes must not shrink either: `total` is
+    // documented as reachability across BOTH primary sections, which is also what keeps it equal
+    // to `facets.total` (asserted separately below, from the other direction).
+    //
+    // Note what is NOT being relaxed here. The assertion is still an EXACT equality against the
+    // cards actually handed over — it now just adds up the whole page instead of one section of
+    // it. A `total` that over- or under-counted either array still fails.
     const violations: Violation[] = [];
     let checked = 0;
     for (const { clock, query, response } of casesFor(3)) {
       checked += 1;
-      if (response.total !== response.results.length) {
-        violations.push(violation(clock, query, `total says ${response.total} but ${response.results.length} cards were returned`));
+      const handed = response.results.length + response.ageUnconfirmed.length;
+      if (response.total !== handed) {
+        violations.push(
+          violation(clock, query, `total says ${response.total} but ${handed} cards were returned (${response.results.length} confirmed-age + ${response.ageUnconfirmed.length} age-unconfirmed)`),
+        );
       }
       if (response.context.raw !== query.q) {
         violations.push(violation(clock, query, `context.raw is "${response.context.raw}" for a query of "${query.q}"`));

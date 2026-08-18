@@ -72,6 +72,16 @@ export interface SearchItemDto {
 export interface SearchResponseDto {
   results: SearchItemDto[];
   expected: SearchItemDto[];
+  /**
+   * Primary results whose age the source never stated, separated out under an active age filter
+   * (lib/search/engine.ts `ageUnconfirmed`). Still results, still reachable — they simply do not
+   * get to sit under a heading that claims they match the age that was asked for.
+   *
+   * OPTIONAL, like `total`/`facets`/`origin` above and for the same stated reason: this type
+   * DESCRIBES a JSON payload fetched over HTTP, it does not verify one, so nothing here may be
+   * assumed present. Fixtures and hand-built responses omit it and read as "no such section".
+   */
+  ageUnconfirmed?: SearchItemDto[];
   /** Total matching results BEFORE `limit` — what the facet counts are measured against. */
   total?: number;
   /**
@@ -106,9 +116,16 @@ export function searchApiUrl(): string {
   return `/api/search?${params.toString()}`;
 }
 
+/**
+ * Every listing a search response surfaced, in EVERY section, de-duplicated by id.
+ *
+ * Section order is the de-dupe priority: a listing that appears in two sections keeps the first
+ * one. `ageUnconfirmed` sits between the two existing sections because it is a primary result
+ * (it outranks `expected`) that has not earned the confirmed heading (so it loses to `results`).
+ */
 export function mapSearchResponseToActivities(response: SearchResponseDto): Activity[] {
   const seen = new Set<string>();
-  return [...response.results, ...response.expected]
+  return [...response.results, ...(response.ageUnconfirmed ?? []), ...response.expected]
     .filter((item) => {
       if (seen.has(item.listing.id)) return false;
       seen.add(item.listing.id);

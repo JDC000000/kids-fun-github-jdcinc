@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { headers } from 'next/headers';
 import { ActivityCard } from '../preview/_components/ActivityCard';
 import { partitionSections } from '../preview/_data/filter';
-import { mapSearchResponseToActivities, type SearchResponseDto } from '../preview/_data/search-api';
+import { mapSearchResponseToActivities, type SearchItemDto, type SearchResponseDto } from '../preview/_data/search-api';
 import type { Activity } from '../preview/_data/types';
 import { recordSearchPerformed } from '@/lib/analytics/record';
 import { getRequestUser, type RequestUser } from '@/lib/db/session-user';
@@ -34,6 +34,7 @@ import type { BroadenAlternative } from '@/lib/search/broaden';
 import type { RequestedDayWindow } from '@/lib/search/day-window';
 import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
+  AGE_OPTIONS,
   CLEARED_FILTERS,
   SORT_OPTIONS,
   analyticsFilterTokens,
@@ -180,6 +181,43 @@ function Section({ title, note, items }: { title: string; note?: string; items: 
 }
 
 /**
+ * The age-not-confirmed section (Jon's ruling 2026-08-18, option b).
+ *
+ * WHAT IT IS. Under an active age filter the engine admits listings whose source never stated an
+ * age — deliberately, because an honestly-unknown age is not grounds for hiding a listing
+ * (lib/search/filters/age.ts) — but it no longer mixes them into the confirmed list. They arrive
+ * as their own array (`ageUnconfirmed`) and render here.
+ *
+ * WHY IT IS NOT JUST ANOTHER <Section>. The brief for this section is that a parent should not
+ * have to READ it to notice it means something different, so it does not reuse the plain
+ * section head that "Confirmed from approved sources" uses. It is a bounded panel with its own
+ * rule, its own heading colour and an explicit caveat above the cards. The wording matches
+ * `AGE_NOT_STATED` ("Age not stated by source") — the same words each card inside it already
+ * prints on its own age line — so the section heading and the cards under it say one thing, not
+ * two versions of it. It never claims the listings are unsuitable; only that nobody told us.
+ */
+function AgeUnconfirmedSection({ items, bandLabel }: { items: Activity[]; bandLabel: string | null }) {
+  if (items.length === 0) return null;
+  return (
+    <section className="kf-ageunconf">
+      <div className="kf-section__head">
+        <h2 className="kf-section__title kf-ageunconf__title">Age not stated by source</h2>
+        <span className="kf-section__count">{items.length}</span>
+        <span className="kf-section__rule" aria-hidden="true" />
+      </div>
+      <p className="kf-section__note kf-ageunconf__note">
+        These are kept separate because their source never published an age range — so we cannot
+        confirm they suit {bandLabel ?? 'the ages you picked'}. They are not hidden, and they may
+        well be a good fit; check the source before you go.
+      </p>
+      {items.map((a) => (
+        <ActivityCard key={a.id} activity={a} />
+      ))}
+    </section>
+  );
+}
+
+/**
  * Confirmed results grouped by day for a custom date range (T26 / FR-04). Keeps the same
  * "Confirmed from approved sources" h2 as the flat view (the confirmed/expected honesty
  * framing must never be lost — UXR-06), then nests one h3 subsection per day the parent's
@@ -216,11 +254,23 @@ function DayGroupedResults({ groups, total }: { groups: DayGroup[]; total: numbe
 function buildDayIndex(body: SearchApiResponse | undefined): Map<string, string | null> {
   const map = new Map<string, string | null>();
   if (!body) return map;
-  for (const item of [...body.results, ...body.expected]) {
+  for (const item of allSections(body)) {
     const start = item.listing.startDatetimeUtc;
     map.set(item.listing.id, start ? localIsoDate(new Date(start)) : null);
   }
   return map;
+}
+
+/**
+ * Every raw item the response surfaced, across ALL THREE sections.
+ *
+ * One helper rather than three inline spreads, because "the sections" is now a list that has
+ * grown once and a per-call-site spread is how a section quietly stops being plotted on the map
+ * or stops getting a day bucket. `ageUnconfirmed` is optional on the DTO (older/hand-built
+ * payloads omit it), so it is defaulted here in the one place that knows about it.
+ */
+function allSections(body: SearchApiResponse): SearchItemDto[] {
+  return [...body.results, ...(body.ageUnconfirmed ?? []), ...body.expected];
 }
 
 export default async function SearchPage({
@@ -244,8 +294,25 @@ export default async function SearchPage({
   const realOrigin = hasNearMeCoords(state) || (state.useSavedLocation && savedOrigin != null);
 
   const activities = result.body ? mapSearchResponseToActivities(result.body) : [];
-  const { confirmed, expected } = partitionSections(activities);
-  const total = confirmed.length + expected.length;
+  // The age-not-stated section (lib/search/engine.ts `ageUnconfirmed`). Peeled off by ID BEFORE
+  // the status partition, not after: `partitionSections` sorts by STATUS, and these listings are
+  // being separated for an unrelated reason (nobody stated who they are for). Running them
+  // through it would scatter them back into the two status sections — the exact blending this
+  // separation exists to end. Whatever their status, they render under their own heading.
+  const ageUnconfirmedIds = new Set((result.body?.ageUnconfirmed ?? []).map((i) => i.listing.id));
+  const ageUnconfirmed = activities.filter((a) => ageUnconfirmedIds.has(a.id));
+  const { confirmed, expected } = partitionSections(activities.filter((a) => !ageUnconfirmedIds.has(a.id)));
+  // Every card the page renders. Age-unconfirmed listings are counted because they are ON the
+  // page — the honesty is delivered by their own heading and their own count, not by leaving
+  // them out of the total (which would make the page under-report what it is showing). Mirrors
+  // SearchResponse.total, which counts both primary sections for the same reason.
+  const total = confirmed.length + expected.length + ageUnconfirmed.length;
+  // "ages 2–4", "ages 2–4 & 5–9" — the selection the unconfirmed section says it cannot vouch
+  // for, in the rail's own words rather than a second phrasing of the same bands.
+  const ageBandLabel =
+    state.ages.length > 0
+      ? `ages ${state.ages.map((band) => AGE_OPTIONS.find((a) => a.key === band)?.label ?? band).join(' & ')}`
+      : null;
 
   // Map view (Task 37): coordinates come off the raw /api/search items (the parent-facing
   // Activity DTO drops geo) and are re-attached by id, so the marker set is exactly the
@@ -253,8 +320,8 @@ export default async function SearchPage({
   // prefer the dedicated NEXT_PUBLIC_MAP_KEY, and fall back to the verified-public geocoding
   // key so the map works wherever Task 36's key is already configured. A secret (sk.*) token
   // must never be placed in either of these vars.
-  const geo = geoIndex(result.body ? [...result.body.results, ...result.body.expected] : []);
-  const markers = buildMarkers(confirmed, expected, geo);
+  const geo = geoIndex(result.body ? allSections(result.body) : []);
+  const markers = buildMarkers(confirmed, expected, geo, ageUnconfirmed);
   const mapToken = (process.env.NEXT_PUBLIC_MAP_KEY ?? process.env.GEOCODING_API_KEY ?? '').trim();
   const sortLabel = SORT_OPTIONS.find((o) => o.key === state.sort)?.label ?? '';
   // Read from the RESPONSE's resolved origin, not from `realOrigin` above. The two disagree in
@@ -437,6 +504,7 @@ export default async function SearchPage({
             tokens={appliedTokens}
             confirmed={confirmed.length}
             expected={expected.length}
+            ageUnconfirmed={ageUnconfirmed.length}
             sortLabel={sortLabel}
             clearHref={hrefFor(state, CLEARED_FILTERS)}
             countsKnown={result.ok}
@@ -578,6 +646,10 @@ export default async function SearchPage({
               ) : (
                 <Section title="Confirmed from approved sources" items={confirmed} />
               )}
+              {/* Between confirmed and expected, which is where it belongs in both directions:
+                  these ARE primary results (so they sit above the not-yet-posted section), but
+                  they have not earned the confirmed heading under an active age filter. */}
+              <AgeUnconfirmedSection items={ageUnconfirmed} bandLabel={ageBandLabel} />
               <Section
                 title="Expected / not yet posted"
                 note="Kept separate from confirmed — we never blur the two. Each card carries its own status and recheck date."

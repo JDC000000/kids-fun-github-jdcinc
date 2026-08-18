@@ -90,4 +90,23 @@ describe('buildMarkers', () => {
     const markers = buildMarkers([activity('c1')], [activity('e1')], geo);
     expect(markers.map((m) => m.section)).toEqual(['confirmed', 'expected']);
   });
+
+  it('plots the age-not-stated section as its OWN section, in rendered order', () => {
+    // The list keeps three sections apart; the map must not merge two of them back together.
+    // Order matches the page (confirmed → age-not-stated → expected) so a parent reading the
+    // list and scanning the map is looking at the same thing in the same order.
+    const geo = geoIndex([
+      item('c1', { lng: -123.1, lat: 49.2 }),
+      item('u1', { lng: -123.05, lat: 49.25 }),
+      item('e1', { lng: -123.0, lat: 49.3 }),
+    ]);
+    const markers = buildMarkers([activity('c1')], [activity('e1')], geo, [activity('u1')]);
+    expect(markers.map((m) => m.id)).toEqual(['c1', 'u1', 'e1']);
+    expect(markers.map((m) => m.section)).toEqual(['confirmed', 'age_unconfirmed', 'expected']);
+  });
+
+  it('defaults the age-not-stated section to empty, so existing two-section callers are unchanged', () => {
+    const geo = geoIndex([item('c1', { lng: -123.1, lat: 49.2 })]);
+    expect(buildMarkers([activity('c1')], [], geo).map((m) => m.section)).toEqual(['confirmed']);
+  });
 });

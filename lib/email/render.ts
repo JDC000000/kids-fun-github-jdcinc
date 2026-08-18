@@ -55,14 +55,26 @@ function subjectFor(digest: WeeklyDigest): string {
   return `${n} new ${n === 1 ? 'activity' : 'activities'} for your saved searches`;
 }
 
-function activityHtml(a: { name: string; venue: string; when: string; cost: string; url: string }): string {
+/**
+ * The caveat an age-unstated row carries in the email.
+ *
+ * Word-for-word the page's own heading and the card's own age line (`AGE_NOT_STATED`), because
+ * three phrasings of one absence is how a product starts sounding like it means three different
+ * things. See DigestActivity.ageNotConfirmed for why the row is included at all rather than
+ * dropped.
+ */
+const AGE_NOT_CONFIRMED_NOTE = 'Age not stated by source';
+
+function activityHtml(a: { name: string; venue: string; when: string; cost: string; url: string; ageNotConfirmed?: boolean }): string {
   return `
     <tr>
       <td style="padding:12px 0;border-bottom:1px solid ${C.rule};">
         <a href="${escapeAttr(a.url)}" style="color:${C.ink};text-decoration:none;font-weight:600;font-size:16px;line-height:1.35;">${escapeHtml(a.name)}</a>
         <div style="color:${C.moss};font-size:14px;line-height:1.5;margin-top:4px;">
           ${escapeHtml(a.venue)}<br />
-          ${escapeHtml(a.when)} &nbsp;·&nbsp; ${escapeHtml(a.cost)}
+          ${escapeHtml(a.when)} &nbsp;·&nbsp; ${escapeHtml(a.cost)}${
+            a.ageNotConfirmed ? ` &nbsp;·&nbsp; ${escapeHtml(AGE_NOT_CONFIRMED_NOTE)}` : ''
+          }
         </div>
       </td>
     </tr>`;
@@ -205,7 +217,7 @@ function renderText(
     lines.push(`New for ${s.label}:`);
     for (const a of s.activities) {
       lines.push(`  • ${a.name} — ${a.venue}`);
-      lines.push(`    ${a.when} · ${a.cost}`);
+      lines.push(`    ${a.when} · ${a.cost}${a.ageNotConfirmed ? ` · ${AGE_NOT_CONFIRMED_NOTE}` : ''}`);
       lines.push(`    ${a.url}`);
     }
   }

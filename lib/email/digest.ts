@@ -49,6 +49,19 @@ export interface DigestActivity {
   when: string;
   cost: string;
   url: string;
+  /**
+   * True when this row came back under an active age filter WITHOUT the source ever stating an
+   * age (lib/search/engine.ts `ageUnconfirmed`).
+   *
+   * The engine now hands these back in their own array so /search can hold them under an explicit
+   * "Age not stated by source" heading instead of mixing them into the confirmed matches (Jon's
+   * ruling 2026-08-18, option b). An email has no room for a second section, and the two wrong
+   * answers here are both easy to reach by accident: read `results` only and a listing a parent
+   * used to be told about silently stops arriving, or read both and the email states an age match
+   * the catalogue never made. So the row is included AND flagged, and the template says so on the
+   * line — the same deal the page offers, in the space an email has.
+   */
+  ageNotConfirmed?: boolean;
 }
 
 /** One saved search's block in the digest (only present when it has new matches). */
@@ -121,7 +134,7 @@ function dedupeSoonestPerSeries(listings: ListingRecord[]): ListingRecord[] {
   return out;
 }
 
-function toActivity(listing: ListingRecord): DigestActivity {
+function toActivity(listing: ListingRecord, ageNotConfirmed = false): DigestActivity {
   return {
     id: listing.id,
     seriesId: listing.seriesId,
@@ -130,6 +143,7 @@ function toActivity(listing: ListingRecord): DigestActivity {
     when: formatWhen(listing),
     cost: formatCost(listing),
     url: appUrl(`/preview/${encodeURIComponent(listing.id)}`),
+    ...(ageNotConfirmed ? { ageNotConfirmed } : {}),
   };
 }
 
@@ -151,7 +165,13 @@ export function buildWeeklyDigest(input: BuildDigestInput): WeeklyDigest {
   for (const ss of input.savedSearches) {
     const run = runSavedSearch(input.engine, ss.params, input.homePostal, input.now);
 
-    const fresh = run.response.results
+    // BOTH primary sections. Under an age filter the engine holds unstated-age listings in
+    // `ageUnconfirmed` rather than mixing them into `results`; reading only `results` here would
+    // silently stop emailing a parent about listings they used to be told about — a reduction in
+    // what the product says, dressed up as a presentation change. They are carried and FLAGGED
+    // (see DigestActivity.ageNotConfirmed) so the row states its own caveat.
+    const ageNotConfirmedIds = new Set(run.response.ageUnconfirmed.map((r) => r.listing.id));
+    const fresh = [...run.response.results, ...run.response.ageUnconfirmed]
       .map((r) => r.listing)
       .filter((l) => input.newOccurrenceIds.has(l.id));
 
@@ -177,7 +197,7 @@ export function buildWeeklyDigest(input: BuildDigestInput): WeeklyDigest {
       savedSearchId: ss.id,
       label: savedSearchLabel(ss.name, run.query),
       searchUrl: appUrl(hrefForParams(ss.params)),
-      activities: deduped.map(toActivity),
+      activities: deduped.map((l) => toActivity(l, ageNotConfirmedIds.has(l.id))),
     });
   }
 

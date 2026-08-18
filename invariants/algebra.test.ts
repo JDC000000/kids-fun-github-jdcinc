@@ -17,10 +17,18 @@
 //    collapse (one card per series per local day) runs AFTER sorting, so removing one occurrence
 //    can promote a different member of its group to representative — and a strictly narrowing
 //    filter then looks like it INTRODUCED a result.
+//
+// 3. THE SET IS THE WHOLE PRIMARY PAGE — `primarySlotIds`, i.e. `results` ∪ `ageUnconfirmed` —
+//    not the `results` array alone. Under an active age filter the engine now SECTIONS the
+//    primary list, holding listings whose source never stated an age under their own heading
+//    instead of mixing them in (Jon's ruling 2026-08-18, option b). That is a presentation
+//    change: nothing is filtered out and everything stays reachable. These relations are about
+//    FILTERING, so reading `results` alone would score a re-sectioning as a removal and quietly
+//    stop measuring the age filter — the relations would keep passing while asserting less.
 
 import { describe, it, afterAll, beforeAll, expect } from 'vitest';
 import { buildCorpus, makeEngine } from './_corpus';
-import { CLOCKS, expectInvariant, notContainedIn, pinClock, slotIds, unpinClock, violation, type Violation } from './_harness';
+import { CLOCKS, expectInvariant, notContainedIn, pinClock, primarySlotIds, unpinClock, violation, type Violation } from './_harness';
 import { searchAt } from './_run';
 import { SORT_VALUES, spine, toRequest, type Query } from './_space';
 
@@ -54,11 +62,11 @@ describe('ALGEBRA — monotonicity', () => {
     let observedShrink = 0;
     for (const clock of CLOCKS) {
       for (const base of spine()) {
-        const before = slotIds(searchAt(clock, base, 0).results);
+        const before = primarySlotIds(searchAt(clock, base, 0));
         for (const { name, patch, appliesTo } of NARROWING) {
           if (!appliesTo(base)) continue;
           const narrowed = { ...base, ...patch };
-          const after = slotIds(searchAt(clock, narrowed, 0).results);
+          const after = primarySlotIds(searchAt(clock, narrowed, 0));
           checked += 1;
           if (after.size < before.size) observedShrink += 1;
           const introduced = notContainedIn(after, before);
@@ -83,8 +91,8 @@ describe('ALGEBRA — monotonicity', () => {
     for (const clock of CLOCKS) {
       for (const base of spine()) {
         if (base.includeRegistration) continue;
-        const off = slotIds(searchAt(clock, base, 0).results);
-        const on = slotIds(searchAt(clock, { ...base, includeRegistration: true }, 0).results);
+        const off = primarySlotIds(searchAt(clock, base, 0));
+        const on = primarySlotIds(searchAt(clock, { ...base, includeRegistration: true }, 0));
         checked += 1;
         if (on.size > off.size) observedGrowth += 1;
         const lost = notContainedIn(off, on);
@@ -107,8 +115,8 @@ describe('ALGEBRA — monotonicity', () => {
     let checked = 0;
     for (const clock of CLOCKS) {
       for (const base of spine()) {
-        const strict = slotIds(searchAt(clock, base, 0).results);
-        const broadened = slotIds(searchAt(clock, base, 3).results);
+        const strict = primarySlotIds(searchAt(clock, base, 0));
+        const broadened = primarySlotIds(searchAt(clock, base, 3));
         checked += 1;
         const lost = notContainedIn(strict, broadened);
         if (lost.length > 0) {
@@ -129,8 +137,8 @@ describe('ALGEBRA — region chips are additive', () => {
     for (const clock of CLOCKS) {
       for (const base of spine()) {
         if (base.region.length > 0) continue;
-        const subArea = slotIds(searchAt(clock, { ...base, region: ['van-east'] }, 0).results);
-        const municipality = slotIds(searchAt(clock, { ...base, region: ['van'] }, 0).results);
+        const subArea = primarySlotIds(searchAt(clock, { ...base, region: ['van-east'] }, 0));
+        const municipality = primarySlotIds(searchAt(clock, { ...base, region: ['van'] }, 0));
         checked += 1;
         const outside = notContainedIn(subArea, municipality);
         if (outside.length > 0) {
@@ -147,9 +155,9 @@ describe('ALGEBRA — region chips are additive', () => {
     for (const clock of CLOCKS) {
       for (const base of spine()) {
         if (base.region.length > 0) continue;
-        const a = slotIds(searchAt(clock, { ...base, region: ['nvan'] }, 0).results);
-        const b = slotIds(searchAt(clock, { ...base, region: ['rmd'] }, 0).results);
-        const both = slotIds(searchAt(clock, { ...base, region: ['nvan', 'rmd'] }, 0).results);
+        const a = primarySlotIds(searchAt(clock, { ...base, region: ['nvan'] }, 0));
+        const b = primarySlotIds(searchAt(clock, { ...base, region: ['rmd'] }, 0));
+        const both = primarySlotIds(searchAt(clock, { ...base, region: ['nvan', 'rmd'] }, 0));
         checked += 1;
         const union = new Set([...a, ...b]);
         const extra = notContainedIn(both, union);
@@ -172,11 +180,11 @@ describe('ALGEBRA — sort is an ordering, not a search', () => {
     for (const clock of CLOCKS) {
       for (const base of spine()) {
         const reference = searchAt(clock, { ...base, sort: 'best_match' }, 0);
-        const referenceIds = slotIds(reference.results);
+        const referenceIds = primarySlotIds(reference);
         for (const sort of SORT_VALUES) {
           if (sort === 'best_match') continue;
           const other = searchAt(clock, { ...base, sort }, 0);
-          const ids = slotIds(other.results);
+          const ids = primarySlotIds(other);
           checked += 1;
           const extra = notContainedIn(ids, referenceIds);
           const missing = notContainedIn(referenceIds, ids);
@@ -233,12 +241,23 @@ describe('ALGEBRA — determinism', () => {
   });
 });
 
-/** The parts of a response whose stability is what "deterministic" means here. */
-function digest(response: { results: Array<{ listing: { id: string }; slots: Array<{ id: string }> }>; total: number; broadening: { applied: Array<{ key: string }> }; context: { date: unknown; ageBands: string[]; radiusKm: number } }) {
+/**
+ * The parts of a response whose stability is what "deterministic" means here.
+ *
+ * BOTH primary sections are digested. Determinism has to cover the SPLIT as well as the order —
+ * an engine that filed the same card under a different heading on a second identical run would
+ * be non-deterministic in the way a parent would actually notice.
+ */
+type DigestSection = Array<{ listing: { id: string }; slots: Array<{ id: string }> }>;
+function digest(response: { results: DigestSection; ageUnconfirmed: DigestSection; total: number; broadening: { applied: Array<{ key: string }> }; context: { date: unknown; ageBands: string[]; radiusKm: number } }) {
+  const section = (items: DigestSection) => ({
+    order: items.map((r) => r.listing.id),
+    slots: items.map((r) => r.slots.map((s) => s.id)),
+  });
   return {
     total: response.total,
-    order: response.results.map((r) => r.listing.id),
-    slots: response.results.map((r) => r.slots.map((s) => s.id)),
+    ...section(response.results),
+    ageUnconfirmed: section(response.ageUnconfirmed),
     rungs: response.broadening.applied.map((r) => r.key),
     context: { date: response.context.date, ageBands: response.context.ageBands, radiusKm: response.context.radiusKm },
   };

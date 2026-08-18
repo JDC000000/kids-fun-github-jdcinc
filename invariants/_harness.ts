@@ -85,11 +85,48 @@ export function notContainedIn(subset: Set<string>, superset: Set<string>): stri
   return [...subset].filter((id) => !superset.has(id)).sort();
 }
 
-/** Every listing a response surfaced, in either section, as records. */
+/**
+ * Every item a response surfaced, in EVERY section.
+ *
+ * ONE definition, because "everywhere a listing can appear" is now a three-element list and an
+ * inline `[...results, ...expected]` at a call site is how an invariant silently stops seeing a
+ * whole section. That is not hypothetical: `ageUnconfirmed` (the age-not-stated split, Jon's
+ * ruling 2026-08-18) holds exactly the listings an age-related invariant most needs to inspect,
+ * and every safety invariant of the form "X must never be surfaced" is weakened — quietly, while
+ * still passing — by a section it does not look in.
+ */
+export function allItems(response: SearchResponse): SearchResultItem[] {
+  return [...primaryItems(response), ...response.expected];
+}
+
+/**
+ * The PRIMARY page — both the confirmed-age section and the age-not-stated one, in render order.
+ *
+ * The distinction from `allItems` is the expected/seasonal section, which is genuinely a
+ * different result class: the strict temporal and status filters are deliberately not applied to
+ * it (lib/search/filters/predicate.ts), so an invariant about what the primary list is allowed to
+ * contain would be asserted against listings it was never meant to describe.
+ */
+export function primaryItems(response: SearchResponse): SearchResultItem[] {
+  return [...response.results, ...response.ageUnconfirmed];
+}
+
+/** Every listing a response surfaced, in every section, as records. */
 export function allListings(response: SearchResponse): ListingRecord[] {
-  const out: ListingRecord[] = [];
-  for (const item of [...response.results, ...response.expected]) out.push(item.listing);
-  return out;
+  return allItems(response).map((item) => item.listing);
+}
+
+/**
+ * Every occurrence behind the PRIMARY page — both the confirmed-age section and the
+ * age-unconfirmed one.
+ *
+ * This is the identity the monotonicity relations are stated in. Filtering is about what a search
+ * can REACH, and the age split moves cards between sections without changing reachability, so a
+ * subset property asserted against `results` alone would read a re-sectioning as a removal and
+ * stop measuring the filter. Compared as slot ids for the reason `slotIds` documents.
+ */
+export function primarySlotIds(response: SearchResponse): Set<string> {
+  return slotIds(primaryItems(response));
 }
 
 // ── Oracles (test-owned; deliberately NOT the product's own predicates) ──────────────────────

@@ -480,6 +480,19 @@
   background: var(--expected-text);
 }
 
+/* Age not stated by source: a HOLLOW NEUTRAL pin, distinct from both of the above at a glance.
+   Deliberately not amber — amber already means "might not be happening" on this map, and reusing
+   it would merge two unrelated caveats into one visual claim. Neutral reads as "no information",
+   which is exactly what an unstated age is. */
+.kf-map__pin--age-unconfirmed {
+  background: var(--surface);
+  border-color: var(--ink-secondary);
+}
+
+.kf-map__pin--age-unconfirmed::after {
+  background: var(--ink-secondary);
+}
+
 .kf-map__pin:focus-visible {
   outline: 2px solid var(--anchor);
   outline-offset: 2px;
@@ -696,6 +709,44 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--ink-muted);
+}
+
+/* ── "Age not stated by source" section (Jon's ruling 2026-08-18, option b) ────────
+ *
+ * Under an active age filter, listings whose source never published an age range are
+ * SEPARATED here rather than excluded (lib/search/filters/age.ts keeps admitting them —
+ * an unknown age is not grounds for hiding a listing) and rather than mixed into the
+ * confirmed list, which is what they used to be.
+ *
+ * WHY IT IS A BOUNDED PANEL AND NOT ANOTHER PLAIN SECTION HEAD. The requirement is that a
+ * parent notice this section means something different WITHOUT reading it. The two existing
+ * sections are distinguished only by their h2, which is a reading task; this one is a boxed
+ * region with an inset background, a dashed leading rule and a muted heading, so it reads as
+ * "held aside" at a glance and the cards inside it sit visibly outside the confirmed run.
+ *
+ * NEUTRAL, NOT AMBER. Amber is already spoken for on this surface — it means "expected /
+ * not yet posted" on the notices, the badges and the map pins. An unstated age is a
+ * different kind of gap (we know it is happening; we don't know who it is for), and giving
+ * it the same colour would collapse two facts into one signal. Neutral grey is the honest
+ * reading of "no information", and it also keeps the section from competing with the
+ * confirmed results for attention — de-ranked visually as well as structurally. */
+.kf-ageunconf {
+  margin-top: 18px;
+  padding: 2px 12px 4px;
+  border-left: 3px dashed var(--hairline);
+  background: var(--surface-subtle);
+  border-radius: 12px;
+}
+
+.kf-ageunconf__title {
+  color: var(--ink-secondary);
+}
+
+/* Carries `.kf-section__note` too, so it inherits both the shared note typography and the
+   `grid-column: 1 / -1` full-bleed rule the multi-column breakpoints apply to section notes
+   (app/preview/preview.css). This class only says the things that differ. */
+.kf-ageunconf__note {
+  max-width: 62ch;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

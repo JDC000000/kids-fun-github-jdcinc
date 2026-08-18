@@ -19,8 +19,13 @@ export interface SearchMarker {
   venue: string;
   area: string;
   category: string;
-  /** Preserve the brand's confirmed-vs-expected split — never blur the two on the map. */
-  section: 'confirmed' | 'expected';
+  /**
+   * Which rendered section this pin came from — never blurred, on the map any more than in the
+   * list. `age_unconfirmed` is the age-not-stated section (lib/search/engine.ts): a primary
+   * result whose age the source never gave, which is a different caveat from `expected`
+   * (we don't know if it's happening) and must not be drawn as if it were the same one.
+   */
+  section: 'confirmed' | 'expected' | 'age_unconfirmed';
 }
 
 /**
@@ -54,10 +59,16 @@ export function geoIndex(items: SearchItemDto[]): Map<string, { lng: number; lat
 export function buildMarkers(
   confirmed: Activity[],
   expected: Activity[],
-  geo: Map<string, { lng: number; lat: number }>
+  geo: Map<string, { lng: number; lat: number }>,
+  /**
+   * The age-not-stated section. Defaults to empty so the existing two-section callers are
+   * unchanged — but the /search page passes it, because a listing that is reachable in the list
+   * and absent from the map is exactly the "N of M mapped" arithmetic going quietly wrong.
+   */
+  ageUnconfirmed: Activity[] = []
 ): SearchMarker[] {
   const out: SearchMarker[] = [];
-  const push = (a: Activity, section: 'confirmed' | 'expected') => {
+  const push = (a: Activity, section: SearchMarker['section']) => {
     const point = geo.get(a.id);
     if (!point) return;
     out.push({
@@ -72,6 +83,7 @@ export function buildMarkers(
     });
   };
   confirmed.forEach((a) => push(a, 'confirmed'));
+  ageUnconfirmed.forEach((a) => push(a, 'age_unconfirmed'));
   expected.forEach((a) => push(a, 'expected'));
   return out;
 }

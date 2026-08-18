@@ -76,8 +76,23 @@ export function ResultsMap({ markers, token }: ResultsMapProps) {
     for (const m of markers) {
       const el = document.createElement('button');
       el.type = 'button';
-      el.className = `kf-map__pin${m.section === 'expected' ? ' kf-map__pin--expected' : ''}`;
-      el.setAttribute('aria-label', `${m.name} at ${m.venue}, ${m.area}`);
+      // Three sections, three pin treatments — the map must not flatten a distinction the list
+      // makes. `--expected` is outlined ("might not be happening"); `--age-unconfirmed` is its
+      // own class ("we don't know who it's for"), never folded into the same outline.
+      el.className =
+        'kf-map__pin' +
+        (m.section === 'expected'
+          ? ' kf-map__pin--expected'
+          : m.section === 'age_unconfirmed'
+            ? ' kf-map__pin--age-unconfirmed'
+            : '');
+      const sectionNote =
+        m.section === 'expected'
+          ? ' — expected, not yet posted'
+          : m.section === 'age_unconfirmed'
+            ? ' — age not stated by source'
+            : '';
+      el.setAttribute('aria-label', `${m.name} at ${m.venue}, ${m.area}${sectionNote}`);
 
       const popup = new mapboxgl.Popup({ offset: 18, closeButton: true, maxWidth: '260px' }).setHTML(
         `<a class="kf-map__pop" href="/preview/${encodeURIComponent(m.id)}" data-kf-preview="${escapeHtml(m.id)}">` +

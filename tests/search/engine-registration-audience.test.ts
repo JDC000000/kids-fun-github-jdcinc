@@ -133,12 +133,36 @@ describe('adult/senior-only content never appears', () => {
     const withTalk = engineOver([swim, parentAndChild, overdose]);
 
     expect(search(withTalk, 'swim').results.map((r) => r.listing.id)).not.toContain('overdose');
-    // …and specifically not in the age-filtered search the bug was reported against.
+    // …and specifically not in the age-filtered search the bug was reported against. Asserted
+    // across BOTH primary sections, because the exclusion is a HARD one: an adult harm-reduction
+    // talk must not reach a toddler search under any heading, and the age split added a second
+    // place a listing can surface. Excluding it from `results` alone would be the audience filter
+    // regressing into a re-heading.
     const forToddlers = search(withTalk, 'swim', { ageBands: ['2-4'] as const });
-    expect(forToddlers.results.map((r) => r.listing.id)).not.toContain('overdose');
+    const toddlerPrimary = [...forToddlers.results, ...forToddlers.ageUnconfirmed].map((r) => r.listing.id);
+    expect(toddlerPrimary).not.toContain('overdose');
+
     // The parent-and-child session in the same result set is untouched — this exclusion is
-    // narrow, not a blanket "anything mentioning adults".
-    expect(forToddlers.results.map((r) => r.listing.id)).toContain('parent-child');
+    // narrow, not a blanket "anything mentioning adults". It is still REACHABLE…
+    expect(toddlerPrimary).toContain('parent-child');
+    // …and it lands under the age-not-stated heading rather than among the confirmed 2–4
+    // matches, which is the correct answer for THIS fixture: its title says "0-6years" but its
+    // `ageBandMatches` is empty, so nothing in the record establishes the band. That is the
+    // whole point of the split (Jon's ruling 2026-08-18, option b) — the listing is offered,
+    // honestly labelled, instead of being either hidden or presented as a confirmed match.
+    expect(forToddlers.results.map((r) => r.listing.id)).not.toContain('parent-child');
+    expect(forToddlers.ageUnconfirmed.map((r) => r.listing.id)).toContain('parent-child');
+
+    // Give the same listing the band its title implies and it moves to the confirmed section —
+    // the split follows the DATA, not the fixture's identity.
+    const withBand = engineOver([
+      swim,
+      makeListing({ ...parentAndChild, ageBandMatches: ['2-4'] }),
+      overdose,
+    ]);
+    const banded = search(withBand, 'swim', { ageBands: ['2-4'] as const });
+    expect(banded.results.map((r) => r.listing.id)).toContain('parent-child');
+    expect(banded.ageUnconfirmed.map((r) => r.listing.id)).not.toContain('parent-child');
   });
 });
 
