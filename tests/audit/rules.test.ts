@@ -14,6 +14,10 @@ import {
   structuredTags,
 } from '@/lib/audit/rules/adult-age-band';
 import { adultSubjectChildBandsRule } from '@/lib/audit/rules/adult-subject-child-bands';
+import {
+  adultTitleChildBandsRule,
+  selfDeclaredMinAgeYears,
+} from '@/lib/audit/rules/adult-title-child-bands';
 import type { AuditListing } from '@/lib/audit/types';
 
 function listing(overrides: {
@@ -309,5 +313,172 @@ describe('pattern 3 — adult SUBJECT, affirmatively-claimed child band', () => 
     for (const title of ['Balanced Body Pilates (Level 1-2)', 'Pickleball Lesson – Skills & Drills Level (1-2)']) {
       expect(adultSubjectChildBandsRule.detect(listing({ title, ageBandMatches: [] })), title).toBeNull();
     }
+  });
+});
+
+describe('pattern 4 — adult-only programme NAME, child age exposure', () => {
+  /** Verbatim from the live sweep of 2026-08-18. Empty bands → admitted to every age filter. */
+  const aquafit = () =>
+    listing({ title: 'Aquafit - Deep', ageWording: 'Aquafit - Deep', ageBandMatches: [] });
+
+  it('fires on the real live instance, with strong TITLE evidence', () => {
+    const signal = adultTitleChildBandsRule.detect(aquafit());
+    expect(signal).not.toBeNull();
+    expect(signal!.evidence.map((e) => e.quote.toLowerCase())).toContain('aquafit');
+    expect(signal!.evidence.every((e) => e.field === 'title' && e.strength === 'strong')).toBe(true);
+    expect(signal!.derivedClaim).toContain("empty → don't hide");
+  });
+
+  it('patterns 2 and 3 cannot see it, which is why this rule exists', () => {
+    // No audience word anywhere (pattern 2 has nothing to read), and "aquafit" is a programme
+    // name, not subject matter, on a row with no affirmative band at all (pattern 3 requires one).
+    expect(adultAgeBandRule.detect(aquafit())).toBeNull();
+    expect(adultSubjectChildBandsRule.detect(aquafit())).toBeNull();
+  });
+
+  it('fires on the other two live instances', () => {
+    for (const title of ['Soccer - Master\'s Co-Ed', 'Osteofit - Sit, Stand and Stabilize']) {
+      const signal = adultTitleChildBandsRule.detect(listing({ title, ageBandMatches: [] }));
+      expect(signal, title).not.toBeNull();
+      expect(signal!.evidence.some((e) => e.strength === 'strong'), title).toBe(true);
+    }
+  });
+
+  it('fires when an adult-named programme carries an actual child band', () => {
+    const signal = adultTitleChildBandsRule.detect(
+      listing({ title: 'Aquafit - Mild', ageBandMatches: ['2-4', '5-9'] })
+    );
+    expect(signal).not.toBeNull();
+    expect(signal!.derivedClaim).toContain('child age band');
+  });
+
+  it('reads a 16+/17+ floor, which pattern 2 deliberately does not carry', () => {
+    // Pattern 2's strong floors are the legal-adult ones (18/19/21/55/65). 16+ is not an adult
+    // floor, but it excludes every child band, so this rule owns it.
+    const signal = adultTitleChildBandsRule.detect(
+      listing({ title: 'Chen\'s Tai Chi: Old Frame (16+)', ageBandMatches: [] })
+    );
+    expect(signal).not.toBeNull();
+    expect(signal!.evidence[0].strength).toBe('strong');
+  });
+
+  it('does NOT fire when the listing reaches no child filter', () => {
+    // The live 16+ rows carry ['15+'] and are therefore correctly derived — no finding.
+    expect(
+      adultTitleChildBandsRule.detect(
+        listing({ title: 'Chen\'s Tai Chi: Old Frame (16+)', ageBandMatches: ['15+'] })
+      )
+    ).toBeNull();
+  });
+
+  it('DISJOINT: it does not re-match pattern 2\'s audience vocabulary', () => {
+    // Reporting the same row under two rule ids is what the pattern-2/3 split exists to prevent.
+    // Each of these is pattern 2's finding, and pattern 4 must stay silent on it.
+    for (const title of ['Adult Swim', 'Seniors Social Hour', '55+ Fitness Circuit', 'Badminton 19+']) {
+      expect(adultTitleChildBandsRule.detect(listing({ title, ageBandMatches: [] })), title).toBeNull();
+      expect(adultAgeBandRule.detect(listing({ title, ageBandMatches: [] })), title).not.toBeNull();
+    }
+  });
+
+  it('DISJOINT: "lane swim" is excluded as a measured false-positive class', () => {
+    // 345 exposed rows / 156 distinct titles on the 2026-08-18 sweep, nearly all NVRC lane swims
+    // banded ['5-9','10-14','15+'] — a plausibly CORRECT derivation, since a lane swim is open to
+    // anyone who can swim lengths. See the rule header.
+    for (const title of [
+      'Lane Swim Delbrook Tuesday 9:00-10:00pm',
+      '$2 Lane Swim Ron Andrews Wednesday 6:30-7:30pm',
+      '|Length Swim (1 lanes x 25m)|',
+    ]) {
+      expect(
+        adultTitleChildBandsRule.detect(listing({ title, ageBandMatches: ['5-9', '10-14', '15+'] })),
+        title
+      ).toBeNull();
+    }
+  });
+
+  it('GUARD: a title stating its own child age range names a child audience', () => {
+    // 605 live rows / 290 distinct titles carry such a token, and this catalogue puts audience
+    // ranges in titles rather than in a field.
+    for (const title of [
+      'Aquafit (5-12 yrs)',
+      'Adult / Early Years (0-6years) Swim Karen Magnussen Monday 9:00am-12:45pm',
+      'Aquafit Osteofit 8yrs+',
+      'Masters Swim Club ages 9-14',
+    ]) {
+      expect(
+        adultTitleChildBandsRule.detect(listing({ title, ageBandMatches: [] })),
+        title
+      ).toBeNull();
+    }
+  });
+
+  it('GUARD: clock times and pool geometry are never read as ages', () => {
+    // Both shapes are pervasive in NVRC/ActiveNet titles. If either parsed as an age the guard
+    // would silently swallow every real finding in the pool programmes.
+    expect(selfDeclaredMinAgeYears('Aquafit Delbrook Tuesday 9:00-10:00pm')).toBeNull();
+    expect(selfDeclaredMinAgeYears('Aquafit (1 lanes x 25m)')).toBeNull();
+    expect(selfDeclaredMinAgeYears('Aquafit - 45 min Deep')).toBeNull();
+    expect(selfDeclaredMinAgeYears('Sportball Outdoor Soccer (5-7yrs)')).toBe(5);
+    expect(selfDeclaredMinAgeYears('Open Gym 8yrs+')).toBe(8);
+    expect(selfDeclaredMinAgeYears('Storytime ages 3-5')).toBe(3);
+    // A 16+ floor is a marker, not a guard — it must not drop the listing.
+    expect(selfDeclaredMinAgeYears('Tai Chi 16 yrs+')).toBe(16);
+    expect(
+      adultTitleChildBandsRule.detect(listing({ title: 'Tai Chi 16 yrs+', ageBandMatches: [] }))
+    ).not.toBeNull();
+  });
+
+  it('GUARD: the source naming a young audience drops the listing outright', () => {
+    for (const title of ['Family Aquafit', 'Kids Aquafit', 'Youth Masters Swim', 'Aquafit for All Ages']) {
+      expect(adultTitleChildBandsRule.detect(listing({ title, ageBandMatches: [] })), title).toBeNull();
+    }
+  });
+
+  it('GUARD: caregiver-attended programmes are dropped, same guard as patterns 2 and 3', () => {
+    for (const title of ['Parent & Tot Aquafit', 'Adult and Child Aquafit']) {
+      expect(adultTitleChildBandsRule.detect(listing({ title, ageBandMatches: ['under2'] })), title).toBeNull();
+    }
+  });
+
+  it('GUARD: a derived age string can never excuse a derived age claim', () => {
+    // `ageWording` is "all-ages" — OUR output wearing the source's field. If the child-audience
+    // guard scanned it, the bug would be its own alibi. Same discipline as pattern 3.
+    const signal = adultTitleChildBandsRule.detect(
+      listing({
+        title: 'Aquafit - Shallow Moderate',
+        ageWording: 'all-ages',
+        ageBandMatches: ['under2', '2-4', '5-9'],
+      })
+    );
+    expect(signal).not.toBeNull();
+  });
+
+  it('GUARD: "Toastmasters", "masterclass" and an academic "Master\'s of" are not the Masters category', () => {
+    for (const title of [
+      'Toastmasters Youth Program - Greater Vancouver Gavel Club',
+      'Pottery Masterclass',
+      'Master Gardener Talk',
+      "Master's of Science Info Session",
+    ]) {
+      expect(adultTitleChildBandsRule.detect(listing({ title, ageBandMatches: [] })), title).toBeNull();
+    }
+  });
+
+  it('GUARD: evidence is TITLE only — a description mention is not the programme\'s name', () => {
+    expect(
+      adultTitleChildBandsRule.detect(
+        listing({ title: 'Open Swim', description: 'Held right after the Aquafit class.', ageBandMatches: [] })
+      )
+    ).toBeNull();
+  });
+
+  it('an ambiguous programme name is a WEAK candidate, never an unreviewed finding', () => {
+    // Verbatim live title (23 rows / 4 programmes). "Gentle Fit" is usually older-adult
+    // programming and sometimes just a low-impact class, so it earns adjudication and nothing more.
+    const signal = adultTitleChildBandsRule.detect(
+      listing({ title: 'Group Fitness - Gentle Fit', ageBandMatches: [] })
+    );
+    expect(signal).not.toBeNull();
+    expect(signal!.evidence.every((e) => e.strength === 'weak')).toBe(true);
   });
 });
