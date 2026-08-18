@@ -35,3 +35,7 @@ test-results/
 # search-cap probe: esbuild bundle, written into the repo root because `pg` stays external and
 # must resolve from ./node_modules. Removed on exit, but not if the run is killed.
 .search-cap-probe.bundle.mjs
+.safety-audit.bundle.mjs
+
+# safety-auditor output (a run artefact, not source — see docs/safety-auditor.md)
+.audit/

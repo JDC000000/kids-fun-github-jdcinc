@@ -412,3 +412,117 @@ export function parseCategoryCostVerdict(text: string | null): CategoryCostVerdi
   const reason = typeof obj.reason === 'string' ? obj.reason.slice(0, 500) : '';
   return { primaryCategory, categoryConfidence, costStatus, costMinCad, costMaxCad, costConfidence, reason };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Use case 4 — catalogue SAFETY AUDIT adjudication (G-SAFE-1).
+//
+// The deterministic prefilter (lib/audit/prefilter.ts) sweeps all ~4,900 listings and hands
+// this stage only the contradictions it found. The model's ONLY job is the judgement a regex
+// cannot make: is this a real contradiction, or an innocent reading of an ambiguous word?
+// Classification, not reasoning — hence Haiku, same as every other use case here.
+//
+// The prompt is written around the ONE failure mode that would sink the job. A false positive
+// here is worse than a miss: a noisy auditor gets muted, and then it catches nothing. So the
+// instruction is explicitly asymmetric — when unsure, say NOT a contradiction — and the worked
+// examples are all near-misses rather than clear cases, including the exact trap documented at
+// worker/core/age.ts:245-250 ("Adults accompanying children under 9 must stay in the library").
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const SAFETY_AUDIT_SYSTEM_PROMPT = `You are a careful data-quality reviewer for a Metro Vancouver kids-activity directory used by parents to choose activities for their children.
+
+An automated check has flagged one listing because the SOURCE TEXT (words copied verbatim from the organisation's own listing page) appears to contradict a DERIVED LABEL (something this directory computed and shows to parents). You decide whether the contradiction is REAL.
+
+You will be given:
+- rule: which contradiction was suspected.
+- source_evidence: the exact words matched, and which source field each came from.
+- source_title / source_description / source_age_wording: the source's own text.
+- derived_claim: what the directory computed and displays.
+
+Judge ONLY whether the source text genuinely contradicts the derived claim. You are not rating the activity, the organisation, or the quality of the listing.
+
+Decision rules:
+- A word can appear without carrying its usual meaning. "Park" in "Parkgate Community Centre" or "Park Board" is a name, not a location outdoors. "Field" in "field trip" is not a field. A playground can be indoors.
+- The word "adults" is very often about SUPERVISION rather than audience. "Adults accompanying children under 9 must stay in the library" describes who must come along to a CHILDREN'S programme — that is NOT adult-only programming and NOT a contradiction. The same applies to "parent participation required", "adult supervision required", "children must be accompanied by an adult".
+- A programme FOR children that adults attend with them (Parent & Tot, Family Storytime, Adult & Child Swim) is a children's programme. Not a contradiction.
+- A structured audience tag that literally reads "Adults" or "Seniors", with no children's audience beside it, IS an adult-audience claim.
+- "Rain or Shine", "Outdoor", "weather permitting", "spray park", "trail", "beach" state that the activity happens outdoors. If the directory also labels it Indoor / Rainy-day friendly, that IS a real contradiction — even if the activity might have an indoor backup location.
+- If the source text is too thin to tell, that is NOT a contradiction. Report contradiction=false with a low confidence.
+
+BE CONSERVATIVE. A false alarm makes parents distrust every warning this system produces, which is worse than missing one. When you are unsure, answer contradiction=false.
+
+Respond with ONLY a single JSON object, no prose, matching exactly:
+{
+  "contradiction": boolean,  // true only if the source really does contradict the derived label
+  "confidence": number,      // your calibrated confidence in [0,1] for the contradiction value
+  "reason": string           // one short sentence, no personal data
+}
+
+Examples:
+- rule outdoor_source_indoor_tag, title "Sportball Outdoor Soccer (5-7yrs) Rain/Shine", derived "tagged indoor; renders Rainy-day friendly" → {"contradiction": true, "confidence": 0.97, "reason": "Title states Outdoor and Rain/Shine; the Rainy-day friendly label is wrong."}
+- rule outdoor_source_indoor_tag, title "Toddler Time at Parkgate Community Centre", derived "tagged indoor" → {"contradiction": false, "confidence": 0.9, "reason": "Park appears only inside a venue name, not as a location claim."}
+- rule outdoor_source_indoor_tag, title "Indoor Playground Drop-In", derived "tagged indoor" → {"contradiction": false, "confidence": 0.95, "reason": "Source says indoor; playground here is an indoor facility."}
+- rule adult_source_child_bands, age wording "International Overdose Awareness Day, Health, Life Skills and Personal Growth, Adults, English", derived "no age bands, admitted into every age filter including 2-4" → {"contradiction": true, "confidence": 0.95, "reason": "Source tags the audience as Adults, yet the listing reaches a toddler age filter."}
+- rule adult_source_child_bands, description "Adults accompanying children under 9 must stay in the library", derived "carries child age band 2-4" → {"contradiction": false, "confidence": 0.95, "reason": "Supervision requirement for a children's programme, not adult-only programming."}
+- rule adult_source_child_bands, title "Prenatal Yoga", derived "no age bands, admitted into every age filter including 2-4" → {"contradiction": true, "confidence": 0.93, "reason": "Prenatal classes are adult-only and should not surface in a toddler search."}`;
+
+export const SAFETY_AUDIT_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['contradiction', 'confidence', 'reason'],
+  properties: {
+    contradiction: { type: 'boolean' },
+    confidence: { type: 'number' },
+    reason: { type: 'string' },
+  },
+};
+
+export const SAFETY_AUDIT_OUTPUT_CONFIG: OutputConfig = {
+  format: { type: 'json_schema', schema: SAFETY_AUDIT_OUTPUT_SCHEMA },
+};
+
+/** The stable, cacheable system prefix for the safety-audit use case (1h TTL breakpoint). */
+export function buildSafetyAuditSystem(): SystemBlock[] {
+  return [{ type: 'text', text: SAFETY_AUDIT_SYSTEM_PROMPT, cache_control: ONE_HOUR_CACHE }];
+}
+
+export interface SafetyAuditContent {
+  ruleId: string;
+  ruleTitle: string;
+  evidence: Array<{ quote: string; field: string; strength: string }>;
+  title: string;
+  description: string;
+  ageWording: string;
+  venueName: string;
+  derivedClaim: string;
+}
+
+/** The VOLATILE per-candidate user content (no cache_control). */
+export function buildSafetyAuditUser(rec: SafetyAuditContent): UserBlock[] {
+  const payload = {
+    rule: rec.ruleId,
+    rule_description: rec.ruleTitle,
+    source_evidence: rec.evidence,
+    source_title: rec.title,
+    source_description: rec.description,
+    source_age_wording: rec.ageWording,
+    source_venue: rec.venueName,
+    derived_claim: rec.derivedClaim,
+  };
+  return [{ type: 'text', text: `Adjudicate this flagged listing:\n${JSON.stringify(payload)}` }];
+}
+
+export interface SafetyAuditVerdict {
+  contradiction: boolean;
+  confidence: number;
+  reason: string;
+}
+
+/** Parse a safety-audit verdict, fail-closed (null on any malformation → treated as unadjudicated). */
+export function parseSafetyAuditVerdict(text: string | null): SafetyAuditVerdict | null {
+  const obj = parseJsonObject(text);
+  if (!obj) return null;
+  const confidence = clampConfidence(obj.confidence);
+  if (typeof obj.contradiction !== 'boolean' || confidence === null) return null;
+  const reason = typeof obj.reason === 'string' ? obj.reason.slice(0, 500) : '';
+  return { contradiction: obj.contradiction, confidence, reason };
+}
