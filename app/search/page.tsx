@@ -29,7 +29,9 @@ import { distanceAvailability, distanceNote } from './_lib/distance-note';
 import { groupActivitiesByDay, formatRangeLabel, type DayGroup } from './_lib/day-groups';
 import { describeBroadening, joinPhrases, type AppliedRungDto } from './_lib/broadening-notice';
 import { describeBroadeningAlternatives } from './_lib/broadening-alternatives';
+import { describeDayRemainder } from './_lib/day-remainder-notice';
 import type { BroadenAlternative } from '@/lib/search/broaden';
+import type { RequestedDayWindow } from '@/lib/search/day-window';
 import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
   CLEARED_FILTERS,
@@ -72,6 +74,11 @@ type SearchApiResponse = SearchResponseDto & {
     // (12 results)" chips. See _lib/broadening-alternatives.ts.
     alternatives?: BroadenAlternative[];
   };
+  // Where the local clock sits inside the single day the search asked for. Optional for the
+  // same reason `broadening` above is: this type DESCRIBES a JSON payload fetched over HTTP,
+  // it does not verify one, so nothing here may be assumed present. The derivation reads an
+  // absent window as "nothing to say" rather than guessing. See _lib/day-remainder-notice.ts.
+  dateWindow?: RequestedDayWindow | null;
 };
 
 function baseUrl(): string {
@@ -266,6 +273,14 @@ export default async function SearchPage({
   // not) whatever the ladder already did. See _lib/broadening-alternatives.ts for why only
   // some rungs are offered as chips.
   const alternativeChips = describeBroadeningAlternatives(result.body?.broadening?.alternatives, state);
+  // WHY A THIN "TODAY" IS THIN. The catalogue only ever holds activities that have not ended
+  // (lib/search/postgres-repository.ts prunes against `now()`), so a Today list is what is LEFT
+  // of today. Late in the evening that collapses to open-hours attractions and still-running
+  // programmes, and the page used to render that silently — indistinguishable from a city with
+  // nothing on. Three testers read it as a broken product. This states which of the two it is
+  // when the clock can tell, and says so plainly when it cannot. See _lib/day-remainder-notice.ts.
+  const dayRemainder = describeDayRemainder(result.body?.dateWindow, { resultCount: total });
+  const tomorrowHref = hrefFor(state, { when: 'tomorrow', dateFrom: null, dateTo: null });
   // The applied query in plain language. One derivation shared with the mobile sticky bar,
   // so the phone and the desktop can never disagree about what is filtering.
   const appliedTokens = appliedFilterTokens(state, savedLocation);
@@ -427,6 +442,28 @@ export default async function SearchPage({
             countsKnown={result.ok}
           />
 
+          {/* "Today has finished" is a different fact from "there is nothing on today", and the
+              page used to render them identically — a near-empty list, no explanation, at 10pm.
+              Rendered FIRST among the notices because it explains the SHAPE of everything below
+              it: the catalogue drops activities as they end, so a late Today is a list of what
+              is left, not a list of what was on. The offer of tomorrow is explicit, and stays an
+              offer — the broadening ladder's silent slide into adjacent days is the behaviour
+              this replaces. `role="status"` matches the notices below it. */}
+          {dayRemainder && (
+            <p className="kf-dayremainder" role="status">
+              <b className="kf-dayremainder__lede">{dayRemainder.lede}</b> {dayRemainder.body}
+              {dayRemainder.offerTomorrow && (
+                <>
+                  {' '}
+                  <Link className="kf-dayremainder__next" href={tomorrowHref}>
+                    See what’s on tomorrow
+                  </Link>
+                  .
+                </>
+              )}
+            </p>
+          )}
+
           {/* Rendered OUTSIDE the results branch, like QuerySummary and for the same reason:
               a search that was widened and STILL came back empty is exactly when a parent most
               needs to know their constraints moved. `role="status"` so the substitution is
@@ -494,10 +531,17 @@ export default async function SearchPage({
             <h2 className="kf-empty__title">
               {state.q ? <>Nothing matches “{state.q}” right now.</> : <>Nothing to show right now.</>}
             </h2>
-            <p className="kf-empty__body">
-              Schedules around Metro Vancouver usually post 2–4 weeks ahead. Try a broader word (like “swim” or
-              “gym”), or clear your search to browse everything on.
-            </p>
+            {/* "Schedules post 2–4 weeks ahead" names a CAUSE, and it is the wrong cause for a
+                day that has simply run out — an empty Today at 10pm is not an unpublished
+                schedule. When the day-remainder notice above has already given the real reason,
+                this paragraph would contradict it, so it stands down rather than competing. The
+                "try a broader word" advice goes with it: broadening cannot lengthen a day. */}
+            {!dayRemainder && (
+              <p className="kf-empty__body">
+                Schedules around Metro Vancouver usually post 2–4 weeks ahead. Try a broader word (like “swim” or
+                “gym”), or clear your search to browse everything on.
+              </p>
+            )}
             {/* The constraint explanation is NOT repeated here — it now renders above the
                 results branch, so it survives a page that the expected section filled. */}
             {clearableFilters && (

@@ -568,7 +568,16 @@ export function ageGuide(min: number | null, max: number | null): AgeGuide {
 export function practicalFacts(
   activity: Pick<Activity, 'indoor' | 'rainyDay' | 'dropIn'>
 ): string[] {
-  const facts = [activity.indoor ? 'Indoor' : 'Outdoor'];
+  const facts: string[] = [];
+  // A NULL reading prints nothing at all. This line used to be `activity.indoor ? 'Indoor' :
+  // 'Outdoor'`, which had no way to abstain: every listing got one of the two labels whether or
+  // not anything supported it, so "the source never said" was published as a flat "Outdoor" —
+  // the mirror image of the `class_program` → "Indoor" defect, and just as actionable to a parent
+  // packing a raincoat. "Good to know" is already conditional on `facts.length > 0`
+  // (ActivityDetail), so an unknown listing simply drops the panel rather than filling it with a
+  // guess. Same ruling as `ageGuide`'s "Not stated" a few hundred lines up.
+  if (activity.indoor === true) facts.push('Indoor');
+  else if (activity.indoor === false) facts.push('Outdoor');
   if (activity.rainyDay) facts.push('Rainy-day friendly');
   if (activity.dropIn) facts.push('No registration needed');
   return facts;
