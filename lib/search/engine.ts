@@ -35,6 +35,7 @@ import { collapseSameDaySeries, slotSpanEnd, type CollapsedListing, type Occurre
 import {
   buildBroadeningLadder,
   explainEmptyState,
+  type BroadenAlternative,
   type BroadenRung,
   type ConstraintExplanation,
 } from './broaden';
@@ -137,7 +138,18 @@ export interface SearchResponse {
   /** Separate "expected / seasonal / evergreen" section (§5A.5). */
   expected: SearchResultItem[];
   total: number;
-  broadening: { applied: BroadenRung[]; emptyState: ConstraintExplanation | null };
+  broadening: {
+    applied: BroadenRung[];
+    emptyState: ConstraintExplanation | null;
+    /**
+     * Every rung of the ladder (§5A.5), each carrying the REAL primary-result count its
+     * cumulative context would yield — the "This weekend (12 results)" chips. Present only
+     * when the primary run was too thin to fill `minResults` (same gate `applied` uses), so
+     * an ordinary well-filled page never pays for it. See lib/search/broaden.ts's
+     * `BroadenAlternative` for why every count here is provably real rather than estimated.
+     */
+    alternatives: BroadenAlternative[];
+  };
   /**
    * Per-filter-value counts for the filter UI; present only when `facets` was requested.
    * Computed against the SAME context that produced `results` (post-broadening), so
@@ -267,12 +279,33 @@ export class SearchEngine {
       // cannot drift about when a search counts as needing an explanation.
       emptyState = run.scored.length === 0 || explained.blockingConstraint != null ? explained : null;
     }
+    // Alternative chips ("This weekend (12 results)"): a REAL count per rung of the ladder,
+    // not just the label. Computed in the SAME loop that already walks the ladder to fill
+    // `minResults`, so every count — applied or not — comes from the identical `primaryOf`
+    // call the engine itself trusts for real results, never a second, cheaper-and-possibly-
+    // wrong estimate. Gated on `tooFew` exactly like the ladder walk below it: a caller whose
+    // page is already full (the ordinary case) pays nothing for this.
+    const alternatives: BroadenAlternative[] = [];
     if (tooFew) {
+      let filled = false;
       for (const rung of buildBroadeningLadder(ctx0, { hasOrigin: origin != null })) {
-        applied.push(rung);
-        working = rung.context;
-        run = primaryOf(rung.context);
-        if (run.scored.length >= minResults) break;
+        const rungRun = primaryOf(rung.context);
+        const isApplied = !filled;
+        if (isApplied) {
+          applied.push(rung);
+          working = rung.context;
+          run = rungRun;
+          if (rungRun.scored.length >= minResults) filled = true;
+        }
+        alternatives.push({
+          rung: rung.rung,
+          key: rung.key,
+          label: rung.label,
+          constraint: rung.constraint,
+          count: rungRun.scored.length,
+          applied: isApplied,
+          context: rung.context,
+        });
       }
     }
     const scored = run.scored;
@@ -302,7 +335,7 @@ export class SearchEngine {
       results: applyLimit(scored).map(toItem),
       expected: applyLimit(expected).map(toItem),
       total: scored.length,
-      broadening: { applied, emptyState },
+      broadening: { applied, emptyState, alternatives },
       ...(facets ? { facets } : {}),
       meta: { fixtureBacked: this.fixtureBacked, sort: working.sort },
     };

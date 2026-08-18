@@ -58,6 +58,35 @@ export interface BroadenRung {
   context: SearchContext;
 }
 
+/**
+ * A `BroadenRung`, plus a REAL pre-computed result count — "This weekend (12 results)" needs a
+ * number behind the chip, not just the label. `BroadenRung` alone (see above) carries no count:
+ * it is pure and has no repository to count against, so this shape only exists on the engine
+ * side (lib/search/engine.ts), built by re-running the SAME primary pipeline the ladder itself
+ * runs for each rung it actually applies — never a separate, cheaper-but-divergent estimate.
+ * That is what lets a UI chip promise "7 results" and be right when a parent taps it.
+ */
+export interface BroadenAlternative {
+  rung: number;
+  key: BroadenRungKey;
+  label: string;
+  constraint?: ConstraintKey;
+  /** Total primary results this rung's CUMULATIVE context would yield if applied. */
+  count: number;
+  /**
+   * True when this rung is already reflected in the CURRENT results (it is one of
+   * `SearchResponse.broadening.applied`). A chip only makes sense to OFFER when this is false —
+   * offering to do something that already happened is not an alternative, it is the status quo.
+   */
+  applied: boolean;
+  /**
+   * The cumulative context this rung's count was measured against — same shape as
+   * `BroadenRung.context`, carried through so a chip can be built into a real `/search` link
+   * (radiusKm / date / ageBands / the dropped chip) without a consumer re-parsing `label`.
+   */
+  context: SearchContext;
+}
+
 /** Human-facing description per constraint (for the empty-state explanation). */
 export const CONSTRAINT_LABELS: Record<ConstraintKey, string> = {
   text: 'search terms',

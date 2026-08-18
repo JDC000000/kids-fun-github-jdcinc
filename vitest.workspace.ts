@@ -93,6 +93,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/core/venue-authority.test.ts',
   'tests/corrections/retention-route.test.ts',
   'tests/corrections/retention.test.ts',
+  'tests/coverage-status-db.test.ts',
   'tests/email/account_deletion_cascade.test.ts',
   'tests/email/weekly_send.test.ts',
   'tests/geo/backfill-clobber-guard.test.ts',

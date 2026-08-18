@@ -28,6 +28,8 @@ import { buildMarkers, geoIndex } from './_lib/markers';
 import { distanceAvailability, distanceNote } from './_lib/distance-note';
 import { groupActivitiesByDay, formatRangeLabel, type DayGroup } from './_lib/day-groups';
 import { describeBroadening, joinPhrases, type AppliedRungDto } from './_lib/broadening-notice';
+import { describeBroadeningAlternatives } from './_lib/broadening-alternatives';
+import type { BroadenAlternative } from '@/lib/search/broaden';
 import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
   CLEARED_FILTERS,
@@ -66,6 +68,9 @@ type SearchApiResponse = SearchResponseDto & {
     // That is what the "we widened your search" notice reports — see _lib/broadening-notice.ts.
     applied: AppliedRungDto[];
     emptyState: { blockingConstraint: string | null; message: string } | null;
+    // Real, pre-counted candidate rungs (applied AND not-yet-applied) — the "This weekend
+    // (12 results)" chips. See _lib/broadening-alternatives.ts.
+    alternatives?: BroadenAlternative[];
   };
 };
 
@@ -256,6 +261,11 @@ export default async function SearchPage({
   // question from the one that was asked, and the page has to say so — silently substituting
   // constraints is the defect this notice closes.
   const broadening = describeBroadening(result.body?.broadening?.applied);
+  // Clickable "pre-counted alternative" chips — the SPECIFIC widenings the ladder considered,
+  // each with a real result count, so a parent can pick one directly instead of accepting (or
+  // not) whatever the ladder already did. See _lib/broadening-alternatives.ts for why only
+  // some rungs are offered as chips.
+  const alternativeChips = describeBroadeningAlternatives(result.body?.broadening?.alternatives, state);
   // The applied query in plain language. One derivation shared with the mobile sticky bar,
   // so the phone and the desktop can never disagree about what is filtering.
   const appliedTokens = appliedFilterTokens(state, savedLocation);
@@ -444,6 +454,23 @@ export default async function SearchPage({
             <p className="kf-browse__empty-explain" role="status">
               {emptyExplain}
             </p>
+          )}
+
+          {/* Pre-counted alternative chips: the SPECIFIC widenings the ladder considered,
+              each a real /search link carrying its own proven result count, so a parent can
+              pick one directly rather than only reading the sentence above. Rendered beside
+              (not instead of) the broadening/empty-state prose — this is the actionable
+              layer on top of the explanation, not a replacement for it. */}
+          {alternativeChips.length > 0 && (
+            <ul className="kf-broaden-chips" aria-label="Other searches to try">
+              {alternativeChips.map((chip) => (
+                <li key={chip.key}>
+                  <Link className="kf-broaden-chips__chip" href={chip.href}>
+                    {chip.text}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           )}
 
           <div className="kf-results">

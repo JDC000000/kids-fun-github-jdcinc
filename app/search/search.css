@@ -278,6 +278,42 @@
   font-weight: 700;
 }
 
+/* Pre-counted alternative chips: the SPECIFIC widenings the ladder considered, each a real
+ * result count behind a real /search link (app/search/_lib/broadening-alternatives.ts).
+ * Sits beside the .kf-broadened / .kf-browse__empty-explain prose above, as the actionable
+ * layer on top of it — not a replacement, so it borrows the same list reset rather than a
+ * competing card treatment. */
+.kf-broaden-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kf-broaden-chips__chip {
+  display: inline-block;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.kf-broaden-chips__chip:hover {
+  border-color: var(--leaf);
+}
+
+.kf-broaden-chips__chip:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Map view — list/map toggle + Mapbox surface (Task 37, G4).
  * Civic field-guide: warm-paper chrome, hairline rules, Leaf reserved for the
