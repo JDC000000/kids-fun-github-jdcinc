@@ -80,6 +80,12 @@ type SearchApiResponse = SearchResponseDto & {
   // it does not verify one, so nothing here may be assumed present. The derivation reads an
   // absent window as "nothing to say" rather than guessing. See _lib/day-remainder-notice.ts.
   dateWindow?: RequestedDayWindow | null;
+  // The parsed intent the engine actually ran. Only ONE field of it is read here, and only
+  // because a zero-result page has to say WHICH kind of zero it is: `unparsedQuery` marks a
+  // query whose text the parser could read nothing of (lib/search/parse.ts), which is not the
+  // same event as a search that ran and matched nothing. Optional/deeply-optional for the same
+  // reason as everything above — this type describes a fetched payload, it does not verify one.
+  context?: { unparsedQuery?: boolean };
 };
 
 function baseUrl(): string {
@@ -330,6 +336,12 @@ export default async function SearchPage({
   // to geocode is origin-asking-for and origin-less, and the parent deserves the second answer.
   const distanceExplanation = distanceNote(distanceAvailability(result.body));
   const emptyExplain = result.body?.broadening?.emptyState?.message ?? null;
+  // The engine could not read the typed query at all, so it deliberately returned nothing
+  // rather than a browse (lib/search/engine.ts). The page must not then report "nothing
+  // matches your search" — no search was performed on those words. The reason and the advice
+  // are already in `emptyExplain` above; this only stops the generic copy from asserting a
+  // cause ("schedules post 2–4 weeks ahead") that has nothing to do with what happened.
+  const queryUnparsed = result.body?.context?.unparsedQuery === true;
   // The broadening ladder may have relaxed dates, times, ages or a chip to fill the page
   // (lib/search/broaden.ts). When it did, the results on screen answer a slightly different
   // question from the one that was asked, and the page has to say so — silently substituting
@@ -595,16 +607,27 @@ export default async function SearchPage({
             <div className="kf-empty__glyph" aria-hidden="true">
               ◍
             </div>
-            <p className="kf-browse__empty-eyebrow">No matches yet</p>
+            <p className="kf-browse__empty-eyebrow">{queryUnparsed ? 'We couldn’t search for that' : 'No matches yet'}</p>
             <h2 className="kf-empty__title">
-              {state.q ? <>Nothing matches “{state.q}” right now.</> : <>Nothing to show right now.</>}
+              {queryUnparsed ? (
+                // NOT "nothing matches" — we never got as far as matching. See `queryUnparsed`.
+                <>We couldn’t understand “{state.q}”.</>
+              ) : state.q ? (
+                <>Nothing matches “{state.q}” right now.</>
+              ) : (
+                <>Nothing to show right now.</>
+              )}
             </h2>
             {/* "Schedules post 2–4 weeks ahead" names a CAUSE, and it is the wrong cause for a
                 day that has simply run out — an empty Today at 10pm is not an unpublished
                 schedule. When the day-remainder notice above has already given the real reason,
                 this paragraph would contradict it, so it stands down rather than competing. The
-                "try a broader word" advice goes with it: broadening cannot lengthen a day. */}
-            {!dayRemainder && (
+                "try a broader word" advice goes with it: broadening cannot lengthen a day.
+                It stands down for an UNREADABLE query too, for the same reason and a stronger
+                one: unpublished schedules are not why that page is empty, and "try a broader
+                word" is the wrong instruction when the problem is that no word was read at
+                all. The advice that fits is already in the explanation line above. */}
+            {!dayRemainder && !queryUnparsed && (
               <p className="kf-empty__body">
                 Schedules around Metro Vancouver usually post 2–4 weeks ahead. Try a broader word (like “swim” or
                 “gym”), or clear your search to browse everything on.

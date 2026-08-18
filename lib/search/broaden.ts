@@ -271,6 +271,44 @@ export interface ConstraintExplanation {
   singleRelaxations: SingleRelaxation[];
 }
 
+/** How much of the parent's own query the unreadable-query message quotes back. */
+const MAX_ECHOED_QUERY_CHARS = 60;
+
+/**
+ * The empty-state explanation for a query the parser could read NOTHING of
+ * (`SearchContext.unparsedQuery` — see lib/search/parse.ts and lib/search/engine.ts).
+ *
+ * AUTHORED, NOT MEASURED, and that is the point. `explainEmptyState` below names a blocking
+ * constraint by probing single relaxations, but the only constraint active here is `text`,
+ * and `relaxSingle(ctx, 'text')` sets `terms: []` — which is precisely the state that puts
+ * lib/search/match.ts into `browseMode` and returns the entire catalogue. The probe would
+ * therefore come back with a large, perfectly true number and the page would print
+ * "Relaxing the search terms shows 4,812 more": the count of everything, offered as the
+ * remedy for a question nobody understood. That sentence is the dressed-up form of the exact
+ * defect this path exists to stop, so the probe is not run.
+ *
+ * `singleRelaxations` is EMPTY for the same reason — no relaxation was measured, and an empty
+ * list is the honest record of that. A consumer reading it gets "nothing was probed" rather
+ * than a fabricated row.
+ *
+ * `blockingConstraint` is `'text'` because the text genuinely is what blocked the search;
+ * consumers that render CONSTRAINT_LABELS['text'] ("search terms") stay correct without
+ * needing to know about this case at all.
+ */
+export function explainUnparsedQuery(raw: string): ConstraintExplanation {
+  const trimmed = raw.trim();
+  const echoed =
+    trimmed.length > MAX_ECHOED_QUERY_CHARS ? `${trimmed.slice(0, MAX_ECHOED_QUERY_CHARS)}…` : trimmed;
+  return {
+    blockingConstraint: 'text',
+    message:
+      `We could not read any searchable words in “${echoed}”. Search matches English words for now, ` +
+      `so try one like “swim”, “park” or “library” — showing you unrelated activities would be worse ` +
+      `than saying so.`,
+    singleRelaxations: [],
+  };
+}
+
 /**
  * Deterministic tie-break ONLY, for constraints that would add exactly the same number of
  * results. It is not the ranking: ranking is by measured yield (see below). Ordering ties by a

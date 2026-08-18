@@ -52,6 +52,7 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
   const ctx: SearchContext = {
     raw,
     terms: [],
+    unparsedQuery: false,
     date: null,
     timeOfDay: null,
     ageBands: [],
@@ -67,8 +68,20 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
 
   // Work on a normalised string; strip each matched span so residual = free text.
   let s = ` ${normalize(raw)} `;
+  /**
+   * Did ANY intent phrase below actually match? This is the second half of `unparsedQuery`
+   * (see the assignment at the end of this function), and it is measured by watching `strip`
+   * rather than by re-reading `ctx` afterwards, because the two are not the same question.
+   * Several strips below recognise a phrase and then deliberately DISCARD its value — the
+   * price ceiling, "include unknown cost" — so a context-field sweep would call those queries
+   * unread when the parser understood them perfectly well and chose to act on nothing. What
+   * matters here is comprehension, not consequence.
+   */
+  let recognisedIntent = false;
   const strip = (re: RegExp) => {
-    s = s.replace(re, ' ');
+    const stripped = s.replace(re, ' ');
+    if (stripped !== s) recognisedIntent = true;
+    s = stripped;
   };
 
   // --- Location intent ---
@@ -197,6 +210,25 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
 
   // Residual free-text terms → alias-expand + matcher.
   ctx.terms = tokenize(s);
+
+  /**
+   * "THE PARENT TYPED SOMETHING AND NONE OF IT SURVIVED." — see SearchContext.unparsedQuery.
+   *
+   * Three conditions, and all three are load-bearing:
+   *   • `raw.trim() !== ''` — a BLANK query is a browse, not a failure. /search with no text
+   *     and no chips is a legitimate "show me everything on", and it must stay one.
+   *   • `terms.length === 0` — nothing survived normalisation and stop-word removal.
+   *     `normalize()` keeps only [a-z0-9], so a query written in any non-Latin script
+   *     (中文, русский, العربية) reduces to the empty string here, as does one made
+   *     entirely of punctuation or of stop words.
+   *   • `!recognisedIntent` — nothing was understood as intent either. "free tomorrow" and
+   *     the chip phrases app/search/_lib/params.ts composes into `q` leave no residual terms
+   *     BY DESIGN (every word is stripped as intent), and they are fully understood queries.
+   *
+   * A query that is PARTLY readable is not unparsed: "游泳 swim" keeps "swim" and searches
+   * for it, which is a better answer than refusing the whole thing.
+   */
+  ctx.unparsedQuery = raw.trim() !== '' && ctx.terms.length === 0 && !recognisedIntent;
   return ctx;
 }
 

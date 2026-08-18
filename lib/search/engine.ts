@@ -40,6 +40,7 @@ import { describeRequestedDay, type RequestedDayWindow } from './day-window';
 import {
   buildBroadeningLadder,
   explainEmptyState,
+  explainUnparsedQuery,
   type BroadenAlternative,
   type BroadenRung,
   type ConstraintExplanation,
@@ -295,6 +296,32 @@ export class SearchEngine {
     }
 
     const regionChips = req.regionChipIds ?? [];
+
+    // AN UNPARSED QUERY IS NOT A BROWSE — the honest zero-state, before anything runs.
+    //
+    // `ctx0.unparsedQuery` means the parent typed text and the parser could read none of it
+    // (lib/search/parse.ts). Below this line that fact is unrecoverable: the pipeline sees
+    // only `terms: []`, which is also what a bare browse looks like, so the matcher enters
+    // `browseMode`, every listing becomes a candidate, and the parent gets a limit's worth of
+    // unrelated activities presented as the results of their search — with `broadening.applied`
+    // empty, because nothing WAS widened, so not even the "we changed your search" notice
+    // fires. A query in any non-Latin script reached exactly that, every time.
+    //
+    // The ladder cannot rescue it either, which is why the exit is here and not after the
+    // primary run: every rung relaxes a FILTER, and no filter is what emptied this search. The
+    // first rung that admits enough rows would simply serve the same unrelated dump under a
+    // "we widened your search" label — a worse outcome than the silent one, because it names a
+    // cause that is not the cause.
+    //
+    // Structured chips do not change the answer. If a parent typed something we cannot read
+    // AND ticked "today", "everything on today" is still not what they asked for; the chips
+    // stay in `context` (the rail keeps rendering them) but they are not grounds to answer a
+    // different question. The origin is resolved above so `origin`/`originError` remain true
+    // on this response — the page's distance note reads them regardless of result count.
+    if (ctx0.unparsedQuery) {
+      return this.unparsedQueryResponse(ctx0, origin, originError, regionChips, now, req.facets === true);
+    }
+
     const primaryOf = (ctx: SearchContext) => this.runPrimary(ctx, origin, regionChips, now);
 
     // Primary run.
@@ -415,6 +442,45 @@ export class SearchEngine {
       ...(facets ? { facets } : {}),
       dateWindow: describeRequestedDay(ctx0.date, now),
       meta: { fixtureBacked: this.fixtureBacked, sort: working.sort },
+    };
+  }
+
+  /**
+   * The zero-state for a query the parser could read nothing of (see the exit in `search()`).
+   *
+   * Every section is empty and `total` is 0 — the two together are what make the page say "we
+   * found you nothing" instead of quietly showing a browse. `broadening.applied` is empty and
+   * stays empty because nothing was widened, and `alternatives` is empty because there is no
+   * widening to offer: every rung acts on a filter, and no filter caused this.
+   *
+   * Facets, when the caller asked for them, are computed over an EMPTY listing set rather than
+   * omitted or hand-built. That keeps the two invariants facets carry — `facets.total === total`
+   * and "every chip the rail can render has a count behind it" — true here by construction, so
+   * the rail folds its groups away rather than rendering stale numbers from a search that never
+   * ran.
+   */
+  private unparsedQueryResponse(
+    ctx: SearchContext,
+    origin: ResolvedOrigin | null,
+    originError: string | null,
+    regionChipIds: string[],
+    now: Date,
+    wantsFacets: boolean,
+  ): SearchResponse {
+    return {
+      context: ctx,
+      origin,
+      originError,
+      results: [],
+      expected: [],
+      ageUnconfirmed: [],
+      total: 0,
+      broadening: { applied: [], emptyState: explainUnparsedQuery(ctx.raw), alternatives: [] },
+      ...(wantsFacets
+        ? { facets: computeFacetCounts([], { ctx, origin, regionChipIds, regions: this.regions, now }) }
+        : {}),
+      dateWindow: describeRequestedDay(ctx.date, now),
+      meta: { fixtureBacked: this.fixtureBacked, sort: ctx.sort },
     };
   }
 
