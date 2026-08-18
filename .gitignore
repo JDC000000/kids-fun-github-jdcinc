@@ -35,3 +35,8 @@ test-results/
 # search-cap probe: esbuild bundle, written into the repo root because `pg` stays external and
 # must resolve from ./node_modules. Removed on exit, but not if the run is killed.
 .search-cap-probe.bundle.mjs
+
+# production-shaped DB snapshots (scripts/snapshot/). Anonymised, but still real catalogue
+# data pulled from a live database — it is an artefact an operator produces and ships out of
+# band, never something that belongs in git history where it cannot be deleted.
+/.snapshots/

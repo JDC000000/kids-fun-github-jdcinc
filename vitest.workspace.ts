@@ -134,6 +134,8 @@ export const DB_INTEGRATION_SUITES = [
   'tests/scheduler/robots-override-db.test.ts',
   'tests/scheduler/shutdown-sql-db.test.ts',
   'tests/search/postgres-repository.test.ts',
+  'tests/snapshot/catalogue-shape.test.ts',
+  'tests/snapshot/policy-schema-guard.test.ts',
   'tests/user_profile_provisioning.test.ts',
   'tests/user_profile_update.test.ts',
   'tests/user_scoped_client.test.ts',
