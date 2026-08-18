@@ -23,6 +23,7 @@ import {
   statusForIngestedRecord,
 } from './confidence';
 import { isTermsApprovedForProduction } from './terms-gate';
+import { withNormalizedTitle } from './title';
 import {
   parseAgeText,
   parseAudienceLabels,
@@ -114,6 +115,24 @@ export async function ingestSource(
       const hook = adapter.normalizeHook.bind(adapter);
       records = await Promise.all(records.map((r) => hook(r)));
     }
+
+    // P1-3: strip source packaging out of the title, keeping the source's own wording in
+    // `sourceTitle`. See worker/core/title.ts for what is stripped and what each rule
+    // demands as evidence.
+    //
+    // THIS LINE'S POSITION IS THE CORRECTNESS CONSTRAINT, not a formatting preference. It sits
+    // AFTER extract() and normalizeHook() because two adapters read the raw title to derive
+    // `ageText` (activenet's extractAgeText admits the whole title when it states an age;
+    // eventbrite's extractAgeWording runs over e.name). Both have already run and already
+    // produced their `ageText` by the time this executes, so the strings worker/core/age.ts
+    // parses below — `record.ageText` and `record.ageAudienceLabels` — are exactly what they
+    // were before this normaliser existed. age.ts never reads `record.title`.
+    //
+    // Everything downstream of here DOES see the clean title, deliberately: the series
+    // canonical_title, the taxonomy classifier, the FTS vector and the persisted
+    // activity_name. That is the point — the junk stops at the front door instead of being
+    // stripped again by every reader.
+    records = records.map(withNormalizedTitle);
 
     // THE FEED'S OWN ITEM COUNT — recorded UNCONDITIONALLY, and read BEFORE the verdict
     // block below on purpose.

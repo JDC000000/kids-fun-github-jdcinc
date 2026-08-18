@@ -111,6 +111,56 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     expect(occ.status_state).toBe('confirmed');
   });
 
+  // P1-3 — the normaliser end to end: a real adapter record carrying real source packaging
+  // through the real runner into real columns. tests/core/title-normalize.test.ts proves the
+  // string rules; this proves the WIRING, which is the half a pure test cannot reach — that
+  // ingest applies it at all, that upsert persists both halves, and that the series was keyed
+  // on the CLEAN title rather than the junk.
+  it('strips source packaging from the title at ingest and keeps the raw wording in source_title', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('perfectmind', $1) RETURNING id`,
+      [`Title Normalise Source ${crypto.randomUUID()}`]
+    );
+
+    const raw = '$3 Open Gym 8yrs+ Delbrook Thursday 3:30-5:00pm';
+    const record: StructuredRecord = {
+      sourceRecordId: `titlenorm-${crypto.randomUUID()}`,
+      title: raw,
+      startDatetimeUtc: '2026-09-24T22:30:00.000Z',
+      costMinCad: 3,
+      costStatus: 'known',
+      sourceUrl: 'https://example.org/perfectmind/open-gym',
+    };
+    const adapter: Adapter = {
+      family: 'perfectmind',
+      fetch: async () => [record],
+      extract: (r) => r as StructuredRecord[],
+      dedupKeys: () => ({ key: 'titlenorm' }),
+    };
+
+    const summary = await ingestSource(pool, adapter, source.id);
+    expect(summary.errors).toEqual([]);
+
+    const [occ] = await query<{ activity_name: string; source_title: string; series_title: string }>(
+      `SELECT o.activity_name, o.source_title, s.canonical_title AS series_title
+       FROM activity_occurrence o
+       JOIN activity_series s ON s.id = o.series_id
+       WHERE s.source_id = $1`,
+      [source.id]
+    );
+
+    // The price and the weekday/time are gone — both are already columns on this very row.
+    expect(occ.activity_name).toBe('Open Gym 8yrs+ Delbrook');
+    // …and "8yrs+" survived, because the conservatism rule is the load-bearing half.
+    expect(occ.activity_name).toContain('8yrs+');
+    // The source's own wording is not destroyed, only relocated.
+    expect(occ.source_title).toBe(raw);
+    // Series identity is keyed on the clean title, so two vendor spellings of one program
+    // collapse into one series instead of forking on punctuation.
+    expect(occ.series_title).toBe('Open Gym 8yrs+ Delbrook');
+  });
+
   // G-T10-3 (IR-08) — the SAME well-parsed, terms-approved record, differing ONLY in the
   // owning source's authority_tier, must land as `manual_candidate` instead of
   // `confirmed`. This is the acceptance criterion's end-to-end proof: a real editorial

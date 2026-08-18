@@ -11,6 +11,18 @@ export interface StructuredRecord {
   /** Raw source-native id/slug used to build dedup keys — not the DB row id. */
   sourceRecordId: string;
   title: string;
+  /**
+   * The source's OWN title wording, before worker/core/title.ts stripped its packaging —
+   * vendor field delimiters (`|Public Swim|`), a price the cost columns already carry, a
+   * weekday/time the datetime columns already carry.
+   *
+   * ADAPTERS DO NOT NORMALLY SET THIS. worker/core/ingest.ts fills it for every record from
+   * `title` as it normalises, so the audit trail keeps the original even though the
+   * catalogue holds the clean name. An adapter only sets it when its own extract step
+   * already rewrote the title and the pre-rewrite wording is the one worth keeping — in
+   * that case ingest leaves the adapter's value alone.
+   */
+  sourceTitle?: string;
   venueName?: string;
   venueAddress?: string;
   /**

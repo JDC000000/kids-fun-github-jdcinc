@@ -245,6 +245,7 @@ export const SNAPSHOT_TABLES: readonly TablePolicy[] = [
       id: ID('activity_occurrence.id'),
       series_id: ID('activity_series.id'),
       activity_name: { action: 'redact_title', why: 'Scraped listing title; FTS weight A. Title-strength redaction — the broad prose heuristic would eat legitimate title words.' },
+      source_title: { action: 'redact_title', why: 'The SAME scraped title before worker/core/title.ts stripped its packaging (0032). Same provenance and therefore the same risk as activity_name, so the same title-strength redaction — scrubbing it more weakly would hand back, verbatim, whatever the redactor removed from activity_name one column over.' },
       description_snippet: { action: 'redact_prose', why: 'Scraped free text; FTS weight D. THE most likely carrier of incidental personal data in the catalogue — registration contacts, instructor names, phone numbers.' },
       primary_category_id: ID('category.id'),
       start_datetime_utc: TIME('the occurrence start. Tonight\'s bug class lives here'),
