@@ -18,6 +18,26 @@
 // is left is open-hours attractions and still-running multi-day programmes — exactly the eight
 // "any day" items the testers saw.
 //
+// CONFIRMED LONGITUDINALLY AGAINST PRODUCTION, not merely inferred from the reports. The same
+// query sampled twice, 24 minutes apart:
+//
+//                          13:48Z         14:12Z
+//     results              220            200          drained by 20, nothing else changed
+//     rows already ended   0 of 220       0 of 200     never one, in either sample
+//     earliest end         14:15Z         14:15Z       held — because nothing ended in between
+//     that floor vs now()  now + 26 min   now + 3 min  now() closing in on it
+//
+// The middle row is the prune caught in the act, twice, independently. The bottom two rows are
+// why: the "floor" is nothing but the next occurrence due to end, so it sits still while nothing
+// ends and jumps forward the moment something does. Both properties are pinned below against the
+// fixture catalogue, at a spread of clocks.
+//
+// DO NOT READ A DECAY RATE INTO THAT TABLE, here or anywhere else. Twenty rows in 24 minutes is a
+// local burst as a cluster of late-morning sessions ended; averaged across 06:48→22:35 local it is
+// closer to a third of that. The rate tracks schedule density and nothing else. What is solid —
+// and all this file asserts — is the MECHANISM and the ENDPOINT: roughly eight rows left by about
+// 22:35 local, observed independently by three testers.
+//
 // That behaviour is arguably CORRECT (a parent at 10pm should not be offered a class that ended
 // at 2pm) and is deliberately NOT changed here. What was broken is DISCLOSURE: the app collapsed
 // to a near-empty list and said nothing, so three testers reasonably concluded it was broken. The
@@ -172,6 +192,62 @@ describe('"Today" empties out as the local day advances (the reported defect)', 
     const unpruned = searchToday(CATALOGUE, LATE);
     expect(unpruned.total).toBe(CATALOGUE.length);
     expect(idsOf(unpruned)).toEqual([...CATALOGUE].map((l) => l.id).sort());
+  });
+
+  // ── The two properties production exhibited, 24 minutes apart ───────────────────────────────
+  //
+  // Sampling live can only ever show that these HELD at two instants. Expressed over a fixture
+  // catalogue they can be checked at every instant that matters, which is what turns a pair of
+  // observations into a regression guard.
+
+  /** Every dated survivor's end time, as epoch ms. Open-hours rows have none and are excluded. */
+  const survivingEndTimes = (now: Date): number[] =>
+    pruneEndedOccurrences(CATALOGUE, now)
+      .filter((l) => l.endDatetimeUtc != null)
+      .map((l) => Date.parse(l.endDatetimeUtc!));
+
+  /** A day's worth of sample clocks, local, spanning first start to after the last end. */
+  const SAMPLE_CLOCKS: Array<[number, number]> = [
+    [8, 0], [9, 45], [10, 30], [12, 0], [13, 15], [15, 0], [16, 45], [18, 0], [20, 30], [22, 35], [23, 30],
+  ];
+
+  // "0 of 220, then 0 of 200." The single most direct evidence there is: an occurrence that has
+  // ended is not ranked low or filtered late, it is ABSENT — and absent at every hour, not just
+  // at the two production happened to be sampled at.
+  it('never retains an occurrence that has already ended, at any hour of the day', () => {
+    for (const [hh, mm] of SAMPLE_CLOCKS) {
+      const now = new Date(local(hh, mm));
+      const alreadyEnded = survivingEndTimes(now).filter((end) => end < now.getTime());
+      expect(alreadyEnded, `survivors with a past end time at ${hh}:${String(mm).padStart(2, '0')} local`).toEqual([]);
+    }
+  });
+
+  // The floor is not a configured value — it is simply the next occurrence due to end, which is
+  // why production saw it HOLD at 14:15Z for 24 minutes and why `now()` was visibly closing in on
+  // it. It can only ever sit still or jump forward; it can never retreat.
+  it('the earliest surviving end time is a floor that holds, then jumps — and never goes backwards', () => {
+    const floorAt = (now: Date): number => Math.min(...survivingEndTimes(now));
+
+    let previous = -Infinity;
+    for (const [hh, mm] of SAMPLE_CLOCKS) {
+      const now = new Date(local(hh, mm));
+      const floor = floorAt(now);
+      expect(floor, `floor is in the future at ${hh}:${String(mm).padStart(2, '0')} local`).toBeGreaterThanOrEqual(
+        now.getTime(),
+      );
+      expect(floor, 'the floor may hold or jump forward, never retreat').toBeGreaterThanOrEqual(previous);
+      previous = floor;
+    }
+  });
+
+  it('holds the floor still while nothing ends, then jumps past whatever just ended', () => {
+    const floorAt = (hh: number, mm: number) => Math.min(...survivingEndTimes(new Date(local(hh, mm))));
+    // Nothing ends between 09:00 and 09:45, so the floor sits on the 10:00 storytime — the shape
+    // production caught when 13:48Z and 14:12Z both reported an earliest end of 14:15Z.
+    expect(floorAt(9, 0)).toBe(Date.parse(local(10, 0)));
+    expect(floorAt(9, 45)).toBe(floorAt(9, 0));
+    // …and once now() crosses it, that row is gone and the floor moves to the next end time.
+    expect(floorAt(10, 1)).toBe(Date.parse(local(11, 0)));
   });
 
   it('drops each event exactly as it ends, not in a batch at some threshold', () => {
