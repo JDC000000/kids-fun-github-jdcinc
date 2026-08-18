@@ -32,6 +32,7 @@ import { computeFacetCounts, type FacetCounts } from './facets';
 import { rankCandidates } from './rank';
 import { applySort, prioritizeConfirmedFreeWhenFreeActive } from './sort';
 import { collapseSameDaySeries, slotSpanEnd, type CollapsedListing, type OccurrenceSlot } from './collapse';
+import { describeRequestedDay, type RequestedDayWindow } from './day-window';
 import {
   buildBroadeningLadder,
   explainEmptyState,
@@ -156,6 +157,23 @@ export interface SearchResponse {
    * `facets.total === total` always holds and the rail can never contradict the list.
    */
   facets?: FacetCounts;
+  /**
+   * Where the local clock sits inside the single day the parent asked for — null when the
+   * request was not about one particular day (see lib/search/day-window.ts).
+   *
+   * WHAT IT IS FOR. The read model prunes ended occurrences against `now()`, so a `when=today`
+   * result set is "what is LEFT of today", not "what is on today". Late in the evening that
+   * collapses to open-hours attractions and still-running programmes, and without this a
+   * consumer has no way to tell that state apart from a genuinely empty day. The engine cannot
+   * count what was pruned — the rows were gone before it saw them — so this reports the CLOCK,
+   * which it knows exactly, and leaves the two interpretations to be distinguished rather than
+   * guessed. Consumers must not read it as a count of anything.
+   *
+   * Derived from the UNBROADENED intent (`ctx0.date`), not from `working`: it has to describe
+   * the day the parent asked about, which is also the day the filter chip still displays, even
+   * after the ladder has widened the window underneath it.
+   */
+  dateWindow: RequestedDayWindow | null;
   meta: { fixtureBacked: boolean; sort: SortKey; backend?: 'fixture' | 'database'; fallbackReason?: string };
 }
 
@@ -259,10 +277,18 @@ export class SearchEngine {
       // an empty one, and "relaxing it shows N more" has to be an addition to what is already
       // on screen — reporting the relaxed TOTAL there overstated the remedy by exactly the
       // number of results the parent already had.
-      const explained = explainEmptyState(ctx0, (v) => primaryOf(v).scored.length, {
-        baseline: run.scored.length,
-        hasOrigin: origin != null,
-      });
+      // The probe takes the region chips as well as the context, so the ONE narrowing filter
+      // that does not live on SearchContext can still be relaxed and measured — see
+      // broaden.ts's `activeConstraints` for what its absence used to make the page claim.
+      const explained = explainEmptyState(
+        ctx0,
+        (v, chips) => this.runPrimary(v, origin, chips, now).scored.length,
+        {
+          baseline: run.scored.length,
+          hasOrigin: origin != null,
+          regionChipIds: regionChips,
+        },
+      );
 
       // PUBLISH ONLY WHAT A PARENT CAN ACT ON. This block fires whenever the primary run is
       // short of `minResults`, which for a caller with a large minimum (the browse page asks
@@ -337,6 +363,7 @@ export class SearchEngine {
       total: scored.length,
       broadening: { applied, emptyState, alternatives },
       ...(facets ? { facets } : {}),
+      dateWindow: describeRequestedDay(ctx0.date, now),
       meta: { fixtureBacked: this.fixtureBacked, sort: working.sort },
     };
   }

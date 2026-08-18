@@ -18,11 +18,23 @@ export interface BroadeningOptions {
    * unchanged; the engine passes the real answer. See the radius rung for why it matters.
    */
   hasOrigin?: boolean;
+  /**
+   * The region chips currently applied (structured `region=` param). Absent/empty → the parent
+   * is not filtering by area.
+   *
+   * It has to be passed in because region chips are the ONE narrowing filter that does not live
+   * on `SearchContext` — they are carried beside it, as a separate argument, all the way down to
+   * `filters/predicate.ts`. That structural difference is exactly why they went unexplained: see
+   * `activeConstraints` below.
+   */
+  regionChipIds?: string[];
 }
 
 export type ConstraintKey =
   | 'text'
   | 'radius'
+  // Region chips. NOT a SearchContext field — see BroadeningOptions.regionChipIds.
+  | 'region'
   | 'timeOfDay'
   | 'date'
   | 'bookableNow'
@@ -91,6 +103,7 @@ export interface BroadenAlternative {
 export const CONSTRAINT_LABELS: Record<ConstraintKey, string> = {
   text: 'search terms',
   radius: 'distance',
+  region: 'area filter',
   timeOfDay: 'time of day',
   date: 'date',
   bookableNow: 'Bookable Now filter',
@@ -187,11 +200,22 @@ const CHIP_RESTRICTIVENESS: ConstraintKey[] = ['bookableNow', 'dropIn', 'rainyDa
  * could not matter; this function sat next to it, ungated, still handing `explainEmptyState` a
  * radius to probe — so the empty state went on naming "distance" as the thing blocking searches
  * that were never distance-filtered. Same false disclosure, same query, one function over.
+ *
+ * REGION CHIPS WERE MISSING ENTIRELY, and the omission was structural rather than a judgement
+ * call. Every other narrowing filter is a field on `SearchContext`, so enumerating them here was
+ * a matter of reading that type; region chips travel as a separate `regionChipIds` argument
+ * (filters/predicate.ts), so they were invisible to a function that only ever looked at the
+ * context. The consequence was the worst possible answer to a blank page: a parent filtered to
+ * Vancouver with sixty Burnaby listings behind the chip was told "No activities found" — and,
+ * with any second filter active, "Relaxing any single filter adds nothing", while clearing the
+ * area chip alone would have shown all sixty. Measured, not hypothesised: see
+ * tests/search/empty-state-names-region-chip.test.ts.
  */
 export function activeConstraints(ctx: SearchContext, opts: BroadeningOptions = {}): ConstraintKey[] {
   const active: ConstraintKey[] = [];
   if (ctx.terms.length > 0) active.push('text');
   if (ctx.radiusKm < 20 && opts.hasOrigin !== false) active.push('radius');
+  if ((opts.regionChipIds?.length ?? 0) > 0) active.push('region');
   if (ctx.timeOfDay) active.push('timeOfDay');
   if (ctx.date) active.push('date');
   if (ctx.bookableNow) active.push('bookableNow');
@@ -202,11 +226,20 @@ export function activeConstraints(ctx: SearchContext, opts: BroadeningOptions = 
   return active;
 }
 
-/** Return a context with exactly ONE constraint relaxed (for probing / drop-chip). */
+/**
+ * Return a context with exactly ONE constraint relaxed (for probing / drop-chip).
+ *
+ * `region` is the one key this CANNOT express, because region chips are not part of a
+ * `SearchContext` at all — relaxing them means passing a different `regionChipIds` alongside the
+ * context, which is what `explainEmptyState`'s probe does. Returning the context untouched keeps
+ * this switch total over `ConstraintKey` without pretending to a power it does not have; every
+ * caller that probes `region` must relax the chips itself.
+ */
 export function relaxSingle(ctx: SearchContext, key: ConstraintKey): SearchContext {
   switch (key) {
     case 'text': return { ...ctx, terms: [], widenText: true };
     case 'radius': return { ...ctx, radiusKm: nextRadius(ctx.radiusKm) };
+    case 'region': return ctx;
     case 'timeOfDay': return { ...ctx, timeOfDay: null };
     case 'date': return { ...ctx, date: null };
     case 'bookableNow': return { ...ctx, bookableNow: false };
@@ -245,7 +278,7 @@ export interface ConstraintExplanation {
  * `activeConstraints` happens to emit.
  */
 const TIE_BREAK_ORDER: ConstraintKey[] = [
-  'radius', 'timeOfDay', 'date', 'bookableNow', 'dropIn', 'rainyDay', 'costFree', 'ageBands', 'text',
+  'radius', 'region', 'timeOfDay', 'date', 'bookableNow', 'dropIn', 'rainyDay', 'costFree', 'ageBands', 'text',
 ];
 
 export interface ExplainOptions extends BroadeningOptions {
@@ -255,14 +288,19 @@ export interface ExplainOptions extends BroadeningOptions {
 
 /**
  * Name the blocking constraint by probing each active constraint's single relaxation.
- * `probe(ctx)` returns the result count for a context (engine-supplied, fixture or DB).
+ * `probe(ctx, regionChipIds)` returns the result count for a selection (engine-supplied, fixture
+ * or DB). The second argument exists because region chips are not part of the context (see
+ * `relaxSingle`); a caller that does not filter by area may ignore it, and a one-parameter
+ * callback stays perfectly valid.
  *
  * `opts.baseline` is how many results the parent can see RIGHT NOW (the unrelaxed count). It
  * defaults to 0 — the classic zero-result empty state — and matters whenever the caller
  * explains a THIN result set rather than an empty one.
  *
  * `opts.hasOrigin` is forwarded to `activeConstraints` so a radius that cannot filter anything
- * is never probed, never ranked, and never named.
+ * is never probed, never ranked, and never named. `opts.regionChipIds` is forwarded for the
+ * opposite reason: without it an area filter is never probed, ranked or named EITHER, and the
+ * page confidently reports that nothing would help.
  *
  * RANKING IS BY MEASURED YIELD, NOT BY A FIXED LIST. This function's contract has always been
  * "the constraint whose removal unlocks the most", but the implementation sorted by a
@@ -279,13 +317,17 @@ export interface ExplainOptions extends BroadeningOptions {
  */
 export function explainEmptyState(
   ctx: SearchContext,
-  probe: (variant: SearchContext) => number,
+  probe: (variant: SearchContext, regionChipIds: string[]) => number,
   opts: ExplainOptions = {},
 ): ConstraintExplanation {
   const baseline = opts.baseline ?? 0;
+  const chips = opts.regionChipIds ?? [];
   const active = activeConstraints(ctx, opts);
   const singleRelaxations: SingleRelaxation[] = active.map((constraint) => {
-    const wouldYield = probe(relaxSingle(ctx, constraint));
+    // Relaxing `region` means dropping the chips, not changing the context; every other
+    // constraint means changing the context and keeping the chips exactly as they are.
+    const wouldYield =
+      constraint === 'region' ? probe(ctx, []) : probe(relaxSingle(ctx, constraint), chips);
     return {
       constraint,
       label: CONSTRAINT_LABELS[constraint],

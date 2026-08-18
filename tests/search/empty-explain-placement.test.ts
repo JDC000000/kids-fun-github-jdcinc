@@ -1,5 +1,11 @@
-// tests/search/empty-explain-placement.test.ts — the empty-state explanation must stay an
-// INDEPENDENT top-level conditional on /search.
+// tests/search/empty-explain-placement.test.ts — /search's explanatory notices must stay
+// INDEPENDENT top-level conditionals.
+//
+// TWO NOTICES ARE PINNED HERE, for the same reason and with the same machinery: the empty-state
+// explanation (`kf-browse__empty-explain`) and the day-remainder notice (`kf-dayremainder`).
+// Both exist to explain a page a parent would otherwise misread, both are computed correctly by
+// code the rest of the suite covers thoroughly, and both are one careless re-nest away from
+// never rendering in the case they were written for — with every other test still green.
 //
 // WHY THIS EXISTS, AND WHY IT IS A STATIC-ANALYSIS TEST.
 //
@@ -39,6 +45,8 @@ const PAGE = fileURLToPath(new URL('../../app/search/page.tsx', import.meta.url)
 
 /** The explanation block's own marker class — the thing whose placement is load-bearing. */
 const EXPLAIN_CLASS = 'kf-browse__empty-explain';
+/** The day-remainder notice's marker class ("today has run out" vs "nothing is on"). */
+const DAY_REMAINDER_CLASS = 'kf-dayremainder';
 
 const source = readFileSync(PAGE, 'utf8');
 const sourceFile = ts.createSourceFile(PAGE, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -173,5 +181,69 @@ describe('/search: the empty-state explanation is an independent top-level condi
       explain!.getStart(sourceFile),
       'The explanation should precede the results fork, next to the broadening notice.',
     ).toBeLessThan(resultsFork!);
+  });
+});
+
+// ── The day-remainder notice ("today has run out" vs "nothing is on today") ───────────────────
+//
+// SAME PROPERTY, SHARPER STAKES. The reported defect was a page with EIGHT results, not zero:
+// three testers searched Today at 22:35, got eight long-running "any day" items and no
+// explanation, and concluded the product was broken. Nesting this notice inside the `total === 0`
+// arm would restore that exact page — the notice would render only for a search that returned
+// nothing, which is the one case a parent can already interpret, and stay silent for the thin
+// list that actually misleads. It is the F2(a) defect again with a worse blast radius, and it is
+// invisible to every behavioural test because the derivation would still be correct.
+describe('/search: the day-remainder notice is an independent top-level conditional', () => {
+  const notice = findElementByClass(DAY_REMAINDER_CLASS);
+
+  it('the day-remainder block still exists in app/search/page.tsx', () => {
+    expect(
+      notice,
+      `No JSX element with className="${DAY_REMAINDER_CLASS}" found in app/search/page.tsx. If the ` +
+        `class was renamed, update DAY_REMAINDER_CLASS here — do not delete this file; the ` +
+        `placement it pins is what makes a THIN "Today" explain itself.`,
+    ).not.toBeNull();
+  });
+
+  it('is NOT nested inside the `total === 0` branch — a thin page is the case it exists for', () => {
+    const conditions = enclosingConditions(notice!);
+    expect(
+      gatedOn(conditions, 'total'),
+      `The day-remainder notice is nested inside a condition on \`total\` (found: ` +
+        `${JSON.stringify(conditions)}).\n\n` +
+        `The reported defect was a page with EIGHT results and no explanation, at 22:35 local. ` +
+        `Gating this on \`total\` means it renders only when the page is completely empty and ` +
+        `stays silent for the thin list that actually misled three testers.`,
+    ).toBe(false);
+  });
+
+  it('is NOT coupled to the broadening notice — the two cover opposite sides of one threshold', () => {
+    const conditions = enclosingConditions(notice!);
+    expect(
+      gatedOn(conditions, 'broadening'),
+      `The day-remainder notice is gated on \`broadening\` (found: ${JSON.stringify(conditions)}).\n\n` +
+        `They are anti-correlated by construction. The ladder runs only BELOW the caller's ` +
+        `minResults; the reported eight-result page was above it, so \`broadening.applied\` was ` +
+        `empty and the banner correctly said nothing. That is precisely when this notice is the ` +
+        `only thing on the page that can explain the day.`,
+    ).toBe(false);
+  });
+
+  it('is guarded by `dayRemainder` itself, so it cannot render unconditionally', () => {
+    expect(
+      gatedOn(enclosingConditions(notice!), 'dayRemainder'),
+      `The notice must render when — and only when — the derivation produced one. ` +
+        `A well-filled morning Today has nothing to disclose and must stay clean.`,
+    ).toBe(true);
+  });
+
+  it('appears BEFORE the results fork, so it frames the list rather than trailing it', () => {
+    let resultsFork: number | null = null;
+    walk(sourceFile, (node) => {
+      if (resultsFork != null || !ts.isConditionalExpression(node)) return;
+      if (/\btotal\s*===\s*0\b/.test(node.condition.getText(sourceFile))) resultsFork = node.getStart(sourceFile);
+    });
+    expect(resultsFork).not.toBeNull();
+    expect(notice!.getStart(sourceFile)).toBeLessThan(resultsFork!);
   });
 });

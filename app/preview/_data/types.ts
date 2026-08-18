@@ -172,8 +172,14 @@ export interface Activity {
    */
   registrationRequired?: boolean;
   seasonLabel?: string; // for seasonal_out_of_season copy
-  indoor: boolean;
-  rainyDay: boolean; // good option when it's raining
+  /**
+   * Indoors (`true`), outdoors (`false`), or NOT STATED (`null`) — the third case is the common
+   * one and it is not a bug. Nullable because a two-valued field forces a claim for a listing
+   * whose source made none: absent evidence used to arrive here as `false` and print "Outdoor"
+   * with the same confidence as a real one. See lib/search/indoor.ts.
+   */
+  indoor: boolean | null;
+  rainyDay: boolean; // safe to recommend when it's raining — only ever true on a positive indoor reading
   dropIn: boolean;
   descriptionSnippet: string;
   parentNotes: string[]; // stroller/transit/sibling-fit facts

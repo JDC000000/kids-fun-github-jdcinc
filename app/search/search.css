@@ -278,6 +278,35 @@
   font-weight: 700;
 }
 
+/* Day-remainder notice: WHY a "Today" list is short — the day has run out, versus nothing being
+   on. Shares the broadening notice's treatment deliberately: both say "what is below answers a
+   narrower question than you think it does", and giving the two the same voice keeps a parent
+   from reading one as an alert and the other as decoration. */
+.kf-dayremainder {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--expected-text);
+  background: var(--expected-bg);
+  border-radius: 12px;
+  text-align: left;
+}
+
+.kf-dayremainder__lede {
+  font-weight: 700;
+}
+
+.kf-dayremainder__next {
+  font-weight: 600;
+  color: inherit;
+}
+
+.kf-dayremainder__next:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
 /* Pre-counted alternative chips: the SPECIFIC widenings the ladder considered, each a real
  * result count behind a real /search link (app/search/_lib/broadening-alternatives.ts).
  * Sits beside the .kf-broadened / .kf-browse__empty-explain prose above, as the actionable
