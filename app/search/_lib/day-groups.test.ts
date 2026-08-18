@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Activity } from '../../preview/_data/types';
-import { groupActivitiesByDay, formatDayHeading, formatRangeLabel } from './day-groups';
+import { buildDayIndex, groupActivitiesByDay, formatDayHeading, formatRangeLabel } from './day-groups';
 
 /** Minimal Activity — groupActivitiesByDay reads only `id` and (as a fallback) `startIso`. */
 function activity(id: string, startIso: string): Activity {
@@ -56,6 +56,40 @@ describe('groupActivitiesByDay (T26 / FR-04)', () => {
 
   it('returns no groups for an empty result set', () => {
     expect(groupActivitiesByDay([], new Map())).toEqual([]);
+  });
+});
+
+describe('buildDayIndex — which day a collapsed card files under', () => {
+  // A recurring programme is ONE card across days now (lib/search/collapse.ts), and the occurrence
+  // that KEEPS the card is whichever ranked best. Under a relevance sort that can be the last
+  // session of a series that also runs on the first day of the searched range, which would file
+  // the card under the later day and leave the earlier one looking emptier than it is.
+  it('files a multi-day card under its EARLIEST occurrence, not its represented one', () => {
+    const index = buildDayIndex([
+      {
+        listing: { id: 'weekly', startDatetimeUtc: '2026-07-16T20:00:00Z' }, // Thu — the representative
+        slots: [
+          { startDatetimeUtc: '2026-07-14T20:00:00Z' }, // Tue — the first day it runs
+          { startDatetimeUtc: '2026-07-16T20:00:00Z' },
+        ],
+      },
+    ]);
+    expect(index.get('weekly')).toBe('2026-07-14');
+  });
+
+  it('files an open-hours listing under no day at all', () => {
+    const index = buildDayIndex([{ listing: { id: 'aquarium', startDatetimeUtc: null }, slots: [{ startDatetimeUtc: null }] }]);
+    expect(index.get('aquarium')).toBeNull();
+  });
+
+  it('falls back to the listing start when an item carries no slot list', () => {
+    const index = buildDayIndex([{ listing: { id: 'solo', startDatetimeUtc: '2026-07-14T20:00:00Z' } }]);
+    expect(index.get('solo')).toBe('2026-07-14');
+  });
+
+  it('files an unreadable start as undated rather than as 1970', () => {
+    const index = buildDayIndex([{ listing: { id: 'broken', startDatetimeUtc: 'not-a-date' } }]);
+    expect(index.get('broken')).toBeNull();
   });
 });
 

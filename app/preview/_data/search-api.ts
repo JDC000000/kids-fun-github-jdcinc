@@ -51,7 +51,7 @@ export interface SearchItemDto {
   listing: ListingRecordDto;
   distanceKm: number | null;
   /**
-   * Same-series-same-day occurrences this result stands for (lib/search/collapse.ts). Each carries
+   * Same-series occurrences this result stands for (lib/search/collapse.ts). Each carries
    * its OWN cost, so a collapsed card can state what the GROUP costs rather than what its
    * representative costs — mirrors `OccurrenceSlot`, which is what the engine puts here.
    */
@@ -63,7 +63,9 @@ export interface SearchItemDto {
     costMinCad: number | null;
     costMaxCad: number | null;
   }[];
-  /** End of the last slot, when the result covers several. */
+  /** Distinct local days those slots fall on, ascending (engine `slotDays`). */
+  slotDays?: string[];
+  /** End of the last slot, when the result covers several — absent when the card spans days. */
   slotSpanEndUtc?: string | null;
   /** Engine's registration classification; recomputed locally when absent (fixture/detail paths). */
   registrationRequired?: boolean;
@@ -228,6 +230,9 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     ...(l.venuePhone ? { venuePhone: l.venuePhone } : {}),
     lastCheckedIso: l.lastCheckedAtUtc ?? new Date().toISOString(),
     ...(slotCount > 1 ? { slotCount } : {}),
+    // Only carried when the card really runs on several days: one day is the ordinary collapsed
+    // card, which states a time span instead (see format.ts#formatSlotSummary).
+    ...(slotCount > 1 && (item.slotDays?.length ?? 0) > 1 ? { slotDays: item.slotDays } : {}),
     ...(slotCount > 1 && item.slotSpanEndUtc ? { slotEndIso: item.slotSpanEndUtc } : {}),
     ...(slotCosts ? { slotCosts } : {}),
     ...(registrationRequired ? { registrationRequired } : {}),

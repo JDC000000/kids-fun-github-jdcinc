@@ -26,13 +26,12 @@ import { SaveSearchButton } from './_components/SaveSearchButton';
 import { ResumeSearch } from './_components/ResumeSearch';
 import { buildMarkers, geoIndex } from './_lib/markers';
 import { distanceAvailability, distanceNote } from './_lib/distance-note';
-import { groupActivitiesByDay, formatRangeLabel, type DayGroup } from './_lib/day-groups';
+import { groupActivitiesByDay, buildDayIndex, formatRangeLabel, type DayGroup } from './_lib/day-groups';
 import { describeBroadening, joinPhrases, type AppliedRungDto } from './_lib/broadening-notice';
 import { describeBroadeningAlternatives } from './_lib/broadening-alternatives';
 import { describeDayRemainder } from './_lib/day-remainder-notice';
 import type { BroadenAlternative } from '@/lib/search/broaden';
 import type { RequestedDayWindow } from '@/lib/search/day-window';
-import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
   AGE_OPTIONS,
   CLEARED_FILTERS,
@@ -250,15 +249,10 @@ function DayGroupedResults({ groups, total }: { groups: DayGroup[]; total: numbe
 }
 
 /** listing id → America/Vancouver local day (YYYY-MM-DD), or null for open-hours / undated
- *  listings — built from the RAW API items so day grouping matches the real occurrence dates. */
-function buildDayIndex(body: SearchApiResponse | undefined): Map<string, string | null> {
-  const map = new Map<string, string | null>();
-  if (!body) return map;
-  for (const item of allSections(body)) {
-    const start = item.listing.startDatetimeUtc;
-    map.set(item.listing.id, start ? localIsoDate(new Date(start)) : null);
-  }
-  return map;
+ *  listings — built from the RAW API items so day grouping matches the real occurrence dates.
+ *  The rule itself lives beside the grouping it feeds (./_lib/day-groups#buildDayIndex). */
+function dayIndexFor(body: SearchApiResponse | undefined): Map<string, string | null> {
+  return body ? buildDayIndex(allSections(body)) : new Map();
 }
 
 /**
@@ -391,7 +385,7 @@ export default async function SearchPage({
   // by day (one dated subsection per day, open-hours attractions last). The day-by-id lookup is
   // built from the raw API items so grouping reflects each occurrence's true local date.
   const rangeActive = hasDateRange(state);
-  const confirmedGroups = rangeActive ? groupActivitiesByDay(confirmed, buildDayIndex(result.body)) : [];
+  const confirmedGroups = rangeActive ? groupActivitiesByDay(confirmed, dayIndexFor(result.body)) : [];
 
   // "Save this search" (Round 10 / Task B): the current filter state is serialized
   // to the same generic `params` envelope Task 38's backend already accepts; a

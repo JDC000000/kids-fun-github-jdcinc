@@ -25,6 +25,7 @@
 // the same as declining to say why it is thin, and until now those were one decision.
 import type { SearchEngine } from '@/lib/search/engine';
 import type { ListingRecord } from '@/lib/search/types';
+import type { OccurrenceSlot } from '@/lib/search/collapse';
 import type { ConstraintKey } from '@/lib/search/broaden';
 import { runSavedSearch } from '@/lib/search/saved-search-status';
 import { hrefForParams } from '@/app/search/_lib/params';
@@ -121,17 +122,51 @@ function startKey(l: ListingRecord): number {
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
 }
 
+/** One candidate row: the occurrence to announce, plus whether its age was ever stated. */
+interface DigestRow {
+  listing: ListingRecord;
+  ageNotConfirmed: boolean;
+}
+
 /** Keep the soonest upcoming occurrence per series, so a weekly series is one row, not five. */
-function dedupeSoonestPerSeries(listings: ListingRecord[]): ListingRecord[] {
-  const sorted = [...listings].sort((a, b) => startKey(a) - startKey(b));
+function dedupeSoonestPerSeries(rows: DigestRow[]): DigestRow[] {
+  const sorted = [...rows].sort((a, b) => startKey(a.listing) - startKey(b.listing));
   const seen = new Set<string>();
-  const out: ListingRecord[] = [];
-  for (const l of sorted) {
-    if (seen.has(l.seriesId)) continue;
-    seen.add(l.seriesId);
-    out.push(l);
+  const out: DigestRow[] = [];
+  for (const row of sorted) {
+    if (seen.has(row.listing.seriesId)) continue;
+    seen.add(row.listing.seriesId);
+    out.push(row);
   }
   return out;
+}
+
+/**
+ * The card's own record re-pointed at ONE of its occurrences.
+ *
+ * WHY THIS EXISTS. Search hands back one card per series with every occurrence in `slots`
+ * (lib/search/collapse.ts), and the occurrence that KEEPS the card is whichever ranked best —
+ * which, under any sort but "soonest", need not be the one that is new this week. Reading only
+ * the card's own listing would therefore have made the digest go quiet about genuinely new
+ * sessions of a series a parent already knew about: exactly the silent-reduction failure the
+ * `ageUnconfirmed` note above is about, arriving through a different door.
+ *
+ * Every field this overrides is a per-OCCURRENCE fact the slot carries first-hand (its instants
+ * and its own three cost fields — see `OccurrenceSlot`, which exists because members of one group
+ * really do disagree about price). Everything left untouched is a series/venue fact that is the
+ * same for every member. So the row states what that occurrence IS; nothing is inferred from a
+ * sibling.
+ */
+function occurrenceRecord(card: ListingRecord, slot: OccurrenceSlot): ListingRecord {
+  return {
+    ...card,
+    id: slot.id,
+    startDatetimeUtc: slot.startDatetimeUtc,
+    endDatetimeUtc: slot.endDatetimeUtc,
+    costStatus: slot.costStatus,
+    costMinCad: slot.costMinCad,
+    costMaxCad: slot.costMaxCad,
+  };
 }
 
 function toActivity(listing: ListingRecord, ageNotConfirmed = false): DigestActivity {
@@ -170,10 +205,22 @@ export function buildWeeklyDigest(input: BuildDigestInput): WeeklyDigest {
     // silently stop emailing a parent about listings they used to be told about — a reduction in
     // what the product says, dressed up as a presentation change. They are carried and FLAGGED
     // (see DigestActivity.ageNotConfirmed) so the row states its own caveat.
-    const ageNotConfirmedIds = new Set(run.response.ageUnconfirmed.map((r) => r.listing.id));
-    const fresh = [...run.response.results, ...run.response.ageUnconfirmed]
-      .map((r) => r.listing)
-      .filter((l) => input.newOccurrenceIds.has(l.id));
+    //
+    // Read at the SLOT level, not the card level: a card stands for every occurrence of its
+    // series, so "is this new since the last email?" is a question about the occurrences behind
+    // it, and the row announces the SOONEST new one (slots are ascending, so the first match is
+    // it). See `occurrenceRecord`.
+    const fresh: DigestRow[] = [];
+    for (const [items, ageNotConfirmed] of [
+      [run.response.results, false],
+      [run.response.ageUnconfirmed, true],
+    ] as const) {
+      for (const item of items) {
+        const newSlot = item.slots.find((slot) => input.newOccurrenceIds.has(slot.id));
+        if (!newSlot) continue;
+        fresh.push({ listing: occurrenceRecord(item.listing, newSlot), ageNotConfirmed });
+      }
+    }
 
     const deduped = dedupeSoonestPerSeries(fresh).slice(0, perSearchLimit);
     if (deduped.length === 0) {
@@ -197,7 +244,7 @@ export function buildWeeklyDigest(input: BuildDigestInput): WeeklyDigest {
       savedSearchId: ss.id,
       label: savedSearchLabel(ss.name, run.query),
       searchUrl: appUrl(hrefForParams(ss.params)),
-      activities: deduped.map((l) => toActivity(l, ageNotConfirmedIds.has(l.id))),
+      activities: deduped.map((row) => toActivity(row.listing, row.ageNotConfirmed)),
     });
   }
 

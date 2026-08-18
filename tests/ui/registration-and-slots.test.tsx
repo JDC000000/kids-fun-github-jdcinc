@@ -217,3 +217,66 @@ describe('a collapsed card is honest about how many slots it stands for', () => 
     expect(formatSlotSummary(activity)).toBeNull();
   });
 });
+
+describe('a card standing for a RECURRING programme states its days, not an invented span', () => {
+  // Collapsing now merges a series across days (lib/search/collapse.ts, report P1-2 2026-08-18),
+  // so this is the shape the old same-day rule existed to prevent being printed dishonestly: the
+  // first start and the last end no longer bound a window anyone could attend. The engine sends no
+  // `slotSpanEndUtc` for such a card; the card prints the weekdays instead.
+  const slotCost = { costStatus: listingDto.costStatus, costMinCad: listingDto.costMinCad, costMaxCad: listingDto.costMaxCad };
+  const weekly = ['2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11'].map((day, i) => ({
+    id: `w${i}`,
+    startDatetimeUtc: `${day}T20:30:00Z`, // 1:30 PM America/Vancouver
+    endDatetimeUtc: `${day}T22:30:00Z`,
+    ...slotCost,
+  }));
+  const item = {
+    listing: listingDto,
+    distanceKm: 1,
+    slots: weekly,
+    slotDays: ['2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11'],
+    slotSpanEndUtc: null,
+  };
+
+  it('reads "N slots · <weekdays>" — never "Saturday 1:30 PM–Tuesday 3:30 PM"', () => {
+    const activity = mapSearchItemToActivity(item);
+    expect(activity.slotCount).toBe(4);
+    expect(activity.slotEndIso).toBeUndefined();
+    expect(formatSlotSummary(activity)).toBe('4 slots · Sat, Sun, Mon, Tue');
+    expect(renderToStaticMarkup(<ActivityCard activity={activity} />)).toContain('Sat, Sun, Mon, Tue');
+  });
+
+  it('names a weekday ONCE however many weeks the programme runs', () => {
+    // Eight Tuesdays is "8 slots · Tue", not eight dates and not "8 slots, 6:30 AM–8:30 AM" on a
+    // card whose sessions are two months apart.
+    const tuesdays = ['2026-08-11', '2026-08-18', '2026-08-25', '2026-09-01', '2026-09-08', '2026-09-15', '2026-09-22', '2026-09-29'];
+    const activity = mapSearchItemToActivity({
+      ...item,
+      slots: tuesdays.map((day, i) => ({ id: `t${i}`, startDatetimeUtc: `${day}T20:30:00Z`, endDatetimeUtc: `${day}T22:30:00Z`, ...slotCost })),
+      slotDays: tuesdays,
+    });
+    expect(formatSlotSummary(activity)).toBe('8 slots · Tue');
+  });
+
+  it('says "Every day" rather than listing all seven', () => {
+    const week = ['2026-08-08', '2026-08-09', '2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14'];
+    const activity = mapSearchItemToActivity({
+      ...item,
+      slots: week.map((day, i) => ({ id: `d${i}`, startDatetimeUtc: `${day}T20:30:00Z`, endDatetimeUtc: `${day}T22:30:00Z`, ...slotCost })),
+      slotDays: week,
+    });
+    expect(formatSlotSummary(activity)).toBe('7 slots · Every day');
+  });
+
+  it('keeps the single-day card on its time span — the day list is only for cards that need it', () => {
+    const activity = mapSearchItemToActivity({
+      listing: listingDto,
+      distanceKm: 1,
+      slots: weekly.slice(0, 2).map((s) => ({ ...s, startDatetimeUtc: '2026-08-08T22:15:00Z', endDatetimeUtc: '2026-08-08T22:30:00Z' })),
+      slotDays: ['2026-08-08'],
+      slotSpanEndUtc: '2026-08-08T22:30:00Z',
+    });
+    expect(activity.slotDays).toBeUndefined();
+    expect(formatSlotSummary(activity)).toBe('2 slots, 3:15 PM–3:30 PM');
+  });
+});

@@ -148,12 +148,22 @@ export interface Activity {
   venuePhone?: string;
   lastCheckedIso: string; // freshness stamp source of truth
   /**
-   * How many same-series-same-day occurrences this ONE card now stands for (lib/search/collapse.ts).
+   * How many same-series occurrences this ONE card now stands for (lib/search/collapse.ts).
    * 1 (or absent) is an ordinary single-slot card; >1 renders as "15 slots, 3:15 PM–7:30 PM" instead
    * of fifteen near-identical cards.
    */
   slotCount?: number;
-  /** End of the LAST slot, when this card covers several — the closing edge of the displayed span. */
+  /**
+   * The distinct local days those slots run on (YYYY-MM-DD, ascending) — carried ONLY when there is
+   * more than one, i.e. when this card stands for a recurring programme rather than one day's
+   * sessions. Its presence is what tells the when-line to print the days ("8 slots · Tue, Wed, Thu,
+   * Fri") rather than a time span no parent could attend end to end.
+   */
+  slotDays?: string[];
+  /**
+   * End of the LAST slot, when this card covers several — the closing edge of the displayed span.
+   * Absent for a card that spans several days: those have no single span to close (see `slotDays`).
+   */
   slotEndIso?: string;
   /**
    * EVERY slot's own cost, carried only when this card stands for more than one (see `slotCount`).

@@ -35,7 +35,8 @@ import { isRegistrationShaped } from './filters/registration';
 import { computeFacetCounts, type FacetCounts } from './facets';
 import { rankCandidates } from './rank';
 import { applySort, prioritizeConfirmedFreeWhenFreeActive } from './sort';
-import { collapseSameDaySeries, slotSpanEnd, type CollapsedListing, type OccurrenceSlot } from './collapse';
+import { collapseSeries, slotLocalDays, slotSpanEnd, type CollapsedListing, type OccurrenceSlot } from './collapse';
+import { capVenueRepetition } from './venue-diversity';
 import { describeRequestedDay, type RequestedDayWindow } from './day-window';
 import {
   buildBroadeningLadder,
@@ -120,12 +121,25 @@ export interface SearchResultItem {
   components: ScoredListing['components'];
   matchedAliases: string[];
   /**
-   * Every same-series-same-day occurrence this one result now stands for, ascending by start
+   * Every same-series occurrence this one result now stands for, ascending by start
    * (see lib/search/collapse.ts). Always at least the listing itself, so consumers can read
    * `slots.length` uniformly rather than special-casing the uncollapsed card.
    */
   slots: OccurrenceSlot[];
-  /** End of the LAST slot — the closing edge of a collapsed card's "3:15 PM–7:30 PM" span. */
+  /**
+   * Every distinct America/Vancouver local day those slots fall on, ascending — what a card that
+   * stands for a recurring programme prints instead of one date ("8 slots · Tue, Wed, Thu, Fri").
+   * Empty for an open-hours listing, which falls on no day at all.
+   */
+  slotDays: string[];
+  /**
+   * End of the LAST slot — the closing edge of a collapsed card's "3:15 PM–7:30 PM" span.
+   *
+   * NULL WHENEVER THE CARD SPANS MORE THAN ONE LOCAL DAY, and that is the point: the first start
+   * and the last end of a Tuesday-to-Friday programme are not a time range anyone can attend, so
+   * the response carries no span for a consumer to print. `slotDays` is what such a card has to
+   * say about when it runs.
+   */
   slotSpanEndUtc: string | null;
   /**
    * True when this listing reads as a registration-required course. Only ever present in results
@@ -419,12 +433,18 @@ export class SearchEngine {
   }
 
   /**
-   * parse-expanded context → matched, filtered, ranked, sorted, collapsed PRIMARY listings.
+   * parse-expanded context → matched, filtered, ranked, sorted, collapsed, venue-capped PRIMARY
+   * listings.
    *
    * Collapsing is the LAST step, after ranking and sorting, so a card lands wherever its
    * best-ranked slot ranked. It is inside this method rather than applied once at the end because
    * everything downstream — the result limit, `total`, and the broadening ladder's "are there
    * enough results?" test — should count CARDS a parent sees, not repeated slots of one activity.
+   *
+   * The venue cap runs after the age split and on each section separately, because each section is
+   * a list a parent scans on its own. It moves cards, never removes them (lib/search/venue-diversity.ts),
+   * so every count this method feeds is identical with and without it — which is also why running
+   * it inside the ladder's probe loop costs nothing but a reorder.
    *
    * Also returns the matched candidate set, so facet counting can reuse it instead of paying for
    * a second matcher pass over every listing. (Facets do their own collapsing arithmetic — they
@@ -450,13 +470,20 @@ export class SearchEngine {
     // reclassified or excluded; see prioritizeConfirmedFreeWhenFreeActive's own header for why
     // this is a stable partition and not a second cost predicate.
     const prioritized = ctx.costFree ? prioritizeConfirmedFreeWhenFreeActive(sorted) : sorted;
-    return { ...splitAgeUnconfirmed(collapseSameDaySeries(prioritized), filtered, ctx.ageBands), candidates };
+    const split = splitAgeUnconfirmed(collapseSeries(prioritized), filtered, ctx.ageBands);
+    return {
+      scored: capVenueRepetition(split.scored),
+      ageUnconfirmed: capVenueRepetition(split.ageUnconfirmed),
+      candidates,
+    };
   }
 
   /** Expected/seasonal/evergreen suggestions: relaxed status class, loose filters. */
   private runExpected(ctx: SearchContext, origin: ResolvedOrigin | null, chips: string[], now: Date): CollapsedListing[] {
     const candidates = this.match(ctx).filter((c) => this.passesFilters(c.listing, ctx, origin, chips, 'expected'));
-    return collapseSameDaySeries(rankCandidates(candidates, this.rankContext(ctx, origin, now)));
+    // Capped like the primary sections: this is a list of cards a parent reads, and one venue
+    // owning it would be the same defect wherever it appears.
+    return capVenueRepetition(collapseSeries(rankCandidates(candidates, this.rankContext(ctx, origin, now))));
   }
 
   /** Alias-expand + text-match the context into a candidate set (no filtering yet). */
@@ -516,7 +543,7 @@ function primaryCount(run: PrimaryRun): number {
  * page without re-ranking it.
  *
  * WHY THE SPLIT IS BY SLOT, NOT BY THE CARD'S REPRESENTATIVE. A card stands for every same-series
- * same-day occurrence behind it (lib/search/collapse.ts), and age is a per-OCCURRENCE fact in the
+ * occurrence behind it (lib/search/collapse.ts), and age is a per-OCCURRENCE fact in the
  * read model, so one card's slots can legitimately disagree about it. A card earns the confirmed
  * section when ANY occurrence it stands for genuinely intersects the selection — the card is one
  * row a parent taps to reach the whole group, and one real match is enough to make that row a
@@ -524,9 +551,9 @@ function primaryCount(run: PrimaryRun): number {
  * happened to rank best, which is not a fact about the group.
  *
  * WHY IT RUNS AFTER COLLAPSING rather than partitioning the ranked list first: collapsing two
- * separate lists would emit the same (series, day) as TWO cards whenever its occurrences
- * disagreed, double-counting it against `facets.total` — which counts distinct collapse keys over
- * the whole candidate set and would still see one.
+ * separate lists would emit the same series as TWO cards whenever its occurrences disagreed,
+ * double-counting it against `facets.total` — which counts distinct collapse keys over the whole
+ * candidate set and would still see one.
  */
 function splitAgeUnconfirmed(
   cards: CollapsedListing[],
@@ -569,6 +596,7 @@ function normalizeDateRange(range?: { from: string; to: string } | null): { from
 function toItem(group: CollapsedListing): SearchResultItem {
   const s = group.representative;
   const matchedAliases = (s.candidate as MatchCandidate & { _matchedAliases?: string[] })._matchedAliases ?? [];
+  const days = slotLocalDays(group.slots);
   return {
     listing: s.candidate.listing,
     score: s.score,
@@ -576,7 +604,9 @@ function toItem(group: CollapsedListing): SearchResultItem {
     components: s.components,
     matchedAliases,
     slots: group.slots,
-    slotSpanEndUtc: slotSpanEnd(group.slots),
+    slotDays: days,
+    // A span is only a fact about a card that occupies ONE day; see SearchResultItem#slotSpanEndUtc.
+    slotSpanEndUtc: days.length > 1 ? null : slotSpanEnd(group.slots),
     registrationRequired: isRegistrationShaped(s.candidate.listing),
   };
 }
