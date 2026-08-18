@@ -200,7 +200,13 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SearchContext 
   return ctx;
 }
 
-function relativeDate(kind: 'today' | 'tomorrow' | 'weekend', now: Date): DateIntent {
+/**
+ * Exported for lib/search/engine.ts's structured `when` override (Stage 2a): the engine
+ * resolves a typed `when` param ('today'/'tomorrow'/'weekend') to the same DateIntent this
+ * parser would produce from the equivalent text phrase, so the two paths can never compute
+ * different dates for the same intent.
+ */
+export function relativeDate(kind: 'today' | 'tomorrow' | 'weekend', now: Date): DateIntent {
   const todayIso = localIsoDate(now);
   if (kind === 'today') return { kind: 'today', isoDate: todayIso, weekday: null };
   if (kind === 'tomorrow') return { kind: 'tomorrow', isoDate: addDaysIso(todayIso, 1), weekday: null };

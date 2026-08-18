@@ -32,12 +32,22 @@ import { fsaGeocoder } from '@/lib/geo/postal-fsa';
 import { resolvePreciseSavedHomeGeocoder } from '@/lib/geo/saved-home-geocoder';
 import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 import type { Geocoder, OriginRequest } from '@/lib/geo/origin';
-import type { SortKey } from '@/lib/search/types';
+import type { AgeBandKey, SortKey } from '@/lib/search/types';
+// Stage 2a — reuse the rail's own vocabulary for the new typed params (age/when/time) rather
+// than duplicating the allowed-value lists, so route.ts and the /search page can never accept
+// different sets. See app/search/_lib/params.ts's header for the structured-vs-composed split.
+import { AGE_ORDER, WHEN_OPTIONS, TIME_OF_DAY_OPTIONS } from '@/app/search/_lib/params';
+import type { WhenKey, TimeOfDayKey } from '@/app/search/_lib/params';
 
 export const dynamic = 'force-dynamic';
 
 const VALID_SORTS: SortKey[] = ['best_match', 'distance', 'soonest', 'lowest_cost', 'newest'];
 const fixtureBundle = makeFixtureEngine();
+
+// Stage 2a — allowed-value sets for the new typed params, derived from the rail's own
+// vocabulary (imported above) so a value the UI could never produce can't reach the engine.
+const WHEN_KEYS: WhenKey[] = WHEN_OPTIONS.map((w) => w.key);
+const TIME_OF_DAY_KEYS: TimeOfDayKey[] = TIME_OF_DAY_OPTIONS.map((t) => t.key);
 
 export const GET = withObservedRoute(searchGet, { tags: { route: 'api/search' } });
 
@@ -179,6 +189,21 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   const limit = clampInt(p.get('limit'), 1, 100);
   const minResults = clampInt(p.get('minResults'), 0, 100);
 
+  // Stage 2a — typed filter-chip params (roadmap initiative 2, first half). Same param names
+  // the /search PAGE URL already reserves (app/search/_lib/params.ts: age/when/time/bookable/
+  // rainy/dropin/free/radius), now ALSO read here as structured request fields — in addition
+  // to, not instead of, the `q` text those same chips still compose (apiQuery sends both
+  // during this stage). Each helper returns `undefined` when the param is absent, so the
+  // engine's override block leaves parseQuery()'s reading alone rather than clearing it.
+  const ageBands = parseCsvAgainstAllowed(p.get('age'), AGE_ORDER);
+  const when = parseEnumParam(p.get('when'), WHEN_KEYS);
+  const timeOfDay = parseEnumParam(p.get('time'), TIME_OF_DAY_KEYS);
+  const bookableNow = parseOptionalBool(p.get('bookable'));
+  const rainyDay = parseOptionalBool(p.get('rainy'));
+  const dropIn = parseOptionalBool(p.get('dropin'));
+  const free = parseOptionalBool(p.get('free'));
+  const radiusKm = parsePositiveFloat(p.get('radius'));
+
   return {
     q,
     origin,
@@ -190,7 +215,42 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
     ...(dateRange != null ? { dateRange } : {}),
     ...(limit != null ? { limit } : {}),
     ...(minResults != null ? { minResults } : {}),
+    ...(ageBands !== undefined ? { ageBands } : {}),
+    ...(when !== undefined ? { when } : {}),
+    ...(timeOfDay !== undefined ? { timeOfDay } : {}),
+    ...(bookableNow !== undefined ? { bookableNow } : {}),
+    ...(rainyDay !== undefined ? { rainyDay } : {}),
+    ...(dropIn !== undefined ? { dropIn } : {}),
+    ...(free !== undefined ? { free } : {}),
+    ...(radiusKm !== undefined ? { radiusKm } : {}),
   };
+}
+
+/** A csv param filtered/ordered against an allowed-value list; `undefined` when the param is
+ *  absent (so the engine leaves the text-parsed value alone), `[]` when it was present but every
+ *  value in it was unrecognised (an explicit, valid "none"). */
+function parseCsvAgainstAllowed<T extends string>(raw: string | null, allowed: readonly T[]): T[] | undefined {
+  if (raw == null) return undefined;
+  const set = new Set(raw.split(',').map((s) => s.trim()));
+  return allowed.filter((v) => set.has(v));
+}
+
+/** A single param validated against an allowed-value list; `undefined` when absent OR when the
+ *  value isn't in the list — a malformed value degrades to "no override", never a thrown error. */
+function parseEnumParam<T extends string>(raw: string | null, allowed: readonly T[]): T | undefined {
+  return raw != null && (allowed as readonly string[]).includes(raw) ? (raw as T) : undefined;
+}
+
+/** A boolean param; `undefined` when absent (leave text parse alone) vs. explicitly on/off. */
+function parseOptionalBool(raw: string | null): boolean | undefined {
+  return raw == null ? undefined : isOn(raw);
+}
+
+/** A positive-finite-number param; `undefined` when absent or not a usable radius. */
+function parsePositiveFloat(raw: string | null): number | undefined {
+  if (raw == null) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 /** Boolean query param, accepting the same truthy spellings across the API. */

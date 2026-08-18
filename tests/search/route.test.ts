@@ -183,3 +183,79 @@ describe('GET /api/search — facet counts for the filter UI (facets=1)', () => 
     expect(radius.values.find((v: { value: string }) => v.value === '10').selected).toBe(true);
   });
 });
+
+describe('GET /api/search — Stage 2a typed structured params (roadmap initiative 2, first half)', () => {
+  // End-to-end URL → buildSearchRequest → SearchRequest → engine override → passesAllFilters,
+  // over real HTTP querystrings (not the engine directly, unlike tests/search/engine.test.ts's
+  // Stage 2a suite) — proves the route wiring itself, not just the engine logic it calls.
+  it('age= overrides a conflicting/absent age with no age phrase in q', async () => {
+    const { body } = await call('q=open+gym&age=under2&minResults=0');
+    const ids = body.results.map((r: { listing: { id: string } }) => r.listing.id);
+    expect(ids).toContain('l-familydropin-bby'); // under2/2-4
+    expect(ids).not.toContain('l-rank-confirmed'); // 5-9 only
+  });
+
+  it('when= overrides a conflicting text date phrase', async () => {
+    // The route has no `now` override (unlike the engine test suite's FIXTURE_NOW), so this
+    // checks the resolved DateIntent kind against the real clock rather than fixture listing
+    // ids tied to a fixed July 2026 "now" — tests/search/engine.test.ts's Stage 2a suite
+    // already proves the listing-level filtering effect deterministically.
+    const textOnly = await call('q=open+gym+tomorrow&minResults=0');
+    expect(textOnly.body.context.date.kind).toBe('tomorrow');
+    const { body } = await call('q=open+gym+tomorrow&when=today&minResults=0');
+    expect(body.context.date.kind).toBe('today');
+  });
+
+  it('time= overrides a conflicting text day-part', async () => {
+    const { body } = await call('q=open+gym+morning&time=afternoon&minResults=0');
+    const ids = body.results.map((r: { listing: { id: string } }) => r.listing.id);
+    expect(ids).toContain('l-gymplay-nvan'); // 14:00 local
+    expect(ids).not.toContain('l-opengym-van'); // 10:00 local
+  });
+
+  it('bookable=1/0 overrides in both directions', async () => {
+    const forcedOn = await call('q=open+gym&bookable=1&minResults=0');
+    expect(forcedOn.body.results.map((r: { listing: { id: string } }) => r.listing.id)).not.toContain('l-opengym-stale');
+    const forcedOff = await call('q=open+gym+bookable+now&bookable=0&minResults=0');
+    expect(forcedOff.body.results.map((r: { listing: { id: string } }) => r.listing.id)).toContain('l-opengym-stale');
+  });
+
+  it('rainy=1 excludes an outdoor listing a bare query never restricted', async () => {
+    const { body } = await call('q=train&rainy=1&minResults=0');
+    expect(body.results.map((r: { listing: { id: string } }) => r.listing.id)).not.toContain('l-minitrain-van');
+  });
+
+  it('dropin=1 narrows results a bare query never restricted', async () => {
+    const { body } = await call('q=open+gym&dropin=1&minResults=0');
+    const ids = body.results.map((r: { listing: { id: string } }) => r.listing.id);
+    expect(ids).not.toContain('l-rank-confirmed');
+    expect(ids).toContain('l-opengym-van');
+  });
+
+  it('free=1/0 overrides in both directions', async () => {
+    const forcedOn = await call('q=open+gym&free=1&minResults=0');
+    expect(forcedOn.body.results.map((r: { listing: { id: string } }) => r.listing.id)).not.toContain('l-gymplay-nvan');
+    const forcedOff = await call('q=open+gym+free&free=0&minResults=0');
+    expect(forcedOff.body.results.map((r: { listing: { id: string } }) => r.listing.id)).toContain('l-gymplay-nvan');
+  });
+
+  it('radius= overrides a conflicting text radius phrase', async () => {
+    const { body } = await call('q=skate+within+5km&lat=49.26&lng=-123.07&radius=20&minResults=0');
+    expect(body.context.radiusKm).toBe(20);
+    expect(body.results.map((r: { listing: { id: string } }) => r.listing.id)).toContain('l-skate-rmd');
+  });
+
+  it('sending none of the new params leaves plain-text search unaffected (fallback path)', async () => {
+    const { body } = await call('q=open+gym+kids&minResults=1');
+    expect(body.context.ageBands).toEqual(['5-9']);
+    expect(body.results.length).toBeGreaterThan(0);
+  });
+
+  it('malformed/unrecognised values for the new params degrade to no override, never a 5xx', async () => {
+    const { res, body } = await call(
+      'q=open+gym&when=nonsense&time=nonsense&age=not-a-real-band&bookable=maybe&rainy=maybe&dropin=maybe&free=maybe&radius=not-a-number&minResults=1',
+    );
+    expect(res.status).toBe(200);
+    expect(body.results.length).toBeGreaterThan(0);
+  });
+});

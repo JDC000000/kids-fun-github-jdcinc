@@ -144,6 +144,58 @@ describe('apiQuery', () => {
   });
 });
 
+describe('apiQuery — Stage 2a typed structured params (roadmap initiative 2, first half)', () => {
+  // Additive: the SAME chip state must keep composing its intentPhrases() text into `q`
+  // (unchanged — Stage 2b, not this unit, retires that) while ALSO sending the new structured
+  // params. If the structured-param block were deleted, `p.has('age')` etc. below would be
+  // false — this is not a green-path check.
+  it('sends every new field as a structured param, in addition to the unchanged text in `q`', () => {
+    const p = apiParams(st({
+      q: 'open gym',
+      when: 'weekend',
+      timeOfDay: 'evening',
+      bookableNow: true,
+      rainyDay: true,
+      dropIn: true,
+      free: true,
+      ages: ['under2', '5-9'],
+      lat: 49.26,
+      lng: -123.07,
+      radiusKm: 20,
+    }));
+    // Text composition is untouched (Stage 2a is additive-only — intentPhrases() unchanged).
+    expect(p.get('q')).toBe('open gym this weekend evening bookable now rainy day drop-in free under 2 kids 20 km');
+    // Structured, in addition to the text above.
+    expect(p.get('age')).toBe('under2,5-9');
+    expect(p.get('when')).toBe('weekend');
+    expect(p.get('time')).toBe('evening');
+    expect(p.get('bookable')).toBe('1');
+    expect(p.get('rainy')).toBe('1');
+    expect(p.get('dropin')).toBe('1');
+    expect(p.get('free')).toBe('1');
+    expect(p.get('radius')).toBe('20');
+  });
+
+  it('omits every new structured param at default state (never sends a no-op override)', () => {
+    const p = apiParams(DEFAULT_STATE);
+    expect(p.has('age')).toBe(false);
+    expect(p.has('when')).toBe(false);
+    expect(p.has('time')).toBe(false);
+    expect(p.has('bookable')).toBe(false);
+    expect(p.has('rainy')).toBe(false);
+    expect(p.has('dropin')).toBe(false);
+    expect(p.has('free')).toBe(false);
+    expect(p.has('radius')).toBe(false);
+  });
+
+  it('omits `radius` when there is no origin, even with a non-default radiusKm carried in state', () => {
+    // radiusKm is only meaningful with an origin (BR-06) — sending it without one would let a
+    // structured param imply a radius search that was never requested.
+    const p = apiParams(st({ radiusKm: 20 }));
+    expect(p.has('radius')).toBe(false);
+  });
+});
+
 describe('custom date range (T26 / G-T26-1, FR-04)', () => {
   it('parses a complete from/to range and reports it active', () => {
     const s = parseSearchState({ from: '2026-07-18', to: '2026-07-20' });

@@ -123,7 +123,9 @@ export const AGE_OPTIONS: { key: AgeBandKey; label: string; phrase: string }[] =
   { key: '5-9', label: '5–9', phrase: 'kids' },
   { key: '10-14', label: '10–14', phrase: 'tween' },
 ];
-const AGE_ORDER = AGE_OPTIONS.map((a) => a.key);
+/** Exported so callers validating a typed `age=` param (app/api/search/route.ts, Stage 2a)
+ *  share this exact vocabulary rather than re-deriving/duplicating it. */
+export const AGE_ORDER: AgeBandKey[] = AGE_OPTIONS.map((a) => a.key);
 
 // ── Time of day (FR-09 day-part windows) ─────────────────────────────────────────
 // Radio-like single-select. Each option maps to the backend `DayPart` the query parser
@@ -649,6 +651,23 @@ export function apiQuery(
     params.set('postal', savedOrigin.postal);
     params.set('signedIn', '1');
   }
+  // Stage 2a (roadmap initiative 2, first half) — send the SAME chip state as typed,
+  // structured params too, in ADDITION to the intentPhrases() text composed into `q` above.
+  // Additive only: nothing above this block changes, `q` still carries every phrase it always
+  // has. The engine (lib/search/engine.ts) applies each of these as a post-parse override on
+  // whatever parseQuery() resolved from `q`, so the structured value always wins — see the
+  // engine's own header for why this stays "send both" rather than "send only one" for now
+  // (Stage 2b, later, retires the text half once this is independently verified). Same
+  // non-default-only shape as `pageParams()` above, and the same param names it already
+  // reserves, so a value here can never collide with what the page URL means by that key.
+  if (state.ages.length) params.set('age', state.ages.join(','));
+  if (state.when !== 'any') params.set('when', state.when);
+  if (state.timeOfDay !== 'any') params.set('time', state.timeOfDay);
+  if (state.bookableNow) params.set('bookable', '1');
+  if (state.rainyDay) params.set('rainy', '1');
+  if (state.dropIn) params.set('dropin', '1');
+  if (state.free) params.set('free', '1');
+  if (hasOrigin(state) && state.radiusKm !== DEFAULT_RADIUS) params.set('radius', String(state.radiusKm));
   params.set('limit', '60');
   // Broadening policy (respect explicit choices, still help thin browses):
   // - Structured/intent filters active → minResults 3: show the real filtered set;

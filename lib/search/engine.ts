@@ -6,7 +6,7 @@
 // region hierarchy, rank config, geocoder), so swapping fixtures for live Postgres is a
 // dependency change, not an engine rewrite.
 
-import type { ListingRecord, SearchContext, SortKey } from './types';
+import type { AgeBandKey, ListingRecord, SearchContext, SortKey } from './types';
 import type { ListingRepository } from './repository';
 import type { AliasResolver } from './expand';
 import type { CandidateMatcher, MatchCandidate } from './match';
@@ -18,7 +18,12 @@ import type { Geocoder, OriginRequest, ResolvedOrigin } from '../geo/origin';
 import { WeightedTrigramMatcher } from './match';
 import { StaticRankConfig } from './rank-config';
 import { FixtureAliasResolver } from './expand';
-import { parseQuery } from './parse';
+import { parseQuery, relativeDate } from './parse';
+// Type-only: the typed filter-chip param names (WhenKey/TimeOfDayKey) are the UI's own
+// vocabulary (app/search/_lib/params.ts), reused here rather than duplicated so the engine's
+// SearchRequest and the rail's SearchState can never drift on what a valid `when`/`time`
+// value is. Erased at compile time — no runtime dependency on the app layer.
+import type { WhenKey, TimeOfDayKey } from '@/app/search/_lib/params';
 import { passesAllFilters, type ResultMode } from './filters/predicate';
 // Filtering lives in predicate.ts (shared with the facet counter); this is the CARD LABEL —
 // a result that came back because the caller opted in has to say why it is there.
@@ -65,6 +70,31 @@ export interface SearchRequest {
    * hyphens, so a range is passed structurally and OVERRIDES any text-parsed single date.
    */
   dateRange?: { from: string; to: string } | null;
+  /**
+   * Stage 2a — typed filter-chip params (roadmap initiative 2, first half). Structured, like
+   * `dateRange` above: each field, when present, OVERRIDES whatever `parseQuery()` resolved
+   * from `q` for that same dimension (see the override block in `search()`, applied right
+   * before the `dateRange` override this pattern is copied from). Absent/undefined leaves the
+   * text-parsed value alone, so a genuine free-typed query is unaffected. The OLD text
+   * composition (`intentPhrases()` / `parseQuery()`'s chip regexes) still runs unchanged — it
+   * is just redundant for chip-driven filtering once the caller sends the typed value too.
+   */
+  /** Selected age bands (chip multi-select). */
+  ageBands?: AgeBandKey[];
+  /** Date quick-pick. 'any' (or absent) applies no override — mirrors WHEN_OPTIONS. */
+  when?: WhenKey;
+  /** Day-part quick-pick. 'any' (or absent) applies no override. */
+  timeOfDay?: TimeOfDayKey;
+  /** Bookable-Now quick filter. */
+  bookableNow?: boolean;
+  /** Rainy-day / indoor quick filter. */
+  rainyDay?: boolean;
+  /** Drop-in quick filter. */
+  dropIn?: boolean;
+  /** Free-only quick filter (→ `ctx.costFree`). */
+  free?: boolean;
+  /** Travel radius in km; only meaningful when `origin` is also set. */
+  radiusKm?: number;
   /** Broaden when the primary result count is below this (default 3). */
   minResults?: number;
   limit?: number;
@@ -145,10 +175,33 @@ export class SearchEngine {
       includeRegistration: req.includeRegistration,
     });
 
+    // Stage 2a — structured filter-chip overrides. Each field, when the caller supplies it,
+    // wins over whatever parseQuery() resolved from `q` for that dimension — the exact
+    // "structured param wins" pattern the dateRange override below already proved. Order
+    // matters for `when` vs `dateRange`: this block runs BEFORE the dateRange block, so a
+    // range (if also sent) always overwrites whatever `when` set here — mirroring
+    // app/search/_lib/params.ts's `when = dateFrom/dateTo set ? 'any' : whenPick` precedence
+    // server-side, so a caller sending both can never get an undefined winner.
+    if (req.ageBands !== undefined) ctx0.ageBands = req.ageBands;
+    if (req.when !== undefined && req.when !== 'any') {
+      ctx0.date = relativeDate(req.when, now);
+    }
+    if (req.timeOfDay !== undefined && req.timeOfDay !== 'any') {
+      ctx0.timeOfDay = req.timeOfDay;
+    }
+    if (req.bookableNow !== undefined) ctx0.bookableNow = req.bookableNow;
+    if (req.rainyDay !== undefined) ctx0.rainyDay = req.rainyDay;
+    if (req.dropIn !== undefined) ctx0.dropIn = req.dropIn;
+    if (req.free !== undefined) ctx0.costFree = req.free;
+    if (req.radiusKm != null && Number.isFinite(req.radiusKm) && req.radiusKm > 0) {
+      ctx0.radiusKm = req.radiusKm;
+    }
+
     // Structured custom date range (T26 / FR-04): an explicit start+end from the UI is
     // the source of truth for date intent and overrides anything the text parser resolved
     // (e.g. a stray "today" phrase). Ordered defensively so isoDate<=endIsoDate always
-    // holds; an invalid/partial range is ignored (no date constraint).
+    // holds; an invalid/partial range is ignored (no date constraint). Runs AFTER the block
+    // above so it always wins over `when` — see the comment there.
     const range = normalizeDateRange(req.dateRange);
     if (range) {
       ctx0.date = { kind: 'range', isoDate: range.from, endIsoDate: range.to, weekday: null };
