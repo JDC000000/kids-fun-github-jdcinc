@@ -7,6 +7,7 @@ import { query, closePool } from '../../lib/db/client';
 import { applyAgeDecision, detectAgeCandidates, runAgeUseCase, type AgeCandidate, type AgeDecision } from '../../lib/llm/age-fallback';
 import { JOB_NAMES } from '../../lib/llm/config';
 import { FakeAnthropicBatchClient } from '../../lib/llm/anthropic-client';
+import { isAdultOrSeniorOnly } from '../../lib/search/filters/audience';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const TAG = () => `vv-age-${randomUUID().slice(0, 8)}`;
@@ -73,7 +74,10 @@ describe.skipIf(!hasDb)('age-parse fallback (real Postgres)', () => {
     const row = await ageRow(occId);
     expect(row.age_min_months).toBe(60);
     expect(row.age_max_months).toBe(108);
-    expect(row.age_notes.startsWith('llm-resolved')).toBe(true);
+    // The source's own wording survives the resolve, verbatim and first; the model's reason is
+    // recorded on the llm_batch_decision row instead of overwriting the source (see
+    // stampAgeNotes and tests/llm/age-provenance.test.ts).
+    expect(row.age_notes).toBe('K through grade 3 (llm-resolved)');
     expect(row.age_band_matches.length).toBeGreaterThanOrEqual(1);
     // Every matched band genuinely overlaps [60,108).
     const bands = await query<{ lo: number; hi: number | null }>(
@@ -96,9 +100,60 @@ describe.skipIf(!hasDb)('age-parse fallback (real Postgres)', () => {
     expect(await applyAgeDecision(cand, decision)).toBe(false);
     const row = await ageRow(occId);
     expect(row.age_min_months).toBeNull();
-    expect(row.age_notes.startsWith('llm-unresolved')).toBe(true);
+    expect(row.age_notes).toBe('see poster for details (llm-unresolved)');
     // No longer detected (dropped off the 'unresolved:%' worklist).
     expect((await detectAgeCandidates(500)).find((c) => c.occurrenceId === occId)).toBeUndefined();
+  });
+
+  it('KEEPS the adult/senior hard exclusion working on a row it resolves', async () => {
+    // The defect this test exists for: the apply branch used to replace the source's own
+    // audience wording with the model's reasoning, and lib/search/filters/audience.ts reads
+    // exactly that field to decide whether adult-only programming is removed from a kids app.
+    // A resolved row therefore stopped being excluded — silently, and only for rows the LLM had
+    // touched. Asserted end-to-end here (real UPDATE → real read → real filter), because the
+    // format contract lives in the SQL parameter, not in a helper.
+    const tag = TAG();
+    const name = `Overdose Response Basics ${tag}`;
+    const raw = 'International Overdose Awareness Day, Health, Life Skills and Personal Growth, Adults, English';
+    const occId = await seedUnresolved(tag, name, raw);
+
+    const before = await ageRow(occId);
+    const asListing = (r: Awaited<ReturnType<typeof ageRow>>) => ({
+      activityName: name,
+      ageMinMonths: r.age_min_months,
+      ageMaxMonths: r.age_max_months,
+      ageNotes: r.age_notes,
+    });
+    expect(isAdultOrSeniorOnly(asListing(before))).toBe(true);
+
+    const cand: AgeCandidate = { occurrenceId: occId, activityName: name, rawAgeText: raw, customId: `age-${occId}` };
+    // A CONFIDENT and WRONG resolution — the shape that hurts. The bounds say "kids"; the
+    // source says "Adults". The source's claim must still win.
+    const decision: AgeDecision = { action: 'apply', ageMinMonths: 24, ageMaxMonths: 60, llmConfidence: 0.95, reason: 'Reads as an all-ages community talk.' };
+    expect(await applyAgeDecision(cand, decision)).toBe(true);
+
+    const after = await ageRow(occId);
+    expect(after.age_min_months).toBe(24);
+    expect(after.age_notes.startsWith(raw)).toBe(true);
+    expect(after.age_notes).not.toContain('all-ages community talk');
+    expect(isAdultOrSeniorOnly(asListing(after))).toBe(true);
+  });
+
+  it('keeps the same exclusion working on a row it declines to resolve (no_op)', async () => {
+    // The no_op branch already re-embedded the raw text, but under an `llm-unresolved: ` PREFIX
+    // that AGE_NOTES_MARKER does not step over — so the tag anchor never reached "Adults" and
+    // this path silently lost the exclusion too. Same stamp, same guarantee.
+    const tag = TAG();
+    const name = `Tech Help ${tag}`;
+    const raw = 'Digital Essentials, Computer & Technology Training, Adults, Seniors, English';
+    const occId = await seedUnresolved(tag, name, raw);
+    const cand: AgeCandidate = { occurrenceId: occId, activityName: name, rawAgeText: raw, customId: `age-${occId}` };
+
+    expect(await applyAgeDecision(cand, { action: 'no_op', ageMinMonths: null, ageMaxMonths: null, llmConfidence: 0.2, reason: 'ambiguous' })).toBe(false);
+
+    const row = await ageRow(occId);
+    expect(row.age_notes.startsWith(raw)).toBe(true);
+    expect(isAdultOrSeniorOnly({ activityName: name, ageMinMonths: row.age_min_months, ageMaxMonths: row.age_max_months, ageNotes: row.age_notes })).toBe(true);
   });
 
   it('dry-run detects but writes nothing', async () => {

@@ -8,10 +8,12 @@
 //
 // Fail-closed apply:
 //   • resolved AND confidence ≥ AGE_APPLY_MIN_CONFIDENCE → write the band + matches; stamp
-//     age_notes='llm-resolved: …' so the row leaves the worklist.
+//     age_notes='<raw> (llm-resolved)' so the row leaves the worklist.
 //   • otherwise (not resolved / low confidence / errored / unparseable) → NO-OP on the
-//     bounds, but stamp age_notes='llm-unresolved: <raw>' so it isn't reprocessed every
+//     bounds, but stamp age_notes='<raw> (llm-unresolved)' so it isn't reprocessed every
 //     night. Half-open interval + band-overlap conventions exactly mirror worker/core/age.ts.
+//
+// EITHER WAY THE SOURCE'S OWN WORDING SURVIVES, FIRST AND VERBATIM — see stampAgeNotes().
 import type { PoolClient } from 'pg';
 import { query } from '@/lib/db/client';
 import { AGE_APPLY_MIN_CONFIDENCE, JOB_NAMES, batchModel, maxCandidates as configMaxCandidates } from './config';
@@ -24,6 +26,8 @@ import { AGE_OUTPUT_CONFIG, buildAgeSystem, buildAgeUser, parseAgeVerdict, textO
 const UNRESOLVED_PREFIX = 'unresolved:';
 /** Large sentinel standing in for an open (null) upper bound in the overlap query. */
 const OPEN_BOUND = 2_147_483_647;
+/** Self-imposed cap on what this job writes into the (untyped `text`) age_notes column. */
+const NOTES_MAX_LENGTH = 500;
 
 export interface AgeCandidate {
   occurrenceId: string;
@@ -64,6 +68,41 @@ export function decideAge(verdict: AgeVerdict | null): AgeDecision {
     llmConfidence: verdict.confidence,
     reason: verdict.reason || 'Below confidence bar or unresolved.',
   };
+}
+
+/**
+ * Stamp this job's provenance onto `age_notes` WITHOUT destroying the source's own wording.
+ *
+ * The raw source text stays FIRST and verbatim, and both halves of that are load-bearing:
+ *
+ *   • lib/search/filters/audience.ts's adult/senior exclusion is a HARD exclusion with no
+ *     user-facing escape hatch, and it reads this field as "the source's own stated audience".
+ *     It steps over a known marker prefix (`audience:` / `unresolved:`), splits on the source's
+ *     tag separators, and anchors ADULT_AUDIENCE_TAG at the START of a segment. Wording that
+ *     does not lead a segment is invisible to it — so a row whose source said "Adults" must
+ *     still read "Adults…" after we touch it, or resolving its age silently un-excludes adult
+ *     content from a children's product. That is precisely what overwriting this field did.
+ *   • app/preview/_components/ActivityDetail.tsx renders it to a parent as
+ *     "From the source: {ageNotes}", so anything in here is a quotation of the source.
+ *
+ * The model's own reason is deliberately NOT part of this string — it is already recorded on
+ * the llm_batch_decision audit row, which is where reasoning belongs. Embedding it here is not
+ * merely untidy: statesAdultAudience() vetoes the WHOLE field on parent-and-child or
+ * supervision wording, so a reason as ordinary as "no children's ages are given" would veto the
+ * source's own "Adults" tag and re-open the same hole from the other side.
+ *
+ * The marker is a trailing parenthetical rather than a prefix so it cannot displace the source
+ * text, contains no tag separator (`[,|;\n]`) so it cannot split a tag, and matches neither
+ * ADULT_AUDIENCE_TAG nor either veto — verified in tests/llm/age-provenance.test.ts against the
+ * real filter, not against a copy of its regexes.
+ */
+export function stampAgeNotes(rawAgeText: string, action: AgeAction): string {
+  const marker = action === 'apply' ? 'llm-resolved' : 'llm-unresolved';
+  const suffix = ` (${marker})`;
+  const raw = rawAgeText.trim();
+  if (!raw) return marker;
+  // Truncate the RAW text, never the marker: a row must stay identifiable as LLM-touched.
+  return `${raw.slice(0, NOTES_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
 }
 
 /** Build the Message-Batches request for one stuck age record (cacheable prefix + volatile body). */
@@ -139,7 +178,7 @@ export async function applyAgeDecision(candidate: AgeCandidate, decision: AgeDec
         `UPDATE occurrence_age
             SET age_min_months = $2, age_max_months = $3, age_band_matches = $4::uuid[], age_notes = $5
           WHERE occurrence_id = $1 AND age_notes LIKE 'unresolved:%'`,
-        [candidate.occurrenceId, decision.ageMinMonths, decision.ageMaxMonths, matches, `llm-resolved: ${decision.reason}`.slice(0, 500)]
+        [candidate.occurrenceId, decision.ageMinMonths, decision.ageMaxMonths, matches, stampAgeNotes(candidate.rawAgeText, 'apply')]
       );
       await recordDecision(
         {
@@ -161,7 +200,7 @@ export async function applyAgeDecision(candidate: AgeCandidate, decision: AgeDec
       `UPDATE occurrence_age
           SET age_notes = $2
         WHERE occurrence_id = $1 AND age_notes LIKE 'unresolved:%'`,
-      [candidate.occurrenceId, `llm-unresolved: ${candidate.rawAgeText}`.slice(0, 500)]
+      [candidate.occurrenceId, stampAgeNotes(candidate.rawAgeText, 'no_op')]
     );
     await recordDecision(
       {
