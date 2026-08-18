@@ -168,7 +168,13 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   const sortParam = p.get('sort');
   const sort = sortParam && (VALID_SORTS as string[]).includes(sortParam) ? (sortParam as SortKey) : undefined;
   const origin = buildOriginRequest(p);
-  const regionChipIds = (p.get('region') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  // Region chips are MULTI-SELECT, and a caller may express that either way — `region=van,bby`
+  // (what the rail's own links and apiQuery emit) or `region=van&region=bby` (the ordinary REST
+  // spelling of a repeated param, and what a hand-written or shared call tends to use). This read
+  // used to be `p.get('region')`, which returns only the FIRST occurrence, so the repeated form
+  // silently searched Vancouver alone and reported nothing about the chips it dropped. See
+  // `csvValues`.
+  const regionChipIds = csvValues(p.getAll('region'));
   // NB: `includeUnknownCost` is GONE as a request parameter. It used to mean absent→exclude
   // here while meaning absent→include in the /search state layer, so unknown-cost listings
   // could be suppressed by nothing more than a caller omitting a param. They are now always
@@ -178,7 +184,17 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   //
   // Registration courses are OFF unless explicitly asked for: an inclusion policy the caller
   // states, never something inferred from the text of `q`.
-  const includeRegistration = isOn(p.get('includeRegistration'));
+  //
+  // BOTH SPELLINGS OF THE SAME FLAG ARE READ, and the alias is not a convenience. `reg` is the
+  // name the /search PAGE URL uses (app/search/_lib/params.ts `pageParams`), the name every rail
+  // link puts in front of a parent, and the key a saved search persists — while this route
+  // historically read only `includeRegistration`. Every other chip param (age/when/time/bookable/
+  // rainy/dropin/free/region/radius/from/to) is spelled identically on both sides, so this was the
+  // one page param that a caller could send verbatim from the URL bar and have silently ignored:
+  // the API answered "drop-in only" to a request that plainly said `reg=1`.
+  // Precedence: this API's own name wins when both are present, so an explicit
+  // `includeRegistration=0` is never overridden by a stale `reg=1` carried along in the same URL.
+  const includeRegistration = isOn(p.get('includeRegistration') ?? p.get('reg'));
   // Facet counts for the filter UI (`facets=1`). Deliberately part of THIS request rather
   // than a second endpoint: the counts are derived from the candidate set this search has
   // already loaded and matched, so asking for them here costs a few in-memory passes, while
@@ -195,7 +211,7 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   // to, not instead of, the `q` text those same chips still compose (apiQuery sends both
   // during this stage). Each helper returns `undefined` when the param is absent, so the
   // engine's override block leaves parseQuery()'s reading alone rather than clearing it.
-  const ageBands = parseCsvAgainstAllowed(p.get('age'), AGE_ORDER);
+  const ageBands = parseCsvAgainstAllowed(p.getAll('age'), AGE_ORDER);
   const when = parseEnumParam(p.get('when'), WHEN_KEYS);
   const timeOfDay = parseEnumParam(p.get('time'), TIME_OF_DAY_KEYS);
   const bookableNow = parseOptionalBool(p.get('bookable'));
@@ -226,12 +242,38 @@ function buildSearchRequest(p: URLSearchParams): SearchRequest {
   };
 }
 
+/**
+ * Every value of a repeatable csv param, in the order the caller sent them, de-duplicated.
+ *
+ * ONE READER FOR BOTH SPELLINGS of a multi-select param — `x=a,b` and `x=a&x=b` — because the two
+ * are the same selection and a caller has no way to know which one this API prefers. Reading it
+ * with `URLSearchParams.get()` (which returns only the first occurrence) is what made a
+ * two-municipality search quietly return one municipality's listings: no error, no notice, and a
+ * result set that looks exactly like a real answer. Empty segments are dropped, so a trailing
+ * comma or a bare `region=` is "no chips", not a chip named "".
+ */
+function csvValues(raw: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of raw) {
+    for (const part of value.split(',')) {
+      const trimmed = part.trim();
+      if (trimmed && !seen.has(trimmed)) {
+        seen.add(trimmed);
+        out.push(trimmed);
+      }
+    }
+  }
+  return out;
+}
+
 /** A csv param filtered/ordered against an allowed-value list; `undefined` when the param is
  *  absent (so the engine leaves the text-parsed value alone), `[]` when it was present but every
- *  value in it was unrecognised (an explicit, valid "none"). */
-function parseCsvAgainstAllowed<T extends string>(raw: string | null, allowed: readonly T[]): T[] | undefined {
-  if (raw == null) return undefined;
-  const set = new Set(raw.split(',').map((s) => s.trim()));
+ *  value in it was unrecognised (an explicit, valid "none"). Repeatable, for the reason
+ *  `csvValues` documents. */
+function parseCsvAgainstAllowed<T extends string>(raw: string[], allowed: readonly T[]): T[] | undefined {
+  if (raw.length === 0) return undefined;
+  const set = new Set(csvValues(raw));
   return allowed.filter((v) => set.has(v));
 }
 

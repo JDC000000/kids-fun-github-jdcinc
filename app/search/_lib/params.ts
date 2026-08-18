@@ -298,10 +298,20 @@ function parseBool(raw: string | undefined, fallback = false): boolean {
   return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
 }
 
-/** Parse a csv param, keep only allowed values, and return them in a canonical order. */
-function parseOrderedCsv<T extends string>(raw: string | undefined, order: T[]): T[] {
-  if (!raw) return [];
-  const set = new Set(raw.split(',').map((s) => s.trim()));
+/**
+ * Parse a MULTI-SELECT param, keep only allowed values, and return them in a canonical order.
+ *
+ * Accepts both spellings of the same selection: `region=van,bby` (what every rail link emits) and
+ * `region=van&region=bby` (the ordinary REST spelling, and what a hand-written or shared URL tends
+ * to carry). It used to be read through `first()`, which keeps only the FIRST occurrence — so the
+ * repeated form silently narrowed a two-municipality search to one, with no error and a result set
+ * indistinguishable from a real answer. Nothing about the csv form's meaning changes; the repeated
+ * form simply stops losing values.
+ */
+function parseOrderedCsv<T extends string>(raw: string | string[] | undefined, order: T[]): T[] {
+  if (raw == null) return [];
+  const values = (Array.isArray(raw) ? raw : [raw]).flatMap((v) => v.split(',')).map((s) => s.trim());
+  const set = new Set(values);
   return order.filter((v) => set.has(v));
 }
 
@@ -366,7 +376,9 @@ export function parseSearchState(sp: RawParams): SearchState {
     // Absent/malformed → OFF. The default view is drop-in only; only an explicit opt-in turns
     // registration content on, so a hand-edited or truncated URL can never quietly re-enable it.
     includeRegistration: parseBool(first(sp.reg)),
-    regions: parseOrderedCsv(first(sp.region), REGION_ORDER),
+    // Multi-select params take the WHOLE value (csv and/or repeated), never just the first
+    // occurrence — see parseOrderedCsv.
+    regions: parseOrderedCsv(sp.region, REGION_ORDER),
     when,
     dateFrom,
     dateTo,
@@ -375,7 +387,7 @@ export function parseSearchState(sp: RawParams): SearchState {
     rainyDay: parseBool(first(sp.rainy)),
     dropIn: parseBool(first(sp.dropin)),
     free: parseBool(first(sp.free)),
-    ages: parseOrderedCsv(first(sp.age), AGE_ORDER as AgeBandKey[]),
+    ages: parseOrderedCsv(sp.age, AGE_ORDER as AgeBandKey[]),
     lat: bothCoords ? lat : null,
     lng: bothCoords ? lng : null,
     useSavedLocation,
