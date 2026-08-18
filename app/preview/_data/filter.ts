@@ -44,7 +44,7 @@ export const TIME_OF_DAY_OPTIONS: { key: TimeOfDay | 'any'; label: string }[] = 
   { key: 'any', label: 'Any time' },
   { key: 'morning', label: 'Morning' },
   { key: 'afternoon', label: 'Afternoon' },
-  { key: 'evening', label: 'Evening' },
+  { key: 'evening', label: 'Evening & night' }, // matches the live chip (app/search/_lib/params.ts)
 ];
 
 export const RADIUS_OPTIONS: FilterState['radiusKm'][] = [5, 10, 20];

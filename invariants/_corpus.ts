@@ -427,6 +427,32 @@ function traps(at: At): ListingRecord[] {
       endDatetimeUtc: at(1, 0, 30).toISOString(),
       statusState: 'confirmed',
     }),
+    // ── time.ts: THE HOURS THAT USED TO BELONG TO NO DAY-PART AT ALL.
+    //
+    // The generated body starts every row between 09:00 and 21:00 (START_HOURS), which is inside
+    // the old 05:00–22:00 span — so the day-part invariants could not have caught the gap that
+    // made an Evening search at 22:35 return nothing, because no row in the catalogue lived
+    // there. These two rows put the catalogue where the defect was. They are traps, not extra
+    // START_HOURS, deliberately: adding hours would reshuffle every generated row through
+    // `i % START_HOURS.length` and change what a dozen unrelated invariants are sampling.
+    makeListing({
+      ...base,
+      id: 'trap-late-night',
+      activityName: 'Fixture Late Public Swim',
+      descriptionSnippet: `${CORPUS_TOKEN} 22:30 local — inside the old 22:00–05:00 dead window`,
+      startDatetimeUtc: at(0, 22, 30).toISOString(),
+      endDatetimeUtc: at(0, 23, 30).toISOString(),
+      statusState: 'confirmed',
+    }),
+    makeListing({
+      ...base,
+      id: 'trap-after-midnight',
+      activityName: 'Fixture Midnight Skate',
+      descriptionSnippet: `${CORPUS_TOKEN} 00:30 local — past midnight, still the evening day-part`,
+      startDatetimeUtc: at(0, 0, 30).toISOString(),
+      endDatetimeUtc: at(0, 1, 30).toISOString(),
+      statusState: 'confirmed',
+    }),
     // ── region.ts: a tag no hierarchy in this product knows. Must not be a filtering accident.
     makeListing({
       ...base,

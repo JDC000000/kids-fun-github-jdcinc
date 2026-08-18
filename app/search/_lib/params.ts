@@ -136,7 +136,12 @@ export const TIME_OF_DAY_OPTIONS: { key: TimeOfDayKey; label: string; phrase: st
   { key: 'any', label: 'Any time', phrase: '' },
   { key: 'morning', label: 'Morning', phrase: 'morning' },
   { key: 'afternoon', label: 'Afternoon', phrase: 'afternoon' },
-  { key: 'evening', label: 'Evening', phrase: 'evening' },
+  // "& night" is the LABEL only — the key, the URL param and the composed phrase stay `evening`,
+  // so every shared link and saved search keeps working. The chip's window was widened to run to
+  // 05:00 (lib/search/filters/time.ts); a chip that still read plain "Evening" would be the one
+  // control a parent searching at 22:35 has no reason to tap, which is how this defect was
+  // reported in the first place.
+  { key: 'evening', label: 'Evening & night', phrase: 'evening' },
 ];
 const TIME_OF_DAY_KEYS = new Set<string>(TIME_OF_DAY_OPTIONS.map((t) => t.key));
 

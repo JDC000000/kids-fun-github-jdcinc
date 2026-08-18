@@ -342,7 +342,14 @@ describe('the engine reports how much of the requested day is still ahead', () =
     expect(stateAt(16, 59)).toBe('day_ahead');
     expect(stateAt(17, 0)).toBe('day_closing'); // the evening day-part opens
     expect(stateAt(21, 59)).toBe('day_closing');
-    expect(stateAt(22, 0)).toBe('day_over'); // …and closes; nothing listed can still start
+    // 22:00 IS NO LONGER THE EVENING WINDOW'S CLOSE — the evening day-part was widened to 05:00
+    // to close a window in which no time-of-day chip could match anything (filters/time.ts). This
+    // module's 22:00 is now its own stated constant, LISTED_DAY_ENDS_MIN, because it answers a
+    // different question: not "which chip reaches this hour" but "has the listed day run out of
+    // scheduled starts". Re-deriving it from `DAY_PART_WINDOWS.evening.endMin` would make it
+    // 29:00, a value localMinutesOfDay can never return, and day_over would stop firing for today
+    // entirely — silently, since nothing else asserts it. These four lines are that guard.
+    expect(stateAt(22, 0)).toBe('day_over');
     expect(stateAt(23, 30)).toBe('day_over');
   });
 
