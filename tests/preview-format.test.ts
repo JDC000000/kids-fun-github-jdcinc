@@ -4,6 +4,7 @@ import {
   ageGuide,
   bookingTag,
   confidenceMeta,
+  confidenceSentence,
   daysSince,
   formatAges,
   formatChecked,
@@ -372,6 +373,37 @@ describe('confidenceMeta', () => {
       const m = confidenceMeta(c);
       expect(m.label.trim().length, `${c} label`).toBeGreaterThan(0);
       expect(VALID_TONES.has(m.tone), `${c} tone`).toBe(true);
+    }
+  });
+});
+
+describe('confidenceSentence', () => {
+  it('reads the recently-checked official tier as verified and recent', () => {
+    expect(confidenceSentence('confirmed')).toBe(
+      'Verified — confirmed directly by the official source, and checked recently.'
+    );
+  });
+  it('reads the official tier as verified, without claiming recency it does not have', () => {
+    expect(confidenceSentence('official')).toBe('Verified — confirmed directly by the official source.');
+  });
+  it('names an editorial/aggregator source honestly — never "reviewed by our team" (no such review happens)', () => {
+    const s = confidenceSentence('editorial');
+    expect(s.toLowerCase()).not.toContain('official');
+    expect(s.toLowerCase()).not.toContain('our team');
+    expect(s.toLowerCase()).not.toContain('our editorial');
+    expect(s).toContain('not directly confirmed');
+  });
+  it('never dresses an unverified community row up as official', () => {
+    const s = confidenceSentence('candidate');
+    expect(s.toLowerCase()).not.toContain('official source.');
+    expect(s).toContain('Not yet verified');
+  });
+  it('every tier is a real sentence, never a bare enum value, for all 4 values Activity.confidence can hold', () => {
+    for (const c of ['confirmed', 'official', 'editorial', 'candidate'] as const) {
+      const s = confidenceSentence(c);
+      expect(s.trim().length, `${c} sentence`).toBeGreaterThan(0);
+      expect(s, `${c} must not just echo the raw enum value`).not.toBe(c);
+      expect(/^[A-Z]/.test(s), `${c} sentence should read as prose`).toBe(true);
     }
   });
 });

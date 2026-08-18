@@ -6,6 +6,7 @@ import type { Activity } from '../_data/types';
 import {
   ageGuide,
   bookingTag,
+  confidenceSentence,
   formatAges,
   formatChecked,
   formatCost,
@@ -164,8 +165,8 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
       <section className="kf-panel">
         <h2 className="kf-panel__title">Source &amp; freshness</h2>
         <p>
-          Official source: <b>{activity.sourceName}</b> · {meta.label} · {formatChecked(activity.lastCheckedIso)} ·
-          Confidence: {activity.confidence}
+          Official source: <b>{activity.sourceName}</b> · {meta.label} · {formatChecked(activity.lastCheckedIso)} ·{' '}
+          {confidenceSentence(activity.confidence)}
         </p>
         <div className="kf-linkrow">
           <a className="kf-link" href={activity.sourceUrl} target="_blank" rel="noreferrer noopener">

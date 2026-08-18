@@ -453,6 +453,38 @@ export function confidenceMeta(confidence: ConfidenceLabel): ConfidenceMeta {
 }
 
 /**
+ * One plain sentence explaining what a source-confidence tier means — the detail page's
+ * "Source & freshness" panel used to print the raw `ConfidenceLabel` enum value verbatim
+ * ("Confidence: candidate"), which is exactly the false-precision-by-omission this product's
+ * honest-by-default voice forbids elsewhere (formatCost's COST_UNKNOWN, AGE_NOT_STATED):
+ * a value a parent cannot interpret is not a fact they were told, it's jargon they were shown.
+ *
+ * Deliberately NOT "Reviewed by our editorial team" for the `editorial` tier, even though that
+ * reads naturally: `editorial` here means the SOURCE is a third-party aggregator/round-up
+ * (worker/core/confidence.ts's CANDIDATE_AUTHORITY_TIER comment — "a '10 best things to do
+ * with kids' round-up, a what's-on blog"), not that this product's own team reviewed the
+ * listing. Claiming an in-house review that never happened is the same shape of invented
+ * specificity `formatCost`'s header warns against, just in prose instead of a number.
+ *
+ * Same tone/tier grouping as `confidenceMeta` (its four cases are the only values
+ * `Activity.confidence` can ever hold — see `mapConfidence` in `search-api.ts`), so the label
+ * badge and this sentence can never disagree about which tier a listing is in.
+ */
+export function confidenceSentence(confidence: ConfidenceLabel): string {
+  switch (confidence) {
+    case 'confirmed':
+      return 'Verified — confirmed directly by the official source, and checked recently.';
+    case 'official':
+      return 'Verified — confirmed directly by the official source.';
+    case 'editorial':
+      return 'From an editorial or listings source, not directly confirmed by the venue or organiser.';
+    case 'candidate':
+    default:
+      return 'Not yet verified — check the official source before you rely on it.';
+  }
+}
+
+/**
  * Plain-language age read for the "Who it's for" section. Grounded ONLY in the
  * numeric age_min/age_max the source gave us — no invented "fit score". Maps the
  * range onto the canonical age_band taxonomy (under2 / 2-4 / 5-9 / 10-14 / 15+)
