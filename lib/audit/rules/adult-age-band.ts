@@ -26,41 +26,25 @@
 // That reuse is necessary but NOT sufficient, because `parseAudienceLabels` is anchored at the
 // START of a tag (`/^\s*(?:adults?|seniors?|older\s+adults?)\b/i`) and the trap sentence also
 // starts with "Adults". Feeding it that sentence returns min = 216 months — a false positive on
-// the exact example the codebase warns about. Hence `structuredTags()` below, which refuses to
+// the exact example the codebase warns about. Hence `structuredTags()`, which refuses to
 // treat prose as a tag list: anything carrying supervision/accompaniment language, or running
 // longer than a real audience label ever does, is discarded before the parser sees it.
-import { parseAudienceLabels } from '@/worker/core/age';
+//
+// The guards this rule is built around are SHARED with pattern 3 and live in ./adult-signals —
+// they are re-exported below because they are this rule's documented public surface (its tests
+// pin the trap sentence through them), but they have one owner, not two copies.
 import type { AuditListing, AuditRule, RuleEvidence, RuleSignal } from '../types';
+import {
+  CAREGIVER_PROGRAMME_RE,
+  CHILD_AUDIENCE_RE,
+  CHILD_BANDS,
+  SUPERVISION_RE,
+  adultTagQuote,
+  audienceTagsAreAdultOnly,
+  structuredTags,
+} from './adult-signals';
 
-/** 18 years in months — worker/core/age.ts's own ADULT_MIN_MONTHS. */
-const ADULT_MIN_MONTHS = 18 * 12;
-
-/** Bands whose presence puts the listing in front of a child. */
-const CHILD_BANDS = new Set(['under2', '2-4', '5-9']);
-
-/**
- * Language that makes a string prose about supervision rather than an audience label. Any tag
- * matching this is not a tag — it is a sentence that happens to begin with "Adults".
- */
-const SUPERVISION_RE =
-  /\b(?:accompan\w+|caregivers?|guardians?|supervis\w+|chaperone\w*|must\s+stay|must\s+remain|remain\s+with|stay\s+with|attend\s+with|responsible\s+for)\b/i;
-
-/**
- * A real audience tag is short — "Adults", "Seniors", "Older Adults", "Children-Preschool".
- * Six words is generous (VPL's longest is "Preschool Age Children"); anything past it is prose.
- * This is the second half of the trap guard: the warning sentence is nine words before it even
- * reaches "library".
- */
-const MAX_TAG_WORDS = 6;
-
-/**
- * A programme FOR children that adults attend. "Parent & Tot", "Adult & Child Swim",
- * "Family Storytime", "Caregiver and Baby Yoga" — every one of these mentions adults and every
- * one belongs in a toddler search. Matching this anywhere in title or description drops the
- * whole listing: the adult reference is explained.
- */
-const CAREGIVER_PROGRAMME_RE =
-  /\b(?:parent|adult|caregiver|grown[\s-]?up|mommy|mummy|daddy|guardian)s?\s*(?:&|and|\+|\/)\s*(?:tot|child|kid|baby|babies|toddler|me|preschooler)s?\b|\bfamil(?:y|ies)\b|\bcaregivers?\b|\bwith\s+(?:a\s+)?(?:parent|caregiver|guardian|grown[\s-]?up)\b|\bparent\s+participation\b/i;
+export { audienceTagsAreAdultOnly, structuredTags };
 
 interface Marker {
   re: RegExp;
@@ -99,50 +83,13 @@ const ADULT_MARKERS: Marker[] = [
  * DEMOTED to weak rather than dropped: it is genuinely ambiguous, which is exactly the class
  * of call the adjudication stage exists to make. (This does not touch the structured-tag path
  * — `parseAudienceLabels` already unions a mixed list below the adult floor.)
+ *
+ * Shared with pattern 3 as `CHILD_AUDIENCE_RE`; the two rules act on it differently (demote vs
+ * drop) but must agree on what counts as the source naming a young audience.
  */
-const MIXED_AUDIENCE_RE =
-  /\b(?:teens?|teenagers?|youth|kids?|child(?:ren)?|toddlers?|preschoolers?|famil(?:y|ies)|all\s+ages)\b/i;
+const MIXED_AUDIENCE_RE = CHILD_AUDIENCE_RE;
 
 const EVIDENCE_FIELDS = ['title', 'description'] as const;
-
-/**
- * Split the source's age wording into candidate STRUCTURED tags, discarding anything that is
- * prose. Returns [] when the wording is a sentence rather than a list — which is the whole
- * point: a sentence is never an audience claim, however it begins.
- */
-export function structuredTags(ageWording: string): string[] {
-  const raw = ageWording.trim();
-  if (!raw) return [];
-  return raw
-    .split(/[,;|]/)
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
-    .filter((t) => !SUPERVISION_RE.test(t))
-    .filter((t) => t.split(/\s+/).length <= MAX_TAG_WORDS);
-}
-
-/**
- * True when the source's own structured audience tags resolve to an adults-only range. Uses
- * the hull minimum from `parseAudienceLabels`, so a list carrying BOTH "Adults" and a child
- * audience resolves below the floor and correctly returns false — a mixed audience is not an
- * adult-only one.
- */
-export function audienceTagsAreAdultOnly(ageWording: string): boolean {
-  const tags = structuredTags(ageWording);
-  if (tags.length === 0) return false;
-  const parsed = parseAudienceLabels(tags);
-  return parsed.resolved && parsed.ageMinMonths !== null && parsed.ageMinMonths >= ADULT_MIN_MONTHS;
-}
-
-/** The tag(s) that carried the adult claim, for quoting in the report. */
-function adultTagQuote(ageWording: string): string {
-  const tags = structuredTags(ageWording);
-  const adult = tags.filter((t) => {
-    const p = parseAudienceLabels([t]);
-    return p.resolved && p.ageMinMonths !== null && p.ageMinMonths >= ADULT_MIN_MONTHS;
-  });
-  return adult.join(', ') || ageWording;
-}
 
 /** Whether this listing can surface in a search filtered to a child age band. */
 export function exposedToChildSearch(bands: string[]): { exposed: boolean; why: string } | null {
