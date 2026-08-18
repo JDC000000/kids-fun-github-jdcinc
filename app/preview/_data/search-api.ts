@@ -1,6 +1,7 @@
 import type { ListingRecord } from '@/lib/search/types';
 import type { FacetCounts } from '@/lib/search/facets';
 import { isRegistrationShaped } from '@/lib/search/filters/registration';
+import { readIndoorOutdoor } from '@/lib/search/indoor';
 import { formatOpenHoursWindow } from './format';
 import type { Activity, BookingType, Category, ConfidenceLabel, CostStatus, StatusState, TimeOfDay } from './types';
 
@@ -148,6 +149,12 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
   // is only true relative to an origin we were given, so with no origin there is no number.
   const distanceKm = item.distanceKm;
   const tags = new Set([...(l.suitabilityTags ?? []), ...(l.categoryTags ?? [])]);
+  const indoorReading = readIndoorOutdoor({
+    primaryCategoryKey: l.primaryCategoryKey,
+    tags,
+    activityName: l.activityName,
+    descriptionSnippet: l.descriptionSnippet,
+  });
   const sourceUrl = l.sourceUrl ?? '#';
   const slotCount = item.slots?.length ?? 1;
   // A collapsed card states the GROUP's cost, so the card formatter needs every member's own three
@@ -207,8 +214,18 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     ...(slotCount > 1 && item.slotSpanEndUtc ? { slotEndIso: item.slotSpanEndUtc } : {}),
     ...(slotCosts ? { slotCosts } : {}),
     ...(registrationRequired ? { registrationRequired } : {}),
-    indoor: tags.has('indoor') || ['open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play'].includes(l.primaryCategoryKey),
-    rainyDay: tags.has('rainy_day') || tags.has('indoor') || ['open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play'].includes(l.primaryCategoryKey),
+    // ONE reading, shared with the DB read model (lib/search/indoor.ts) — `true` indoors,
+    // `false` outdoors, `null` when the source never said. The inline category list this
+    // replaces could only ever answer true/false, so "we don't know" arrived at the detail
+    // page as `false` and `practicalFacts` printed a confident **"Outdoor"** for it. Both
+    // halves of that were wrong at once on the reported listings: the old `indoor` inference
+    // said "Indoor" for outdoor soccer, and its absence would have said "Outdoor" for the
+    // thousands of listings whose sources say nothing either way.
+    indoor: indoorReading === 'unknown' ? null : indoorReading === 'indoor',
+    // Only a positive indoor reading earns "Rainy-day friendly". `false` here does not claim
+    // the listing is unsuitable in rain — it claims only that we have no basis to recommend it
+    // for one, which is why it renders as the absence of a badge rather than a warning.
+    rainyDay: indoorReading === 'indoor',
     dropIn: tags.has('drop_in'),
     descriptionSnippet: l.descriptionSnippet || `${l.activityName} at ${l.venueName}.`,
     parentNotes: [`Source: ${hostLabel(sourceUrl)}`, `Status: ${mapStatus(l.statusState).replaceAll('_', ' ')}`],

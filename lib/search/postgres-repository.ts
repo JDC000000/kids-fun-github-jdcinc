@@ -4,6 +4,7 @@
 // flag; fixture/default mode is a separate local/demo path.
 import type { Pool } from 'pg';
 import { HIDDEN_STATUSES } from './filters/status';
+import { INDOOR_CATEGORY_KEYS, indoorTextVerdict } from './indoor';
 import type { ConfidenceLabel, CostStatus, ListingRecord, StatusState } from './types';
 import { TtlPromiseCache } from './ttl-cache';
 
@@ -198,7 +199,7 @@ function rowToListing(row: ListingRow): ListingRecord {
     venueName,
     organisation: sourceName,
     descriptionSnippet: row.description_snippet ?? '',
-    suitabilityTags: suitabilityTags(categoryKey, tagKeys),
+    suitabilityTags: suitabilityTags(categoryKey, tagKeys, row),
     startDatetimeUtc: iso(row.start_datetime_utc),
     endDatetimeUtc: iso(row.end_datetime_utc),
     openHours: Boolean(row.open_hours_state),
@@ -247,11 +248,29 @@ function categoryKeyFromTitle(title: string): string {
   return 'class_program';
 }
 
-function suitabilityTags(categoryKey: string, tagKeys: string[]): string[] {
+/**
+ * The listing's own tags, plus an `indoor` tag ONLY where the category genuinely carries that
+ * claim and nothing in the listing's own words contradicts it.
+ *
+ * `class_program` used to be in the deriving set and is now excluded on purpose: it is the
+ * fallback `categoryKeyFromTitle` above returns when it cannot classify a title at all (and the
+ * `certainty: 'generic'` bucket in worker/core/taxonomy.ts), so it is a statement about OUR
+ * knowledge, not about the activity. It was tagging 2,280 of 2,335 sampled live listings `indoor`
+ * — rendered to parents as "Indoor" and "Rainy-day friendly" — including "Sportball Outdoor Soccer
+ * (5-7yrs) Rain/Shine". See ./indoor.ts for the measurement and the full reasoning.
+ *
+ * Source tags pass through untouched, nulls and contradictions included, exactly as
+ * `registrationRequired` does below: this function's job is to stop INVENTING a claim, not to
+ * start editing what the source said. A source that says both indoor and outdoor is resolved
+ * where it is rendered (`readIndoorOutdoor`), not by deleting half of it here.
+ */
+function suitabilityTags(categoryKey: string, tagKeys: string[], row: ListingRow): string[] {
   const out = new Set(tagKeys);
-  if (categoryKey === 'storytime' || categoryKey === 'indoor_play' || categoryKey === 'class_program') {
-    out.add('indoor');
-  }
+  const claimsIndoor =
+    INDOOR_CATEGORY_KEYS.has(categoryKey) &&
+    !out.has('outdoor') &&
+    indoorTextVerdict(row.activity_name, row.description_snippet) !== 'outdoor';
+  if (claimsIndoor) out.add('indoor');
   return [...out];
 }
 
