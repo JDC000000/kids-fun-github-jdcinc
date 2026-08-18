@@ -19,6 +19,8 @@ Canonical scope: `documents/requirements/jon-cartwright/kids-fun-scope-to-task-v
 | `.github/workflows/ci.yml` | CI: migrations + typecheck + lint + unit on every PR |
 | `docs/infra.md` | Environments, hosting, provisioning runbook |
 | `docs/credentials.md` | Vault slug registry (names only — never values) |
+| `lib/snapshot/` + `scripts/snapshot/` | Anonymised production-catalogue snapshots for testing against real data shapes |
+| `docs/prod-snapshot-runbook.md` | Operator runbook for producing, verifying and scheduling those snapshots |
 
 ## Local dev
 
@@ -36,6 +38,23 @@ The suite runs in two lanes (`vitest.workspace.ts`): the DB-backed integration s
 one Postgres and must run one file at a time; everything else runs fully parallel. A bare
 `npx vitest run` still works and is still safe — it just serialises everything, which is
 what `npm run test` exists to avoid.
+
+### Testing against real data shapes (opt-in)
+
+Fixtures only contain what somebody thought to put in them, so they cannot catch data-shape
+drift. `npm run test:snapshot` loads an anonymised snapshot of the real catalogue and runs the
+DB lane against it. Fixture mode stays the default; nothing above changes.
+
+The snapshot exports **twelve catalogue tables only** — the searchable index scraped from
+public websites. User and account tables (`user_profile`, `saved_search`, `analytics_event`, …)
+are never exported at all, because a table that is never read cannot leak. The allowlist lives
+in `lib/snapshot/policy.ts` and is enforced on every CI run by
+`tests/snapshot/policy-schema-guard.test.ts`, which fails loudly if a migration adds an
+unclassified column to an allowlisted table.
+
+Producing a snapshot needs production database access and is an Operator task:
+**`docs/prod-snapshot-runbook.md`**. The whole pipeline can be rehearsed locally with no
+production access at all — see §11 of that runbook.
 
 ## Environments
 
