@@ -136,10 +136,54 @@ export function classifyCost(event: ActiveNetEvent): CostVerdict {
 const AGE_PHRASE_RE =
   /(?:ages?\s*\d{1,2}\s*(?:-|–|to)\s*\d{1,2}|\bages?\s*\d{1,2}\s*\+|\b\d{1,2}\s*(?:-|–|to)\s*\d{1,2}\s*(?:yrs?|years)|\b\d{1,2}\s*\+\s*(?:yrs?|years)|\ball\s+ages\b|\bpreschool(?:ers)?\b|\btoddlers?\b|\bbabies\b|\byouth\b|\bteens?\b)/i;
 
+/** A number that is plausibly an AGE. The guards are worker/core/age.ts's, and for its
+ *  reasons: a clock time ("6:00-8:00"), a decimal skill rating ("3.0-4.0") and a price
+ *  ("$5+") are all numbers in rec-centre titles that are not ages, and reading them as ages
+ *  is a defect that module already paid for twice. Kept local rather than exported from
+ *  there because this copy also excludes a leading `$`; widening the shared guard would
+ *  change parseAgeText for every adapter, which is not this change. */
+const AGE_NUMBER = /(?<![\d.,:$])\d{1,2}(?![.,:]\d)/.source;
+
+/**
+ * Does the TITLE itself state an age?
+ *
+ * A title is an activity NAME, and a name is not an age claim: "Youth Basketball" says what
+ * the drop-in is called, not who may attend. Titles that genuinely assert an age do exist on
+ * this platform and are used — "Youth (13-18yrs) Open Gym", "Play Palace - 0-12 yrs",
+ * "Adult Open Gym (19+)", "Badminton All Ages" — so the disqualifier is the age-adjacent
+ * WORD, not the title. Explicit numeric ranges, minimums and the literal "all ages" pass;
+ * "Youth"/"Baby"/"Family"/"Preschool" on their own do not.
+ */
+const TITLE_STATES_AGE_RE = new RegExp(
+  `\\bages?\\s*\\d|${AGE_NUMBER}\\s*(?:-|–|—|to)\\s*${AGE_NUMBER}|${AGE_NUMBER}\\s*\\+|\\ball\\s+ages\\b`,
+  'i'
+);
+
+/**
+ * Capture the age WORDING this event actually states. Both halves must be evidence.
+ *
+ * THE TITLE USED TO BE INCLUDED UNCONDITIONALLY, which manufactured an age claim out of an
+ * activity name whenever the description said nothing about age. Measured on the captured
+ * fixtures before this fix: 33 of 33 events emitted `ageText` — every single one, because the
+ * title always went in — and 23 of those resolved to CONFIDENT bands downstream. Among them
+ * "Play Palace - Baby Time" published as under-2s and "Family Play Time" as all five bands,
+ * neither description saying anything about age. That is not a captured claim, it is an
+ * inference from a kid-coded title marker — the same inference measured at a 57% band-error
+ * rate and removed elsewhere in this system — and `parseAgeText` cannot tell the difference,
+ * because by the time the string reaches it the title looks exactly like quoted source
+ * wording. It resolves, marks `resolved: true`, writes `occurrence_age` bounds, matches bands
+ * and records an `age_min_months` provenance fact pointing at a page that never said it.
+ *
+ * So the title now has to earn its place the same way the description does.
+ */
 export function extractAgeText(event: ActiveNetEvent): string | undefined {
   const title = (event.title ?? '').trim();
   const phrase = AGE_PHRASE_RE.exec(stripHtml(event.description))?.[0];
-  const parts = [title, phrase].filter(Boolean);
+  // Whole title, not just the matched phrase: when a title DOES state an age, the surrounding
+  // words are the context parseAgeText's own rules read ("(6-13 with adult)", "0-12 yrs"), and
+  // clipping to the bare match would change how those resolve.
+  const titleClaim = TITLE_STATES_AGE_RE.test(title) ? title : undefined;
+  const parts = [titleClaim, phrase].filter(Boolean);
   return parts.length ? parts.join(' — ') : undefined;
 }
 

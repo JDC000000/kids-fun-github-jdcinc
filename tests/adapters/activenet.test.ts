@@ -42,7 +42,9 @@ import {
   classifyCost,
   stripCentreSentinel,
   occurrenceRecordId,
+  extractAgeText,
 } from '../../worker/adapters/activenet/parse';
+import { parseAgeText } from '../../worker/core/age';
 import {
   buildVenueIndex,
   applyVenues,
@@ -416,6 +418,81 @@ describe('G-T7R-3 parse against real captured payloads', () => {
     expect(youth?.ageText).toContain('13-18yrs');
     // No structured age fields are emitted here — worker/core/age.ts owns that.
     expect(Object.keys(records[0])).not.toContain('ageMinMonths');
+  });
+
+  // ── the title is not an age claim ────────────────────────────────────────────────
+  //
+  // `extractAgeText` used to prepend the title unconditionally, so an activity NAME
+  // containing an age-adjacent word became `ageText` even when the description said nothing
+  // about age at all. Downstream that is indistinguishable from wording the source actually
+  // published: parseAgeText resolves it, marks resolved:true, and ingest writes bounds, band
+  // matches and an `age_min_months` provenance fact. These tests pin the boundary in BOTH
+  // directions, because the cheap fix (drop the title) silently discards the real title-stated
+  // ages below, which this platform genuinely publishes.
+
+  it('does not manufacture an age claim from a kid-coded title when the description is age-silent', () => {
+    // Shaped like a real ActiveNet event: age-adjacent title word, age-silent description.
+    const ageSilent = {
+      title: 'Youth Basketball',
+      description: '<p>Drop in at the community centre. Bring your own ball. No registration.</p>',
+    };
+    expect(extractAgeText(ageSilent)).toBeUndefined();
+    // …and therefore nothing downstream to resolve into bands.
+    expect(parseAgeText(extractAgeText(ageSilent)).resolved).toBe(false);
+  });
+
+  it('drops the title-only age claim on the REAL captured events that carried one', () => {
+    // Both are verbatim captured records whose descriptions never mention age. Before this
+    // fix "Play Palace - Baby Time" published as under-2s and "Family Play Time" as all five
+    // bands, each on the strength of one word in its own name.
+    const { records } = parseTenantCalendars(
+      VANCOUVER,
+      [
+        asCalendar('vancouver.events.calendar-1.json', 1, '*Parent and Tot Activities'),
+        asCalendar('vancouver.events.calendar-32.json', 32, '*Kerrisdale Play Palace'),
+      ],
+      { window: CAPTURE_WINDOW }
+    );
+    for (const title of ['Family Play Time', 'Play Palace - Baby Time']) {
+      const record = records.find((r) => r.title === title);
+      expect(record, `${title} missing from the fixture`).toBeDefined();
+      expect(record!.ageText).toBeUndefined();
+    }
+  });
+
+  it('still captures a genuine age phrase stated in the DESCRIPTION', () => {
+    const stated = {
+      title: 'Basketball Drop-in',
+      description: '<p>Open gym for ages 8-12. Bring your own ball.</p>',
+    };
+    const ageText = extractAgeText(stated);
+    expect(ageText).toContain('ages 8-12');
+    expect(parseAgeText(ageText)).toMatchObject({ ageMinMonths: 96, ageMaxMonths: 156, resolved: true });
+  });
+
+  it('still uses a title that STATES an age, on the real records that state one', () => {
+    // The disqualifier is the age-adjacent WORD, not the title: an explicit range or minimum
+    // in the name is the source asserting an age, and dropping it would lose a correct claim.
+    const { records } = parseTenantCalendars(
+      VANCOUVER,
+      [asCalendar('vancouver.events.calendar-5.json', 5, '*Open Gym Times')],
+      { window: CAPTURE_WINDOW }
+    );
+    const adult = records.find((r) => r.title === 'Adult Open Gym (19+)');
+    expect(adult?.ageText).toContain('19+');
+    expect(parseAgeText(adult?.ageText)).toMatchObject({ ageMinMonths: 228, resolved: true });
+
+    const youth = records.find((r) => /^Youth \(13-18yrs\)/.test(r.title));
+    expect(parseAgeText(youth?.ageText)).toMatchObject({ ageMinMonths: 156, ageMaxMonths: 228, resolved: true });
+  });
+
+  it('reads no age out of a title number that is a clock time, a rating or a price', () => {
+    // The numbers rec-centre titles actually carry. Each must leave the title unused, not
+    // resolve to an age — the same three mistakes worker/core/age.ts already paid for.
+    for (const title of ['Open Gym 6:00-8:00pm', 'Pickleball 3.0-4.0', 'Drop-in Badminton $5+']) {
+      const ageText = extractAgeText({ title, description: '<p>All welcome at the gym.</p>' });
+      expect(ageText, `${title} leaked into ageText`).toBeUndefined();
+    }
   });
 
   it('reports a zero-yield calendar as a finding, not an absence', () => {
