@@ -25,6 +25,10 @@ import { parseQuery, relativeDate } from './parse';
 // value is. Erased at compile time — no runtime dependency on the app layer.
 import type { WhenKey, TimeOfDayKey } from '@/app/search/_lib/params';
 import { passesAllFilters, type ResultMode } from './filters/predicate';
+// The POSITIVE age predicate, used to SECTION the primary list — never to filter it. Its
+// permissive sibling `matchesAge` (which admits unknown-age listings under every filter) still
+// owns inclusion, in predicate.ts, and is unchanged. See filters/age.ts for why there are two.
+import { hasConfirmedAgeMatch } from './filters/age';
 // Filtering lives in predicate.ts (shared with the facet counter); this is the CARD LABEL —
 // a result that came back because the caller opted in has to say why it is there.
 import { isRegistrationShaped } from './filters/registration';
@@ -135,9 +139,47 @@ export interface SearchResponse {
   context: SearchContext;
   origin: ResolvedOrigin | null;
   originError: string | null;
+  /**
+   * The primary result list. Under an ACTIVE age filter this holds only the cards whose own
+   * derived age bands genuinely intersect the selection — see `ageUnconfirmed` below for the rest.
+   */
   results: SearchResultItem[];
   /** Separate "expected / seasonal / evergreen" section (§5A.5). */
   expected: SearchResultItem[];
+  /**
+   * Primary-section cards that passed the age filter only because their source never stated an
+   * age (Jon's ruling 2026-08-18, option b).
+   *
+   * `matchesAge` admits a listing with no derived bands under EVERY age selection, deliberately —
+   * an honestly-unknown age is not grounds for hiding a listing, and that rule is not changing.
+   * What was wrong is what happened next: those listings were mixed into `results` and ranked
+   * beside genuine matches, so a page headed "results for ages 2–4" contained listings nobody had
+   * ever established were for 2–4-year-olds, and a parent could only find out by reading each
+   * card's "Age not stated by source" line. The remedy is separation, not exclusion — this array
+   * is the same listings, still reachable, under a heading that says what they are.
+   *
+   * ALWAYS EMPTY when no age filter is active: with nothing selected there is no claim to
+   * qualify, so every card belongs in `results`.
+   *
+   * Modelled on `expected` above, which solved the same shape of problem for a different
+   * dimension (§5A.5) — a second section rather than a flag on a card, because a flag is
+   * something a parent has to notice and a section is something they cannot miss. It is NOT the
+   * same section and must never be merged with it: `expected` is about whether the activity is
+   * happening, this is about who it is for.
+   */
+  ageUnconfirmed: SearchResultItem[];
+  /**
+   * Every primary-section card this search reached, BEFORE `limit` — i.e.
+   * `results.length + ageUnconfirmed.length`.
+   *
+   * It counts REACHABILITY, and the age split does not change reachability: an age-unconfirmed
+   * listing is still on the page, under its own heading. Shrinking this to the confirmed count
+   * would tell the broadening ladder the page is thinner than it is and provoke a widening the
+   * parent never needed (silent constraint substitution — the defect `broadening.applied` exists
+   * to disclose), and it would contradict `facets.total`, which counts the same "survives this
+   * selection" population from the same candidate set. The two sections carry their own counts;
+   * the total stays whole.
+   */
   total: number;
   broadening: {
     applied: BroadenRung[];
@@ -270,8 +312,8 @@ export class SearchEngine {
     // so the digest went quiet about a search it could not fill without ever computing why
     // — while /search, which always broadens, explained itself. Explain whenever the primary
     // run came back genuinely EMPTY; broaden only when the caller asked for a minimum.
-    const tooFew = run.scored.length < minResults;
-    if (tooFew || run.scored.length === 0) {
+    const tooFew = primaryCount(run) < minResults;
+    if (tooFew || primaryCount(run) === 0) {
       // `baseline` is how many results the parent can see before any relaxation. It is
       // `run.scored.length` and not 0 because this branch ALSO fires for a THIN set, not only
       // an empty one, and "relaxing it shows N more" has to be an addition to what is already
@@ -282,9 +324,9 @@ export class SearchEngine {
       // broaden.ts's `activeConstraints` for what its absence used to make the page claim.
       const explained = explainEmptyState(
         ctx0,
-        (v, chips) => this.runPrimary(v, origin, chips, now).scored.length,
+        (v, chips) => primaryCount(this.runPrimary(v, origin, chips, now)),
         {
-          baseline: run.scored.length,
+          baseline: primaryCount(run),
           hasOrigin: origin != null,
           regionChipIds: regionChips,
         },
@@ -303,7 +345,7 @@ export class SearchEngine {
       //     which is what leaves `blockingConstraint` non-null).
       // Deciding it here rather than in each consumer means the digest, /account and /search
       // cannot drift about when a search counts as needing an explanation.
-      emptyState = run.scored.length === 0 || explained.blockingConstraint != null ? explained : null;
+      emptyState = primaryCount(run) === 0 || explained.blockingConstraint != null ? explained : null;
     }
     // Alternative chips ("This weekend (12 results)"): a REAL count per rung of the ladder,
     // not just the label. Computed in the SAME loop that already walks the ladder to fill
@@ -321,24 +363,31 @@ export class SearchEngine {
           applied.push(rung);
           working = rung.context;
           run = rungRun;
-          if (rungRun.scored.length >= minResults) filled = true;
+          if (primaryCount(rungRun) >= minResults) filled = true;
         }
         alternatives.push({
           rung: rung.rung,
           key: rung.key,
           label: rung.label,
           constraint: rung.constraint,
-          count: rungRun.scored.length,
+          // The chip promises what the page will HOLD, which is both primary sections — the same
+          // number `total` reports for the rung the engine applies. A count that silently dropped
+          // the age-unconfirmed cards would under-promise every widening a parent can click.
+          count: primaryCount(rungRun),
           applied: isApplied,
           context: rung.context,
         });
       }
     }
     const scored = run.scored;
+    const ageUnconfirmed = run.ageUnconfirmed;
 
     // Expected/seasonal section — populated once the ladder reached it, or when still short.
+    // Gated on the WHOLE primary page (both sections), not just the confirmed one: the expected
+    // section exists to rescue a thin page, and a page carrying six age-unconfirmed cards is not
+    // thin — padding it further would bury them rather than answer for them.
     const expected =
-      working.includeExpected || scored.length < minResults
+      working.includeExpected || primaryCount(run) < minResults
         ? this.runExpected({ ...working, includeExpected: true }, origin, regionChips, now)
         : [];
 
@@ -360,7 +409,8 @@ export class SearchEngine {
       originError,
       results: applyLimit(scored).map(toItem),
       expected: applyLimit(expected).map(toItem),
-      total: scored.length,
+      ageUnconfirmed: applyLimit(ageUnconfirmed).map(toItem),
+      total: primaryCount(run),
       broadening: { applied, emptyState, alternatives },
       ...(facets ? { facets } : {}),
       dateWindow: describeRequestedDay(ctx0.date, now),
@@ -379,13 +429,17 @@ export class SearchEngine {
    * Also returns the matched candidate set, so facet counting can reuse it instead of paying for
    * a second matcher pass over every listing. (Facets do their own collapsing arithmetic — they
    * need per-facet-value card counts, not this one collapsed list.)
+   *
+   * The two returned card lists PARTITION the primary page — every card is in exactly one of
+   * them, and `scored.length + ageUnconfirmed.length` is the count the whole pipeline (ladder,
+   * `total`, alternative chips) reasons about. See `primaryCount`.
    */
   private runPrimary(
     ctx: SearchContext,
     origin: ResolvedOrigin | null,
     chips: string[],
     now: Date,
-  ): { scored: CollapsedListing[]; candidates: MatchCandidate[] } {
+  ): PrimaryRun {
     const candidates = this.match(ctx);
     const filtered = candidates.filter((c) => this.passesFilters(c.listing, ctx, origin, chips, 'primary'));
     const scored = rankCandidates(filtered, this.rankContext(ctx, origin, now));
@@ -396,7 +450,7 @@ export class SearchEngine {
     // reclassified or excluded; see prioritizeConfirmedFreeWhenFreeActive's own header for why
     // this is a stable partition and not a second cost predicate.
     const prioritized = ctx.costFree ? prioritizeConfirmedFreeWhenFreeActive(sorted) : sorted;
-    return { scored: collapseSameDaySeries(prioritized), candidates };
+    return { ...splitAgeUnconfirmed(collapseSameDaySeries(prioritized), filtered, ctx.ageBands), candidates };
   }
 
   /** Expected/seasonal/evergreen suggestions: relaxed status class, loose filters. */
@@ -435,6 +489,65 @@ export class SearchEngine {
       weights: this.rankConfig.getWeights(),
     };
   }
+}
+
+/** One primary run: the confirmed-age cards, the age-unconfirmed cards, and the candidate set. */
+interface PrimaryRun {
+  scored: CollapsedListing[];
+  ageUnconfirmed: CollapsedListing[];
+  candidates: MatchCandidate[];
+}
+
+/**
+ * Every primary card a run reached, across BOTH sections — the number `total`, the broadening
+ * ladder's fill test and every alternative chip's count are all measured in.
+ *
+ * One function rather than `a.length + b.length` at five call sites, because the whole hazard of
+ * splitting a result list in two is that some of the arithmetic downstream keeps counting only
+ * half of it: a ladder that thinks the page is empty will widen a search that was already full.
+ */
+function primaryCount(run: PrimaryRun): number {
+  return run.scored.length + run.ageUnconfirmed.length;
+}
+
+/**
+ * Partition already-collapsed primary cards into confirmed-age and age-unconfirmed (Jon's ruling
+ * 2026-08-18, option b). Order within each part is preserved exactly, so the split re-sections the
+ * page without re-ranking it.
+ *
+ * WHY THE SPLIT IS BY SLOT, NOT BY THE CARD'S REPRESENTATIVE. A card stands for every same-series
+ * same-day occurrence behind it (lib/search/collapse.ts), and age is a per-OCCURRENCE fact in the
+ * read model, so one card's slots can legitimately disagree about it. A card earns the confirmed
+ * section when ANY occurrence it stands for genuinely intersects the selection — the card is one
+ * row a parent taps to reach the whole group, and one real match is enough to make that row a
+ * true answer. Classifying by the representative alone would file such a card by whichever slot
+ * happened to rank best, which is not a fact about the group.
+ *
+ * WHY IT RUNS AFTER COLLAPSING rather than partitioning the ranked list first: collapsing two
+ * separate lists would emit the same (series, day) as TWO cards whenever its occurrences
+ * disagreed, double-counting it against `facets.total` — which counts distinct collapse keys over
+ * the whole candidate set and would still see one.
+ */
+function splitAgeUnconfirmed(
+  cards: CollapsedListing[],
+  filtered: MatchCandidate[],
+  userBands: AgeBandKey[],
+): { scored: CollapsedListing[]; ageUnconfirmed: CollapsedListing[] } {
+  // No age filter → nothing to qualify, so the whole page is the ordinary result list.
+  if (userBands.length === 0) return { scored: cards, ageUnconfirmed: [] };
+
+  const confirmedSlots = new Set<string>();
+  for (const c of filtered) {
+    if (hasConfirmedAgeMatch(c.listing, userBands)) confirmedSlots.add(c.listing.id);
+  }
+
+  const scored: CollapsedListing[] = [];
+  const ageUnconfirmed: CollapsedListing[] = [];
+  for (const card of cards) {
+    if (card.slots.some((slot) => confirmedSlots.has(slot.id))) scored.push(card);
+    else ageUnconfirmed.push(card);
+  }
+  return { scored, ageUnconfirmed };
 }
 
 const nullGeocoder: Geocoder = { geocodePostal: () => null };

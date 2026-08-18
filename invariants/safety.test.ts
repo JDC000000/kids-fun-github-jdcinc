@@ -16,7 +16,7 @@
 import { describe, it, afterAll, beforeAll, expect } from 'vitest';
 import { readCost, readGroupCost } from '../lib/search/filters/cost';
 import { HIDDEN_STATUSES } from '../lib/search/filters/status';
-import { CLOCKS, expectInvariant, pinClock, slotIds, unpinClock, violation, type Violation } from './_harness';
+import { CLOCKS, allItems, expectInvariant, pinClock, primaryItems, primarySlotIds, slotIds, unpinClock, violation, type Violation } from './_harness';
 import { casesFor, runFor, searchAt, SAMPLE_SIZE } from './_run';
 import { coverageNote, DEFAULT_QUERY, queryKey, spine, type Query } from './_space';
 
@@ -65,7 +65,7 @@ describe('SAFETY — content that must never surface', () => {
     const violations: Violation[] = [];
     let checked = 0;
     for (const { clock, query, response } of casesFor(3)) {
-      for (const item of [...response.results, ...response.expected]) {
+      for (const item of allItems(response)) {
         checked += 1;
         if (HIDDEN_STATUSES.includes(item.listing.statusState)) {
           violations.push(
@@ -82,7 +82,7 @@ describe('SAFETY — content that must never surface', () => {
     // exclusion. Asserted at every clock because the corpus moves with the clock.
     for (const clock of CLOCKS) {
       const response = searchAt(clock, { ...DEFAULT_QUERY }, 0);
-      const ids = slotIds(response.results);
+      const ids = primarySlotIds(response);
       for (const id of MUST_REMAIN_REACHABLE) {
         expect(
           ids.has(id),
@@ -155,7 +155,9 @@ describe('SAFETY — cost: no CONFIRMED price above zero under the Free filter',
     for (const { clock, query, response } of casesFor(3)) {
       if (!response.context.costFree) continue;
       checked += 1;
-      const surfaced = new Set([...slotIds(response.results), ...slotIds(response.expected)]);
+      // EVERY section. A hard exclusion that only holds in the section an invariant happens to
+      // read is not a hard exclusion — it is one refactor away from being none.
+      const surfaced = new Set([...primarySlotIds(response), ...slotIds(response.expected)]);
       for (const id of priced) {
         if (surfaced.has(id)) violations.push(violation(clock, query, `priced row "${id}" survived the Free filter`));
       }
@@ -179,9 +181,9 @@ describe('SAFETY — cost: no CONFIRMED price above zero under the Free filter',
     let checked = 0;
     for (const clock of CLOCKS) {
       const withoutFree = searchAt(clock, { ...DEFAULT_QUERY }, 0);
-      const withFree = slotIds(searchAt(clock, { ...DEFAULT_QUERY, free: true }, 0).results);
+      const withFree = primarySlotIds(searchAt(clock, { ...DEFAULT_QUERY, free: true }, 0));
       const visible = new Map(runFor(clock).corpus.map((l) => [l.id, l]));
-      for (const id of slotIds(withoutFree.results)) {
+      for (const id of primarySlotIds(withoutFree)) {
         const listing = visible.get(id);
         if (!listing) continue;
         const isZeroCeiling = listing.costStatus === 'known' && listing.costMaxCad === 0 && (listing.costMinCad ?? 0) === 0;
@@ -210,7 +212,7 @@ describe('SAFETY — registration content is opt-in AND labelled', () => {
     let checked = 0;
     for (const { clock, query, response } of casesFor(3)) {
       if (response.context.includeRegistration) continue;
-      for (const item of [...response.results, ...response.expected]) {
+      for (const item of allItems(response)) {
         checked += 1;
         if (item.registrationRequired) {
           violations.push(
@@ -233,9 +235,12 @@ describe('SAFETY — registration content is opt-in AND labelled', () => {
         if (base.includeRegistration) continue;
         const off = searchAt(clock, base, 0);
         const on = searchAt(clock, { ...base, includeRegistration: true }, 0);
-        const before = slotIds(off.results);
+        const before = primarySlotIds(off);
         checked += 1;
-        for (const item of on.results) {
+        // Both primary sections on the opt-in side too: an age filter can file a newly-added
+        // registration listing under the age-not-stated heading, and an unlabelled course is
+        // no less unlabelled for sitting there.
+        for (const item of primaryItems(on)) {
           const addedHere = item.slots.filter((s) => !before.has(s.id));
           if (addedHere.length === 0) continue;
           if (!item.registrationRequired) {

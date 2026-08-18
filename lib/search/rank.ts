@@ -133,9 +133,29 @@ function saturate(x: number): number {
   return x <= 0 ? 0 : x / (x + 1);
 }
 
+/**
+ * How well the listing's own derived bands answer the age the parent asked for.
+ *
+ * THE 0.5 THAT USED TO SIT IN THE UNKNOWN BRANCH. A listing whose source never stated an age was
+ * scored 0.5 — "neutral" — under an active age filter. Half a band match is not a neutral claim,
+ * it is a manufactured one: 0.5 beats every genuine partial match of a two-or-more-band selection
+ * (a real listing covering one of two selected bands also scores 0.5, and one of three scores
+ * 0.33), so a listing nobody had established was for the requested age could outrank one that
+ * demonstrably was. That is the ranking half of the same defect the section split fixes — a
+ * guess scored as evidence.
+ *
+ * Unknown now scores ZERO: no stated age, no age credit. It is not a penalty and it hides
+ * nothing — `matchesAge` still admits these listings under every age filter (deliberately, and
+ * that rule is not changing), and the primary list separates them into `ageUnconfirmed` rather
+ * than dropping them. This only settles ORDER, and it settles it the honest way round wherever
+ * the two still share a list — most visibly the expected/seasonal section, which is not split.
+ * Within the primary sections the effect is nil by construction: after the split every card in
+ * `results` has a genuine intersection and every card in `ageUnconfirmed` scores the same 0, so
+ * this term can no longer order one against the other there.
+ */
 function ageMatchScore(listing: ListingRecord, userBands: AgeBandKey[]): number {
-  if (userBands.length === 0) return 0; // no age signal
-  if (listing.ageBandMatches.length === 0) return 0.5; // all-ages/unknown → neutral
+  if (userBands.length === 0) return 0; // no age filter → this component says nothing
+  if (listing.ageBandMatches.length === 0) return 0; // age not stated → no evidence, no credit
   const covered = userBands.filter((b) => listing.ageBandMatches.includes(b)).length;
   return covered / userBands.length;
 }

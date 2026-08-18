@@ -13,6 +13,32 @@ export function matchesAge(listing: ListingRecord, userBands: AgeBandKey[]): boo
   return userBands.some((b) => listing.ageBandMatches.includes(b));
 }
 
+/**
+ * The POSITIVE half of `matchesAge` — a genuine band intersection, as distinct from the
+ * "unknown → don't hide" pass that predicate also grants.
+ *
+ * WHY BOTH PREDICATES EXIST. `matchesAge` answers one question ("may this listing be shown?")
+ * and is deliberately permissive: a listing whose source never stated an age is admitted under
+ * every age filter, because an honestly-unknown age is not grounds for hiding a listing (Jon's
+ * standing ruling; the empty-array branch above is NOT to be inverted). But "may be shown" and
+ * "matches the age you asked for" are two different claims, and the result list used to make
+ * only the first one while presenting it as the second — an unresolved-age listing sat silently
+ * among genuine 2–4 matches with nothing to tell a parent which was which.
+ *
+ * So the second question gets its own predicate rather than a second reading of the first.
+ * `hasConfirmedAgeMatch` is what SearchEngine partitions the primary result list on: true → the
+ * confirmed section, false (under an active filter) → the separate "age not confirmed" section
+ * (lib/search/engine.ts, `ageUnconfirmed`). Nothing is excluded either way — this decides which
+ * heading a listing appears under, never whether it appears.
+ *
+ * Returns false when no age filter is active: with nothing selected there is no claim to confirm,
+ * which is why the engine only consults this once `userBands` is non-empty.
+ */
+export function hasConfirmedAgeMatch(listing: ListingRecord, userBands: AgeBandKey[]): boolean {
+  if (userBands.length === 0) return false; // nothing asked for → nothing to confirm
+  return userBands.some((b) => listing.ageBandMatches.includes(b));
+}
+
 /** The bands in order, youngest first. Adjacency is only meaningful against this ordering. */
 export const AGE_BAND_ORDER: AgeBandKey[] = ['under2', '2-4', '5-9', '10-14', '15+'];
 

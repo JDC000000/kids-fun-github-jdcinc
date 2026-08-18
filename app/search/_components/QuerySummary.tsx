@@ -38,6 +38,14 @@ export interface QuerySummaryProps {
   confirmed: number;
   expected: number;
   /**
+   * How many results are in the "Age not stated by source" section (lib/search/engine.ts
+   * `ageUnconfirmed`). Named separately for the same reason confirmed and expected are: the
+   * count line is where a parent learns the SHAPE of the page, and folding these into
+   * "confirmed" would put the one number that has to be qualified inside the one that must not
+   * be. Zero (the default, and the only value with no age filter applied) renders nothing.
+   */
+  ageUnconfirmed?: number;
+  /**
    * Sort NAME, e.g. "Best match" (SORT_OPTIONS[].label). The long `sentence` form the old
    * three-line header used ("confirmed first, then closest and soonest for your kids") is
    * the wrong length for a line whose whole job is to be scannable in one glance; the sort
@@ -59,6 +67,7 @@ export function QuerySummary({
   tokens,
   confirmed,
   expected,
+  ageUnconfirmed = 0,
   sortLabel,
   clearHref,
   countsKnown = true,
@@ -111,6 +120,14 @@ export function QuerySummary({
       {countsKnown && (
         <p className="kf-qsum__meta" role="status">
           <b>{confirmed}</b> confirmed
+          {/* Stated BEFORE "expected", matching the order the sections render in, so the line
+              reads as a map of the page rather than a list of caveats in some other order. */}
+          {ageUnconfirmed > 0 && (
+            <>
+              {' · '}
+              <b>{ageUnconfirmed}</b> age not stated
+            </>
+          )}
           {expected > 0 && (
             <>
               {' · '}
