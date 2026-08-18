@@ -94,18 +94,24 @@ export function allListings(response: SearchResponse): ListingRecord[] {
 
 // ── Oracles (test-owned; deliberately NOT the product's own predicates) ──────────────────────
 
-/** Local day-part windows, in Vancouver minutes past midnight. Restated here, not imported. */
+/**
+ * Local day-part windows, in Vancouver minutes past midnight. Restated here, not imported.
+ *
+ * The three windows TILE the clock: evening runs past midnight and is written as 17:00–29:00
+ * (05:00 the next morning, where morning opens). Hours ending above 1440 are why the day-part
+ * oracles below compare on a clock face rather than on the number line.
+ */
 export const DAY_PART: Record<string, { from: number; to: number }> = {
   morning: { from: 5 * 60, to: 12 * 60 },
   afternoon: { from: 12 * 60, to: 17 * 60 },
-  evening: { from: 17 * 60, to: 22 * 60 },
+  evening: { from: 17 * 60, to: 29 * 60 },
 };
 
 /** The union window a day-part widens to when the adjacent-time rung has fired. */
 export const ADJACENT_DAY_PART: Record<string, { from: number; to: number }> = {
   morning: { from: 5 * 60, to: 17 * 60 },
-  afternoon: { from: 5 * 60, to: 22 * 60 },
-  evening: { from: 12 * 60, to: 22 * 60 },
+  afternoon: { from: 5 * 60, to: 29 * 60 },
+  evening: { from: 12 * 60, to: 29 * 60 },
 };
 
 /**
@@ -146,6 +152,23 @@ export function localMinuteSpan(listing: ListingRecord): { from: number; to: num
 /** Half-open interval overlap. */
 export function overlaps(a: { from: number; to: number }, b: { from: number; to: number }): boolean {
   return a.from < b.to && b.from < a.to;
+}
+
+/**
+ * Half-open overlap on a 24-hour CLOCK FACE — minute 30 and minute 1470 are the same place.
+ *
+ * Written independently of the product's own `overlapsOnClock` for the reason stated at the top
+ * of this section: an oracle that imports the predicate under test proves only that the
+ * predicate agrees with itself. Both spans are at most one turn long, so three alignments
+ * (in place, one turn back, one turn forward) exhaust the possibilities.
+ */
+export function overlapsOnClock(a: { from: number; to: number }, b: { from: number; to: number }): boolean {
+  const DAY = 24 * 60;
+  return (
+    overlaps(a, b) ||
+    overlaps({ from: a.from + DAY, to: a.to + DAY }, b) ||
+    overlaps({ from: a.from - DAY, to: a.to - DAY }, b)
+  );
 }
 
 /** Vancouver-local weekday (0=Sun) of a local YYYY-MM-DD. */

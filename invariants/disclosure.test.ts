@@ -32,7 +32,9 @@ import {
   localDaySpan,
   localMinuteSpan,
   overlaps,
+  overlapsOnClock,
   pinClock,
+  slotIds,
   unpinClock,
   violation,
   weekdayOf,
@@ -237,7 +239,9 @@ describe('DISCLOSURE — time of day', () => {
         // An open-hours row with NO published hours is documented as "don't hide it" — exempt.
         if (!span) continue;
         checked += 1;
-        if (!overlaps(span, window)) {
+        // On a clock face, not a number line: `evening` reaches past midnight, so a 00:30 result
+        // is inside it even though 30 < 1020. See overlapsOnClock in _harness.ts.
+        if (!overlapsOnClock(span, window)) {
           violations.push(
             violation(clock, query, `"${item.listing.id}" occupies local minutes ${span.from}..${span.to} but the response declares ${part}${response.context.timeOfDayAdjacent ? ' (+adjacent)' : ''} = ${window.from}..${window.to}`),
           );
@@ -263,31 +267,43 @@ describe('DISCLOSURE — time of day', () => {
     expectInvariant('adjacent day-part relaxation is disclosed', violations, checked);
   });
 
-  it('pins the hours the day-part chips can reach — and names what falls outside them', () => {
-    // ⚠️ A DOCUMENTED GAP, PINNED RATHER THAN ASSERTED AWAY. The three chips span 05:00–22:00
-    // local and nothing else: an occurrence starting at 22:15 matches morning, afternoon and
-    // evening ALL false, so it is reachable only through "Any" and is invisible to a parent using
-    // the Evening chip. Measured, at the clock this suite was commissioned around:
+  it('the day-part chips reach every hour of the clock — the 22:00–05:00 gap is closed', () => {
+    // ⚠️ THIS TEST USED TO PIN THE GAP RATHER THAN ASSERT IT AWAY, and the note it carried is
+    // worth keeping because it is what got the defect fixed. The three chips used to span
+    // 05:00–22:00 and nothing else, so an occurrence starting at 22:15 matched morning,
+    // afternoon and evening ALL false and was reachable only through "Any time". Measured then:
     //     local 22:15 → []      local 23:00 → []      local 00:30 → []      local 04:30 → [morning]
+    // Whether the day should end at 22:00 was a PRODUCT question nobody had ruled on, so this
+    // suite pinned the consequence instead of encoding an assumption. It has since been ruled
+    // on — evening was widened to 05:00 the next morning — so the pin becomes an assertion.
     //
-    // This is NOT written as a violation, because whether the day should end at 22:00 is a PRODUCT
-    // question and nobody has ruled on it — encoding an assumption here is exactly the mistake this
-    // suite exists not to make. It is written as a pin with the consequence stated, so that the day
-    // someone changes the windows, they read this and know what it was hiding.
+    // The claim is COVERAGE AND DISJOINTNESS over the whole 24 hours, stated over the oracle
+    // windows rather than over a corpus, because "some hour reaches nothing" is a property of
+    // the windows themselves and a corpus can only ever sample it.
+    const parts = [DAY_PART.morning, DAY_PART.afternoon, DAY_PART.evening];
+    for (let minute = 0; minute < 24 * 60; minute += 1) {
+      const matching = parts.filter((w) => overlapsOnClock({ from: minute, to: minute + 1 }, w));
+      expect(
+        matching.length,
+        `local minute ${minute} (${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}) ` +
+          `is matched by ${matching.length} day-part windows, not exactly 1 — the chips have re-opened a gap or begun to overlap`,
+      ).toBe(1);
+    }
+
+    // The boundaries themselves, named, so a future edit has to face them one at a time.
+    expect(DAY_PART.morning.from).toBe(5 * 60); // …and evening now ends exactly here, one turn on.
+    expect(DAY_PART.evening.to).toBe(29 * 60);
+
+    // And the product agrees with the oracle where it used to disagree: an evening search now
+    // returns late-night rows instead of guaranteeing an empty page. `trap-late-night` (22:30)
+    // and `trap-after-midnight` (00:30) exist in the corpus for exactly this assertion.
     for (const clock of CLOCKS) {
-      const late = searchAt(clock, { ...DEFAULT_QUERY, timeOfDay: 'evening' }, 0);
-      for (const item of late.results) {
-        const span = localMinuteSpan(item.listing);
-        if (!span) continue;
-        expect(
-          span.from < DAY_PART.evening.to,
-          `"${item.listing.id}" starts at local minute ${span.from}, at or after the evening window's close ` +
-            `(${DAY_PART.evening.to}) — the day-part windows have moved; see this test's note about the 22:00–05:00 gap`,
-        ).toBe(true);
+      const evening = searchAt(clock, { ...DEFAULT_QUERY, timeOfDay: 'evening' }, 0);
+      const reached = slotIds(evening.results);
+      for (const id of ['trap-late-night', 'trap-after-midnight']) {
+        expect(reached.has(id), `${id} is not reachable through the Evening chip at ${clock.label}`).toBe(true);
       }
     }
-    expect(DAY_PART.morning.from).toBe(5 * 60);
-    expect(DAY_PART.evening.to).toBe(22 * 60);
   });
 
   it('morning never widens into evening (and evening never into morning)', () => {
@@ -305,7 +321,7 @@ describe('DISCLOSURE — time of day', () => {
         const span = localMinuteSpan(item.listing);
         if (!span) continue;
         checked += 1;
-        if (overlaps(span, forbidden) && !overlaps(span, allowed)) {
+        if (overlapsOnClock(span, forbidden) && !overlapsOnClock(span, allowed)) {
           violations.push(
             violation(clock, query, `"${item.listing.id}" (local ${span.from}..${span.to}) is ${requested === 'morning' ? 'evening' : 'morning'}-only content returned for a ${requested} search`),
           );

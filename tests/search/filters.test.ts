@@ -19,6 +19,85 @@ describe('time-of-day filter (FR-09, G-T16-4)', () => {
     expect(matchesTimeOfDay(l, 'evening')).toBe(false);
   });
 
+  // ── THE 22:00–05:00 GAP. The three chips used to span 05:00–22:00 and nothing else, so every
+  // chip was guaranteed empty for anything happening late at night. Three testers opened the app
+  // at 22:35 local, tapped Evening, saw nothing, and reported the product broken. `evening` now
+  // runs to 05:00 the next morning — the hour `morning` opens — so the parts tile the clock.
+  describe('the late-night window (the 22:35 repro)', () => {
+    /** The UTC instant for a Vancouver-local wall-clock time on a PDT summer day (UTC-7). */
+    const utcAt = (hh: number, mm: number) => Date.UTC(2026, 6, 13, hh + 7, mm);
+
+    /** A one-hour occurrence starting at that local time — the shape a real listing has. */
+    const at = (hh: number, mm = 0) =>
+      makeListing({
+        startDatetimeUtc: new Date(utcAt(hh, mm)).toISOString(),
+        endDatetimeUtc: new Date(utcAt(hh, mm) + 60 * 60_000).toISOString(),
+      });
+
+    /**
+     * A POINT occurrence at that local time (no end). Boundary claims have to be made about a
+     * point, not a span: a one-hour 04:59 occurrence runs to 05:59 and therefore genuinely
+     * belongs to evening AND morning, which says nothing about where the boundary sits.
+     */
+    const instant = (hh: number, mm = 0) =>
+      makeListing({ startDatetimeUtc: new Date(utcAt(hh, mm)).toISOString(), endDatetimeUtc: null });
+
+    const partsMatching = (l: ReturnType<typeof at>) =>
+      (['morning', 'afternoon', 'evening'] as const).filter((p) => matchesTimeOfDay(l, p));
+
+    it('THE REPRO — a 22:35 occurrence is reachable, and through the Evening chip', () => {
+      expect(partsMatching(at(22, 35))).toEqual(['evening']);
+    });
+
+    it('every minute of the clock belongs to exactly one day-part — no gap, no overlap', () => {
+      for (let minute = 0; minute < 24 * 60; minute += 1) {
+        const hh = Math.floor(minute / 60);
+        const parts = partsMatching(instant(hh, minute % 60));
+        expect(
+          parts,
+          `local ${String(hh).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')} matched [${parts.join(', ')}]`,
+        ).toHaveLength(1);
+      }
+    });
+
+    it('past midnight is still "evening", not "morning"', () => {
+      expect(partsMatching(instant(0, 30))).toEqual(['evening']);
+      expect(partsMatching(instant(3, 0))).toEqual(['evening']);
+    });
+
+    it('04:59 is the last minute of evening and 05:00 the first of morning', () => {
+      expect(partsMatching(instant(4, 59))).toEqual(['evening']);
+      expect(partsMatching(instant(5, 0))).toEqual(['morning']);
+    });
+
+    it('an occurrence running 23:00→06:00 spans the boundary and matches BOTH ends', () => {
+      // Only the backward clock-turn places this row's tail inside the next morning; a naive
+      // comparison would report evening alone and hide it from a parent browsing at breakfast.
+      const overnight = makeListing({
+        startDatetimeUtc: '2026-07-14T06:00:00Z', // 23:00 local, 13 Jul
+        endDatetimeUtc: '2026-07-14T13:00:00Z', // 06:00 local, 14 Jul
+      });
+      expect(partsMatching(overnight)).toEqual(['morning', 'evening']);
+    });
+
+    it('a late-night row is NOT dragged into a morning search by the adjacent-time rung', () => {
+      // Evening's new reach must not make it a neighbour of morning: the broadening ladder's
+      // whole point is that a parent asking for one end of the day is never handed the other.
+      expect(matchesTimeOfDay(at(0, 30), 'morning', { includeAdjacent: true })).toBe(false);
+      expect(matchesTimeOfDay(at(22, 35), 'morning', { includeAdjacent: true })).toBe(false);
+      // …while evening's own adjacent window (afternoon + evening) still reaches them.
+      expect(matchesTimeOfDay(at(0, 30), 'evening', { includeAdjacent: true })).toBe(true);
+      expect(matchesTimeOfDay(at(14, 0), 'evening', { includeAdjacent: true })).toBe(true);
+    });
+
+    it('an open-hours venue whose published hours wrap midnight is open in the evening', () => {
+      const lateVenue = makeListing({ openHours: true, openHoursLocal: { startMin: 20 * 60, endMin: 2 * 60 } });
+      expect(matchesTimeOfDay(lateVenue, 'evening')).toBe(true);
+      expect(matchesTimeOfDay(lateVenue, 'morning')).toBe(false);
+      expect(matchesTimeOfDay(lateVenue, 'afternoon')).toBe(false);
+    });
+  });
+
   it('matchesDate restricts fixed occurrences to the local date but always passes open-hours', () => {
     const fixed = makeListing({ startDatetimeUtc: '2026-07-13T17:00:00Z' }); // 2026-07-13 local
     expect(matchesDate(fixed, { kind: 'today', isoDate: '2026-07-13', weekday: null })).toBe(true);

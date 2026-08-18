@@ -44,8 +44,16 @@ export interface BroadeningNotice {
 }
 
 const ageLabel = (band: AgeBandKey): string => AGE_OPTIONS.find((o) => o.key === band)?.label ?? band;
-const timeLabel = (part: DayPart): string =>
-  (TIME_OF_DAY_OPTIONS.find((o) => o.key === part)?.label ?? part).toLowerCase();
+/**
+ * The day-part's word for use INSIDE A SENTENCE, which is not the same string as its chip.
+ *
+ * The Evening chip is labelled "Evening & night" so a parent searching at 22:35 can see it is
+ * for them; lowercased into this notice that produced "adjacent times of day (morning,
+ * afternoon and evening & night)", an ampersand nested inside a comma list. `phrase` is the
+ * plain parent-language noun for the part — the same word the query parser resolves back to
+ * this DayPart — so the sentence stays readable however the chip is worded.
+ */
+const timeLabel = (part: DayPart): string => TIME_OF_DAY_OPTIONS.find((o) => o.key === part)?.phrase || part;
 
 /** "a", "a and b", "a, b and c" — an Oxford-comma-free list a sentence can swallow. */
 export function joinPhrases(parts: string[]): string {
