@@ -59,10 +59,17 @@ function adjacentBands(selected: AgeBandKey[]): AgeBandKey[] {
   return AGE_ORDER.filter((b) => widened.has(b));
 }
 
-/** The inclusive local-day window a DateIntent selects, or null when it constrains nothing. */
+/**
+ * The inclusive local-day window a DateIntent selects, or null when it constrains nothing.
+ *
+ * Keyed off `endIsoDate`, exactly as lib/search/filters/time.ts `matchesDate` is — these
+ * invariants compare what the response DECLARES against what it RETURNS, so if this helper and
+ * the predicate disagree about where a window ends, the suite measures its own drift instead of
+ * the product's. `weekend` is the second kind to carry an end (Sat+Sun) and the first to prove it.
+ */
 function windowOf(date: DateIntent | null): { from: string; to: string } | null {
   if (!date || !date.isoDate) return null;
-  return { from: date.isoDate, to: date.kind === 'range' && date.endIsoDate ? date.endIsoDate : date.isoDate };
+  return { from: date.isoDate, to: date.endIsoDate && date.endIsoDate > date.isoDate ? date.endIsoDate : date.isoDate };
 }
 
 const sameWindow = (a: { from: string; to: string } | null, b: { from: string; to: string } | null) =>
@@ -196,31 +203,56 @@ describe('DISCLOSURE — relative dates resolve in America/Vancouver, not UTC', 
     expectInvariant('when=today/tomorrow resolve to the America/Vancouver local day', violations, checked);
   });
 
-  it('when=weekend resolves to a weekend day that is not in the past and not more than a week out', () => {
-    // DELIBERATELY WEAK. The product currently resolves "this weekend" to the upcoming Saturday
-    // only; whether Sunday should be included is a PRODUCT question (it bites on the DST clock
-    // below, which falls on a Sunday). Pinning today's answer here would make a future product
-    // decision look like a regression, so this asserts only what must be true under any answer.
+  it('when=weekend resolves to a Saturday AND its Sunday, and contains today when today is one of them', () => {
+    // THIS WAS DELIBERATELY WEAK — "some weekend day within 7 days" — because the product
+    // resolved "this weekend" to the upcoming Saturday only, and whether Sunday belonged was an
+    // open PRODUCT question that this file declined to pre-empt. It is not open any more (Jon,
+    // 2026-08-18: "saturday and sundays are always a weekend together... very important that
+    // sunday is always included in the weekend search"), and left loose it now PERMITS the exact
+    // bug it was written around — including on the DST fall-back clock below, a Sunday, where the
+    // old `(6 - wd + 7) % 7` jumped six days to the NEXT Saturday and skipped that very day.
+    // Tightened to pin the decision rather than leave it an accident.
+    const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const violations: Violation[] = [];
     let checked = 0;
     for (const clock of CLOCKS) {
       const query = { ...DEFAULT_QUERY, when: 'weekend' as const };
       const response = searchAt(clock, query, 0);
       const today = localDay(clock.utc);
-      const iso = response.context.date?.isoDate ?? null;
+      const from = response.context.date?.isoDate ?? null;
+      const to = response.context.date?.endIsoDate ?? null;
       checked += 1;
-      if (iso == null) {
-        violations.push(violation(clock, query, 'when=weekend resolved to no date at all'));
+      if (from == null || to == null) {
+        violations.push(
+          violation(clock, query, `when=weekend resolved to ${from ?? 'no start date'}..${to ?? 'no end date'} — a weekend is two days and the intent must declare both`),
+        );
         continue;
       }
-      const weekday = weekdayOf(iso);
-      if (iso < today) violations.push(violation(clock, query, `when=weekend resolved to ${iso}, which is before today (${today})`));
-      if (iso > addDays(today, 7)) violations.push(violation(clock, query, `when=weekend resolved to ${iso}, more than a week after today (${today})`));
-      if (weekday !== 6 && weekday !== 0) {
-        violations.push(violation(clock, query, `when=weekend resolved to ${iso}, a ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][weekday]} — not a weekend day`));
+      if (weekdayOf(from) !== 6) {
+        violations.push(violation(clock, query, `when=weekend opens on ${from}, a ${DAY_NAMES[weekdayOf(from)]} — the window must open on Saturday`));
+      }
+      if (weekdayOf(to) !== 0) {
+        violations.push(violation(clock, query, `when=weekend closes on ${to}, a ${DAY_NAMES[weekdayOf(to)]} — the window must close on Sunday`));
+      }
+      if (to !== addDays(from, 1)) {
+        violations.push(violation(clock, query, `when=weekend resolved to ${from}..${to} — Saturday and Sunday are consecutive, so the window is exactly two days`));
+      }
+      // It is the NEAREST pair, not next week's. Both halves matter: the old code satisfied the
+      // second and broke the first, which is the whole bug.
+      const todayIsWeekend = weekdayOf(today) === 6 || weekdayOf(today) === 0;
+      if (todayIsWeekend && !(from <= today && today <= to)) {
+        violations.push(
+          violation(clock, query, `today (${today}) is a ${DAY_NAMES[weekdayOf(today)]} but when=weekend resolved to ${from}..${to}, which does not contain it`),
+        );
+      }
+      // Mon..Fri: the coming Saturday is 1–5 days out and is never behind us.
+      if (!todayIsWeekend && (from <= today || from > addDays(today, 5))) {
+        violations.push(
+          violation(clock, query, `today (${today}) is a ${DAY_NAMES[weekdayOf(today)]} but when=weekend opens on ${from} — not the coming Saturday`),
+        );
       }
     }
-    expectInvariant('when=weekend resolves to an upcoming weekend day', violations, checked);
+    expectInvariant('when=weekend resolves to the nearest Saturday+Sunday pair, both days', violations, checked);
   });
 });
 

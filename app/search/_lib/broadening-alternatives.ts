@@ -78,9 +78,16 @@ function overridesFor(alt: BroadenAlternative): Partial<SearchState> | null {
   if ((RADIUS_OPTIONS as readonly number[]).includes(alt.context.radiusKm)) {
     overrides.radiusKm = alt.context.radiusKm as RadiusKm;
   }
-  if (alt.context.date?.isoDate && alt.context.date?.endIsoDate) {
+  if (alt.context.date?.kind === 'range' && alt.context.date.isoDate && alt.context.date.endIsoDate) {
     // A custom range and the When quick-pick are mutually exclusive (params.ts) — carrying
     // this context forward means the range, not whatever quick-pick word might still be set.
+    //
+    // GATED ON `kind === 'range'`, NOT on `endIsoDate` being present. `weekend` also carries an
+    // `endIsoDate` now (Sat+Sun), and it is NOT a custom range: turning it into one here would
+    // rewrite a chip's href from `when=weekend` to two literal dates with `when=any`, which
+    // filter-summary then labels as a custom range instead of "This weekend" and which flips the
+    // results into the FR-04 grouped-by-day view. Same result set, different words and different
+    // layout — a quick-pick must survive a broadening chip as the quick-pick the parent chose.
     overrides.dateFrom = alt.context.date.isoDate;
     overrides.dateTo = alt.context.date.endIsoDate;
     overrides.when = 'any';

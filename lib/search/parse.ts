@@ -210,10 +210,34 @@ export function relativeDate(kind: 'today' | 'tomorrow' | 'weekend', now: Date):
   const todayIso = localIsoDate(now);
   if (kind === 'today') return { kind: 'today', isoDate: todayIso, weekday: null };
   if (kind === 'tomorrow') return { kind: 'tomorrow', isoDate: addDaysIso(todayIso, 1), weekday: null };
-  // weekend → upcoming Saturday (today if already Saturday).
-  const wd = toVancouverParts(now).weekday;
-  const delta = (6 - wd + 7) % 7;
-  return { kind: 'weekend', isoDate: addDaysIso(todayIso, delta), weekday: 6 };
+  return weekendDate(now, todayIso);
+}
+
+/**
+ * A WEEKEND IS SATURDAY *AND* SUNDAY, ALWAYS BOTH, NEVER ONE (Jon, 2026-08-18).
+ *
+ * This used to resolve to a single Saturday — `delta = (6 - wd + 7) % 7` — and `matchesDate`
+ * then day-equality-matched it, so Sunday was never in a "this weekend" result set at all.
+ * Worse, on a SUNDAY the formula read `(6 - 0 + 7) % 7 = 6` and threw the intent six days
+ * forward to NEXT Saturday: a parent searching on Sunday morning was shown nothing that was on
+ * that very day. Measured on the DST fall-back clock — `2026-11-01T08:30:00Z`, a Sunday —
+ * it resolved to `2026-11-07`.
+ *
+ * The pair is the NEAREST one, and today is always in it when today is a weekend day:
+ *
+ *   Sun → [yesterday, TODAY]   Mon → [+5, +6]   Tue → [+4, +5]   Wed → [+3, +4]
+ *   Thu → [+2, +3]             Fri → [+1, +2]   Sat → [TODAY, +1]
+ *
+ * Sunday's already-past Saturday is deliberately NOT special-cased away. The read model only
+ * ever holds occurrences that have not yet ended (`visibleOccurrenceWhereSql()`), so a finished
+ * Saturday contributes nothing on its own — the same mechanism that already makes `today`
+ * behave at 9pm. Trimming it here would be a second, divergent prune of the same fact.
+ */
+function weekendDate(now: Date, todayIso: string): DateIntent {
+  const wd = toVancouverParts(now).weekday; // 0=Sun..6=Sat
+  const saturdayDelta = wd === 0 ? -1 : 6 - wd;
+  const saturday = addDaysIso(todayIso, saturdayDelta);
+  return { kind: 'weekend', isoDate: saturday, endIsoDate: addDaysIso(saturday, 1), weekday: 6 };
 }
 
 function weekdayDate(targetWeekday: number, now: Date): DateIntent {

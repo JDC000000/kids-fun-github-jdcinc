@@ -207,16 +207,23 @@ export interface SearchContext {
 export interface DateIntent {
   kind: 'today' | 'tomorrow' | 'weekend' | 'weekday' | 'explicit' | 'range';
   /**
-   * For 'weekday'/'explicit': the local target date. For 'weekend': Saturday of the target
-   * week. For 'range' (T26 / FR-04): the inclusive START date of the range.
+   * For 'weekday'/'explicit': the local target date. For 'weekend': the SATURDAY of the nearest
+   * Saturday+Sunday pair (see lib/search/parse.ts — on a Sunday that Saturday is yesterday).
+   * For 'range' (T26 / FR-04): the inclusive START date of the range.
    */
   isoDate: string | null;
   /**
-   * For 'range' only: the inclusive END date (YYYY-MM-DD, America/Vancouver local). Absent /
-   * null for all single-day kinds. A range with `endIsoDate` matches every day in
-   * [isoDate, endIsoDate] and drives the "grouped by day" results view (FR-04).
+   * The inclusive END date (YYYY-MM-DD, America/Vancouver local) of a MULTI-DAY intent. Set by
+   * 'range' (T26 / FR-04) and by 'weekend' (always `isoDate` + 1 — a weekend is Saturday AND
+   * Sunday, never one of them). Absent / null for every single-day kind.
+   *
+   * `matchesDate` keys the requested window off THIS FIELD rather than off `kind`, so any
+   * multi-day kind is matched across its whole span by construction. The "grouped by day"
+   * results view (FR-04) is a separate, narrower decision: it is driven by the UI's explicit
+   * from/to range control (`hasDateRange` in app/search/_lib/params.ts), NOT by this field, so a
+   * two-day 'weekend' stays one flat Confirmed list.
    */
   endIsoDate?: string | null;
-  /** Weekday 0=Sun..6=Sat when kind==='weekday'. */
+  /** Weekday 0=Sun..6=Sat of `isoDate` — set for kind==='weekday', and 6 (Sat) for 'weekend'. */
   weekday: number | null;
 }

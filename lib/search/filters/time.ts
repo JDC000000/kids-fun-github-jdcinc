@@ -86,10 +86,17 @@ export function matchesTimeOfDay(
  * runs. Testing only the start day answered "did it begin today?", which is a different
  * question, and it answered "no" for every day of a running programme but its first.
  *
- * Both the point query and the range intent (`kind === 'range'` with an `endIsoDate`, T26 /
- * FR-04) therefore ask the same thing: do the occurrence's local days and the requested local
- * days overlap? YYYY-MM-DD strings compare lexicographically identically to chronologically, so
- * the overlap test needs no Date arithmetic.
+ * Both the point query and the multi-day intents (`endIsoDate` set — a custom `range`, T26 /
+ * FR-04, or a `weekend`, which is Saturday AND Sunday) therefore ask the same thing: do the
+ * occurrence's local days and the requested local days overlap? YYYY-MM-DD strings compare
+ * lexicographically identically to chronologically, so the overlap test needs no Date arithmetic.
+ *
+ * THE REQUESTED WINDOW IS KEYED OFF `endIsoDate`, NOT OFF `kind`. It used to read
+ * `kind === 'range' && endIsoDate`, which meant a second kind that legitimately spans days was
+ * silently narrowed back to its start day — exactly what happened to `weekend` when it grew its
+ * Sunday: the intent said Sat–Sun and this predicate still matched Saturday only. The end of the
+ * window is a property of the window, so it is read from the field that carries it and every
+ * present and future multi-day kind is covered by construction.
  */
 export function matchesDate(listing: ListingRecord, date: DateIntent | null): boolean {
   if (!date || !date.isoDate) return true;
@@ -98,7 +105,8 @@ export function matchesDate(listing: ListingRecord, date: DateIntent | null): bo
   const firstDay = localIsoDate(new Date(listing.startDatetimeUtc));
   const lastDay = occurrenceLastDay(listing, firstDay);
   const wantedFrom = date.isoDate;
-  const wantedTo = date.kind === 'range' && date.endIsoDate ? date.endIsoDate : date.isoDate;
+  // A backwards intent must never widen what it matches (mirrors occurrenceLastDay below).
+  const wantedTo = date.endIsoDate && date.endIsoDate > date.isoDate ? date.endIsoDate : date.isoDate;
   return firstDay <= wantedTo && lastDay >= wantedFrom;
 }
 

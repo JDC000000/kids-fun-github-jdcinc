@@ -47,11 +47,16 @@ const EVENING_CLOSES_MIN = DAY_PART_WINDOWS.evening.endMin;
  * Describe the single local day a search asked for, relative to `now` — or null when the request
  * is not about one particular day, in which case there is nothing honest to say.
  *
- * Returns null for a multi-day RANGE on purpose. "That day is over" is a claim about one day; a
- * range spanning today and the next two contains days in both states at once, and collapsing that
- * into a single verdict would be exactly the kind of confident-and-wrong sentence this module
- * exists to avoid. A `weekend` intent resolves to one Saturday and is treated as the single day
- * `matchesDate` actually filters on.
+ * Returns null for ANY multi-day intent on purpose. "That day is over" is a claim about one day;
+ * a window spanning today and the next two contains days in both states at once, and collapsing
+ * that into a single verdict would be exactly the kind of confident-and-wrong sentence this
+ * module exists to avoid.
+ *
+ * That now includes `weekend`, which spans Saturday AND Sunday (it used to resolve to a lone
+ * Saturday and got a verdict like any other single day). This is the honest answer, not a lost
+ * feature: at 11pm on Saturday the Saturday is over but the Sunday is entirely ahead, so there is
+ * no one state to report — and the same test that catches it catches a range. The check reads the
+ * SPAN (`endIsoDate`), never the kind, so it cannot be outgrown by a new multi-day kind.
  */
 export function describeRequestedDay(date: DateIntent | null, now: Date): RequestedDayWindow | null {
   const isoDate = date?.isoDate;

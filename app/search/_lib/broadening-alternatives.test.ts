@@ -84,6 +84,23 @@ describe('describeBroadeningAlternatives', () => {
     expect(chips[0].href).not.toContain('when=weekend');
   });
 
+  it('DECISIVE: a weekend intent stays the When quick-pick — it is NOT rewritten into a custom range', () => {
+    // A weekend now carries an `endIsoDate` (Sat+Sun) like a range does, and the override block
+    // used to key off exactly that. Left keyed off the field, a drop_chip chip offered on top of
+    // "This weekend" would link to `from=…&to=…&when=any`: the same listings, but the summary
+    // reads "18 Jul – 19 Jul" instead of "This weekend" and the page flips into the FR-04
+    // grouped-by-day layout. The quick-pick the parent chose must survive the chip.
+    const weekend = { kind: 'weekend' as const, isoDate: '2026-07-18', endIsoDate: '2026-07-19', weekday: 6 };
+    const chips = describeBroadeningAlternatives(
+      [alt({ key: 'drop_chip', constraint: 'dropIn', label: 'Dropped the Drop-in filter', count: 5, context: ctx({ date: weekend, dropIn: false }) })],
+      { ...DEFAULT_STATE, when: 'weekend', dropIn: true },
+    );
+    expect(chips).toHaveLength(1);
+    expect(chips[0].href).toContain('when=weekend');
+    expect(chips[0].href).not.toContain('from=2026-07-18');
+    expect(chips[0].href).not.toContain('to=2026-07-19');
+  });
+
   it('an age chip carries the widened bands', () => {
     const chips = describeBroadeningAlternatives(
       [alt({ key: 'adjacent_age', label: 'Included adjacent age groups (under2, 2-4)', count: 4, context: ctx({ ageBands: ['under2', '2-4'] }) })],
