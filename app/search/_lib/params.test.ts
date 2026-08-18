@@ -77,6 +77,17 @@ describe('parseSearchState', () => {
     expect(parseSearchState({ age: 'under2,5-9,10-14' }).ages).toEqual(['under2', '5-9', '10-14']);
   });
 
+  it('keeps EVERY value of a repeated multi-select param, not just the first (report P1-5)', () => {
+    // Next hands a repeated param through as a string[]. Read via `first()`, `?region=van&region=bby`
+    // silently became "Vancouver only" — a narrower search than the parent asked for, indistinguishable
+    // from a real answer. Both spellings, and a mixture of them, mean the same selection.
+    expect(parseSearchState({ region: ['van', 'bby'] }).regions).toEqual(['van', 'bby']);
+    expect(parseSearchState({ region: ['bby', 'van,notreal'] }).regions).toEqual(['van', 'bby']);
+    expect(parseSearchState({ age: ['5-9', '2-4'] }).ages).toEqual(['2-4', '5-9']);
+    // A scalar param keeps first-wins: two conflicting values are a malformed URL, not a selection.
+    expect(parseSearchState({ when: ['today', 'tomorrow'] }).when).toBe('today');
+  });
+
   it('parses boolean quick filters', () => {
     const s = parseSearchState({ bookable: '1', rainy: 'true', free: 'on' });
     expect([s.bookableNow, s.rainyDay, s.free]).toEqual([true, true, true]);

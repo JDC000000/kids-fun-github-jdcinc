@@ -259,3 +259,49 @@ describe('GET /api/search — Stage 2a typed structured params (roadmap initiati
     expect(body.results.length).toBeGreaterThan(0);
   });
 });
+
+describe('GET /api/search — the /search page URL is a first-class caller (report P1-5)', () => {
+  // Every param the page URL carries is spelled the same on both sides, so a parent's own URL —
+  // shared, saved, or pasted into curl — means here exactly what it means there. The two defects
+  // below were found by probing the API with the UI's own links; the broad, table-driven version
+  // of this lives in invariants/filter-params.test.ts, and these are the blocking-lane pins for
+  // the specific fixes.
+
+  it('reads `reg=1`, the page URL spelling of the registration opt-in', async () => {
+    // Was dead: the route read only `includeRegistration`, so a URL that plainly said reg=1 got
+    // a drop-in-only answer with no error and no notice.
+    const viaPage = await call('q=open+gym&reg=1&minResults=0');
+    const viaApi = await call('q=open+gym&includeRegistration=1&minResults=0');
+    const off = await call('q=open+gym&minResults=0');
+    expect(viaPage.body.context.includeRegistration).toBe(true);
+    expect(viaApi.body.context.includeRegistration).toBe(true);
+    expect(off.body.context.includeRegistration).toBe(false);
+  });
+
+  it('lets this API\'s own param name win when both spellings are present', async () => {
+    const { body } = await call('q=open+gym&includeRegistration=0&reg=1&minResults=0');
+    expect(body.context.includeRegistration).toBe(false);
+  });
+
+  it('keeps every value of a repeated region= param (was: all but the first were dropped)', async () => {
+    const van = await call('region=van&minResults=0');
+    const bby = await call('region=bby&minResults=0');
+    const ids = (body: { results: Array<{ listing: { id: string } }>; expected: Array<{ listing: { id: string } }> }) =>
+      [...body.results, ...body.expected].map((r) => r.listing.id);
+    const union = [...new Set([...ids(van.body), ...ids(bby.body)])].sort();
+    for (const spelling of ['region=van,bby', 'region=van&region=bby']) {
+      const { body } = await call(`${spelling}&minResults=0`);
+      expect(ids(body).sort(), `${spelling} dropped chips`).toEqual(union);
+    }
+    // Non-vacuous only if the two municipalities really do hold different listings.
+    expect(ids(bby.body).length).toBeGreaterThan(0);
+    expect(union.length).toBeGreaterThan(ids(van.body).length);
+  });
+
+  it('keeps every value of a repeated age= param', async () => {
+    const csv = await call('age=5-9,10-14&minResults=0');
+    const repeated = await call('age=5-9&age=10-14&minResults=0');
+    expect(csv.body.context.ageBands).toEqual(['5-9', '10-14']);
+    expect(repeated.body.context.ageBands).toEqual(['5-9', '10-14']);
+  });
+});

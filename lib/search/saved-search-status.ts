@@ -33,7 +33,20 @@ export function savedSearchRawParams(params: Record<string, unknown>): RawParams
   for (const [k, v] of Object.entries(params)) {
     if (typeof v === 'string') out[k] = v;
     else if (typeof v === 'number' || typeof v === 'boolean') out[k] = String(v);
-    // objects/arrays/null are ignored — not part of the /search URL contract.
+    // An ARRAY is kept, as the string[] shape Next's own searchParams uses, because that is a
+    // legitimate way to have written a multi-select: `{"region": ["van","bby"]}`. The envelope is
+    // generic JSON (the saved-searches API stores what a client posts), so a row written by
+    // anything other than serializeStateToParams can carry one — and dropping it here deleted the
+    // parent's whole region selection from the search their saved row re-runs. parseSearchState
+    // reads both shapes for the multi-select params and still takes the first value for the
+    // scalar ones, so this cannot change what a single-valued param means.
+    else if (Array.isArray(v)) {
+      const parts = v
+        .filter((x) => typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean')
+        .map((x) => String(x));
+      if (parts.length > 0) out[k] = parts;
+    }
+    // objects/null are ignored — not part of the /search URL contract.
   }
   return out;
 }
@@ -67,6 +80,15 @@ export function savedSearchRequest(
       signedIn: origin != null,
       regionChipIds: state.regions,
       sort: state.sort,
+      // The registration opt-in is STRUCTURED-ONLY and deliberately unreadable from text
+      // (lib/search/parse.ts: an inclusion policy must never be inferable from words a parent
+      // typed), so unlike every other chip it cannot arrive through `query` above — intentPhrases
+      // composes no phrase for it, and none should exist. Forwarding it here is therefore the only
+      // way a saved search's `reg=1` reaches the engine at all. Without this line, a parent who
+      // saved a search with course content switched ON had it re-run drop-in only, in the weekly
+      // digest and in /account's status line, for as long as the row lived — and the row itself
+      // (tests/saved_search_ui_params.test.ts) had faithfully persisted `reg: '1'` the whole time.
+      includeRegistration: state.includeRegistration,
       minResults: 0, // never broaden — a saved search's answer must be its genuine matches
       limit: 100, // generous; callers narrow further (e.g. the digest's "new since" filter)
     },
