@@ -30,14 +30,18 @@ export async function upsertOccurrence(
 ): Promise<UpsertResult> {
   const { rows } = await pool.query(
     `INSERT INTO activity_occurrence (
-       series_id, source_record_id, activity_name,
+       series_id, source_record_id, activity_name, source_title,
        primary_category_id, start_datetime_utc, end_datetime_utc, open_hours_state,
        cost_min_cad, cost_max_cad, cost_status, source_url, booking_url, location_url,
        registration_required, status_state, confidence_label, last_checked_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now())
      ON CONFLICT (series_id, source_record_id) WHERE source_record_id IS NOT NULL
      DO UPDATE SET
        activity_name        = EXCLUDED.activity_name,
+       -- Plain overwrite, like activity_name: this is what the source says TODAY, and a
+       -- vendor that retitles an event has changed the fact. COALESCE would pin the first
+       -- wording ever seen and quietly turn the audit trail into a stale claim.
+       source_title         = EXCLUDED.source_title,
        primary_category_id  = COALESCE(EXCLUDED.primary_category_id, activity_occurrence.primary_category_id),
        start_datetime_utc    = EXCLUDED.start_datetime_utc,
        end_datetime_utc      = EXCLUDED.end_datetime_utc,
@@ -60,6 +64,12 @@ export async function upsertOccurrence(
       seriesId,
       record.sourceRecordId,
       record.title,
+      // `?? record.title` and NOT `?? null`: worker/core/ingest.ts sets this for every record
+      // it normalises, so the fallback only fires for a caller that bypasses the runner (the
+      // admin manual-entry path, a test harness). Those titles are already the source's own
+      // wording, so recording them as such keeps the column's meaning uniform — a null here
+      // would mean "predates migration 0032" and nothing else.
+      record.sourceTitle ?? record.title,
       fields.primaryCategoryId ?? null,
       record.startDatetimeUtc ?? null,
       record.endDatetimeUtc ?? null,
