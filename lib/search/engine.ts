@@ -492,6 +492,11 @@ export class SearchEngine {
    * and "every chip the rail can render has a count behind it" — true here by construction, so
    * the rail folds its groups away rather than rendering stale numbers from a search that never
    * ran.
+   *
+   * `regionCoverage` is empty for the same reason as everything else: the query never ran, so
+   * there is no catalogue measurement to report — not "we checked and found nothing," but "there
+   * was nothing to check." A consumer reading an empty array here draws no conclusion about area
+   * coverage at all, which is correct; that question simply wasn't asked.
    */
   private unparsedQueryResponse(
     ctx: SearchContext,
@@ -510,6 +515,7 @@ export class SearchEngine {
       ageUnconfirmed: [],
       total: 0,
       broadening: { applied: [], emptyState: explainUnparsedQuery(ctx.raw), alternatives: [] },
+      regionCoverage: [],
       ...(wantsFacets
         ? { facets: computeFacetCounts([], { ctx, origin, regionChipIds, regions: this.regions, now }) }
         : {}),
