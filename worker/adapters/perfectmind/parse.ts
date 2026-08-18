@@ -250,11 +250,42 @@ export function classifyCost(record: BookMe4Class): CostVerdict {
 
 // ── age ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * WHICH input produced the verdict, as a stable slug.
+ *
+ * Deliberately SEPARATE from `reason`, which is human prose for a report and is free to be
+ * reworded. This is the key the per-run breakdown is aggregated on, so it has to survive a
+ * copy edit. It is also the axis the age-provenance initiative proposes to persist per
+ * record (docs/age-provenance-design.md §4a `age_derivation` — design-only, not landed at
+ * time of writing), which is why the mapping lives here rather than being re-derived from
+ * prose by whoever plumbs that through.
+ *
+ * `structured-min-incoherent-max` is kept apart from `structured-min-open` on purpose: both
+ * emit "N years and up", but one is the vendor saying "no maximum" and the other is us
+ * DISCARDING a maximum we could not make sense of. Collapsing them would hide the only case
+ * here where information was dropped.
+ */
+export const AGE_SIGNAL_CODES = [
+  'no-age-restriction',
+  'structured-min-max',
+  'structured-min-open',
+  'structured-min-incoherent-max',
+  'structured-max-only',
+  'display-restrictions',
+  'age-restrictions',
+  'none',
+] as const;
+
+export type AgeSignalCode = (typeof AGE_SIGNAL_CODES)[number];
+
 export interface AgeVerdict {
   /** Canonical phrase handed to T13's parseAgeText(). Undefined when nothing is known. */
   ageText?: string;
   /** True when it came from the STRUCTURED fields rather than a display string. */
   deterministic: boolean;
+  /** Machine-readable provenance — see AGE_SIGNAL_CODES. */
+  code: AgeSignalCode;
+  /** Human-readable provenance, for the run report. Never parsed. */
   reason: string;
 }
 
@@ -283,7 +314,7 @@ const DISPLAY_AGE_RE = /^\s*age\s*:\s*(.+?)\s*$/i;
  */
 export function resolveAgeText(record: BookMe4Class): AgeVerdict {
   if (record.NoAgeRestriction === true) {
-    return { ageText: 'All ages', deterministic: true, reason: 'NoAgeRestriction' };
+    return { ageText: 'All ages', deterministic: true, code: 'no-age-restriction', reason: 'NoAgeRestriction' };
   }
 
   const minYears = typeof record.MinAge === 'number' ? record.MinAge : null;
@@ -304,6 +335,7 @@ export function resolveAgeText(record: BookMe4Class): AgeVerdict {
       return {
         ageText: `ages ${minTotalYears}-${maxTotalYears}`,
         deterministic: true,
+        code: 'structured-min-max',
         reason: 'structured MinAge/MaxAge',
       };
     }
@@ -311,11 +343,12 @@ export function resolveAgeText(record: BookMe4Class): AgeVerdict {
       return {
         ageText: `ages ${minTotalYears} years and up`,
         deterministic: true,
+        code: maxTotalYears == null ? 'structured-min-open' : 'structured-min-incoherent-max',
         reason: maxTotalYears == null ? 'structured MinAge, no maximum' : 'structured MinAge (incoherent maximum ignored)',
       };
     }
     if (maxTotalYears != null) {
-      return { ageText: `under ${maxTotalYears + 1}`, deterministic: true, reason: 'structured MaxAge only' };
+      return { ageText: `under ${maxTotalYears + 1}`, deterministic: true, code: 'structured-max-only', reason: 'structured MaxAge only' };
     }
   }
 
@@ -324,13 +357,18 @@ export function resolveAgeText(record: BookMe4Class): AgeVerdict {
   const display = String(record.DisplayableRestrictionsForCourses ?? '').trim();
   const stripped = DISPLAY_AGE_RE.exec(display)?.[1];
   if (stripped) {
-    return { ageText: `ages ${stripped}`, deterministic: false, reason: 'DisplayableRestrictionsForCourses' };
+    return {
+      ageText: `ages ${stripped}`,
+      deterministic: false,
+      code: 'display-restrictions',
+      reason: 'DisplayableRestrictionsForCourses',
+    };
   }
   const restrictions = String(record.AgeRestrictions ?? '').trim();
   if (restrictions) {
-    return { ageText: `ages ${restrictions}`, deterministic: false, reason: 'AgeRestrictions' };
+    return { ageText: `ages ${restrictions}`, deterministic: false, code: 'age-restrictions', reason: 'AgeRestrictions' };
   }
-  return { deterministic: false, reason: 'no age signal' };
+  return { deterministic: false, code: 'none', reason: 'no age signal' };
 }
 
 // ── category ────────────────────────────────────────────────────────────────────────
@@ -506,6 +544,22 @@ export interface ParseResult {
     skippedUnparseableDate: number;
     skippedUnparseableTime: number;
     costStatusCounts: Record<string, number>;
+    /**
+     * Per-record age provenance, kept at VERDICT-TYPE resolution.
+     *
+     * resolveAgeText() distinguishes eight inputs; the three rollups below collapse them
+     * into "structured / display string / nothing", which cannot answer the first question
+     * anyone asks when a band looks wrong — WHICH rule produced it. A run where every age
+     * came from `NoAgeRestriction` and a run where every age came from a parsed
+     * `MinAge`/`MaxAge` pair are indistinguishable in `ageDeterministic`, and a tenant
+     * quietly drifting from structured bounds to display strings shows up here a whole
+     * verdict type earlier than it does in the rollup.
+     *
+     * Always carries every key in AGE_SIGNAL_CODES, zero-filled: "this rule fired zero
+     * times" and "this rule no longer exists" must not read alike.
+     */
+    ageSignalCounts: Record<AgeSignalCode, number>;
+    /** Coarse rollups of the above, kept for the coverage report's headline numbers. */
     ageDeterministic: number;
     ageFromDisplayText: number;
     ageUnresolved: number;
@@ -522,6 +576,12 @@ export interface ParseResult {
   warnings: string[];
 }
 
+/** Every code at zero — built from AGE_SIGNAL_CODES so a new verdict type cannot be added
+ *  without appearing in the breakdown. */
+export function emptyAgeSignalCounts(): Record<AgeSignalCode, number> {
+  return Object.fromEntries(AGE_SIGNAL_CODES.map((code) => [code, 0])) as Record<AgeSignalCode, number>;
+}
+
 export function emptyStats(): ParseResult['stats'] {
   return {
     classesSeen: 0,
@@ -532,6 +592,7 @@ export function emptyStats(): ParseResult['stats'] {
     skippedUnparseableDate: 0,
     skippedUnparseableTime: 0,
     costStatusCounts: { free: 0, known: 0, check_source: 0, unknown: 0 },
+    ageSignalCounts: emptyAgeSignalCounts(),
     ageDeterministic: 0,
     ageFromDisplayText: 0,
     ageUnresolved: 0,
@@ -599,6 +660,7 @@ function parseCalendar(
     stats.costStatusCounts[cost.costStatus] = (stats.costStatusCounts[cost.costStatus] ?? 0) + 1;
 
     const age = resolveAgeText(cls);
+    stats.ageSignalCounts[age.code] += 1;
     if (age.deterministic) stats.ageDeterministic += 1;
     else if (age.ageText) stats.ageFromDisplayText += 1;
     else stats.ageUnresolved += 1;
