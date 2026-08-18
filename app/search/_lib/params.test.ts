@@ -63,10 +63,33 @@ describe('parseSearchState', () => {
     expect(SORT_OPTIONS.map((o) => o.key)).not.toContain('newest');
   });
 
-  it('drops a stale `age=15+` — the retired band cannot be reapplied from a URL', () => {
-    expect(parseSearchState({ age: '15+' }).ages).toEqual([]);
-    expect(parseSearchState({ age: '15+,5-9' }).ages).toEqual(['5-9']);
-    expect(AGE_OPTIONS.map((o) => o.key)).not.toContain('15+');
+  it('offers `15+` as a real chip and accepts it from a URL, in canonical band order', () => {
+    // The band was off the rail for a period and is back (Jon, 2026-08-18). This is the exact
+    // inverse of the assertion that used to sit here — `age=15%2B` was DROPPED by
+    // parseOrderedCsv because AGE_ORDER didn't contain it — so it fails loudly if the chip is
+    // ever quietly removed again while the taxonomy underneath keeps the band.
+    expect(AGE_OPTIONS.map((o) => o.key)).toEqual(['under2', '2-4', '5-9', '10-14', '15+']);
+    expect(parseSearchState({ age: '15+' }).ages).toEqual(['15+']);
+    // Canonical order, not URL order: 15+ sorts LAST however it was written.
+    expect(parseSearchState({ age: '15+,5-9' }).ages).toEqual(['5-9', '15+']);
+    // …and a genuinely unknown band is still dropped, so widening the vocabulary did not
+    // turn the parser into a pass-through.
+    expect(parseSearchState({ age: '15+,20-24' }).ages).toEqual(['15+']);
+  });
+
+  it('round-trips a `15+` selection through the page URL, the API query and the intent phrase', () => {
+    const state = st({ ages: ['15+'] });
+    // `+` is percent-encoded in a URL, which is the encoding the old (retired-band) note called
+    // out as the reason a stale link could not reapply the chip. Now that it CAN, the encoding
+    // has to survive the round trip rather than arriving as a space.
+    expect(hrefFor(state)).toBe('/search?age=15%2B');
+    expect(parseSearchState({ age: new URLSearchParams('age=15%2B').get('age')! }).ages).toEqual(['15+']);
+    // Structured (Stage 2a) and text (the composed phrase) halves both carry the band.
+    expect(apiParams(state).get('age')).toBe('15+');
+    expect(intentPhrases(state)).toContain('teen');
+    // The phrase resolves to EXACTLY this band — a chip must not widen itself.
+    expect(parseQuery('teen').ageBands).toEqual(['15+']);
+    expect(analyticsFilterTokens(state)).toContain('age:15+');
   });
 
   it('parses region csv, drops unknown ids, canonicalises order', () => {

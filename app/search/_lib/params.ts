@@ -110,18 +110,43 @@ export function hasDateRange(state: SearchState): boolean {
 // Multi-select. Each band maps to a SINGLE-band parent phrase so a selection resolves
 // to exactly that band (avoids e.g. "toddler" which the parser expands to two bands).
 /**
- * The chip vocabulary is a deliberate SUBSET of the `AgeBandKey` data taxonomy: `15+` was
- * removed from the parent-facing rail on Jon's beta feedback (this is a kids-activity index;
- * a teen band was noise on every search he ran). The band still exists in the data and in
- * `lib/search/facets.ts`'s age counts — removing the chip removes a way to NARROW, and can
- * therefore never hide a listing. A stale `?age=15%2B` link is dropped by `parseOrderedCsv`
- * (which keeps only values in AGE_ORDER), so no shared URL can re-apply a chip that is gone.
+ * One chip per band of the `AgeBandKey` data taxonomy (lib/search/types.ts), youngest first.
+ *
+ * `15+` SPENT A PERIOD OFF THIS LIST AND IS BACK. It was removed from the parent-facing rail on
+ * Jon's beta feedback (a teen band read as noise on the searches he was running) while staying
+ * everywhere else — the `AgeBandKey` union, `AGE_BAND_ORDER`, the facet counts, the seeded
+ * `age_band` table (`180 months → NULL`, open-ended), and the PRD, which specified the band
+ * throughout. The rail was the only layer that did not offer it, so a parent with a 15-year-old
+ * had no way to ask for the teen listings the index already held and already counted. Jon
+ * reinstated the band on 2026-08-18 ("Let's add for 15 plus kids as well"), and reinstating it
+ * is exactly this entry: the chip returns, nothing underneath it moves, and no other band's
+ * behaviour changes — an added chip is a new way to NARROW, so it can only ever be reachable
+ * state a parent opts into, never a listing that stops being shown.
+ *
+ * WHY THERE IS NO SEPARATE "OPEN-ENDED BAND" HANDLING ANYWHERE. `15+` has no upper bound, but
+ * that fact lives in the taxonomy (`age_band.upper_months_exclusive = NULL`) and is resolved by
+ * worker/core/age.ts's `computeAgeBandMatches`, which reads the band rows from the database
+ * rather than a hard-coded list. Every consumer here is likewise driven off this array or off
+ * `AGE_BAND_ORDER`, so the band needed adding in ONE place and no membership logic had to learn
+ * about it. If you find yourself special-casing `15+` in a consumer, that consumer has stopped
+ * being data-driven and that is the bug to fix.
+ *
+ * ORDER IS LOAD-BEARING. `AGE_ORDER` is derived from this list and is the canonical order a
+ * selection is sorted into (`parseOrderedCsv`, `toggleInList`), so it must stay youngest-first
+ * and agree with `AGE_BAND_ORDER` (lib/search/filters/age.ts), whose adjacency rung reads each
+ * band's neighbours off exactly that ordering — `15+` sits after `10-14` so the two are
+ * neighbours, which is what makes the broadening ladder's `adjacent_age` rung correct for it.
+ *
+ * `teen` is the phrase, on the same single-band rule as the rest of the group: parse.ts resolves
+ * it to `['15+']` and nothing else. It is NOT `tween`, which is a different token and belongs to
+ * `10-14`; the two regexes cannot match each other's word (see lib/search/parse.ts AGE_PHRASES).
  */
 export const AGE_OPTIONS: { key: AgeBandKey; label: string; phrase: string }[] = [
   { key: 'under2', label: 'Under 2', phrase: 'under 2' },
   { key: '2-4', label: '2–4', phrase: 'preschool' },
   { key: '5-9', label: '5–9', phrase: 'kids' },
   { key: '10-14', label: '10–14', phrase: 'tween' },
+  { key: '15+', label: '15+', phrase: 'teen' },
 ];
 /** Exported so callers validating a typed `age=` param (app/api/search/route.ts, Stage 2a)
  *  share this exact vocabulary rather than re-deriving/duplicating it. */

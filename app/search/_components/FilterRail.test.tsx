@@ -144,12 +144,19 @@ describe('FilterRail — chips carry NO count, whatever the facet payload says',
     }
   });
 
-  it('the retired 15+ age band is not rendered, and the four kept bands are', () => {
+  it('renders all five age bands, 15+ last, each a real link', () => {
+    // 15+ was off the rail for a period and is back (Jon, 2026-08-18) \u2014 this test used to assert
+    // its ABSENCE. The order assertion is the part that matters beyond mere presence: the chips
+    // must read youngest-first, so 15+ has to render after 10\u201314, not wherever AGE_OPTIONS
+    // happened to put it.
     const html = render(DEFAULT_STATE);
-    expect(html).not.toContain('>15+<');
-    for (const label of ['Under 2', '2\u20134', '5\u20139', '10\u201314']) {
-      expect(html).toContain(`>${label}<`);
-    }
+    const labels = ['Under 2', '2\u20134', '5\u20139', '10\u201314', '15+'];
+    for (const label of labels) expect(html).toContain(`>${label}<`);
+    const positions = labels.map((l) => html.indexOf(`>${l}<`));
+    const ascending = positions.every((p, i) => i === 0 || p > positions[i - 1]);
+    expect(ascending, `age chips render out of order: ${JSON.stringify(positions)}`).toBe(true);
+    // A chip, not inert text: tapping it has to be able to apply the band with JS off.
+    expect(chipTag(html, '15+').startsWith('<a')).toBe(true);
   });
 });
 
