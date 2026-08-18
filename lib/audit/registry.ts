@@ -8,8 +8,14 @@ import type { AuditRule } from './types';
 import { outdoorIndoorRule } from './rules/outdoor-indoor';
 import { adultAgeBandRule } from './rules/adult-age-band';
 import { adultSubjectChildBandsRule } from './rules/adult-subject-child-bands';
+import { adultTitleChildBandsRule } from './rules/adult-title-child-bands';
 
-export const AUDIT_RULES: AuditRule[] = [outdoorIndoorRule, adultAgeBandRule, adultSubjectChildBandsRule];
+export const AUDIT_RULES: AuditRule[] = [
+  outdoorIndoorRule,
+  adultAgeBandRule,
+  adultSubjectChildBandsRule,
+  adultTitleChildBandsRule,
+];
 
 export function ruleById(id: string): AuditRule | undefined {
   return AUDIT_RULES.find((r) => r.id === id);
@@ -25,4 +31,5 @@ export const RULE_CUSTOM_ID_PREFIX: Record<string, string> = {
   outdoor_source_indoor_tag: 'oi',
   adult_source_child_bands: 'ac',
   adult_subject_child_bands: 'as',
+  adult_title_child_bands: 'at',
 };
