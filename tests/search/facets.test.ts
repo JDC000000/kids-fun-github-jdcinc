@@ -482,17 +482,19 @@ describe('facet vocabulary parity with the filter UI', () => {
     expect(valuesOf('timeOfDay')).toEqual(TIME_OF_DAY_OPTIONS.map((o) => o.key));
   });
 
-  it('counts the FULL age-band taxonomy, which is deliberately wider than the rail offers', () => {
-    // The facet group counts the data vocabulary (lib/search/types AgeBandKey, the age_bands
-    // seed). The rail's chip vocabulary (AGE_OPTIONS) is a strict SUBSET of it — '15+' was
-    // retired from the chips on Jon's beta feedback without touching the taxonomy underneath.
-    // Asserting them equal, as this test used to, would silently couple a product decision
-    // about chips to a schema-level list; asserting the SUBSET relation states the real rule.
+  it('counts every age band the rail offers, and never fewer than the taxonomy holds', () => {
+    // The facet group counts the DATA vocabulary (lib/search/types AgeBandKey, the age_bands
+    // seed); AGE_OPTIONS is the CHIP vocabulary. The two are equal again now that '15+' is back
+    // on the rail (Jon, 2026-08-18), but the assertion stays a SUBSET relation rather than an
+    // equality: they were legitimately unequal for a period, and asserting equality would couple
+    // a product decision about which chips to show to a schema-level list — the reason this test
+    // was loosened in the first place. What must never happen is the other direction, a chip with
+    // no facet behind it, which is what the loop below pins.
     const ages = valuesOf('ages');
     expect(ages[0]).toBe('any');
     for (const opt of AGE_OPTIONS) expect(ages).toContain(opt.key);
     expect(ages).toContain('15+');
-    expect(AGE_OPTIONS.map((o) => o.key)).not.toContain('15+');
+    expect(AGE_OPTIONS.map((o) => o.key)).toContain('15+');
   });
 
   it('covers every radius option', () => {
