@@ -38,7 +38,6 @@ import {
   overlaps,
   overlapsOnClock,
   pinClock,
-  slotIds,
   unpinClock,
   violation,
   weekdayOf,
