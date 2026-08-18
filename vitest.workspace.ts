@@ -122,6 +122,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/llm/dedup-merge-fixture.test.ts',
   'tests/llm/route.test.ts',
   'tests/llm/watermark-db.test.ts',
+  'tests/notify/region-notify-db.test.ts',
   'tests/regions.test.ts',
   'tests/rls_admin.test.ts',
   'tests/rls_public_tables.test.ts',

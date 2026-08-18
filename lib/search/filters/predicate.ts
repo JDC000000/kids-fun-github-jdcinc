@@ -12,7 +12,7 @@
 
 import type { ListingRecord, SearchContext } from '../types';
 import type { ResolvedOrigin } from '../../geo/origin';
-import { RegionHierarchy, matchesRegion } from '../../geo/region';
+import { RegionHierarchy, matchesRegion, regionTagsOf } from '../../geo/region';
 import { withinRadius } from '../../geo/radius';
 import { matchesAge } from './age';
 import { matchesTimeOfDay, matchesDate } from './time';
@@ -64,7 +64,7 @@ export function passesAllFilters(
   if (mode === 'expected' && !isExpectedSection(listing)) return false;
 
   // Region chips (additive, hierarchical). Independent of radius.
-  if (!matchesRegion([listing.municipalityId, listing.displayArea, listing.neighbourhood], deps.regions, regionChipIds)) {
+  if (!matchesRegion(regionTagsOf(listing), deps.regions, regionChipIds)) {
     return false;
   }
   // Radius (only when we have an origin).

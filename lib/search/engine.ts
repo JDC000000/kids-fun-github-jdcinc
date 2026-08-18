@@ -33,6 +33,7 @@ import { hasConfirmedAgeMatch } from './filters/age';
 // a result that came back because the caller opted in has to say why it is there.
 import { isRegistrationShaped } from './filters/registration';
 import { computeFacetCounts, type FacetCounts } from './facets';
+import { assessRegionCoverage, type RegionCoverage } from './coverage';
 import { rankCandidates } from './rank';
 import { applySort, prioritizeConfirmedFreeWhenFreeActive } from './sort';
 import { collapseSameDaySeries, slotSpanEnd, type CollapsedListing, type OccurrenceSlot } from './collapse';
@@ -199,6 +200,19 @@ export interface SearchResponse {
    * `facets.total === total` always holds and the rail can never contradict the list.
    */
   facets?: FacetCounts;
+  /**
+   * How much of the CATALOGUE we hold for each area chip this request selected — one entry per
+   * recognised chip, empty when no chip was selected (see lib/search/coverage.ts).
+   *
+   * A measurement, never a filter. Nothing in this response was included or excluded because of
+   * it; it exists so a consumer can tell "your search matched nothing HERE" apart from "we have
+   * essentially nothing here to match", which are different facts that a result count alone
+   * cannot separate. Deliberately reported for EVERY selected chip rather than only the sparse
+   * ones, so a consumer reads the number and applies its own policy instead of inheriting a
+   * threshold it cannot see (`RegionCoverage.sparse` carries this module's own verdict for the
+   * consumers that just want it).
+   */
+  regionCoverage: RegionCoverage[];
   /**
    * Where the local clock sits inside the single day the parent asked for — null when the
    * request was not about one particular day (see lib/search/day-window.ts).
@@ -413,6 +427,12 @@ export class SearchEngine {
       total: primaryCount(run),
       broadening: { applied, emptyState, alternatives },
       ...(facets ? { facets } : {}),
+      // Measured over the WHOLE catalogue (`repo.all()`), not over `run.candidates`: the
+      // question is what we hold in this area, and a candidate set has already been narrowed by
+      // the very query whose emptiness this exists to explain. Skipped entirely when no area
+      // chip is selected, which is the ordinary search and pays nothing for this.
+      regionCoverage:
+        regionChips.length > 0 ? assessRegionCoverage(this.repo.all(), this.regions, regionChips) : [],
       dateWindow: describeRequestedDay(ctx0.date, now),
       meta: { fixtureBacked: this.fixtureBacked, sort: working.sort },
     };

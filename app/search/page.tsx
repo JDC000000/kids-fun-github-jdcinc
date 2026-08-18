@@ -30,7 +30,9 @@ import { groupActivitiesByDay, formatRangeLabel, type DayGroup } from './_lib/da
 import { describeBroadening, joinPhrases, type AppliedRungDto } from './_lib/broadening-notice';
 import { describeBroadeningAlternatives } from './_lib/broadening-alternatives';
 import { describeDayRemainder } from './_lib/day-remainder-notice';
+import { SparseCoverageNotice } from './_components/SparseCoverageNotice';
 import type { BroadenAlternative } from '@/lib/search/broaden';
+import type { RegionCoverage } from '@/lib/search/coverage';
 import type { RequestedDayWindow } from '@/lib/search/day-window';
 import { localIsoDate } from '@/lib/search/time/vancouver';
 import {
@@ -80,6 +82,11 @@ type SearchApiResponse = SearchResponseDto & {
   // it does not verify one, so nothing here may be assumed present. The derivation reads an
   // absent window as "nothing to say" rather than guessing. See _lib/day-remainder-notice.ts.
   dateWindow?: RequestedDayWindow | null;
+  // How much of the catalogue we actually hold for each area chip this search selected
+  // (lib/search/coverage.ts). Optional/deeply-optional for the same reason as everything above —
+  // this type describes a fetched payload, it does not verify one — and the derivation reads an
+  // absent array as "no area was selected", which renders nothing.
+  regionCoverage?: RegionCoverage[];
 };
 
 function baseUrl(): string {
@@ -510,13 +517,26 @@ export default async function SearchPage({
             countsKnown={result.ok}
           />
 
+          {/* "We hold almost nothing for this area" is a different fact from every other notice
+              on this page, and it outranks them: the day-remainder note explains the shape of ONE
+              DAY, the broadening note explains what happened to ONE QUERY, and both are answers
+              about a search that could have gone differently. This one says the area itself is
+              the limit, so it renders FIRST — a parent who reads "widen your dates" before they
+              read this one has already been sent somewhere that cannot help. Rendered outside the
+              results branch, like the notices below it, because a thin area presented as a
+              complete result set is the same defect as an unexplained empty one. `role="status"`
+              matches them too. */}
+          <SparseCoverageNotice coverage={result.body?.regionCoverage} />
+
           {/* "Today has finished" is a different fact from "there is nothing on today", and the
               page used to render them identically — a near-empty list, no explanation, at 10pm.
-              Rendered FIRST among the notices because it explains the SHAPE of everything below
-              it: the catalogue drops activities as they end, so a late Today is a list of what
-              is left, not a list of what was on. The offer of tomorrow is explicit, and stays an
-              offer — the broadening ladder's silent slide into adjacent days is the behaviour
-              this replaces. `role="status"` matches the notices below it. */}
+              First among the QUERY-level notices because it explains the SHAPE of everything
+              below it: the catalogue drops activities as they end, so a late Today is a list of
+              what is left, not a list of what was on. (The coverage notice above it is not a
+              query-level notice at all — see its own comment for why it precedes this.) The offer
+              of tomorrow is explicit, and stays an offer — the broadening ladder's silent slide
+              into adjacent days is the behaviour this replaces. `role="status"` matches the
+              notices below it. */}
           {dayRemainder && (
             <p className="kf-dayremainder" role="status">
               <b className="kf-dayremainder__lede">{dayRemainder.lede}</b> {dayRemainder.body}
