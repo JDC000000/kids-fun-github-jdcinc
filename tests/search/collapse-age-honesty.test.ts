@@ -4,7 +4,7 @@
 //
 // THE BUG. `occurrence_age` is keyed per OCCURRENCE (supabase/migrations/0005_taxonomy.sql), so two
 // sessions of one series on one day can carry different age bounds — an adults-only evening session
-// beside an all-ages daytime one is the shape that was reported. `collapseSameDaySeries` kept the
+// beside an all-ages daytime one is the shape that was reported. `collapseSeries` kept the
 // representative and carried only cost per-slot, so the card printed the representative's age for
 // every member. Which occurrence is the representative is decided by rank+sort BEFORE collapse
 // (lib/search/engine.ts) on grounds that have nothing to do with age, so when it happened to be the
@@ -12,7 +12,7 @@
 // may attend.
 
 import { describe, expect, it } from 'vitest';
-import { collapseSameDaySeries } from '../../lib/search/collapse';
+import { collapseSeries, type OccurrenceSlot } from '../../lib/search/collapse';
 import { readGroupAge } from '../../lib/search/filters/age';
 import type { ScoredListing } from '../../lib/search/rank';
 import { makeListing } from '../../lib/search/__fixtures__/factory';
@@ -59,14 +59,14 @@ const adultsOnly = scored(
 
 describe('collapse carries every member’s own age bounds', () => {
   it('collapses the two sessions into one card (the grouping itself is unchanged)', () => {
-    const groups = collapseSameDaySeries([allAges, adultsOnly]);
+    const groups = collapseSeries([allAges, adultsOnly]);
     expect(groups).toHaveLength(1);
     expect(groups[0].slots).toHaveLength(2);
   });
 
   it('puts each occurrence’s OWN age on its slot, not the representative’s', () => {
-    const [group] = collapseSameDaySeries([allAges, adultsOnly]);
-    const byId = new Map(group.slots.map((s) => [s.id, s]));
+    const [group] = collapseSeries([allAges, adultsOnly]);
+    const byId = new Map(group.slots.map((s: OccurrenceSlot) => [s.id, s]));
     expect(byId.get('daytime')).toMatchObject({ ageMinMonths: 0, ageMaxMonths: null });
     expect(byId.get('evening')).toMatchObject({ ageMinMonths: 228, ageMaxMonths: null });
   });
@@ -107,7 +107,7 @@ describe('readGroupAge', () => {
 });
 
 describe('the card never under-claims a collapsed group’s age', () => {
-  const [group] = collapseSameDaySeries([allAges, adultsOnly]);
+  const [group] = collapseSeries([allAges, adultsOnly]);
   const activity = mapSearchItemToActivity({
     listing: group.representative.candidate.listing,
     distanceKm: null,
@@ -135,7 +135,7 @@ describe('the card never under-claims a collapsed group’s age', () => {
       scored({ id: 'p', seriesId: 'series-piano', startDatetimeUtc: '2026-08-08T22:15:00Z', ageMinMonths: 60, ageMaxMonths: 108 }, 9),
       scored({ id: 'q', seriesId: 'series-piano', startDatetimeUtc: '2026-08-08T22:30:00Z', ageMinMonths: 60, ageMaxMonths: 108 }, 8),
     ];
-    const [agreeing] = collapseSameDaySeries(sameAge);
+    const [agreeing] = collapseSeries(sameAge);
     const card = mapSearchItemToActivity({
       listing: agreeing.representative.candidate.listing,
       distanceKm: null,
