@@ -136,6 +136,29 @@ export interface SearchContext {
   raw: string;
   /** Free-text terms after intent extraction (fed to alias-expand + matcher). */
   terms: string[];
+  /**
+   * The parent typed something and the parser could read NONE of it: no free-text terms
+   * survived AND no intent phrase matched. Set by `parseQuery` (see its own note for the
+   * exact three conditions); always false for a blank query.
+   *
+   * WHY THIS FIELD EXISTS. Downstream, "no terms" was the ONLY signal, and it means two
+   * opposite things. A bare browse produces no terms and should return the catalogue —
+   * lib/search/match.ts's `browseMode` is right to do that. A query in a script
+   * `normalize()` cannot represent (中文, русский) ALSO produces no terms, and there
+   * `browseMode` handed a parent ~50 unrelated activities under the heading of their own
+   * search, with `broadening.applied` empty because nothing had been widened: the page said,
+   * in every way it knows how, "these are your results". Nothing in the pipeline below the
+   * parser could tell the two apart, because the fact that distinguishes them — whether the
+   * raw text had content the parser failed to read — is destroyed by the time `terms` is
+   * computed. So it is recorded here, at the only place that still knows it.
+   *
+   * It is the same rule the rest of this product runs on (AGE_NOT_STATED, `originError`,
+   * server-engine.ts returning null rather than an empty engine): "we could not answer" and
+   * "the answer is nothing" are different statements, and we never quietly substitute a
+   * third thing for either. The engine short-circuits to an honest zero-state on this flag —
+   * see lib/search/engine.ts.
+   */
+  unparsedQuery: boolean;
 
   // Temporal intent.
   date: DateIntent | null;

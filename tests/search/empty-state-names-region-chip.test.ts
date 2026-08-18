@@ -102,6 +102,7 @@ describe('the region constraint is wired consistently into the constraint vocabu
   const bareCtx = (): SearchContext => ({
     raw: '',
     terms: [],
+    unparsedQuery: false,
     date: null,
     timeOfDay: null,
     ageBands: [],
