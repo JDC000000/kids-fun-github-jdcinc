@@ -41,6 +41,21 @@ export interface OccurrenceSlot {
   costStatus: CostStatus;
   costMinCad: number | null;
   costMaxCad: number | null;
+  /**
+   * THIS occurrence's own age bounds, for the same reason the three cost fields above are here and
+   * carried the same way — `toSlot` already holds the whole `ListingRecord`, so this is a widening,
+   * not a lookup.
+   *
+   * MEMBERS OF ONE GROUP GENUINELY DISAGREE ON AGE. `occurrence_age` is keyed per OCCURRENCE
+   * (supabase/migrations/0005_taxonomy.sql — `occurrence_id` is the primary key), not per series,
+   * so two sessions of one series on one day can carry different bounds and frequently do: an
+   * adults-only evening session sits in the same series+day group as an all-ages daytime one.
+   * Without these fields the card can only state its REPRESENTATIVE's age, which is how a group
+   * containing a 19+ session came to be presented as "All ages" — a less-restrictive claim than
+   * the most-restrictive true fact about what the card stands for.
+   */
+  ageMinMonths: number | null;
+  ageMaxMonths: number | null;
 }
 
 /** A ranked result plus every same-series-same-day occurrence it now stands for. */
@@ -119,6 +134,8 @@ function toSlot(item: ScoredListing): OccurrenceSlot {
     costStatus: l.costStatus,
     costMinCad: l.costMinCad,
     costMaxCad: l.costMaxCad,
+    ageMinMonths: l.ageMinMonths,
+    ageMaxMonths: l.ageMaxMonths,
   };
 }
 

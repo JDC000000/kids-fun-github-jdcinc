@@ -1,6 +1,7 @@
 import type { ListingRecord } from '@/lib/search/types';
 import type { FacetCounts } from '@/lib/search/facets';
 import { isRegistrationShaped } from '@/lib/search/filters/registration';
+import { readGroupAge } from '@/lib/search/filters/age';
 import { readIndoorOutdoor } from '@/lib/search/indoor';
 import { formatOpenHoursWindow } from './format';
 import type { Activity, BookingType, Category, ConfidenceLabel, CostStatus, StatusState, TimeOfDay } from './types';
@@ -52,8 +53,9 @@ export interface SearchItemDto {
   distanceKm: number | null;
   /**
    * Same-series-same-day occurrences this result stands for (lib/search/collapse.ts). Each carries
-   * its OWN cost, so a collapsed card can state what the GROUP costs rather than what its
-   * representative costs — mirrors `OccurrenceSlot`, which is what the engine puts here.
+   * its OWN cost AND its OWN age bounds, so a collapsed card can state what the GROUP costs and who
+   * the GROUP is for rather than what its representative costs and who its representative is for —
+   * mirrors `OccurrenceSlot`, which is what the engine puts here.
    */
   slots?: {
     id: string;
@@ -62,6 +64,8 @@ export interface SearchItemDto {
     costStatus: ListingRecordDto['costStatus'];
     costMinCad: number | null;
     costMaxCad: number | null;
+    ageMinMonths?: number | null;
+    ageMaxMonths?: number | null;
   }[];
   /** End of the last slot, when the result covers several. */
   slotSpanEndUtc?: string | null;
@@ -186,6 +190,21 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
           ...(slot.costMaxCad != null ? { costMaxCad: slot.costMaxCad } : {}),
         }))
       : undefined;
+  // A collapsed card states the GROUP's age, so this reads every member's own bounds rather than
+  // the representative's — the same defect, and the same fix, as `slotCosts` above. `readGroupAge`
+  // takes the `agreed` arm for a single-slot card, so a card that never had the defect is
+  // unchanged. See lib/search/filters/age.ts for why a disagreeing group prints no range at all.
+  // A slot that OMITS age has not carried the fact, which is not the same as the source stating no
+  // age — so it inherits the listing's own bounds and the group still reads `agreed`. Only a
+  // producer that genuinely carries differing per-slot bounds (the engine, via `OccurrenceSlot`)
+  // can reach `varies`, which keeps every fixture/detail path that builds slots without age
+  // rendering exactly what it rendered before.
+  const ageRead = readGroupAge(
+    item.slots?.map((s) => ({
+      ageMinMonths: s.ageMinMonths === undefined ? l.ageMinMonths : s.ageMinMonths,
+      ageMaxMonths: s.ageMaxMonths === undefined ? l.ageMaxMonths : s.ageMaxMonths,
+    })) ?? [l],
+  );
   // The engine classifies once and sends the answer; the fallback covers the paths that build an
   // Activity without going through search (the detail loader, fixtures) so a course is labelled
   // as one wherever it is rendered. Same pure predicate either way — one definition, two callers.
@@ -209,8 +228,9 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     driveMinutes: distanceKm == null ? null : Math.max(4, Math.round(distanceKm * 4)),
     distanceKm,
     category: mapCategory(l.primaryCategoryKey),
-    ageMin: monthsToMinYears(l.ageMinMonths),
-    ageMax: monthsToMaxYears(l.ageMaxMonths),
+    ageMin: ageRead.kind === 'agreed' ? monthsToMinYears(ageRead.ageMinMonths) : null,
+    ageMax: ageRead.kind === 'agreed' ? monthsToMaxYears(ageRead.ageMaxMonths) : null,
+    ...(ageRead.kind === 'varies' ? { agesVaryBySession: true } : {}),
     startIso,
     endIso,
     timeOfDay: startIso ? timeOfDay(startIso) : null,
