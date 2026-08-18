@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
-import { loadPostgresListings } from '../../lib/search/postgres-repository';
+import { loadPostgresListings, loadPostgresListingById } from '../../lib/search/postgres-repository';
 import { readIndoorOutdoor, hasOutdoorMarker, indoorTextVerdict } from '../../lib/search/indoor';
 import { mapListingRecordToActivity } from '../../app/preview/_data/search-api';
 import { practicalFacts } from '../../app/preview/_data/format';
@@ -179,6 +179,20 @@ describe('suitabilityTags — an unclassified listing is not an indoor listing',
     // The fix stops INVENTING a claim; it does not start editing what the source said.
     const { listing } = await render({ tag_keys: ['indoor', 'outdoor', 'stroller_friendly'] });
     expect(listing.suitabilityTags).toEqual(expect.arrayContaining(['indoor', 'outdoor', 'stroller_friendly']));
+  });
+
+  it('applies to the DETAIL loader too, which is where both findings were seen', async () => {
+    // `loadPostgresListingById` is a SEPARATE entry point sharing `rowToListing`, and the two
+    // reported listings were observed on their /preview/<id> detail pages — not in a result list.
+    // A fix verified only through the list loader would not have proven the page in the report.
+    const id = 'd759d82f-e83e-42b4-96c5-cbdb34aa2408'; // the live Sportball occurrence
+    const listing = await loadPostgresListingById(
+      fakePool([row(id, { activity_name: 'Sportball Outdoor Parent & Child Soccer (2-3yrs) Rain/Shine' })]),
+      id,
+    );
+    expect(listing).not.toBeNull();
+    expect(listing?.suitabilityTags).not.toContain('indoor');
+    expect(practicalFacts(mapListingRecordToActivity(listing!))).toEqual(['Outdoor']);
   });
 });
 
