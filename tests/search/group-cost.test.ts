@@ -25,7 +25,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { readCost, readGroupCost, type CostFacts } from '../../lib/search/filters/cost';
-import { collapseSameDaySeries } from '../../lib/search/collapse';
+import { collapseSeries } from '../../lib/search/collapse';
 import { applySort } from '../../lib/search/sort';
 import { makeListing } from '../../lib/search/__fixtures__/factory';
 import type { ScoredListing } from '../../lib/search/rank';
@@ -227,9 +227,9 @@ function scored(overrides: Partial<ListingRecord> & { id: string }, score = 1): 
 const PIANO = 'series-piano';
 const DAY = '2026-08-08T22:15:00Z';
 
-describe('collapseSameDaySeries carries every member\'s OWN cost', () => {
+describe('collapseSeries carries every member\'s OWN cost', () => {
   it('puts each slot\'s three cost fields on its slot, not the representative\'s', () => {
-    const groups = collapseSameDaySeries([
+    const groups = collapseSeries([
       scored({ id: 'a', seriesId: PIANO, startDatetimeUtc: DAY, costStatus: 'known', costMinCad: 103, costMaxCad: 103 }),
       scored({ id: 'b', seriesId: PIANO, startDatetimeUtc: '2026-08-08T23:15:00Z', costStatus: 'known', costMinCad: 240, costMaxCad: 240 }),
     ]);
@@ -323,7 +323,7 @@ describe('the lowest-cost ordering needed no change, and this is why', () => {
     const cheap = scored({ id: 'cheap', seriesId: PIANO, startDatetimeUtc: DAY, costStatus: 'known', costMinCad: 103, costMaxCad: 103 });
     const other = scored({ id: 'other', seriesId: 'series-swim', startDatetimeUtc: DAY, costStatus: 'known', costMinCad: 150, costMaxCad: 150 });
 
-    const groups = collapseSameDaySeries(applySort([dear, other, cheap], 'lowest_cost'));
+    const groups = collapseSeries(applySort([dear, other, cheap], 'lowest_cost'));
 
     // The piano group sorts at $103 — its own floor — not at the $240 member that happened to
     // arrive first, and not behind the $150 swim.

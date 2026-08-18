@@ -129,3 +129,65 @@ describe('an age-filtered saved search still reports unstated-age listings — f
     for (const a of digest.sections[0].activities) expect(a.ageNotConfirmed).toBeUndefined();
   });
 });
+
+describe('a new session of a KNOWN series still reaches the email', () => {
+  // THE REGRESSION THIS PINS. Search collapses a recurring programme into ONE card whose
+  // representative is whichever occurrence ranked best (lib/search/collapse.ts). The digest asks
+  // "is this new since the last email?" — and if it asked that of the CARD, a parent who already
+  // knew about last week's session would silently stop being told about next week's, because the
+  // new occurrence is a slot inside a card whose representative is old. Nothing would look broken:
+  // the email would simply be shorter.
+  const week = ['2026-07-14', '2026-07-15', '2026-07-16'].map((day, i) =>
+    makeListing({
+      id: `w-storytime-${i}`,
+      seriesId: 'series-weekly-storytime',
+      activityName: 'Weekly Storytime',
+      primaryCategoryKey: 'storytime',
+      venueName: 'Kitsilano Library',
+      startDatetimeUtc: `${day}T17:00:00Z`,
+      endDatetimeUtc: `${day}T18:00:00Z`,
+      costStatus: 'free',
+    }),
+  );
+  const weeklyEngine = new SearchEngine({
+    repository: new InMemoryListingRepository(week),
+    regionHierarchy: new RegionHierarchy(REGIONS),
+    fixtureBacked: true,
+  });
+
+  const digestFor = (newIds: string[]) =>
+    buildWeeklyDigest({
+      userId: 'u-1',
+      engine: weeklyEngine,
+      savedSearches: [{ id: 'ss-weekly', name: 'Storytime', params: { q: 'storytime' } }],
+      homePostal: null,
+      now: FIXTURE_NOW,
+      newOccurrenceIds: new Set(newIds),
+    });
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://app.example');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('reports the new occurrence even when the card is kept by an older one', () => {
+    // Only the LAST session is new; the card is represented by the first.
+    const digest = digestFor(['w-storytime-2']);
+    expect(digest.shouldSend).toBe(true);
+    expect(digest.sections[0].activities.map((a) => a.id)).toEqual(['w-storytime-2']);
+    // …and it links to that occurrence, and states that occurrence's own date.
+    expect(digest.sections[0].activities[0].url).toBe('https://app.example/preview/w-storytime-2');
+    expect(digest.sections[0].activities[0].when).toContain('Jul 16');
+  });
+
+  it('announces the SOONEST new session when several are new, one row per series', () => {
+    const digest = digestFor(['w-storytime-1', 'w-storytime-2']);
+    expect(digest.sections[0].activities.map((a) => a.id)).toEqual(['w-storytime-1']);
+  });
+
+  it('still says nothing when the whole series is old news', () => {
+    expect(digestFor([]).shouldSend).toBe(false);
+  });
+});

@@ -67,7 +67,9 @@ export interface SearchItemDto {
     ageMinMonths?: number | null;
     ageMaxMonths?: number | null;
   }[];
-  /** End of the last slot, when the result covers several. */
+  /** Distinct local days those slots fall on, ascending (engine `slotDays`). */
+  slotDays?: string[];
+  /** End of the last slot, when the result covers several — absent when the card spans days. */
   slotSpanEndUtc?: string | null;
   /** Engine's registration classification; recomputed locally when absent (fixture/detail paths). */
   registrationRequired?: boolean;
@@ -254,6 +256,9 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     // exactly the listings we know the least about. `formatChecked` states the absence instead.
     lastCheckedIso: l.lastCheckedAtUtc,
     ...(slotCount > 1 ? { slotCount } : {}),
+    // Only carried when the card really runs on several days: one day is the ordinary collapsed
+    // card, which states a time span instead (see format.ts#formatSlotSummary).
+    ...(slotCount > 1 && (item.slotDays?.length ?? 0) > 1 ? { slotDays: item.slotDays } : {}),
     ...(slotCount > 1 && item.slotSpanEndUtc ? { slotEndIso: item.slotSpanEndUtc } : {}),
     ...(slotCosts ? { slotCosts } : {}),
     ...(registrationRequired ? { registrationRequired } : {}),

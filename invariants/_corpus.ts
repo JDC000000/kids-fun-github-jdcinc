@@ -483,6 +483,27 @@ function traps(at: At): ListingRecord[] {
         statusState: 'confirmed',
       }),
     ),
+    // ── collapse.ts, the RECURRING shape: one series, one occurrence on each of four local days.
+    // This is the corpus's only cross-day group and it exists so the card-honesty invariant about
+    // a multi-day card (it may state its DAYS, never a single time span) is asserted over
+    // something rather than passing vacuously. A date-filtered query narrows it back to one day,
+    // so both shapes of card get exercised by the same rows.
+    ...[-1, 0, 1, 2].map((offset, n) =>
+      makeListing({
+        ...base,
+        id: `trap-recurring-${n}`,
+        seriesId: 'trap-recurring-series',
+        activityName: 'Fixture Weekly Slot',
+        descriptionSnippet: `${CORPUS_TOKEN} same series, day offset ${offset}`,
+        startDatetimeUtc: at(offset, 10).toISOString(),
+        endDatetimeUtc: at(offset, 11).toISOString(),
+        costStatus: 'free',
+        ageBandMatches: ['2-4'],
+        ageMinMonths: 24,
+        ageMaxMonths: 60,
+        statusState: 'confirmed',
+      }),
+    ),
     // ── status.ts: the hidden class, present so "never shown" is a real assertion.
     makeListing({
       ...base,

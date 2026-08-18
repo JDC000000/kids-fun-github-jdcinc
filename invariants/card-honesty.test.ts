@@ -85,10 +85,10 @@ describe('CARD HONESTY — distance', () => {
 });
 
 describe('CARD HONESTY — a collapsed card stands only for its own occurrences', () => {
-  it('every slot shares the representative series and the representative local day', () => {
-    // The collapse contract (lib/search/collapse.ts): the grouping key is (seriesId, local start
-    // date). If a card ever seated a slot from another series or another day, its "15 slots,
-    // 3:15 PM–7:30 PM" line would describe activities a parent cannot attend together.
+  it('every slot shares the representative series', () => {
+    // The collapse contract (lib/search/collapse.ts): the grouping key is the seriesId. If a card
+    // ever seated a slot from another series, its "15 slots, 3:15 PM–7:30 PM" line would describe
+    // activities a parent cannot attend together.
     const violations: Violation[] = [];
     let checked = 0;
     let collapsedCards = 0;
@@ -97,11 +97,10 @@ describe('CARD HONESTY — a collapsed card stands only for its own occurrences'
       for (const item of allItems(response)) {
         checked += 1;
         if (item.slots.length > 1) collapsedCards += 1;
-        const repDay = item.listing.startDatetimeUtc ? localDay(new Date(item.listing.startDatetimeUtc)) : null;
-        // Open-hours / undated rows belong to no day and are documented as never collapsed.
-        if (item.listing.openHours || repDay == null) {
+        // Open-hours / undated rows belong to no point in time and are documented as never collapsed.
+        if (item.listing.openHours || item.listing.startDatetimeUtc == null) {
           if (item.slots.length !== 1) {
-            violations.push(violation(clock, query, `"${item.listing.id}" has no single day but was collapsed into ${item.slots.length} slots`));
+            violations.push(violation(clock, query, `"${item.listing.id}" has no start instant but was collapsed into ${item.slots.length} slots`));
           }
           continue;
         }
@@ -114,15 +113,38 @@ describe('CARD HONESTY — a collapsed card stands only for its own occurrences'
           if (member.seriesId !== item.listing.seriesId) {
             violations.push(violation(clock, query, `card "${item.listing.id}" (series ${item.listing.seriesId}) seats slot "${slot.id}" from series ${member.seriesId}`));
           }
-          const slotDay = slot.startDatetimeUtc ? localDay(new Date(slot.startDatetimeUtc)) : null;
-          if (slotDay !== repDay) {
-            violations.push(violation(clock, query, `card "${item.listing.id}" (local day ${repDay}) seats slot "${slot.id}" on local day ${slotDay}`));
-          }
         }
       }
     }
-    expectInvariant('a collapsed card seats only its own series, on its own local day', violations, checked);
+    expectInvariant('a collapsed card seats only its own series', violations, checked);
     expect(collapsedCards, 'nothing in the corpus ever collapsed — the contract is untested').toBeGreaterThan(0);
+  });
+
+  it('a card that runs on several days states those DAYS and no single time span', () => {
+    // THE RULE THE (seriesId, local day) KEY USED TO ENFORCE, now enforced where it belongs.
+    // Collapsing merges a recurring programme across days (report P1-2, 2026-08-18), so the first
+    // start and last end of one card can sit on different dates — "Tuesday 6:30 AM to Friday
+    // 8:30 AM" is not a window anyone can attend. Such a card must therefore publish NO span at
+    // all, and must instead list every local day it runs on, in agreement with its own slots.
+    const violations: Violation[] = [];
+    let checked = 0;
+    let multiDayCards = 0;
+    for (const { clock, query, response } of casesFor(3)) {
+      for (const item of allItems(response)) {
+        checked += 1;
+        const slotDays = [...new Set(item.slots.filter((s) => s.startDatetimeUtc).map((s) => localDay(new Date(s.startDatetimeUtc!))))].sort();
+        if (JSON.stringify(item.slotDays) !== JSON.stringify(slotDays)) {
+          violations.push(violation(clock, query, `card "${item.listing.id}" reports days ${JSON.stringify(item.slotDays)} but its slots run on ${JSON.stringify(slotDays)}`));
+        }
+        if (slotDays.length <= 1) continue;
+        multiDayCards += 1;
+        if (item.slotSpanEndUtc != null) {
+          violations.push(violation(clock, query, `card "${item.listing.id}" spans ${slotDays.length} local days yet states a span ending ${item.slotSpanEndUtc}`));
+        }
+      }
+    }
+    expectInvariant('a multi-day card states its days, never a span it does not occupy', violations, checked);
+    expect(multiDayCards, 'no card in the corpus ever spanned days — the contract is untested').toBeGreaterThan(0);
   });
 
   it('a card never states a time span that ends before it begins, and its slots are in order', () => {
@@ -147,6 +169,29 @@ describe('CARD HONESTY — a collapsed card stands only for its own occurrences'
       }
     }
     expectInvariant('a card\'s stated time span is coherent', violations, checked);
+  });
+
+  it('no response seats the same occurrence twice, in one section or across two', () => {
+    // The venue cap (lib/search/venue-diversity.ts) REORDERS the page — it defers a card from an
+    // over-represented venue to the next round rather than dropping it. A reorder that duplicated
+    // or lost a card would be indistinguishable from a working one on a count, so this asserts
+    // identity: every occurrence the response mentions, whether as a card or as a slot inside
+    // one, is mentioned exactly once across the whole payload.
+    const violations: Violation[] = [];
+    let checked = 0;
+    for (const { clock, query, response } of casesFor(3)) {
+      const seen = new Set<string>();
+      for (const item of allItems(response)) {
+        checked += 1;
+        for (const slot of item.slots) {
+          if (seen.has(slot.id)) {
+            violations.push(violation(clock, query, `occurrence "${slot.id}" appears more than once in the response (card "${item.listing.id}")`));
+          }
+          seen.add(slot.id);
+        }
+      }
+    }
+    expectInvariant('every occurrence is seated exactly once', violations, checked);
   });
 
   it('every card the engine returns is a listing the catalogue actually holds', () => {

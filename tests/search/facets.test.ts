@@ -238,9 +238,10 @@ describe('facet counts — group-specific behaviour', () => {
 });
 
 describe('facet counts are in CARDS, like the list they sit next to', () => {
-  // Results are collapsed to one card per series per local day (lib/search/collapse.ts). Counting
-  // raw occurrences would overstate every facet — on staging, 1000 occurrences render as 661
-  // cards, so a rail would sit "Vancouver 47" on top of a list of 31.
+  // Results are collapsed to one card per series (lib/search/collapse.ts). Counting raw
+  // occurrences would overstate every facet — on staging, 1000 occurrences rendered as 661 cards
+  // under the narrower same-day rule this replaced, and fewer still now, so a rail would sit
+  // "Vancouver 47" on top of a list of 31.
   //
   // NOTE this needs its own catalogue: no listing in FIXTURE_LISTINGS shares a seriesId with
   // another, so nothing there ever collapses and the parity suite above would pass either way.
@@ -267,7 +268,8 @@ describe('facet counts are in CARDS, like the list they sit next to', () => {
         municipalityId: 'van',
       }),
     ),
-    // Same series, NEXT day → a second, separate card (a day boundary is never collapsed across).
+    // Same series, NEXT day → the SAME card, one more slot on it: a recurring programme is one
+    // thing to decide about (report P1-2, 2026-08-18), so it is one row whichever days it runs.
     makeListing({
       id: 'slot-nextday',
       seriesId: REPEATED_SERIES,
@@ -306,23 +308,24 @@ describe('facet counts are in CARDS, like the list they sit next to', () => {
   const run = (req: Partial<SearchRequest> = {}) =>
     collapsingEngine.search({ q: '', now: FIXTURE_NOW, minResults: 0, ...req });
 
-  it('counts a repeated series as one card per day, not one per time slot', () => {
+  it('counts a repeated series as ONE card, not one per time slot and not one per day', () => {
     const res = run({ facets: true });
-    // 6 occurrences → 3 cards: the 4-slot day, the next day, and the solo listing.
+    // 6 occurrences → 2 cards: the five-slot piano series (four on one day, one the next) and the
+    // solo listing.
     expect(catalogue.length).toBe(6);
-    expect(res.total).toBe(3);
-    expect(res.facets?.total).toBe(3);
+    expect(res.total).toBe(2);
+    expect(res.facets?.total).toBe(2);
   });
 
   it('counts every individual facet value in cards too, not just the total', () => {
     const facets = run({ facets: true }).facets!;
-    // Vancouver holds 5 occurrences but only 2 cards.
-    expect(facetCount(facets, 'areas', 'van')).toBe(2);
+    // Vancouver holds 5 occurrences but only 1 card.
+    expect(facetCount(facets, 'areas', 'van')).toBe(1);
     expect(facetCount(facets, 'areas', 'bby')).toBe(1);
-    expect(facetCount(facets, 'ages', '5-9')).toBe(3);
-    // The 4 collapsed slots are all in the morning; they are still ONE card.
-    expect(facetCount(facets, 'category', 'indoor_play')).toBe(2);
-    expect(facetCount(facets, 'quick', 'free')).toBe(3);
+    expect(facetCount(facets, 'ages', '5-9')).toBe(2);
+    // The 5 collapsed slots span two days and four morning starts; they are still ONE card.
+    expect(facetCount(facets, 'category', 'indoor_play')).toBe(1);
+    expect(facetCount(facets, 'quick', 'free')).toBe(2);
   });
 
   it('keeps every facet value equal to what applying it actually returns', () => {

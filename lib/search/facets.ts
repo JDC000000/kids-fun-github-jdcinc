@@ -186,11 +186,12 @@ export function computeFacetCounts(listings: ListingRecord[], request: FacetRequ
 /**
  * How many CARDS a set of listings renders as — the unit the result list is in.
  *
- * Results are collapsed to one card per series per local day (lib/search/collapse.ts), so
- * counting raw occurrences would overstate every facet: on the staging catalogue 1000
- * occurrences render as 661 cards. A rail that said "Vancouver 47" above a list of 31 cards
- * would be exactly the kind of lie these counts exist to prevent. Listings that belong to no
- * single day (open-hours, undated) are never collapsed and each count as their own card.
+ * Results are collapsed to one card per series (lib/search/collapse.ts), so counting raw
+ * occurrences would overstate every facet: on the staging catalogue 1000 occurrences render as
+ * 661 cards under the narrower same-day rule this replaced, and fewer still now that a recurring
+ * programme is one card rather than one per day. A rail that said "Vancouver 47" above a list of
+ * 31 cards would be exactly the kind of lie these counts exist to prevent. Listings that belong
+ * to no point in time (open-hours, undated) are never collapsed and each count as their own card.
  */
 function countCards(listings: ListingRecord[]): number {
   let uncollapsable = 0;
@@ -387,7 +388,7 @@ function categoryGroup(c: CountContext): FacetGroupCounts {
  */
 function cardRepresentatives(listings: ListingRecord[]): ListingRecord[] {
   const byKey = new Map<string, ListingRecord>();
-  // Listings belonging to no single day (open-hours, undated) are never collapsed: each is its
+  // Listings belonging to no point in time (open-hours, undated) are never collapsed: each is its
   // own card and its own representative.
   const uncollapsable: ListingRecord[] = [];
   for (const listing of listings) {

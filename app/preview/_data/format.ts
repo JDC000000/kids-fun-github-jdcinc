@@ -700,19 +700,54 @@ export function telHref(phone: string): string | null {
 }
 
 /**
- * "15 slots, 3:15 PM–7:30 PM" — the when-line for a card that stands for several same-day slots
- * of one series. Returns null for an ordinary single-slot card, whose caller keeps `formatWhen`.
+ * The when-line for a card that stands for several occurrences of one series. Returns null for an
+ * ordinary single-slot card, whose caller keeps `formatWhen`.
  *
- * The span runs from the first slot's start to the LAST slot's end, so it describes the window a
- * parent can actually arrive in. Collapsing is same-day only, so this can never straddle a date.
+ * TWO SHAPES, because a collapsed card genuinely comes in two:
+ *
+ *  1. ONE LOCAL DAY → "15 slots, 3:15 PM–7:30 PM". The span runs from the first slot's start to
+ *     the LAST slot's end, so it describes the window a parent can actually arrive in.
+ *
+ *  2. SEVERAL LOCAL DAYS → "8 slots · Tue, Wed, Thu, Fri". A recurring programme now collapses to
+ *     one card across days (lib/search/collapse.ts), and the first start-to-last end of such a
+ *     card is not a window anyone can attend — a Tuesday-morning class that also runs Friday is
+ *     not "on from Tuesday 6:30 AM to Friday 8:30 AM". So a multi-day card states the DAYS it
+ *     runs on and no time at all; the day-line beside it still carries the represented
+ *     occurrence's own date and the slot list carries every start. Seven distinct weekdays reads
+ *     as "Every day" rather than a list of all seven.
  */
 export function formatSlotSummary(
-  activity: Pick<Activity, 'slotCount' | 'startIso' | 'slotEndIso' | 'endIso'>,
+  activity: Pick<Activity, 'slotCount' | 'startIso' | 'slotEndIso' | 'endIso' | 'slotDays'>,
 ): string | null {
   const count = activity.slotCount ?? 1;
   if (count < 2) return null;
+  const days = activity.slotDays ?? [];
+  if (days.length > 1) return `${count} slots · ${formatWeekdays(days)}`;
   const span = formatWhen(activity.startIso, activity.slotEndIso ?? activity.endIso);
   return `${count} slots, ${span.time}`;
+}
+
+const WEEKDAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', weekday: 'short' });
+const DAYS_IN_WEEK = 7;
+
+/**
+ * "Tue, Wed, Thu, Fri" from local ISO dates — the DISTINCT weekdays they land on, in the order
+ * they first occur, so an eight-week Tuesday class reads "Tue" rather than eight dates.
+ *
+ * Anchored at UTC-noon like every other local-date label in this file, so the weekday is exact
+ * regardless of the server's own timezone.
+ */
+function formatWeekdays(isoDays: string[]): string {
+  const labels: string[] = [];
+  for (const iso of isoDays) {
+    const anchor = new Date(`${iso}T12:00:00Z`);
+    // A day this formatter cannot read is a day it has nothing true to say about, so it says
+    // nothing — a card is never worth throwing a page away for, and never worth a made-up label.
+    if (Number.isNaN(anchor.getTime())) continue;
+    const label = WEEKDAY_FMT.format(anchor);
+    if (!labels.includes(label)) labels.push(label);
+  }
+  return labels.length >= DAYS_IN_WEEK ? 'Every day' : labels.join(', ');
 }
 
 /** The registration-required card tag. One phrase, used everywhere, so the label never drifts. */
