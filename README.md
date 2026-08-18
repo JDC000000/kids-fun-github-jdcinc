@@ -52,6 +52,13 @@ in `lib/snapshot/policy.ts` and is enforced on every CI run by
 `tests/snapshot/policy-schema-guard.test.ts`, which fails loudly if a migration adds an
 unclassified column to an allowlisted table.
 
+What the snapshot changes is not *how many* tests run — 420 of the 436 DB-gated tests are
+un-skipped by simply having a bootstrapped Postgres, which CI already does — but **what they
+run against**. `tests/admin/data-health-db.test.ts` compares the region table to the app's
+`LAUNCH_REGIONS` constant; against seed data that assertion is a tautology (the seed file and
+the constant were written together), and against a snapshot it finally sees production drift.
+Measured numbers and a worked region-rename demonstration: §9 of the runbook.
+
 Producing a snapshot needs production database access and is an Operator task:
 **`docs/prod-snapshot-runbook.md`**. The whole pipeline can be rehearsed locally with no
 production access at all — see §11 of that runbook.

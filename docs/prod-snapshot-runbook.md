@@ -90,7 +90,7 @@ the production database (§3). **No** Supabase service-role key, **no** app secr
 **Credentials you must NOT create:** do not put a production connection string into GitHub
 Actions secrets. The CI `e2e` lane deliberately holds no production secret (see the comment on
 that job in `.github/workflows/ci.yml`), and changing that is a decision for you and Jon, not a
-side effect of adopting this tooling. §10 sets out the two options if you decide you want it.
+side effect of adopting this tooling. §11 sets out the two options if you decide you want it.
 
 ---
 
@@ -278,7 +278,67 @@ Two guards run in ordinary CI, with no snapshot and no opt-in:
 
 ---
 
-## 9. What snapshot mode reports today
+## 9. What running with a database actually changes — measured
+
+A common and reasonable misreading of this work is "the snapshot lights up hundreds of
+already-written tests that never run". Measured on this branch, that is **not** what happens,
+and it is worth knowing exactly what does, because the real answer is better.
+
+Three configurations, same commit, full suite (`npx vitest run`):
+
+| Config | Passed | Failed | **Skipped** |
+|---|---|---|---|
+| **A** — no `DATABASE_URL` | 2871 | 0 | **436** |
+| **B** — `DATABASE_URL` + `local-db-bootstrap.sh` + `seed.sh` (**what CI does today**) | 3453 | 2 | **16** |
+| **C** — snapshot loaded + `KF_SNAPSHOT_MODE=1` | 3466 | 5 | **0** |
+
+- **420 of the 436** skips are un-skipped by config **B** — i.e. by simply having a bootstrapped,
+  seeded Postgres. They are gated on `hasDb = Boolean(process.env.DATABASE_URL)`, not on
+  snapshot data. **The `ci` job in `.github/workflows/ci.yml` already sets `DATABASE_URL` and
+  runs `scripts/test.sh`, so those tests are not dark in CI.** They are dark only in a local
+  `npx vitest run` with no database.
+- **16** are un-skipped only by config **C**. They are `tests/snapshot/catalogue-shape.test.ts`,
+  added by this work.
+- Config **C** is the only configuration where the suite has **zero** skipped tests.
+
+### The part that actually matters
+
+The snapshot's value is not *how many* tests run. It is **what they run against**.
+
+`tests/admin/data-health-db.test.ts` asserts that the set of municipality names in `region`
+equals the app's `LAUNCH_REGIONS` constant. In fixture mode that assertion **cannot fail** — and
+not because the code is right. The table was populated from `supabase/seeds/regions.sql`, and
+the seed file and the constant were written together. The fixture *is* the expectation. It is a
+tautology wearing a test's clothes.
+
+Load a snapshot and the same assertion compares the app's constant against what **production
+actually holds**. Demonstrated with `scripts/snapshot/synthetic-production-defect.sql`, which
+renames a live municipality the way a real rename would drift from a months-old seed file:
+
+```
+FAIL tests/admin/data-health-db.test.ts
+  → canonical launch-region constant matches the seeded municipalities
+     -   "North Vancouver (District)"      ← what the database holds
+     +   "North Vancouver"                 ← what the app's constant expects
+
+FAIL tests/regions.test.ts
+  → all seeded regions have a non-null centroid    (expected 1 to be 0)
+```
+
+Both are **pre-existing tests nobody had to write**. Region-name drift is one of the suspected
+root causes this pipeline was commissioned to target, and this is the configuration in which it
+becomes visible. The same applies to `tests/age_bands.test.ts`, `tests/geo/radius-postgres.test.ts`
+and every other assertion over reference data: fixture mode checks the seed file against itself;
+snapshot mode checks production against the app.
+
+Reference tables are therefore load-bearing snapshot contents, not incidental ones — which is
+why `region`, `category`, `tag`, `age_band` and `synonym_alias` are all on the allowlist. All of
+`tests/regions.test.ts`, `tests/age_bands.test.ts`, `tests/geo/radius-postgres.test.ts`,
+`tests/admin_guard.test.ts`, `tests/geo/venue-geo-golden.test.ts` and
+`tests/email/account_deletion_cascade.test.ts` pass against snapshot-loaded data, so the load
+path satisfies what they expect.
+
+## 10. What snapshot mode reports today
 
 From the first end-to-end run against a production-shaped dataset of 604 occurrences. Three of
 these are **findings the fixture suites are structurally incapable of producing** — they only
@@ -297,7 +357,7 @@ assuming the test is wrong — usually the catalogue is telling you something.
 
 ---
 
-## 10. Scheduling it nightly
+## 11. Scheduling it nightly
 
 The tooling is ready; **the scheduling decision is not mine to make**, because every option
 below changes where a production credential lives. Two viable shapes:
@@ -359,7 +419,7 @@ records the current property deliberately; if it changes, that comment must chan
 
 ---
 
-## 11. Rehearsing without production access
+## 12. Rehearsing without production access
 
 Everything above can be exercised locally, which is how the pipeline was validated:
 
@@ -399,7 +459,7 @@ catalogue's own free text, to exercise the redactors.
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
@@ -414,7 +474,7 @@ catalogue's own free text, to exercise the redactors.
 
 ---
 
-## 13. Where the code lives
+## 14. Where the code lives
 
 | Path | Role |
 |---|---|

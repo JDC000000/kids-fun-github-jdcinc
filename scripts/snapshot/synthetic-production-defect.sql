@@ -28,3 +28,25 @@ INSERT INTO region (id, name, level, parent_id, centroid) VALUES
 ON CONFLICT (id) DO UPDATE SET centroid = NULL;
 
 COMMIT;
+
+-- ── DEFECT 2: REFERENCE-DATA DRIFT ───────────────────────────────────────────────────
+--
+-- This one is the sharpest argument for the whole pipeline, so read it before deleting it.
+--
+-- A municipality in the LIVE database has been renamed since supabase/seeds/regions.sql was
+-- written — the "region-name drift" failure mode. tests/admin/data-health-db.test.ts asserts
+-- that the set of municipality names equals the LAUNCH_REGIONS constant in the app.
+--
+-- In FIXTURE MODE that assertion can never fail, and not because the code is correct: the test
+-- reads a region table that was populated from the seed file, and the seed file and the
+-- constant were written together. The fixture IS the expectation. It is a tautology wearing a
+-- test's clothes.
+--
+-- In SNAPSHOT MODE the same assertion compares the app's constant against what PRODUCTION
+-- actually holds — so a rename that happened in the live database, months after the seed file
+-- was last touched, finally has something that can see it.
+--
+-- Apply, re-export, re-load, run `npm run test:snapshot`, and watch data-health-db go red.
+UPDATE region
+   SET name = 'North Vancouver (District)'
+ WHERE name = 'North Vancouver' AND level = 'municipality';
