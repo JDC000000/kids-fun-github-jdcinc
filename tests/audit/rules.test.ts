@@ -13,6 +13,7 @@ import {
   exposedToChildSearch,
   structuredTags,
 } from '@/lib/audit/rules/adult-age-band';
+import { adultSubjectChildBandsRule } from '@/lib/audit/rules/adult-subject-child-bands';
 import type { AuditListing } from '@/lib/audit/types';
 
 function listing(overrides: {
@@ -25,6 +26,8 @@ function listing(overrides: {
   categoryTags?: string[];
   primaryCategoryKey?: string;
   ageBandMatches?: string[];
+  ageMinMonths?: number | null;
+  ageMaxMonths?: number | null;
 }): AuditListing {
   return {
     id: '00000000-0000-0000-0000-000000000001',
@@ -43,8 +46,8 @@ function listing(overrides: {
       categoryTags: overrides.categoryTags ?? ['class_program'],
       primaryCategoryKey: overrides.primaryCategoryKey ?? 'class_program',
       ageBandMatches: overrides.ageBandMatches ?? [],
-      ageMinMonths: null,
-      ageMaxMonths: null,
+      ageMinMonths: overrides.ageMinMonths ?? null,
+      ageMaxMonths: overrides.ageMaxMonths ?? null,
     },
   };
 }
@@ -209,5 +212,102 @@ describe('pattern 2 — adult source, child age exposure', () => {
     );
     expect(signal).not.toBeNull();
     expect(signal!.evidence.every((e) => e.strength === 'weak')).toBe(true);
+  });
+});
+
+describe('pattern 3 — adult SUBJECT, affirmatively-claimed child band', () => {
+  /** Verbatim from production 2026-08-18, id 97670289-a949-4ebb-8f47-d33adf92d404. */
+  const overdose = () =>
+    listing({
+      title: 'International Overdose Awareness',
+      // NOT source text. `age_notes` keeps the RAW wording only for rows that stayed
+      // unresolved; this row resolved, so the field holds our own verdict. The rule must not
+      // be able to excuse itself with it — see the guard test below.
+      ageWording: 'all-ages',
+      ageBandMatches: ['under2', '2-4', '5-9', '10-14', '15+'],
+      ageMinMonths: 0,
+      ageMaxMonths: null,
+    });
+
+  it('fires on the real live instance, with strong evidence', () => {
+    const signal = adultSubjectChildBandsRule.detect(overdose());
+    expect(signal).not.toBeNull();
+    expect(signal!.evidence.map((e) => e.quote.toLowerCase())).toContain('overdose');
+    expect(signal!.evidence.some((e) => e.field === 'title' && e.strength === 'strong')).toBe(true);
+    // The report has to say the claim was MADE, not merely not-hidden — that is the whole
+    // difference between this pattern and pattern 2.
+    expect(signal!.derivedClaim).toContain('AFFIRMATIVELY');
+    expect(signal!.derivedClaim).toContain('under2');
+  });
+
+  it('pattern 2 cannot see it, which is why this rule exists', () => {
+    // Not "pattern 2 ignores resolved rows" — it handles both exposure shapes. It has no
+    // ADULT AUDIENCE wording to read here, because resolving the age destroyed it.
+    expect(adultAgeBandRule.detect(overdose())).toBeNull();
+  });
+
+  it('does NOT fire on the empty-band case — that is pattern 2\'s row, not a second finding', () => {
+    expect(
+      adultSubjectChildBandsRule.detect(
+        listing({ title: 'The Basics of Overdose Response', ageBandMatches: [] })
+      )
+    ).toBeNull();
+  });
+
+  it('does NOT fire when the claimed bands are teen/adult only', () => {
+    expect(
+      adultSubjectChildBandsRule.detect(
+        listing({ title: 'Naloxone Training', ageBandMatches: ['10-14', '15+'] })
+      )
+    ).toBeNull();
+  });
+
+  it('GUARD: a derived age string can never excuse a derived age claim', () => {
+    // If `ageWording` were scanned by the child-audience guard, the literal string "all-ages"
+    // this codebase wrote would drop the finding — the bug would be its own alibi.
+    const signal = adultSubjectChildBandsRule.detect(overdose());
+    expect(signal).not.toBeNull();
+  });
+
+  it('GUARD: the source naming a young audience drops the listing outright', () => {
+    for (const title of [
+      'Grief Support for Children and Families',
+      'Youth Mental Health First Aid',
+      'Teen Naloxone Training',
+      'Overdose Awareness — All Ages Welcome',
+    ]) {
+      expect(
+        adultSubjectChildBandsRule.detect(listing({ title, ageBandMatches: ['5-9'] })),
+        title
+      ).toBeNull();
+    }
+  });
+
+  it('GUARD: caregiver-attended programmes are dropped, same guard as pattern 2', () => {
+    expect(
+      adultSubjectChildBandsRule.detect(
+        listing({ title: 'Parent & Tot Swim', description: 'Naloxone kits available on site.', ageBandMatches: ['under2'] })
+      )
+    ).toBeNull();
+  });
+
+  it('an ambiguous subject is a WEAK candidate, never an unreviewed finding', () => {
+    // Verbatim live title, also tagged all five bands. "Support Group" is real signal with an
+    // innocent reading (groups for parents of a child, run with childcare), so it earns a
+    // candidate for adjudication and nothing more.
+    const signal = adultSubjectChildBandsRule.detect(
+      listing({ title: 'Kitsilano MS Support Group', ageBandMatches: ['under2', '2-4', '5-9', '10-14', '15+'] })
+    );
+    expect(signal).not.toBeNull();
+    expect(signal!.evidence.every((e) => e.strength === 'weak')).toBe(true);
+  });
+
+  it('after the Level-1-2 ingest fix, the level rows are not a pattern-3 finding', () => {
+    // Part C makes parseAgeText leave these unresolved, so the affirmative precondition fails.
+    // (Production still serves the pre-fix bands until the rows are re-ingested — this pins the
+    // post-fix SHAPE, which is the only thing a rule test can honestly assert.)
+    for (const title of ['Balanced Body Pilates (Level 1-2)', 'Pickleball Lesson – Skills & Drills Level (1-2)']) {
+      expect(adultSubjectChildBandsRule.detect(listing({ title, ageBandMatches: [] })), title).toBeNull();
+    }
   });
 });

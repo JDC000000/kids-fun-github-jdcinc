@@ -96,6 +96,60 @@ const ALL_AGES_RE = /\ball[-\s]?ages?\b|\bfamil(?:y|ies)\b|\beveryone\b|\ball\s+
 const NOT_DECIMAL_BEFORE = /(?<![\d.,:])/.source; // not preceded by a digit, decimal or clock colon
 const NOT_DECIMAL_AFTER = /(?![.,:]\d)/.source; //  not the leading part of a decimal or clock time
 
+// A SKILL LEVEL IS THE THIRD MEMBER OF THE SAME FAMILY: a title number that is not an age.
+// "Balanced Body Pilates (Level 1-2)" published as ages 12-36 months — an adult Pilates class
+// labelled UNDER-2s AND 2-4s, resolved:true, i.e. stated as fact rather than left unknown.
+// "Pickleball Lesson – Skills & Drills Level (1-2)" is the same, and "Wushu Level 2+ Novice-
+// Intermediate" is the same defect through MIN_ONLY_RE instead of RANGE_RE ("level 2 and up"
+// read as "age 2 and up", four bands including 2-4). Verified on the live catalogue
+// 2026-08-18: 5 distinct programmes, 2 via the range rule and 3 via the min-only rule.
+//
+// WHY THIS IS A STRIP AND NOT ANOTHER LOOKAROUND, WHICH IS WHERE THE OBVIOUS FIX BREAKS
+// The decimal/clock guards work as lookarounds because a digit inside "3.0" is disqualified by
+// what touches it. A skill level is not: "Level 1-2" and "Aikido Beginner Level (5-7yrs)" have
+// the SAME shape and only the second is an age — the difference is the unit "yrs", which sits
+// AFTER the number a lookbehind would have to reject. A `(?<!level\s*\(?\s*)` guard therefore
+// throws away the correct age on the second title, which is live and currently right. So the
+// disqualifier is "labelled AND unit-less", and it is applied by removing the level phrase
+// before parsing rather than by guarding each numeric rule:
+//   • one place instead of two, so MIN_ONLY_RE cannot be left behind the way it was for the
+//     decimal guard's first cut;
+//   • it preserves the existing "skip the bad number, keep looking" behaviour that
+//     tests/ingestion/age.test.ts pins for clock times — "Level 1-2 (ages 5-7)" still resolves
+//     to 5-7, because only "Level 1-2" is removed.
+// Labels are the three the live data actually carries (level/lvl, stage, set). Widening this
+// list is a measured change, not a guess: "Session 1-2" and "Week 1-2" are plausible and absent
+// from the catalogue today, and each new word is a new chance to eat a real age range.
+const SKILL_LABEL = /(?:levels?|lvl|stages?|sets?)/.source;
+/**
+ * A number that is NOT immediately qualified as an age — "1", "2+", but not "5yrs".
+ *
+ * `(?!\d)` is load-bearing, not tidiness: without it the engine satisfies the unit check by
+ * BACKTRACKING to a shorter number, so "Level (8-12yrs)" matched "8-1" and left "2yrs)" behind —
+ * turning a correct 8-12 year listing into a 2-year-old one. Caught by running this against the
+ * live catalogue rather than against the two titles the fix was written for.
+ */
+const UNLABELLED_NUM = `\\d{1,2}(?!\\d)\\s*\\+?(?!\\s*(?:years?|yrs?|yr|months?|mos?|mo)\\b)`;
+const LABEL_GAP = `\\b[\\s:#.\\-–—]*\\(?\\s*`;
+const RANGE_SEP = `\\s*(?:[-–—/&]|to|and)\\s*`;
+// Ordered longest-first: the range form must win, and the single form must then REFUSE to match
+// half of a range it rejected — otherwise "Level (5-7yrs)" falls back to stripping "Level (5"
+// and destroys the very age the range form was protecting.
+const SKILL_LEVEL_RE = new RegExp(
+  `\\b${SKILL_LABEL}${LABEL_GAP}${UNLABELLED_NUM}${RANGE_SEP}${UNLABELLED_NUM}\\s*\\)?` +
+    `|\\b${SKILL_LABEL}${LABEL_GAP}${UNLABELLED_NUM}(?!${RANGE_SEP}\\d)\\s*\\)?`,
+  'gi'
+);
+
+/**
+ * Remove "Level 1-2" / "Stage 2" / "Set 1" style skill markers so their numbers cannot be read
+ * as ages. Only the marker is removed, never the rest of the string — the remaining text is
+ * still parsed normally.
+ */
+export function stripSkillLevels(text: string): string {
+  return text.replace(SKILL_LEVEL_RE, ' ');
+}
+
 // Explicit numeric year/month ranges: "ages 0-2", "0 - 2 years", "2 to 4", "6-18 months".
 //
 // EACH END CARRIES ITS OWN OPTIONAL UNIT, because a source is allowed to change units mid-range
@@ -187,8 +241,14 @@ export function extractAgeWording(...texts: Array<string | null | undefined>): s
  */
 export function parseAgeText(ageText?: string | null): AgeParse {
   if (!ageText) return { ...UNRESOLVED };
-  const text = ageText.toLowerCase().trim();
-  if (!text) return { ...UNRESOLVED };
+  const raw = ageText.toLowerCase().trim();
+  if (!raw) return { ...UNRESOLVED };
+  // Skill-level markers are removed before ANY rule runs, so no numeric rule can read one as an
+  // age. A string that is NOTHING BUT a level marker ("Set 1") strips to empty and falls through
+  // to the unresolved branch below — deliberately, because that branch keeps the untouched
+  // original in `notes`, and the LLM-fallback worklist must show what the source actually said
+  // rather than what this module chose to ignore.
+  const text = stripSkillLevels(raw).trim();
 
   // Explicit numeric range wins over everything else.
   const range = RANGE_RE.exec(text);

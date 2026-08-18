@@ -445,6 +445,8 @@ Decision rules:
 - The word "adults" is very often about SUPERVISION rather than audience. "Adults accompanying children under 9 must stay in the library" describes who must come along to a CHILDREN'S programme — that is NOT adult-only programming and NOT a contradiction. The same applies to "parent participation required", "adult supervision required", "children must be accompanied by an adult".
 - A programme FOR children that adults attend with them (Parent & Tot, Family Storytime, Adult & Child Swim) is a children's programme. Not a contradiction.
 - A structured audience tag that literally reads "Adults" or "Seniors", with no children's audience beside it, IS an adult-audience claim.
+- Some listings name no audience at all, and the only adult signal is the SUBJECT: overdose response, bereavement, dementia, income-tax help. Judge whether that subject could plausibly be programming for the age band claimed. A toddler band on an overdose-awareness event is a contradiction; a children's grief group is not, and neither is a public commemoration that genuinely welcomes all ages.
+- source_age_wording is NOT always the source's words. When the age parser resolved the row, this field holds THIS DIRECTORY'S OWN verdict (e.g. the literal string "all-ages"). Never treat it as the source agreeing with the derived claim.
 - "Rain or Shine", "Outdoor", "weather permitting", "spray park", "trail", "beach" state that the activity happens outdoors. If the directory also labels it Indoor / Rainy-day friendly, that IS a real contradiction — even if the activity might have an indoor backup location.
 - If the source text is too thin to tell, that is NOT a contradiction. Report contradiction=false with a low confidence.
 
@@ -463,7 +465,10 @@ Examples:
 - rule outdoor_source_indoor_tag, title "Indoor Playground Drop-In", derived "tagged indoor" → {"contradiction": false, "confidence": 0.95, "reason": "Source says indoor; playground here is an indoor facility."}
 - rule adult_source_child_bands, age wording "International Overdose Awareness Day, Health, Life Skills and Personal Growth, Adults, English", derived "no age bands, admitted into every age filter including 2-4" → {"contradiction": true, "confidence": 0.95, "reason": "Source tags the audience as Adults, yet the listing reaches a toddler age filter."}
 - rule adult_source_child_bands, description "Adults accompanying children under 9 must stay in the library", derived "carries child age band 2-4" → {"contradiction": false, "confidence": 0.95, "reason": "Supervision requirement for a children's programme, not adult-only programming."}
-- rule adult_source_child_bands, title "Prenatal Yoga", derived "no age bands, admitted into every age filter including 2-4" → {"contradiction": true, "confidence": 0.93, "reason": "Prenatal classes are adult-only and should not surface in a toddler search."}`;
+- rule adult_source_child_bands, title "Prenatal Yoga", derived "no age bands, admitted into every age filter including 2-4" → {"contradiction": true, "confidence": 0.93, "reason": "Prenatal classes are adult-only and should not surface in a toddler search."}
+- rule adult_subject_child_bands, title "International Overdose Awareness", derived "affirmatively resolved to include child bands under2, 2-4, 5-9" → {"contradiction": true, "confidence": 0.94, "reason": "Overdose-awareness programming is adult subject matter, yet the listing states it is for under-2s."}
+- rule adult_subject_child_bands, title "Kitsilano MS Support Group", derived "affirmatively resolved to include child bands under2, 2-4, 5-9" → {"contradiction": true, "confidence": 0.75, "reason": "A multiple-sclerosis support group is adult programming; the all-ages label is not supported by the source."}
+- rule adult_subject_child_bands, title "Remembrance Day Ceremony", derived "affirmatively resolved to include child bands under2, 2-4, 5-9" → {"contradiction": false, "confidence": 0.9, "reason": "A public commemoration is genuinely attended by all ages, including young children."}`;
 
 export const SAFETY_AUDIT_OUTPUT_SCHEMA: Record<string, unknown> = {
   type: 'object',

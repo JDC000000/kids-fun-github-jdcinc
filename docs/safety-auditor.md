@@ -9,23 +9,56 @@ Nothing in it writes. It makes `GET /api/search` calls and produces a report.
 
 ---
 
-## The two patterns it detects today
+## The three patterns it detects today
 
 | Rule id | What it catches | Real instance |
 |---|---|---|
 | `outdoor_source_indoor_tag` | Source says outdoor; the card renders **Indoor / Rainy-day friendly** | `Sportball Outdoor Soccer (5-7yrs) Rain/Shine` → `suitabilityTags: ['outdoor','indoor']` |
-| `adult_source_child_bands` | Source says Adults / 18+ / Seniors / prenatal; the listing reaches a **child age filter** | `Supporting People Together: The Basics of Overdose Response`, `age_notes: "…, Adults, English"`, `ageBandMatches: []` → returned by `ages=2-4` |
+| `adult_source_child_bands` | Source names an adult **audience**; the listing reaches a **child age filter** | `Supporting People Together: The Basics of Overdose Response`, `age_notes: "…, Adults, English"`, `ageBandMatches: []` → returned by `ages=2-4` |
+| `adult_subject_child_bands` | Source's **subject** is adult-only; the listing **affirmatively claims** a child band | `International Overdose Awareness`, `age_notes: "all-ages"`, `ageBandMatches: [under2, 2-4, 5-9, 10-14, 15+]` |
 
 Pattern 2 counts **two** ways a listing reaches a child: it carries a child band, *or* it carries
 **no bands at all** — because the search filter's "empty → don't hide" rule then admits it into
 every age filter. The tonight instance was the second kind, and a rule that only looked at bands
 present would have scored it clean.
 
-### Adding a third pattern
+### Pattern 3, and what it is NOT
 
-One file under `lib/audit/rules/`, one entry in `lib/audit/registry.ts`, one test. The prefilter,
-the LLM stage, the report and the CLI all iterate the registry and know nothing about how many
-rules exist.
+Pattern 3 is often described as "pattern 2 but for resolved rows". That is wrong, and the wrong
+version is unimplementable: pattern 2 already handles the child-band-present case, and its tests
+pin it. The gap it fills is on the **evidence** side.
+
+Pattern 2 asks whether the source names an adult **audience**. On the `International Overdose
+Awareness` row there is no audience wording left to read, because resolving an age **destroys**
+it: `occurrence_age.age_notes` keeps the raw source string only while a row is unresolved
+(`"unresolved: …"`), and this row resolved to `"all-ages"`. So the auditor's `source.ageWording`
+for it is the string `all-ages` — *our own output wearing the source's field*. The only adult
+signal left is in the title, and it is not an audience, it is a **subject**.
+
+Two consequences are load-bearing:
+
+- Pattern 3's false-positive guards read **title and description only**, never `ageWording`.
+  Letting a derived age string satisfy a source-side guard would make the rule unfalsifiable —
+  the bug would be its own alibi.
+- Pattern 3 requires the child band to be **present**, and deliberately ignores the empty-band
+  case. An empty band list is a *known unknown* (the parser said "I cannot tell", and the filter
+  chose to be permissive, which pattern 2 owns); a populated one is a **false statement of
+  fact**. Only the second is a claim we made.
+
+Measured against the live catalogue on 2026-08-18 — 4,530 rows, 2,090 of them carrying an
+affirmative child band — pattern 3 raises **one strong** candidate (the row above) and **one
+weak** one (`Kitsilano MS Support Group`, also tagged all five bands), with no guarded-out rows.
+Its subject list is expected to grow one measured entry at a time; adding a term without checking
+it against a live sweep is how a severity-3 report starts being filtered to a folder.
+
+### Adding a fourth pattern
+
+One file under `lib/audit/rules/`, one entry in `lib/audit/registry.ts` (plus its `custom_id`
+prefix), one test. The prefilter, the LLM stage, the report and the CLI all iterate the registry
+and know nothing about how many rules exist. Shared vocabulary — which bands expose a listing to
+a child, the supervision-sentence trap guard, the caregiver-programme guard — lives in
+`lib/audit/rules/adult-signals.ts` with one owner, so a new rule reuses it rather than growing a
+second copy that drifts.
 
 ---
 
@@ -90,6 +123,11 @@ The rule therefore reuses `parseAudienceLabels()` (so the audience semantics can
 guards what reaches it: `structuredTags()` discards any candidate tag containing
 supervision/accompaniment language, or running longer than six words. Both halves are pinned by
 tests, including the verbatim sentence.
+
+That guard, the caregiver-programme guard and the child-band set now live in
+`lib/audit/rules/adult-signals.ts`, shared by patterns 2 and 3. Two copies of a false-positive
+guard drift the moment one is tuned, and the drift surfaces as a false positive on a
+child-safety report — the one output whose credibility everything else here depends on.
 
 ---
 
