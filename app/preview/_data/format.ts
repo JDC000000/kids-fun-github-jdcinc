@@ -8,7 +8,26 @@ import type { Activity, ConfidenceLabel, StatusMeta, StatusState } from './types
 
 const VANCOUVER_TZ = 'America/Vancouver';
 
-/** Reference "now" for the static fixtures (matches the sprint date). */
+/**
+ * Reference "now" for the static fixtures (matches the sprint date).
+ *
+ * NOT the default for the freshness math any more, and that is the whole of P0-3. This constant
+ * used to be the default `nowIso` of `daysSince`/`formatChecked`, so every LIVE card measured its
+ * last check against 13 July 2026 — a frozen date, months behind the reader — and `daysSince`'s
+ * `Math.max(0, …)` floor collapsed every one of those negative differences to 0. The badge was
+ * therefore not "sometimes wrong": every listing checked at any point after 13 July 2026, which
+ * is every listing the crawler has ever touched, printed **"Checked today"**, permanently,
+ * regardless of when it was actually checked. Measured against the 2026-08-18 snapshot DB
+ * (603 live occurrences, last_checked_at spanning 16–17 August): 603 of 603 rendered "Checked
+ * today". The honest readings, in the Vancouver calendar-day frame this module measures in,
+ * are "Checked yesterday" (183) and "Checked 2 days ago" (420) — not one listing of the 603
+ * had been checked on the day it claimed to have been.
+ *
+ * This badge is the product's stated differentiator, so a badge that is structurally incapable
+ * of saying anything but "today" is the most expensive untruth on the card — the same shape of
+ * defect as `formatAges`' fabricated "All ages" and `formatCost`' invented "$0", except this one
+ * was making an affirmative claim about our own diligence.
+ */
 export const FIXTURE_NOW = '2026-07-13T09:00:00-07:00';
 
 /** The when-line a card and a detail page both print: a day (or span) plus a time (or hours). */
@@ -283,11 +302,30 @@ export function formatDistanceValue(activity: Pick<Activity, 'distanceKm'>): str
   return activity.distanceKm == null ? 'Unavailable' : `${activity.distanceKm.toFixed(1)} km`;
 }
 
-/** Whole-day difference between a checked date and "now", in the Vancouver day frame. */
-export function daysSince(lastCheckedIso: string, nowIso: string = FIXTURE_NOW): number {
-  const then = startOfVancouverDay(new Date(lastCheckedIso));
-  const now = startOfVancouverDay(new Date(nowIso));
-  const ms = now - then;
+/**
+ * Whole-day difference between a check timestamp and now, in the Vancouver day frame — or
+ * `null` when there is no usable timestamp to measure from (absent, or unparseable).
+ *
+ * `nowIso` defaults to the REAL clock. It stays injectable, because the fixture shell and every
+ * test need a fixed reference, but a caller that passes nothing now gets today instead of the
+ * sprint date this module used to hardcode (see FIXTURE_NOW's header for what that cost).
+ *
+ * THE 0 FLOOR STAYS, and is now only reachable by clock skew — a row stamped a little ahead of
+ * the reader's clock. "Checked in -1 days" is not a sentence a parent can read. What made the
+ * floor dangerous was never the floor; it was a default `now` months in the past, which turned a
+ * guard against skew into a guarantee of "today".
+ */
+export function daysSince(
+  lastCheckedIso: string | null,
+  nowIso: string = new Date().toISOString(),
+): number | null {
+  if (!lastCheckedIso) return null;
+  const then = new Date(lastCheckedIso);
+  const now = new Date(nowIso);
+  // An unparseable instant is "we don't know when", not "0 days ago" — and `startOfVancouverDay`
+  // throws on an Invalid Date, so this guard is load-bearing as well as honest.
+  if (Number.isNaN(then.getTime()) || Number.isNaN(now.getTime())) return null;
+  const ms = startOfVancouverDay(now) - startOfVancouverDay(then);
   return Math.max(0, Math.round(ms / 86_400_000));
 }
 
@@ -302,9 +340,38 @@ function startOfVancouverDay(d: Date): number {
   return new Date(`${ymd}T00:00:00-07:00`).getTime();
 }
 
-/** Human "Checked today / Checked 2 days ago" for the freshness stamp. */
-export function formatChecked(lastCheckedIso: string, nowIso: string = FIXTURE_NOW): string {
+/**
+ * The words for a listing we hold no check timestamp for — the sibling of AGE_NOT_STATED,
+ * COST_UNKNOWN and DISTANCE_UNKNOWN, and here for the same reason: an absent fact is STATED,
+ * never filled in.
+ *
+ * Reached whenever `activity_occurrence.last_checked_at` is null — a row nothing has ever
+ * ingested or re-checked. That null used to be replaced with `new Date().toISOString()` one
+ * layer up in search-api.ts, which manufactured a freshness claim ("Checked today") out of a
+ * row we have never once looked at. Of the two possible readings of a missing timestamp, that
+ * boundary picked the single most flattering one and printed it with full confidence.
+ *
+ * Deliberately NOT "Not checked recently": we do not know that it wasn't: we know only that we
+ * hold no record of a check. Naming the record, rather than guessing at the world, is the same
+ * distinction `AGE_NOT_STATED` draws between "no age applies" and "the source stated no age".
+ */
+export const CHECK_NOT_RECORDED = 'Last check not recorded';
+
+/**
+ * Human "Checked today / Checked yesterday / Checked 12 days ago" for the freshness stamp —
+ * or CHECK_NOT_RECORDED when we hold no timestamp for this listing.
+ *
+ * Measured against the REAL clock by default (see `daysSince`). No threshold buckets and no
+ * upper cap: a listing last checked 200 days ago says so, in the same words as one checked
+ * yesterday. A cap would put a floor under how bad the number is allowed to look, which is the
+ * defect this function is being repaired from, one storey up.
+ */
+export function formatChecked(
+  lastCheckedIso: string | null,
+  nowIso: string = new Date().toISOString(),
+): string {
   const days = daysSince(lastCheckedIso, nowIso);
+  if (days === null) return CHECK_NOT_RECORDED;
   if (days === 0) return 'Checked today';
   if (days === 1) return 'Checked yesterday';
   return `Checked ${days} days ago`;

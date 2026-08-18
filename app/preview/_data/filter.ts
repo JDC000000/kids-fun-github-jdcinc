@@ -139,6 +139,20 @@ function compareSoonest(a: Activity, b: Activity): number {
   return a.startIso.localeCompare(b.startIso);
 }
 
+/**
+ * Most-recently-checked first. A listing we hold no check timestamp for sorts LAST rather than
+ * first — the same "unknown goes to the back" choice `compareSoonest` above makes for a null
+ * `startIso`. Comparing the strings directly would throw on the null the field now carries, and
+ * defaulting the null to an empty string would have put every never-checked listing at the head
+ * of a list whose whole promise is "these are the ones we checked most recently".
+ */
+function compareRecentlyChecked(a: Activity, b: Activity): number {
+  if (!a.lastCheckedIso && !b.lastCheckedIso) return 0;
+  if (!a.lastCheckedIso) return 1;
+  if (!b.lastCheckedIso) return -1;
+  return b.lastCheckedIso.localeCompare(a.lastCheckedIso);
+}
+
 /** Stable sort within an already-sectioned list. Best-match = closest then soonest. */
 export function sortActivities(activities: Activity[], key: SortKey): Activity[] {
   const copy = [...activities];
@@ -151,7 +165,7 @@ export function sortActivities(activities: Activity[], key: SortKey): Activity[]
       case 'lowest_cost':
         return effectiveCost(a) - effectiveCost(b);
       case 'recently_checked':
-        return b.lastCheckedIso.localeCompare(a.lastCheckedIso);
+        return compareRecentlyChecked(a, b);
       case 'best_match':
       default:
         return byDistance(a, b) || compareSoonest(a, b);

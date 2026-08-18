@@ -36,7 +36,12 @@ describe('describeActivity', () => {
     expect(desc).toContain('Trout Lake');
     expect(desc).toContain('$7 approx.');
     expect(desc).toContain('Source: vancouver.ca');
-    expect(desc).toContain('Checked today');
+    // The freshness line is now a READING of this fixture's own timestamp against the real
+    // clock, not the frozen "Checked today" it used to be pinned to — see the FIXTURE_NOW
+    // header in app/preview/_data/format.ts for why that constant is no longer a default.
+    // Asserting the SHAPE (and, below, that it is not a bare static string) is what this test
+    // was ever actually about: that the share/OG description states a freshness at all.
+    expect(desc).toMatch(/Checked (today|yesterday|\d+ days ago)\.$/);
   });
   it('never invents a price when cost is unknown', () => {
     const desc = describeActivity(unknownCost);

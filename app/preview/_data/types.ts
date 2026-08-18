@@ -146,7 +146,13 @@ export interface Activity {
    * detail UI renders nothing at all in that case rather than an empty field.
    */
   venuePhone?: string;
-  lastCheckedIso: string; // freshness stamp source of truth
+  /**
+   * `activity_occurrence.last_checked_at`, verbatim — the freshness stamp's source of truth.
+   * NULLABLE, because the column is: a row nothing has ever ingested or re-checked holds no
+   * timestamp, and the mapper is no longer allowed to invent one (see search-api.ts). The stamp
+   * reads CHECK_NOT_RECORDED for that case rather than "Checked today".
+   */
+  lastCheckedIso: string | null;
   /**
    * How many same-series-same-day occurrences this ONE card now stands for (lib/search/collapse.ts).
    * 1 (or absent) is an ordinary single-slot card; >1 renders as "15 slots, 3:15 PM–7:30 PM" instead

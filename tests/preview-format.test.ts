@@ -159,6 +159,14 @@ describe('freshness math', () => {
     expect(formatChecked('2026-07-12T06:00:00-07:00', now)).toBe('Checked yesterday');
     expect(formatChecked('2026-07-07T06:00:00-07:00', now)).toBe('Checked 6 days ago');
   });
+  // No timestamp = no measurement. `Math.max(0, …)` would otherwise have made "we have never
+  // checked this" indistinguishable from "we checked it this morning". The badge copy for this
+  // case, and the mapper that must stop inventing a timestamp for it, are pinned in
+  // tests/ui/freshness-badge-live-clock.test.tsx.
+  it('measures nothing when there is no usable timestamp', () => {
+    expect(daysSince(null, now)).toBeNull();
+    expect(daysSince('not-a-date', now)).toBeNull();
+  });
 });
 
 describe('formatWhen (America/Vancouver)', () => {

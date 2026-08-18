@@ -226,7 +226,13 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     ...(l.bookingUrl ? { bookingUrl: l.bookingUrl } : {}),
     ...(l.locationUrl ? { locationUrl: l.locationUrl } : {}),
     ...(l.venuePhone ? { venuePhone: l.venuePhone } : {}),
-    lastCheckedIso: l.lastCheckedAtUtc ?? new Date().toISOString(),
+    // Carried VERBATIM, null included — the same rule `startIso` above and `distanceKm` already
+    // follow. `?? new Date().toISOString()` used to sit here, and it is the second half of the
+    // freshness defect: a row with NO last_checked_at (nothing has ever ingested or re-checked
+    // it) was stamped with the moment the page rendered, so the card told a parent we had
+    // checked it today. That is a claim about our own diligence, invented at the boundary, for
+    // exactly the listings we know the least about. `formatChecked` states the absence instead.
+    lastCheckedIso: l.lastCheckedAtUtc,
     ...(slotCount > 1 ? { slotCount } : {}),
     ...(slotCount > 1 && item.slotSpanEndUtc ? { slotEndIso: item.slotSpanEndUtc } : {}),
     ...(slotCosts ? { slotCosts } : {}),
