@@ -107,6 +107,62 @@ describe('parseAgeText — deterministic age wording', () => {
     });
   });
 
+  // A SKILL LEVEL IS THE THIRD MEMBER OF THE SAME FAMILY — a title number that is not an age —
+  // and, like the decimal, it fires through BOTH numeric rules. Live on 2026-08-18:
+  //   RANGE_RE:    "Balanced Body Pilates (Level 1-2)"            → 12-36 months  [under2, 2-4]
+  //                "Pickleball Lesson – Skills & Drills Level (1-2)" → same
+  //   MIN_ONLY_RE: "Wushu Level 2+ / 3+ / 4+"                     → 24/36/48 months and up
+  // All five published `resolved: true`, i.e. as a statement of fact, not as an unknown.
+  it('never reads an age out of a skill level, through either numeric rule', () => {
+    for (const title of [
+      'Balanced Body Pilates (Level 1-2)',
+      'Pickleball Lesson – Skills & Drills Level (1-2)',
+      'Wushu Level 2+ Novice-Intermediate',
+      'Wushu Level 3+ Intermediate-Advanced',
+      'Wushu Level 4+ Competitive',
+      'Iyengar Yoga - Level 1 and 2 (AM)',
+      'Pickleball Lessons - Stage 2/3 - Volley Smart',
+      'Aikido - Set 1',
+    ]) {
+      expect(parseAgeText(title), title).toMatchObject({ ageMinMonths: null, ageMaxMonths: null, resolved: false });
+      expect(computeAgeBandMatches(parseAgeText(title), BANDS), title).toEqual([]);
+    }
+  });
+
+  it('keeps the raw wording on the worklist even when the level marker was the whole string', () => {
+    // Stripping happens before the rules, so "Set 1" reaches them as ''. The unresolved branch
+    // must still echo what the SOURCE said — that string is the LLM-fallback's only input.
+    expect(parseAgeText('Aikido - Set 1').notes).toBe('unresolved: Aikido - Set 1');
+    expect(parseAgeText('Set 1').notes).toBe('unresolved: Set 1');
+  });
+
+  it('does NOT over-guard: a level label beside a real age range keeps the age range', () => {
+    // These are verbatim live titles that are CORRECT today. The naive fix — a lookbehind
+    // rejecting a number preceded by "Level" — breaks every one of them, because the only thing
+    // separating "Level 1-2" from "Level (5-7yrs)" is the unit that follows the number.
+    expect(parseAgeText('Aikido Beginner Level (5-7yrs)')).toMatchObject({ ageMinMonths: 60, ageMaxMonths: 96 });
+    expect(parseAgeText('Aikido Beginner Level (8-12yrs)')).toMatchObject({ ageMinMonths: 96, ageMaxMonths: 156 });
+    expect(parseAgeText('Ballet / Jazz Fusion (4-7yrs) Set 1')).toMatchObject({ ageMinMonths: 48, ageMaxMonths: 96 });
+    expect(parseAgeText('K-Pop (6-12yrs) Set 1')).toMatchObject({ ageMinMonths: 72, ageMaxMonths: 156 });
+    expect(parseAgeText('My First Dance Class (ages 2–4 + guardian) Set 1')).toMatchObject({
+      ageMinMonths: 24,
+      ageMaxMonths: 60,
+    });
+    // …and ordinary numeric age wording is untouched wherever it appears.
+    expect(parseAgeText('ages 3-5')).toMatchObject({ ageMinMonths: 36, ageMaxMonths: 72, resolved: true });
+    expect(parseAgeText('6-18 months')).toMatchObject({ ageMinMonths: 6, ageMaxMonths: 19, resolved: true });
+    expect(parseAgeText('ages 5+')).toMatchObject({ ageMinMonths: 60, ageMaxMonths: null, resolved: true });
+  });
+
+  it('skips the level and keeps looking, exactly as the decimal and clock guards do', () => {
+    expect(parseAgeText('Level 1-2 (ages 5-7)')).toMatchObject({ ageMinMonths: 60, ageMaxMonths: 96, resolved: true });
+    expect(parseAgeText('Swim Level 3 ages 6-8 years')).toMatchObject({
+      ageMinMonths: 72,
+      ageMaxMonths: 108,
+      resolved: true,
+    });
+  });
+
   it('resolves open-ended minimums and "under N"', () => {
     expect(parseAgeText('ages 5+')).toMatchObject({ ageMinMonths: 60, ageMaxMonths: null, resolved: true });
     expect(parseAgeText('5 years and up')).toMatchObject({ ageMinMonths: 60, ageMaxMonths: null, resolved: true });
