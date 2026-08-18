@@ -1,5 +1,30 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CityCalendarAdapter, getCityCalendar } from '../../worker/adapters/citycalendar';
+import { computeAgeBandMatches, parseAgeText } from '../../worker/core/age';
+
+/** The seeded age_band rows (supabase/seeds), so a band assertion reads as bands not ids. */
+const BANDS = [
+  { id: 'under2', key: 'under2', lowerMonthsInclusive: 0, upperMonthsExclusive: 24 },
+  { id: '2-4', key: '2-4', lowerMonthsInclusive: 24, upperMonthsExclusive: 60 },
+  { id: '5-9', key: '5-9', lowerMonthsInclusive: 60, upperMonthsExclusive: 120 },
+  { id: '10-14', key: '10-14', lowerMonthsInclusive: 120, upperMonthsExclusive: 180 },
+  { id: '15+', key: '15+', lowerMonthsInclusive: 180, upperMonthsExclusive: null },
+];
+
+/** Minimal well-formed Trumba event; `audiences` omitted = no structured field. */
+function trumba(id: number, title: string, description: string, audiences?: string) {
+  return {
+    eventID: id,
+    title,
+    description,
+    location: '<a href="http://maps.google.com/?q=453+W+12th+Ave%2C+Vancouver%2C+BC">City Hall</a>',
+    startDateTime: '2026-08-31T10:00:00',
+    startTimeZoneOffset: '-0700',
+    canceled: false,
+    requiresPayment: false,
+    customFields: audiences ? [{ label: 'Audiences', value: audiences }] : [],
+  };
+}
 
 // KIDS FUN Task 9 — City of Vancouver events calendar (Trumba public JSON feed).
 // The city_calendar adapter consumes a municipality's public calendar-syndication
@@ -221,6 +246,136 @@ describe('CityCalendar adapter — City of Vancouver Trumba feed (Task 9)', () =
     expect(skate.venueLat).toBeCloseTo(49.2214, 3);
     expect(skate.venueLng).toBeCloseTo(-123.0398, 3);
     expect(skate.venueDisplayArea).toBe('Killarney'); // curated, not "All of Vancouver"
+  });
+
+  // ── adult subject + catch-all "Audiences" tag → no age claim at all ─────────────────
+  //
+  // The fixture below is the VERBATIM live Trumba payload for eventID 150181808, captured
+  // from https://www.trumba.com/calendars/city-of-vancouver-events.json on 2026-08-18 —
+  // the event behind listing 97670289-a949-4ebb-8f47-d33adf92d404, which the safety
+  // auditor's adult_subject_child_bands rule reported with ageBandMatches =
+  // [under2, 2-4, 5-9, 10-14, 15+]. Root cause is the STRUCTURED field, not the prose
+  // fallback: `Audiences` literally reads "All ages", and AGE_HINT_RE matches nothing in
+  // this title+description (pinned below), so the fallback never ran.
+  const OVERDOSE_FIXTURE = [
+    {
+      eventID: 150181808,
+      seriesID: 150181802,
+      title: 'International Overdose Awareness',
+      description: 'City Hall&#39;s flag will be at half-mast in honour of&#160;International Overdose Awareness.',
+      location:
+        '<a href="http://maps.google.com/?q=453+W+12th+Ave%2C+Vancouver%2C+BC+V5Y+1V4%2C+Canada" target="_blank" rel="noopener">City Hall<br />Vancouver City Hall<br />453 W 12th Ave, Vancouver, BC V5Y 1V4, Canada</a>',
+      startDateTime: '2026-08-31T01:00:00',
+      endDateTime: '2026-09-01T01:00:00',
+      startTimeZoneOffset: '-0700',
+      endTimeZoneOffset: '-0700',
+      allDay: true,
+      canceled: false,
+      requiresPayment: false,
+      permaLinkUrl:
+        'https://vancouver.ca/news-calendar/calendar-of-events.aspx?trumbaEmbed=view%3Devent%26eventid%3D150181808',
+      customFields: [
+        { fieldID: 41996, label: 'Event type', value: 'Community' },
+        { fieldID: 43884, label: 'Campaign, project, or topic', value: 'Flag observance' },
+        { fieldID: 45689, label: 'Neighbourhoods', value: 'All of Vancouver' },
+        { fieldID: 42593, label: 'Audiences', value: 'All ages' },
+        { fieldID: 42594, label: 'Languages', value: 'English' },
+        { fieldID: 42002, label: 'Organizer type', value: 'City of Vancouver' },
+        { fieldID: 42595, label: 'Organizer name', value: 'External Protocol' },
+      ],
+    },
+  ];
+
+  it('withholds a catch-all Audiences tag when the source subject is adult-only (real 150181808 payload)', async () => {
+    process.env.KIDS_FUN_LIVE_CITY_CALENDARS = 'vancouver';
+    stubFetchJson(OVERDOSE_FIXTURE);
+    const adapter = new CityCalendarAdapter(getCityCalendar('vancouver')!);
+    const [record] = await adapter.extract(await adapter.fetch());
+
+    // The claim is withheld entirely — not replaced with a different age. Absent wording is
+    // a neutral parse signal (worker/core/ingest.ts writes no occurrence_age row), so the
+    // listing stays visible and simply stops asserting it is programming for a baby.
+    expect(record.ageText).toBeUndefined();
+    const parse = parseAgeText(record.ageText);
+    expect(parse.resolved).toBe(false);
+    expect(computeAgeBandMatches(parse, BANDS)).toEqual([]);
+
+    // The rest of the record is untouched by the age decision.
+    expect(record.title).toBe('International Overdose Awareness');
+    expect(record.venueName).toBe('City Hall');
+    expect(record.venueDisplayArea).toBeUndefined(); // "All of Vancouver" is not an area
+  });
+
+  it('pins the pre-fix band explosion, so the fixture proves the fix and not the fixture', () => {
+    // What the shipped code produced for this exact row: 'All ages' → [0, ∞) → all five
+    // bands, ageMinMonths 0. If this ever stops being the "before" picture, the test above
+    // is passing for the wrong reason.
+    const before = parseAgeText('All ages');
+    expect(before).toMatchObject({ ageMinMonths: 0, ageMaxMonths: null, resolved: true, notes: 'all-ages' });
+    expect(computeAgeBandMatches(before, BANDS)).toEqual(['under2', '2-4', '5-9', '10-14', '15+']);
+
+    // And the prose fallback is NOT the culprit: it finds nothing in this event's own text.
+    const hay = "International Overdose Awareness City Hall's flag will be at half-mast in honour of International Overdose Awareness.";
+    expect(
+      /(?:for\s+)?(?:kids|children|families|family|all\s+ages|youth|teens?|tweens?|toddlers?|babies|baby|preschool(?:ers)?|seniors?|adults?)[^.<\n]{0,30}/i.exec(
+        hay
+      )
+    ).toBeNull();
+  });
+
+  it('still resolves genuine audience claims, and never second-guesses a source that names a child', async () => {
+    process.env.KIDS_FUN_LIVE_CITY_CALENDARS = 'vancouver';
+    stubFetchJson([
+      // (a) Ordinary catch-all tags with no adult subject — unchanged behaviour.
+      trumba(1, 'Music in the Park', 'Free outdoor concert in the park.', 'All ages'),
+      trumba(2, 'Lunar New Year Craft', 'Drop-in craft.', 'Families'),
+      // (b) A SPECIFIC tag is never eligible for suppression, even beside an adult subject:
+      //     the structured-field-over-prose preference is untouched.
+      trumba(3, 'Youth Harm Reduction Workshop', 'Peer-led session.', 'Youth'),
+      trumba(4, 'Overdose Awareness Info Session', 'For adults only.', 'Adults'),
+      // (c) Guards: the source's own words say a child may come, so the catch-all stands.
+      trumba(5, 'Kids Grief Support Circle', 'A bereavement group for children.', 'All ages'),
+      trumba(6, 'Naloxone Training for Families', 'Learn to respond to an overdose.', 'All ages'),
+      // (d) No Audiences field at all — the prose fallback still works as before.
+      trumba(7, 'Family Swim', 'Drop-in swim for all ages at the pool.'),
+      // (e) A WEAK audit marker ("support group") must NOT suppress at ingest: no
+      //     adjudicator here, and those subjects do run as real family programmes.
+      trumba(8, 'Community Support Group', 'Monthly meet-up.', 'All ages'),
+      // (f) The suppression itself, via a different strong marker + no Audiences field is
+      //     not required — this one has the tag, and the description carries the subject.
+      trumba(9, 'Flag Lowering', 'Marking the anniversary of a death by suicide.', 'All ages'),
+    ]);
+    const adapter = new CityCalendarAdapter(getCityCalendar('vancouver')!);
+    const byId = new Map((await adapter.extract(await adapter.fetch())).map((r) => [r.sourceRecordId, r]));
+
+    expect(byId.get('1')?.ageText).toBe('All ages');
+    expect(byId.get('2')?.ageText).toBe('Families');
+    expect(byId.get('3')?.ageText).toBe('Youth');
+    expect(byId.get('4')?.ageText).toBe('Adults');
+    expect(byId.get('5')?.ageText).toBe('All ages');
+    expect(byId.get('6')?.ageText).toBe('All ages');
+    // The 30-char window still starts at the TITLE's "Family" and truncates mid-phrase,
+    // exactly as it did before this change — the prose path is untouched.
+    expect(byId.get('7')?.ageText).toBe('Family Swim Drop-in swim for all age');
+    expect(byId.get('8')?.ageText).toBe('All ages');
+    expect(byId.get('9')?.ageText).toBeUndefined();
+
+    // The ones that still resolve resolve to the SAME bands as before the fix.
+    expect(computeAgeBandMatches(parseAgeText(byId.get('1')!.ageText), BANDS)).toEqual([
+      'under2',
+      '2-4',
+      '5-9',
+      '10-14',
+      '15+',
+    ]);
+    expect(computeAgeBandMatches(parseAgeText(byId.get('3')!.ageText), BANDS)).toEqual(['10-14', '15+']);
+    expect(computeAgeBandMatches(parseAgeText(byId.get('7')!.ageText), BANDS)).toEqual([
+      'under2',
+      '2-4',
+      '5-9',
+      '10-14',
+      '15+',
+    ]);
   });
 
   it('does not make a live request when the calendar is not enabled (fixture-only)', async () => {

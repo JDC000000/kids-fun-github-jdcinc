@@ -14,6 +14,7 @@
 // gate (source terms_status='allowed' + robots_status='allowed') AND the
 // env allow-list KIDS_FUN_LIVE_CITY_CALENDARS=<calendarKey>.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
+import { parseAgeText } from '../../core/age';
 import { politeFetch } from '../../health/policy';
 import { VENUE_GEO_AUTHORITY } from '../../core/venue-geo-authority';
 import { CITY_CALENDARS, getCityCalendar, type CityCalendarConfig, type CityCalendarVenueGeo } from './config';
@@ -211,17 +212,123 @@ function categoryHint(event: TrumbaEvent): string | undefined {
 const AGE_HINT_RE =
   /(?:for\s+)?(?:kids|children|families|family|all\s+ages|youth|teens?|tweens?|toddlers?|babies|baby|preschool(?:ers)?|seniors?|adults?)[^.<\n]{0,30}/i;
 
+// ── a catch-all audience is not a child-audience claim when the subject is adult-only ──
+//
+// THE ROW THIS EXISTS FOR, and it is not a parsing bug:
+//   "International Overdose Awareness"  (eventID 150181808, listing 97670289-…)
+//   customFields: [{ label: 'Audiences', value: 'All ages' }, …]
+//   description:  "City Hall's flag will be at half-mast in honour of International
+//                  Overdose Awareness."
+// Verified against the live Trumba feed on 2026-08-18: the structured field really does
+// say "All ages", and AGE_HINT_RE finds NOTHING in that title+description — so the prose
+// fallback never ran and cannot be blamed. The City tags a flag observance "All ages"
+// meaning "nobody is excluded from observing it"; worker/core/age.ts reads the same two
+// words as an AUDIENCE and resolves [0, ∞), which publishes all five bands including
+// under2. A parent filtering to ages=under2 was told a public overdose-awareness
+// observance is programming for their baby. That is the defect
+// lib/audit/rules/adult-subject-child-bands.ts caught at audit time; this is the same
+// question asked at ingest, where the claim is actually made.
+//
+// WHAT THIS DOES NOT DO. The structured-field-over-prose preference below is untouched —
+// "Children", "Preschoolers", "Youth", "Adults" and every other SPECIFIC tag still wins
+// outright and resolves exactly as before. Only a tag that names no age group at all is
+// eligible, and only when the source's own subject matter is adult-only. The result of
+// suppression is SILENCE (undefined → no occurrence_age row → no bands), never a
+// substituted age: a known unknown, which the search filter keeps visible, instead of a
+// false statement of fact. The source's own wording is not lost — `raw` keeps the whole
+// Trumba event, Audiences field included.
+//
+// KNOWN DUPLICATION, recorded rather than silently widened (same convention as
+// worker/core/age.ts's note on the adapter AGE_HINT_REs). The three regexes below are
+// copies of lib/audit/rules/{adult-subject-child-bands,adult-signals}.ts. The worker
+// CANNOT import them: lib/audit/rules/adult-signals.ts imports '@/worker/core/age', and
+// worker/tsconfig.json has no '@/*' alias by design — pulling it in would emit a bare
+// require("@/worker/core/age") into the container and trip
+// tests/scheduler/worker-image-closure.test.ts. Consolidating them into one
+// worker-owned module that lib/ imports is a real, separately-QA'd change to the audit
+// layer and is logged as a follow-up, not smuggled in here.
+//
+// STRONG MARKERS ONLY. The audit rule carries a `weak` tier ("mental health", "support
+// group", "crisis") whose contract is "raises a candidate, never reports one" — it exists
+// because those subjects genuinely do run as family programmes. Audit time has an
+// adjudicator to make that call; ingest does not, so acting on a weak marker here would
+// silently mute real listings with nobody reviewing the decision.
+const ADULT_SUBJECT_RE = new RegExp(
+  [
+    /\b(?:overdose|naloxone|narcan|opioids?|fentanyl|harm\s+reduction|safer\s+supply|substance\s+use|drug\s+use)\b/,
+    /\b(?:suicide|self[\s-]?harm)\b/,
+    /\b(?:bereavement|palliative|hospice|end[\s-]of[\s-]life)\b|\bgrief\s+(?:support|group|circle|counsell?ing)\b/,
+    /\b(?:domestic|intimate[\s-]partner)\s+violence\b|\bsexual\s+assault\b/,
+    /\b(?:dementia|alzheimer\w*|osteoporosis|menopaus\w+|prostate|incontinence)\b/,
+    /\b(?:income\s+tax|tax\s+clinic|estate\s+planning|wills?\s+and\s+estates?|retirement\s+planning|pension|mortgage)\b/,
+    /\b(?:smoking|vaping|tobacco)\s+cessation\b|\bgambling\b/,
+  ]
+    .map((r) => r.source)
+    .join('|'),
+  'i'
+);
+/** The source naming a young audience in its OWN words — copy of adult-signals.ts. */
+const CHILD_AUDIENCE_RE =
+  /\b(?:teens?|teenagers?|youth|kids?|child(?:ren)?|toddlers?|preschoolers?|infants?|babies|baby|famil(?:y|ies)|all[\s-]ages)\b/i;
+/** A programme FOR children that adults attend — copy of adult-signals.ts. */
+const CAREGIVER_PROGRAMME_RE =
+  /\b(?:parent|adult|caregiver|grown[\s-]?up|mommy|mummy|daddy|guardian)s?\s*(?:&|and|\+|\/)\s*(?:tot|child|kid|baby|babies|toddler|me|preschooler)s?\b|\bfamil(?:y|ies)\b|\bcaregivers?\b|\bwith\s+(?:a\s+)?(?:parent|caregiver|guardian|grown[\s-]?up)\b|\bparent\s+participation\b/i;
+
+/**
+ * True when the wording names no age group at all — "All ages", "Families", "Everyone".
+ *
+ * Decided by worker/core/age.ts rather than by a fourth copy of ALL_AGES_RE: `notes ===
+ * 'all-ages'` is set by exactly one branch of parseAgeText, and parseAudienceLabels already
+ * relies on it as the marker for "this tag named no age group at all". Reusing it means a
+ * catch-all can never mean one thing to the parser and another to this guard.
+ *
+ * EVERY tag must be a catch-all, not just the first. The Trumba feed publishes a single
+ * value today (measured 2026-08-18: 32 events → "All ages" ×7, "Adults" ×1, absent ×24), but
+ * parseAgeText checks ALL_AGES_RE before the keyword table, so a hypothetical
+ * "Families, Preschoolers" would read as a pure catch-all and lose the specific half. Cheap
+ * insurance against a field the city can widen without telling us.
+ */
+function isCatchAllAudience(wording: string): boolean {
+  const tags = wording
+    .split(/\s*[;,]\s*/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (tags.length === 0) return false;
+  return tags.every((t) => parseAgeText(t).notes === 'all-ages');
+}
+
+/**
+ * True when the source's OWN title/description names adult-only subject matter and names no
+ * young audience anywhere to contradict it.
+ *
+ * Reads title and description ONLY — never the Audiences field, never the resolved wording.
+ * That is deliberate and it is the reason the audit rule's header gives: letting the value
+ * under suspicion satisfy the guard that would excuse it makes the check unfalsifiable, the
+ * bug becomes its own alibi. It also has a useful consequence for the prose branch of
+ * ageText(): a catch-all lifted OUT of the description ("…for all ages in the park") is
+ * necessarily also matched by CHILD_AUDIENCE_RE in that same text, so it guards itself out.
+ * The suppressed set is therefore exactly the set adult_subject_child_bands would report —
+ * a source that said in words that a child may come is never second-guessed here.
+ */
+function namesAdultOnlySubject(sourceText: string): boolean {
+  if (CHILD_AUDIENCE_RE.test(sourceText)) return false;
+  if (CAREGIVER_PROGRAMME_RE.test(sourceText)) return false;
+  return ADULT_SUBJECT_RE.test(sourceText);
+}
+
 function ageText(event: TrumbaEvent): string | undefined {
   // Prefer the feed's STRUCTURED "Audiences" custom field ("All ages", "Families",
   // "Children", "Preschoolers", "Youth", …) over a prose keyword scan. It is a
   // clean, unambiguous token that worker/core/age.ts resolves into an age band
   // accurately, avoiding the misfires a 30-char description window produces
   // (e.g. "kids" inside "Kids' Place desk for a chance to win").
-  const audience = customField(event, 'Audiences');
-  if (audience) return audience;
   const hay = `${decodeEntities(event.title)} ${decodeEntities(event.description ?? '')}`;
-  const m = AGE_HINT_RE.exec(hay);
-  return m ? m[0].trim() : undefined;
+  const wording = customField(event, 'Audiences') ?? AGE_HINT_RE.exec(hay)?.[0]?.trim();
+  if (!wording) return undefined;
+  // Precedence above is untouched; this only withholds a wording that claims every age
+  // while the source's subject is adult-only. See the block comment above.
+  if (isCatchAllAudience(wording) && namesAdultOnlySubject(hay)) return undefined;
+  return wording;
 }
 
 export class CityCalendarAdapter implements Adapter {
