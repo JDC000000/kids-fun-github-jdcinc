@@ -24,6 +24,9 @@
 // second half of this file pins the disclosure — see lib/search/day-window.ts.
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { SearchEngine } from '../../lib/search/engine';
 import { InMemoryListingRepository } from '../../lib/search/repository';
 import { RegionHierarchy } from '../../lib/geo/region';
@@ -186,6 +189,13 @@ describe('"Today" empties out as the local day advances (the reported defect)', 
 // The mirror is only trustworthy while it agrees with the SQL it mirrors. These are the four
 // canonical row shapes tests/search/postgres-repository.test.ts drives through real Postgres in
 // "excludes an expired dated occurrence even when it also carries an open-hours string".
+//
+// READ THIS BEFORE TRUSTING THAT SENTENCE. Those Postgres cases are gated behind
+// `describe.skipIf(!hasDb)`, so in any run without DATABASE_URL — which is the default, and was
+// how this file was developed — the SQL half of the comparison DOES NOT RUN. Only the TypeScript
+// half below does. A green suite therefore shows the mirror is self-consistent, not that it still
+// matches the query it claims to mirror. The `visibleOccurrenceWhereSql` drift guard further down
+// exists precisely to close that gap without a database.
 describe('the TypeScript visibility mirror agrees with visibleOccurrenceWhereSql', () => {
   const now = new Date('2026-08-17T20:00:00.000Z');
   const cases: Array<[string, ListingRecord, boolean]> = [
@@ -314,5 +324,95 @@ describe('a thin late "Today" is disclosed on both sides of the broadening thres
     expect(notice?.changes.some((c) => /^nearby dates \(/.test(c))).toBe(true);
     // The chip a parent still sees says "Today"; the banner must say which days are really below.
     expect(notice?.changes.join(' ')).toContain('Aug 1');
+  });
+});
+
+// ── Drift guard: the SQL this file's mirror claims to mirror ──────────────────────────────────
+//
+// WHY A SOURCE-LEVEL TEST, AND WHY IT IS NOT A CONSOLATION PRIZE.
+//
+// `lib/search/occurrence-visibility.ts` is a hand-written TypeScript copy of a predicate that
+// really lives in SQL. Everything this file proves about the "Today empties by 10pm" defect rests
+// on the two agreeing. The only test that drives the REAL query is in
+// tests/search/postgres-repository.test.ts, behind `describe.skipIf(!hasDb)` — one of 413 tests
+// that silently vanish from a run with no DATABASE_URL. So the agreement was pinned exclusively
+// by a test that does not run by default, which is the weakest possible place to put it.
+//
+// The predicate is a string a pure function returns. Its TEXT can be checked with no database at
+// all, and a check that always runs is worth more here than one that usually skips. Same approach
+// as this file's neighbour tests/search/empty-explain-placement.test.ts.
+//
+// AST, NOT A TEXT SCAN OVER THE FILE. `visibleOccurrenceWhereSql` carries a long doc comment that
+// quotes its own clauses verbatim to explain them; grepping the file would match that prose and
+// keep passing over a predicate that had actually changed underneath it.
+describe('visibleOccurrenceWhereSql still says what the mirror assumes it says', () => {
+  /** The normalised BODY of a named function declaration in postgres-repository.ts. */
+  function sqlBodyOf(fnName: string): string {
+    const path = fileURLToPath(new URL('../../lib/search/postgres-repository.ts', import.meta.url));
+    const source = readFileSync(path, 'utf8');
+    const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    let body: string | null = null;
+    const walk = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === fnName && node.body) {
+        body = node.body.getText(sourceFile);
+      }
+      node.forEachChild(walk);
+    };
+    walk(sourceFile);
+    if (body == null) {
+      throw new Error(
+        `No function declaration named ${fnName} in lib/search/postgres-repository.ts. If it was ` +
+          `renamed or inlined, update this guard — do not delete it. It is the only check that the ` +
+          `SQL and lib/search/occurrence-visibility.ts still agree in a run without a database.`,
+      );
+    }
+    return (body as string).replace(/\s+/g, ' ');
+  }
+
+  const sql = sqlBodyOf('visibleOccurrenceWhereSql');
+
+  it('keeps the dateless arm requiring BOTH a null start AND standing hours', () => {
+    expect(
+      sql,
+      'The mirror\'s first arm (`if (startDatetimeUtc == null) return listing.openHours`) is a ' +
+        'direct transcription of this clause. Widening it to `open_hours_state IS NOT NULL` alone ' +
+        'would resurrect rows carrying a long-dead date behind an hours string — the exact defect ' +
+        "postgres-repository.ts's own header documents — and the mirror would no longer agree.",
+    ).toContain('(o.start_datetime_utc IS NULL AND o.open_hours_state IS NOT NULL)');
+  });
+
+  it('keeps judging a dated row on COALESCE(end, start)', () => {
+    expect(
+      sql,
+      'The mirror falls back from endDatetimeUtc to startDatetimeUtc because of this COALESCE. ' +
+        'Change one without the other and the two disagree for every row with no end time.',
+    ).toContain('COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now()');
+  });
+
+  // THE ONE THAT MATTERS MOST RIGHT NOW. Replacing the instant with a start-of-day floor is the
+  // change under active discussion for this defect, and it is deliberately NOT made here: it
+  // would surface finished activities as if they were still bookable. If it is ever made, this
+  // must fail loudly rather than let the mirror, this file's repro, and the day-remainder
+  // disclosure quietly start describing a product that no longer behaves that way.
+  it('still prunes against the INSTANT `now()`, not a day boundary', () => {
+    expect(
+      /\bnow\(\)/.test(sql) && !/date_trunc|::\s*date\b|current_date/i.test(sql),
+      `The catalogue floor is no longer a bare now(). Normalised predicate:\n  ${sql}\n\n` +
+        `Three things are built on the instant-floor behaviour and all of them need revisiting ` +
+        `together:\n` +
+        `  1. lib/search/occurrence-visibility.ts — the mirror, which compares against now().\n` +
+        `  2. this file's repro — "Today" collapsing at 22:35 is the floor, caught in the act.\n` +
+        `  3. app/search/_lib/day-remainder-notice.ts — its copy tells a parent the list only ` +
+        `shows activities that have not ended yet. With a day floor that sentence becomes false, ` +
+        `and finished sessions would render as if a parent could still turn up to them.`,
+    ).toBe(true);
+  });
+
+  it('still excludes archived rows, which is why the mirror has no arm for them', () => {
+    expect(
+      sql,
+      'occurrence-visibility.ts documents that it needs no archived_at arm because archived rows ' +
+        'never reach the read model. Drop this and that reasoning stops holding.',
+    ).toContain('o.archived_at IS NULL');
   });
 });
