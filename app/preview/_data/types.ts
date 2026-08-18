@@ -104,6 +104,14 @@ export interface Activity {
   ageMin: number | null;
   ageMax: number | null;
   /**
+   * True when this card stands for several sessions (see `slotCount`) whose age bounds DISAGREE,
+   * so no single range is a fact about the card. `ageMin`/`ageMax` are both null in that case and
+   * the card says the ages vary instead of printing one session's bounds for all of them
+   * (lib/search/filters/age.ts#readGroupAge). Absent on every card whose sessions agree, which is
+   * every uncollapsed card.
+   */
+  agesVaryBySession?: boolean;
+  /**
    * When the occurrence starts / ends. NULLABLE, and the null is the point.
    *
    * A standing "open hours" listing (a museum's general admission, a drop-in pool with no fixed

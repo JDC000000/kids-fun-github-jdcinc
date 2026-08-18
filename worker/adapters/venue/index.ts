@@ -156,17 +156,89 @@ function to12h(value: string): string {
   return min === '00' ? `${h} ${ampm}` : `${h}:${min} ${ampm}`;
 }
 
-function addSpecStrings(specs: string[], map: Map<number, [string, string]>): void {
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+/** One opening window on one day, as the local wall-clock "HH:MM" pair the source published. */
+export interface HoursWindow {
+  opens: string;
+  closes: string;
+}
+
+/**
+ * A venue's published week, kept in the shape the SOURCE published it: seven days, each holding
+ * zero or more opening windows. Monday-first (index 0 = Monday), so the index is the same day
+ * number `DAY_ALIASES` produces.
+ *
+ * A day with an EMPTY window list is a day the source did not say the venue is open, and that is a
+ * load-bearing distinction — it is the difference between "closed Mondays" and "we don't know about
+ * Mondays", which the flattened sentence could not express at all.
+ *
+ * WHY PER-DAY AND NOT WEEKDAY/WEEKEND. Real venue weeks do not divide into two buckets: closed
+ * Mondays, a late Thursday, a midday break on Sundays. A weekday/weekend pair cannot hold any of
+ * those, and forcing a week into it asserts hours on days the venue never claimed — the exact
+ * "arrive at a closed building" failure this structure exists to prevent. Per-day is what
+ * schema.org publishes and it is strictly richer: a weekday/weekend read is derivable from it,
+ * while it is not recoverable from a weekday/weekend pair.
+ */
+export interface WeeklyHours {
+  /** Monday-first, always length 7. Index 0 = Monday … 6 = Sunday. */
+  days: HoursWindow[][];
+}
+
+function emptyWeek(): WeeklyHours {
+  return { days: [[], [], [], [], [], [], []] };
+}
+
+function minutesOf(hhmmValue: string): number {
+  const m = /^(\d{1,2}):(\d{2})/.exec(hhmmValue);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
+}
+
+/** [open, close) in minutes; a close at or before the open is read as running to end of day. */
+function windowBounds(w: HoursWindow): [number, number] {
+  const open = minutesOf(w.opens);
+  const close = minutesOf(w.closes);
+  return [open, close > open ? close : close + 1440];
+}
+
+function overlaps(a: HoursWindow, b: HoursWindow): boolean {
+  const [aOpen, aClose] = windowBounds(a);
+  const [bOpen, bClose] = windowBounds(b);
+  return aOpen < bClose && bOpen < aClose;
+}
+
+/**
+ * Add one window to one day.
+ *
+ * DISJOINT WINDOWS ACCUMULATE; AN OVERLAPPING ONE REPLACES WHAT IT OVERLAPS. Both patterns are real
+ * and they mean opposite things. A venue that closes over lunch publishes two disjoint windows for
+ * one day and both are true — this used to `map.set` and keep only the last, so a 10–1 / 2–5 day
+ * was published as "2 PM–5 PM" and the morning simply vanished. A venue that publishes a general
+ * week and then a more specific line for one day publishes OVERLAPPING windows, and there the later,
+ * more specific spec is meant to win; replacing on overlap keeps that behaviour rather than printing
+ * a contradictory "9 AM–5 PM, 10 AM–4 PM".
+ */
+function addWindow(week: WeeklyHours, day: number, window: HoursWindow): void {
+  const kept = week.days[day].filter((existing) => !overlaps(existing, window));
+  kept.push(window);
+  kept.sort((a, b) => windowBounds(a)[0] - windowBounds(b)[0]);
+  week.days[day] = kept;
+}
+
+function addSpecStrings(specs: string[], week: WeeklyHours): void {
   for (const spec of specs) {
     const t = TIME_RANGE_RE.exec(spec);
     if (!t) continue;
     const daysPart = spec.slice(0, t.index).trim();
-    const days = daysPart ? parseDays(daysPart) : [0, 1, 2, 3, 4, 5, 6];
-    for (const d of days) map.set(d, [t[1], t[2]]);
+    // No day part at all is schema.org's "every day". A day part that is PRESENT but parses to
+    // nothing is not — `parseDays` returns [] and the loop below adds nothing, which is the
+    // fail-safe reading: we were told specific days and could not read them, so we claim none.
+    const days = daysPart ? parseDays(daysPart) : ALL_DAYS;
+    for (const d of days) addWindow(week, d, { opens: hhmm(t[1]), closes: hhmm(t[2]) });
   }
 }
 
-function addSpecObjects(specs: unknown[], map: Map<number, [string, string]>): void {
+function addSpecObjects(specs: unknown[], week: WeeklyHours): void {
   for (const s of specs) {
     if (!isRecord(s)) continue;
     const opens = s['opens'];
@@ -181,43 +253,71 @@ function addSpecObjects(specs: unknown[], map: Map<number, [string, string]>): v
       const idx = DAY_ALIASES[name];
       if (idx !== undefined) days.push(idx);
     }
-    const time: [string, string] = [hhmm(opens), hhmm(closes)];
-    for (const d of days.length ? days : [0, 1, 2, 3, 4, 5, 6]) map.set(d, time);
+    // A SPEC THAT STATES DAYS WE CANNOT READ CLAIMS NO DAYS AT ALL.
+    //
+    // This used to fall back to all seven whenever `days` came out empty, which conflated two
+    // opposite cases. `dayOfWeek` ABSENT genuinely means every day. `dayOfWeek` PRESENT but
+    // unreadable — the object form `{"@id": "https://schema.org/Saturday"}`, a locale spelling, a
+    // typo — means the venue named specific days and we failed to parse them, and publishing that
+    // as "open daily" is how a Saturday-only venue came to be advertised as open all week. A parent
+    // acts on those hours; being silent about a day is recoverable, being wrong about it is not.
+    // `addSpecStrings` above already fails safe the same way for an unreadable day part.
+    const dayOfWeekStated = dow !== undefined && dow !== null;
+    if (days.length === 0 && dayOfWeekStated) continue;
+    for (const d of days.length ? days : ALL_DAYS) addWindow(week, d, { opens: hhmm(opens), closes: hhmm(closes) });
   }
 }
 
-function collectOpeningHours(nodes: Record<string, unknown>[]): Map<number, [string, string]> {
-  const map = new Map<number, [string, string]>();
+function collectOpeningHours(nodes: Record<string, unknown>[]): WeeklyHours {
+  const week = emptyWeek();
   for (const node of nodes) {
     const oh = node['openingHours'];
-    if (typeof oh === 'string') addSpecStrings([oh], map);
-    else if (Array.isArray(oh)) addSpecStrings(oh.filter((x): x is string => typeof x === 'string'), map);
+    if (typeof oh === 'string') addSpecStrings([oh], week);
+    else if (Array.isArray(oh)) addSpecStrings(oh.filter((x): x is string => typeof x === 'string'), week);
     const ohs = node['openingHoursSpecification'];
-    if (ohs) addSpecObjects(Array.isArray(ohs) ? ohs : [ohs], map);
+    if (ohs) addSpecObjects(Array.isArray(ohs) ? ohs : [ohs], week);
   }
-  return map;
+  return week;
 }
 
-/** Summarise a day→hours map into a human open-hours state string. */
-function summariseHours(dayHours: Map<number, [string, string]>): string | undefined {
-  const days = [...dayHours.keys()].sort((a, b) => a - b);
-  if (days.length === 0) return undefined;
+/** True when the source stated no hours at all — so no open-hours record should be built. */
+export function isEmptyWeek(hours: WeeklyHours): boolean {
+  return hours.days.every((windows) => windows.length === 0);
+}
 
-  const distinct = new Set([...dayHours.values()].map((v) => v.join('-')));
-  if (days.length === 7 && distinct.size === 1) {
-    const [o, c] = dayHours.get(0)!;
-    return `Daily ${to12h(o)}–${to12h(c)}`;
-  }
+/** The comparable identity of one day's windows, so two days can be tested for "same hours". */
+function dayKey(windows: HoursWindow[]): string {
+  return windows.map((w) => `${w.opens}-${w.closes}`).join('|');
+}
+
+/** "10 AM–1 PM, 2–5 PM" — every window the venue published for that day, in order. */
+function formatDayWindows(windows: HoursWindow[]): string {
+  return windows.map((w) => `${to12h(w.opens)}–${to12h(w.closes)}`).join(', ');
+}
+
+/**
+ * Render a week as the human open-hours sentence (`open_hours_state`).
+ *
+ * DERIVED FROM THE STRUCTURE, NEVER ASSEMBLED ALONGSIDE IT, so the sentence cannot come to disagree
+ * with the schedule it is meant to describe. Days the source never claimed are simply absent from
+ * the sentence — a gap breaks a day run, so a venue closed on Mondays reads "Tue–Sun …" and never
+ * "Daily".
+ */
+export function formatWeeklyHours(hours: WeeklyHours): string | undefined {
+  const open = ALL_DAYS.filter((d) => hours.days[d].length > 0);
+  if (open.length === 0) return undefined;
+
+  const distinct = new Set(open.map((d) => dayKey(hours.days[d])));
+  if (open.length === 7 && distinct.size === 1) return `Daily ${formatDayWindows(hours.days[0])}`;
 
   const parts: string[] = [];
   let i = 0;
-  while (i < days.length) {
+  while (i < open.length) {
     let j = i;
-    const key = dayHours.get(days[i])!.join('-');
-    while (j + 1 < days.length && days[j + 1] === days[j] + 1 && dayHours.get(days[j + 1])!.join('-') === key) j += 1;
-    const [o, c] = dayHours.get(days[i])!;
-    const label = i === j ? DAY_ORDER[days[i]] : `${DAY_ORDER[days[i]]}–${DAY_ORDER[days[j]]}`;
-    parts.push(`${label} ${to12h(o)}–${to12h(c)}`);
+    const key = dayKey(hours.days[open[i]]);
+    while (j + 1 < open.length && open[j + 1] === open[j] + 1 && dayKey(hours.days[open[j + 1]]) === key) j += 1;
+    const label = i === j ? DAY_ORDER[open[i]] : `${DAY_ORDER[open[i]]}–${DAY_ORDER[open[j]]}`;
+    parts.push(`${label} ${formatDayWindows(hours.days[open[i]])}`);
     i = j + 1;
   }
   return parts.join('; ');
@@ -231,8 +331,30 @@ function flatten(nodes: Record<string, unknown>[]): Record<string, unknown>[] {
   return out;
 }
 
+/**
+ * The venue's published week, per day, straight off its schema.org markup.
+ *
+ * THE STRUCTURE IS THE PARSE RESULT; the sentence is a rendering of it. This used to be the other
+ * way round — `parseOpeningHours` was the only entry point and it flattened a day→hours map into a
+ * string on the way out, so the per-day facts the source had actually published were destroyed at
+ * the adapter boundary and nothing downstream could ever answer "is it open today?". Recovering
+ * them from the sentence afterwards would mean re-parsing our own prose, which is the manufactured
+ * claim this codebase keeps removing. Keeping the structure costs nothing: the parser already built
+ * it internally.
+ */
+export function parseWeeklyHours(nodes: Record<string, unknown>[]): WeeklyHours | undefined {
+  const week = collectOpeningHours(flatten(nodes));
+  return isEmptyWeek(week) ? undefined : week;
+}
+
+/**
+ * The human open-hours sentence for a venue's markup — `open_hours_state`, verbatim-equivalent to
+ * what the venue published. Unchanged signature; it is now `parseWeeklyHours` rendered, so it is
+ * correct by construction rather than assembled by a second pass over the same data.
+ */
 export function parseOpeningHours(nodes: Record<string, unknown>[]): string | undefined {
-  return summariseHours(collectOpeningHours(flatten(nodes)));
+  const week = parseWeeklyHours(nodes);
+  return week ? formatWeeklyHours(week) : undefined;
 }
 
 // ── special-event parsing (schema.org Event + subtypes) ──────────────────────

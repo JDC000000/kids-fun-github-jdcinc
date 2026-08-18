@@ -69,3 +69,63 @@ export function adjacentAgeBands(userBands: AgeBandKey[]): AgeBandKey[] {
   }
   return AGE_BAND_ORDER.filter((b) => widened.has(b));
 }
+
+/** One collapsed-group member's own age bounds, in months — the canonical unit (`occurrence_age`). */
+export interface AgeFacts {
+  ageMinMonths: number | null;
+  ageMaxMonths: number | null;
+}
+
+/**
+ * What may be said about a collapsed card's age.
+ *   • `agreed` → every member states the same bounds; print them exactly as a single card always did.
+ *   • `varies` → the members DISAGREE, and no single range is true of all of them.
+ */
+export type AgeRead =
+  | { kind: 'agreed'; ageMinMonths: number | null; ageMaxMonths: number | null }
+  | { kind: 'varies' };
+
+/**
+ * Decide what may be said about the age of a COLLAPSED CARD — one card standing for every
+ * same-series-same-day occurrence of one activity (lib/search/collapse.ts). Pure, and the exact
+ * counterpart of `readGroupCost` (lib/search/filters/cost.ts) for the other per-occurrence fact a
+ * collapsed card asserts on its face.
+ *
+ * THE DEFECT THIS CLOSES. A collapsed card printed its REPRESENTATIVE's age bounds as though they
+ * spoke for the whole group. `occurrence_age` is keyed per OCCURRENCE (migration 0005), so a group
+ * can legitimately hold a 19+ evening session beside an all-ages daytime one — and the card said
+ * whichever the representative happened to be. Which member that is, is decided by rank+sort BEFORE
+ * collapse (lib/search/engine.ts) and has nothing to do with age, so the claim on the face was
+ * effectively arbitrary. When the representative is the less-restrictive member, the card publishes
+ * "All ages" for a group containing a session no child may attend. That is the same family as the
+ * age-provenance work: a confident claim that exceeds what the source actually said.
+ *
+ * THE RULE — DECLINE, DON'T RECONCILE. When members disagree the answer is `varies`, and the card
+ * states that in words rather than printing a range:
+ *   • The most-restrictive ENVELOPE (highest floor, lowest ceiling) is wrong to print, because it
+ *     over-claims in the other direction: [0,∞) beside [15,∞) would render "Ages 15+" and hide a
+ *     genuinely all-ages session from the parent of a toddler. It can also invert ([5,9] beside
+ *     [15,∞)), leaving nothing printable anyway.
+ *   • The UNION span is wrong to print because it is exactly the less-restrictive claim this
+ *     function exists to stop — "Ages 0–19" reads as one session admitting everyone.
+ * Neither bound is a fact about the group, so neither is printed. This differs deliberately from
+ * `readGroupCost`, which CAN state a union span ("Varies: $103–$240") because a price span is
+ * still a true statement about what a parent might pay; an age span is read as a permission, and a
+ * permission that is true of only one session is the harm. Per-session bounds stay available via
+ * `slots` for any surface that wants to list them.
+ *
+ * A single-member group takes the `agreed` arm, so every uncollapsed card is unchanged to the byte.
+ */
+export function readGroupAge(slots: AgeFacts[]): AgeRead {
+  // No members is not a group. `collapseSameDaySeries` always seats at least the representative,
+  // but "the source stated nothing" is the honest answer if one ever arrives.
+  if (slots.length === 0) return { kind: 'agreed', ageMinMonths: null, ageMaxMonths: null };
+
+  const first = slots[0];
+  const agreed = slots.every(
+    (s) => s.ageMinMonths === first.ageMinMonths && s.ageMaxMonths === first.ageMaxMonths,
+  );
+  return agreed
+    ? { kind: 'agreed', ageMinMonths: first.ageMinMonths, ageMaxMonths: first.ageMaxMonths }
+    : { kind: 'varies' };
+}

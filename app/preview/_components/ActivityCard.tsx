@@ -17,7 +17,7 @@ import { FreshnessStamp } from './FreshnessStamp';
 import {
   REGISTRATION_REQUIRED_TAG,
   bookingTag,
-  formatAges,
+  formatCardAges,
   formatCost,
   formatDistance,
   formatSlotSummary,
@@ -78,7 +78,7 @@ export function ActivityCard({ activity }: { activity: Activity }) {
   const label = [
     `${activity.activityName} at ${activity.venue}`,
     `${when.day} ${whenTime}`,
-    formatAges(activity.ageMin, activity.ageMax),
+    formatCardAges(activity),
     meta.label,
     // Screen-reader parity with the visible tag — a course must never read as a drop-in.
     activity.registrationRequired ? REGISTRATION_REQUIRED_TAG : null,
@@ -117,7 +117,7 @@ export function ActivityCard({ activity }: { activity: Activity }) {
             <b>{when.day}</b> · {whenTime}
           </span>
           <span>
-            {formatAges(activity.ageMin, activity.ageMax)} · {formatCost(activity)}
+            {formatCardAges(activity)} · {formatCost(activity)}
           </span>
           <span>{formatDistance(activity)}</span>
         </div>

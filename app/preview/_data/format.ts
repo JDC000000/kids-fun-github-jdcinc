@@ -154,6 +154,13 @@ function formatClock(d: Date): string {
 export const AGE_NOT_STATED = 'Age not stated by source';
 
 /**
+ * The words for a collapsed card whose sessions disagree about age. Distinct from AGE_NOT_STATED:
+ * the source DID state ages here, they simply are not the same one for every session behind this
+ * card, and telling a parent "not stated" would be its own false claim.
+ */
+export const AGES_VARY_BY_SESSION = 'Ages vary by session — check each';
+
+/**
  * "Ages 5–9", "Under 6", "Ages 16+", "All ages", or — when the source stated nothing —
  * "Age not stated by source".
  *
@@ -173,6 +180,23 @@ export const AGE_NOT_STATED = 'Age not stated by source';
  * A `max` of null means OPEN-ENDED when `min` is known, and unknown only when `min` is null
  * too, so a source that genuinely does say "all ages" (min 0, no upper bound) keeps saying so.
  */
+/**
+ * The age words for a CARD, which may stand for several sessions (lib/search/collapse.ts).
+ *
+ * Wraps `formatAges` rather than replacing it: the ranges themselves are unchanged, and a card
+ * whose sessions agree — every uncollapsed card, and every collapsed one whose members share an
+ * age — routes straight through to the same string it printed before this existed. The only new
+ * outcome is the disagreeing group, which gets its own words instead of one member's range
+ * standing for all of them. See lib/search/filters/age.ts#readGroupAge for why no range is
+ * printable for that case in either direction.
+ */
+export function formatCardAges(
+  activity: Pick<Activity, 'ageMin' | 'ageMax' | 'agesVaryBySession'>,
+): string {
+  if (activity.agesVaryBySession) return AGES_VARY_BY_SESSION;
+  return formatAges(activity.ageMin, activity.ageMax);
+}
+
 export function formatAges(min: number | null, max: number | null): string {
   if (min === null && max === null) return AGE_NOT_STATED;
   const lower = min ?? 0;
