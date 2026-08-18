@@ -55,7 +55,11 @@ const UNRESOLVED: AgeParse = { ageMinMonths: null, ageMaxMonths: null, resolved:
 const KEYWORD_BANDS: Array<{ re: RegExp; min: number; max: number | null }> = [
   { re: /\b(?:newborn|infants?|babies|baby|babytime)\b/, min: 0, max: 24 },
   { re: /\b(?:toddlers?|toddler\s*time)\b/, min: 12, max: 36 },
-  { re: /\b(?:preschool(?:ers)?|pre-?k|kindergarten|kinder)\b/, min: 36, max: 60 },
+  // `ers?` not `ers`: the singular "preschooler" is a real title word ("|Parent and
+  // Preschooler|", live and unresolved in production) and `preschool(?:ers)?` cannot match it —
+  // \b fails after "preschool" and the "ers" alternative needs the plural. Same claim as the
+  // plural already makes, one character apart.
+  { re: /\b(?:preschool(?:ers?)?|pre-?k|kindergarten|kinder)\b/, min: 36, max: 60 },
   { re: /\b(?:tweens?)\b/, min: 108, max: 156 },
   { re: /\b(?:teens?|teenagers?|youth)\b/, min: 144, max: 216 },
   // Broad "kids/children/school-age" last so a more specific word above wins.
@@ -93,8 +97,21 @@ const NOT_DECIMAL_BEFORE = /(?<![\d.,:])/.source; // not preceded by a digit, de
 const NOT_DECIMAL_AFTER = /(?![.,:]\d)/.source; //  not the leading part of a decimal or clock time
 
 // Explicit numeric year/month ranges: "ages 0-2", "0 - 2 years", "2 to 4", "6-18 months".
+//
+// EACH END CARRIES ITS OWN OPTIONAL UNIT, because a source is allowed to change units mid-range
+// and several do: "age 10 months to 2 years" (Richmond Public Library's Toddler Time), "6 mo-5
+// yrs", "18 months to 3 years". The unit used to be readable only after the SECOND number, so
+// any range that named a unit on the FIRST one failed to match AT ALL — the separator had to
+// follow the digits immediately and "months" is not a separator. Those listings then fell all
+// the way through to `unresolved`, which is the one outcome that is not true here: the source
+// stated the age plainly, in words this module already understands on their own.
+//
+// A single trailing unit still governs BOTH ends ("6-18 months" is 6 and 18 MONTHS, not 6 years
+// to 18 months) — that is what `?? ` below preserves, and it is why the first unit is optional
+// rather than required.
+const AGE_UNIT = /(years?|yrs?|yr|months?|mos?|mo)?/.source;
 const RANGE_RE = new RegExp(
-  `(?:ages?\\s*)?${NOT_DECIMAL_BEFORE}(\\d{1,2})${NOT_DECIMAL_AFTER}\\s*(?:-|–|—|to)\\s*(\\d{1,2})${NOT_DECIMAL_AFTER}\\s*(years?|yrs?|yr|months?|mos?|mo)?`
+  `(?:ages?\\s*)?${NOT_DECIMAL_BEFORE}(\\d{1,2})${NOT_DECIMAL_AFTER}\\s*${AGE_UNIT}\\s*(?:-|–|—|to)\\s*${NOT_DECIMAL_BEFORE}(\\d{1,2})${NOT_DECIMAL_AFTER}\\s*${AGE_UNIT}`
 );
 // "5+", "5 years and up", "18 months+".
 const MIN_ONLY_RE = new RegExp(
@@ -177,14 +194,23 @@ export function parseAgeText(ageText?: string | null): AgeParse {
   const range = RANGE_RE.exec(text);
   if (range) {
     const lo = Number(range[1]);
-    const hi = Number(range[2]);
-    if (hi >= lo) {
-      if (isMonths(range[3])) {
-        return { ageMinMonths: lo, ageMaxMonths: hi + 1, resolved: true };
-      }
-      // year range: B-year-olds included → exclusive max at (B+1) years.
-      return { ageMinMonths: lo * YEARS, ageMaxMonths: (hi + 1) * YEARS, resolved: true };
-    }
+    const hi = Number(range[3]);
+    // A unit stated only after the SECOND number governs both ends, as it always has; a unit on
+    // the first end now speaks for that end alone. No unit anywhere still means years.
+    const loUnit = range[2] ?? range[4];
+    const hiUnit = range[4];
+    const min = isMonths(loUnit) ? lo : lo * YEARS;
+    // The upper bound is EXCLUSIVE and the written one is inclusive, so it steps one unit past
+    // what the source wrote: "6-18 months" includes 18-month-olds, "ages 2-4" includes
+    // 4-year-olds up to their fifth birthday. Applied per-end, the mixed case follows the same
+    // rule with no special pleading — "10 months to 2 years" ends where a 2-year-old's year
+    // does, at 36 months. That is this module's ONE documented convention (see the file header)
+    // applied uniformly, not a reading invented for mixed units; if the convention itself is
+    // ever revisited, this case must move with it rather than being exempted.
+    const max = isMonths(hiUnit) ? hi + 1 : (hi + 1) * YEARS;
+    // Compared in MONTHS, not in the raw digits. "10 months to 2 years" is an ascending range
+    // whose written numbers descend (10 > 2), and a digit comparison rejects it as reversed.
+    if (max > min) return { ageMinMonths: min, ageMaxMonths: max, resolved: true };
   }
 
   const under = UNDER_RE.exec(text);

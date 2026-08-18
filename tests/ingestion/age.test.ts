@@ -123,6 +123,46 @@ describe('parseAgeText — deterministic age wording', () => {
     expect(parseAgeText('Preschool storytime')).toMatchObject({ ageMinMonths: 36, ageMaxMonths: 60, resolved: true });
   });
 
+  // `preschool(?:ers)?` matched "preschool" and "preschoolers" but not the SINGULAR
+  // "preschooler" — \b fails after "preschool" and the plural alternative needs its "s". Live
+  // consequence: "|Parent and Preschooler|" is unresolved in production today and therefore
+  // shows under every age band, while "Science4Preschoolers" resolves correctly. One character.
+  it('resolves the singular "preschooler", not just the plural', () => {
+    for (const text of ['Preschooler', 'preschoolers', 'Preschool', '|Parent and Preschooler|']) {
+      expect(parseAgeText(text), text).toMatchObject({ ageMinMonths: 36, ageMaxMonths: 60, resolved: true });
+    }
+    expect(bandsFor('|Parent and Preschooler|')).toEqual(['2-4']);
+  });
+
+  // A source may change units mid-range, and three real wordings did. The unit was readable
+  // only AFTER the second number, so a unit on the first one broke the match outright (the
+  // separator had to follow the digits immediately, and "months" is not a separator) and the
+  // listing fell through to `unresolved` — the one answer that is untrue here, because the
+  // source stated the age plainly. Live example: Richmond Public Library's "Toddler Time for
+  // Chinese Speaking Families", age_notes `unresolved: age 10 months to 2 years`.
+  it('resolves a range whose two ends are stated in DIFFERENT units', () => {
+    expect(parseAgeText('age 10 months to 2 years')).toMatchObject({
+      ageMinMonths: 10,
+      ageMaxMonths: 36, // 2-year-olds included, to their third birthday — the module's one convention
+      resolved: true,
+    });
+    expect(parseAgeText('6 mo-5 yrs')).toMatchObject({ ageMinMonths: 6, ageMaxMonths: 72, resolved: true });
+    expect(parseAgeText('18 months to 3 years')).toMatchObject({ ageMinMonths: 18, ageMaxMonths: 48, resolved: true });
+    // Ascending in months, DESCENDING in the written digits (10 > 2). Comparing the digits
+    // rejected it as a reversed range; the comparison is in months.
+    expect(bandsFor('age 10 months to 2 years')).toEqual(['2-4', 'under2']);
+  });
+
+  it('still lets a single trailing unit govern BOTH ends of a range', () => {
+    // The regression this fix must not cause: "6-18 months" is 6 and 18 MONTHS. If the first
+    // end stopped inheriting the trailing unit it would read as 6 YEARS to 18 months.
+    expect(parseAgeText('6-18 months')).toMatchObject({ ageMinMonths: 6, ageMaxMonths: 19, resolved: true });
+    expect(parseAgeText('ages 0-2')).toMatchObject({ ageMinMonths: 0, ageMaxMonths: 36, resolved: true });
+    expect(parseAgeText('2 to 4')).toMatchObject({ ageMinMonths: 24, ageMaxMonths: 60, resolved: true });
+    // A genuinely reversed range is still rejected and falls through to the later rules.
+    expect(parseAgeText('ages 4-2')).toMatchObject({ resolved: false });
+  });
+
   it('treats all-ages / family wording as an open range', () => {
     expect(parseAgeText('All ages')).toMatchObject({ ageMinMonths: 0, ageMaxMonths: null, resolved: true, notes: 'all-ages' });
     expect(parseAgeText('Family Theatre highlighting local artists')).toMatchObject({ ageMinMonths: 0, ageMaxMonths: null, resolved: true });
