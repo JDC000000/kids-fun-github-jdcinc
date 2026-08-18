@@ -307,6 +307,77 @@
   outline-offset: 2px;
 }
 
+/* Sparse-coverage notice: we hold almost nothing for the area that is filtered in, plus the
+   "tell me when it is live" capture (app/search/_lib/coverage-notice.ts).
+
+   It wears the SAME muted "expected" palette as the two notices above rather than an alert
+   treatment, and that is the whole visual argument: nothing has gone wrong, the product is
+   simply saying what it does not have. An alert here would read as an error a parent could fix,
+   which is the opposite of the point. It is a block rather than a bare <p> only because it
+   carries a form; the prose line inside it is styled identically to its siblings so the three
+   notices stay one voice. */
+.kf-coverage {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  color: var(--expected-text);
+  background: var(--expected-bg);
+  border-radius: 12px;
+  text-align: left;
+}
+
+.kf-coverage__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.kf-coverage__lede {
+  font-weight: 700;
+}
+
+.kf-coverage__form {
+  margin: 10px 0 0;
+}
+
+.kf-coverage__label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* The field and its action share a row where there is room and stack on a phone. `flex-wrap`
+   rather than a media query: the wrap point is the input's own min-width, so the control does
+   the right thing inside the rail, the sheet and the full-width results column alike. */
+.kf-coverage__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.kf-coverage__input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.kf-coverage__done,
+.kf-coverage__err {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.kf-coverage__done {
+  margin: 0;
+  font-weight: 600;
+}
+
+.kf-coverage__err {
+  font-weight: 600;
+}
+
 /* Pre-counted alternative chips: the SPECIFIC widenings the ladder considered, each a real
  * result count behind a real /search link (app/search/_lib/broadening-alternatives.ts).
  * Sits beside the .kf-broadened / .kf-browse__empty-explain prose above, as the actionable

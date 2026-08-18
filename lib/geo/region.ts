@@ -6,8 +6,24 @@
 // municipalities within distance even when not chip-selected (FR-06) — that lives in
 // radius.ts and stays independent of these chips. Never a 30-item single-select (BR-07).
 
-import type { GeoPoint } from '../search/types';
+import type { GeoPoint, ListingRecord } from '../search/types';
 import { REGION_LABEL, type CoveredRegionId } from './postal-fsa';
+
+/**
+ * The region tags a listing may be matched on, in the order `matchesRegion` reads them.
+ *
+ * Extracted so the region FILTER (lib/search/filters/predicate.ts) and the region COVERAGE
+ * count (lib/search/coverage.ts) attribute a listing to a municipality by the identical rule.
+ * They must agree: coverage exists to explain why a region filter returned what it returned,
+ * so a listing the filter counts as "in Burnaby" and a listing the coverage count calls "in
+ * Burnaby" being two different populations would make the explanation a second, competing
+ * claim about the same search.
+ */
+export function regionTagsOf(
+  listing: Pick<ListingRecord, 'municipalityId' | 'displayArea' | 'neighbourhood'>,
+): Array<string | null> {
+  return [listing.municipalityId, listing.displayArea, listing.neighbourhood];
+}
 
 export type RegionLevel = 'metro' | 'municipality' | 'sub_area';
 
