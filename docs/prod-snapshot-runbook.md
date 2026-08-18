@@ -284,11 +284,12 @@ A common and reasonable misreading of this work is "the snapshot lights up hundr
 already-written tests that never run". Measured on this branch, that is **not** what happens,
 and it is worth knowing exactly what does, because the real answer is better.
 
-Three configurations, same commit, full suite (`npx vitest run`):
+Three configurations, same commit, full suite (`npx vitest run`), measured on
+`integration/kf-teststrategy-2026-08-18` @ `21d9aef` + this branch:
 
 | Config | Passed | Failed | **Skipped** |
 |---|---|---|---|
-| **A** — no `DATABASE_URL` | 2871 | 0 | **436** |
+| **A** — no `DATABASE_URL` | 3035 | 0 | **436** |
 | **B** — `DATABASE_URL` + `local-db-bootstrap.sh` + `seed.sh` (**what CI does today**) | 3453 | 2 | **16** |
 | **C** — snapshot loaded + `KF_SNAPSHOT_MODE=1` | 3466 | 5 | **0** |
 
