@@ -81,8 +81,19 @@ const ADULT_AUDIENCE_TAG = /^\s*(?:adults?|seniors?|older\s+adults?)\b/i;
  * than just the one today's rows carry is deliberate: the live library rows were ingested before
  * the audience-tag path existed and read `unresolved: …, Adults, English`, and a re-ingest will
  * rewrite the very same rows as `audience: Adults`. This signal must survive that transition.
+ *
+ * `llm-unresolved:` is the same case, one generation later. lib/llm/age-fallback.ts's no-op
+ * branch stamped rows in that shape before 2026-08-18, and what follows the marker is again the
+ * SOURCE's own wording, re-embedded verbatim — so those rows must be read, not skipped. (Rows
+ * stamped after that date carry the marker as a trailing parenthetical, `Adults (llm-resolved)`,
+ * which needs no stripping and is why this list does not have to keep growing.)
+ *
+ * `llm-resolved:` is deliberately NOT here. A row in that legacy shape holds the MODEL's
+ * reasoning — the source's wording was overwritten and is not recoverable from this column — and
+ * this function is documented to report what the SOURCE said. Tag-matching model prose would be
+ * manufacturing a source claim, which is the wrong kind of input to a hard exclusion.
  */
-const AGE_NOTES_MARKER = /^\s*(?:audience|unresolved)\s*:\s*/i;
+const AGE_NOTES_MARKER = /^\s*(?:audience|unresolved|llm-unresolved)\s*:\s*/i;
 
 /**
  * A source publishes its audience taxonomy as a LIST, which reaches the read model flattened

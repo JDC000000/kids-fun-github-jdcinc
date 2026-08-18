@@ -105,6 +105,21 @@ describe("isAdultOrSeniorOnly — reads the SOURCE's own stated audience (ageNot
     expect(isAdultOrSeniorOnly(noted('Digitization Orientation', 'audience: Adults'))).toBe(true);
   });
 
+  it('reads a row the LLM age fallback stamped, in either the current or the legacy shape', () => {
+    // Current shape (lib/llm/age-fallback.ts stampAgeNotes): the source's wording leads and the
+    // provenance marker trails, so nothing has to be stripped.
+    expect(isAdultOrSeniorOnly(noted('Tech Help', 'Digital Essentials, Adults, Seniors, English (llm-resolved)'))).toBe(true);
+    expect(isAdultOrSeniorOnly(noted('Zero Waste Ambassador Program', 'Adults (llm-unresolved)'))).toBe(true);
+    // Legacy shape: the no-op branch used to write `llm-unresolved: <raw source text>`. The text
+    // after that marker is still the SOURCE's, so the marker must be stepped over like the
+    // others — otherwise a row this job merely LOOKED at stops being excluded.
+    expect(isAdultOrSeniorOnly(noted('Zero Waste Ambassador Program', 'llm-unresolved: Adults'))).toBe(true);
+    expect(isAdultOrSeniorOnly(noted('Tech Help', 'llm-unresolved: Digital Essentials, Adults, Seniors, English'))).toBe(true);
+    // Legacy `llm-resolved: <reason>` rows are model prose, not a source claim: not read. The
+    // source's wording is gone from the column in those rows and cannot be recovered here.
+    expect(isAdultOrSeniorOnly(noted('Zero Waste Ambassador Program', 'llm-resolved: Adults-only per the source.'))).toBe(false);
+  });
+
   it('does NOT exclude on supervision prose that merely mentions adults', () => {
     // The exact failure worker/core/age.ts:245-250 warns about. An unanchored /adults?/ over
     // this field hides genuine kids content, which is the worse direction for a hard exclusion.
