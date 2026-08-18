@@ -119,7 +119,16 @@ export function buildOpenHoursRecord(venue: VenueIdentity, input: OpenHoursInput
     // Pin to a venue category so the daily visit is never classified as a
     // rec-programme (public_swim / skate / open_gym) — T-02.
     categoryHint: venue.venueCategory,
-    ageText: 'All ages',
+    // Deliberately NO ageText. A venue's opening-hours markup states when the doors are
+    // open, never who the visit is for, and OpenHoursInput carries no age member for a
+    // caller to supply one — so any value here would be this builder's own invention, not
+    // the source's claim. It used to hardcode 'All ages', which worker/core/age.ts resolves
+    // to [0, ∞) `resolved: true` and so scored parse_quality.ageResolved as a FULLY RESOLVED
+    // age — the BR-13 formula (worker/core/confidence.ts) then credited a literal typed here
+    // exactly as much as a source's genuine structured age bounds. Leaving it undefined makes
+    // ageParse null, i.e. "this record makes no age claim", which is the honest signal and
+    // the neutral (0.6) age term the formula documents for it. Same posture as
+    // buildSpecialEventRecord below, which passes input.ageText through undefaulted.
     sourceUrl: input.sourceUrl,
     bookingUrl: input.bookingUrl,
   };

@@ -7,7 +7,15 @@ import {
   parseOpeningHours,
   parseVenueEvents,
 } from '../../worker/adapters/venue';
-import { separateVenueRecords, assertSeparation, type VenueIdentity } from '../../worker/adapters/venue/separate';
+import {
+  separateVenueRecords,
+  assertSeparation,
+  buildOpenHoursRecord,
+  buildSpecialEventRecord,
+  type VenueIdentity,
+} from '../../worker/adapters/venue/separate';
+import { parseAgeText } from '../../worker/core/age';
+import { parseQualityFactor, computeConfidence, statusForConfidence } from '../../worker/core/confidence';
 import { ingestSource } from '../../worker/core/ingest';
 import { loadPostgresListings, loadPostgresListingById } from '../../lib/search/postgres-repository';
 import { getPool, query, closePool } from '../../lib/db/client';
@@ -99,6 +107,93 @@ describe('Venue adapter — config + fixture shape (G-T11-1/3)', () => {
         { openHours: { openHoursState: 'Daily 9–5', sourceUrl: 'https://x' }, events: [] }
       )
     ).not.toThrow();
+  });
+});
+
+// ── an open-hours record makes NO age claim ──────────────────────────────────
+//
+// buildOpenHoursRecord used to emit a hardcoded `ageText: 'All ages'`. Nothing supplied it
+// (OpenHoursInput has no age member and no caller sets one), so it was the builder's own
+// invention — and it did NOT stop at the record: worker/core/age.ts resolves that literal to
+// [0, ∞) with `resolved: true`, which worker/core/ingest.ts feeds to the BR-13 formula as
+// parse_quality.ageResolved. A typed-in string therefore scored the age term exactly as high
+// (1.0) as a source's genuine structured age bounds.
+//
+// These assertions run the whole chain — builder → parseAgeText → parseQualityFactor →
+// computeConfidence — because a fix at the builder alone would be silently undone by anyone
+// re-adding a default anywhere along it. The sibling assertions on buildSpecialEventRecord
+// pin the behaviour this fix must NOT touch: that builder was already correct, passing
+// input.ageText through undefaulted, and stays that way.
+describe('Venue open-hours records make no age claim (BR-13 parse-quality honesty)', () => {
+  const OPEN_HOURS_INPUT = { openHoursState: 'Daily 9:30 AM–5 PM', sourceUrl: 'https://example.org/hours' };
+
+  it('buildOpenHoursRecord emits no ageText — no "All ages", no value at all', () => {
+    const record = buildOpenHoursRecord(AQUARIUM, OPEN_HOURS_INPUT);
+    expect(record.ageText).toBeUndefined();
+    expect(Object.values(record)).not.toContain('All ages');
+    // The standing state itself is untouched by the fix.
+    expect(record.openHoursState).toBe('Daily 9:30 AM–5 PM');
+    expect(record.categoryHint).toBe('attraction');
+  });
+
+  it('every launch venue fixture emits an open-hours record with no age claim', async () => {
+    for (const config of LAUNCH_VENUES) {
+      const adapter = new VenueAdapter(config);
+      const records = await adapter.extract(await adapter.fetch());
+      const openHours = records.filter((r) => r.openHoursState && !r.startDatetimeUtc);
+      expect(openHours).toHaveLength(1);
+      expect(openHours[0].ageText, `${config.venueKey} open-hours ageText`).toBeUndefined();
+    }
+  });
+
+  it('buildSpecialEventRecord still passes ageText through undefaulted (unchanged)', () => {
+    const base = {
+      slug: 'ocean-after-hours',
+      title: 'Ocean After Hours',
+      startDatetimeUtc: '2026-09-13T02:00:00.000Z',
+      sourceUrl: 'https://example.org/events',
+    };
+    // A stated age survives verbatim…
+    expect(buildSpecialEventRecord(AQUARIUM, { ...base, ageText: '19+' }).ageText).toBe('19+');
+    expect(buildSpecialEventRecord(AQUARIUM, { ...base, ageText: 'All ages' }).ageText).toBe('All ages');
+    // …and an absent one is NOT defaulted into existence.
+    expect(buildSpecialEventRecord(AQUARIUM, base).ageText).toBeUndefined();
+  });
+
+  it('traces through to BR-13: the open-hours age term is neutral (0.6), not resolved (1.0)', () => {
+    const record = buildOpenHoursRecord(AQUARIUM, OPEN_HOURS_INPUT);
+
+    // ingest.ts's exact expression: no audience labels and no ageText -> no age parse at all.
+    const ageParse = record.ageAudienceLabels?.length
+      ? null
+      : record.ageText
+        ? parseAgeText(record.ageText)
+        : null;
+    expect(ageParse).toBeNull();
+    // …and had a literal survived, this is what it would have claimed.
+    expect(parseAgeText('All ages')).toMatchObject({ ageMinMonths: 0, ageMaxMonths: null, resolved: true });
+
+    const parseQuality = {
+      categoryCertainty: 'specific' as const,
+      explicitCategoryHint: true,
+      hasStartDatetime: false,
+      hasOpenHours: true,
+      costStatus: record.costStatus,
+    };
+    const honest = parseQualityFactor({ ...parseQuality, ageResolved: ageParse ? true : null });
+    const fabricated = parseQualityFactor({ ...parseQuality, ageResolved: true });
+    expect(honest).toBeCloseTo(0.77, 5);
+    expect(fabricated).toBeCloseTo(0.85, 5);
+
+    // The same delta at the score/label layer for a healthy official venue source: the record
+    // stays visible (still 'high' -> 'confirmed'), it just stops being credited for a claim
+    // nobody made. 0.77 clears HIGH_THRESHOLD by 0.02, so this is the assertion that will
+    // fail first if any factor's weights move — deliberately, because the margin is the point.
+    const ctx = { authorityTier: 'official', lastCheckAtMs: null, cadenceSeconds: 86_400, healthScore: 1, nowMs: 0 };
+    const scored = computeConfidence({ ...ctx, parseQuality: { ...parseQuality, ageResolved: null } });
+    expect(scored.score).toBeCloseTo(0.77, 5);
+    expect(scored.label).toBe('high');
+    expect(statusForConfidence(scored.label)).toBe('confirmed');
   });
 });
 
