@@ -31,6 +31,9 @@ export function makeListing(partial: Partial<ListingRecord> & { id?: string }): 
     ageBandMatches: partial.ageBandMatches ?? [],
     ageMinMonths: partial.ageMinMonths ?? null,
     ageMaxMonths: partial.ageMaxMonths ?? null,
+    // Carried through, because the audience filter now reads it: a fixture that set `ageNotes`
+    // and had it silently dropped here would test a listing the product never sees.
+    ageNotes: partial.ageNotes ?? null,
     geo: partial.geo ?? null,
     municipalityId: partial.municipalityId ?? null,
     neighbourhood: partial.neighbourhood ?? null,

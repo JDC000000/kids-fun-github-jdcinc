@@ -111,6 +111,35 @@ describe('adult/senior-only content never appears', () => {
   it('keeps parent-and-child sessions, even though they say "Adult"', () => {
     expect(search(engine, 'swim').results.map((r) => r.listing.id)).toContain('parent-child');
   });
+
+  it('excludes an adult talk whose ONLY adult signal is the source\'s own audience tag', () => {
+    // The reported severity-3 bug, reproduced at engine level with the live row's exact shape:
+    // an adult harm-reduction talk with no adult word in the title and NO parsed age, so its
+    // ageBandMatches is empty and matchesAge's "unknown → don't hide" rule admits it to every
+    // age band — including a parent's search for a 2-4 year-old. The library's audience
+    // taxonomy is the only thing that ever said who it was for.
+    const overdose = makeListing({
+      id: 'overdose',
+      activityName: 'Supporting People Together: The Basics of Overdose Response',
+      primaryCategoryKey: 'public_swim', // shares the query text so it competes with `swim`
+      startDatetimeUtc: '2026-08-08T21:00:00Z',
+      endDatetimeUtc: '2026-08-08T22:00:00Z',
+      ageBandMatches: [],
+      ageMinMonths: null,
+      ageMaxMonths: null,
+      ageNotes:
+        'unresolved: International Overdose Awareness Day, Health, Life Skills and Personal Growth, Adults, English',
+    });
+    const withTalk = engineOver([swim, parentAndChild, overdose]);
+
+    expect(search(withTalk, 'swim').results.map((r) => r.listing.id)).not.toContain('overdose');
+    // …and specifically not in the age-filtered search the bug was reported against.
+    const forToddlers = search(withTalk, 'swim', { ageBands: ['2-4'] as const });
+    expect(forToddlers.results.map((r) => r.listing.id)).not.toContain('overdose');
+    // The parent-and-child session in the same result set is untouched — this exclusion is
+    // narrow, not a blanket "anything mentioning adults".
+    expect(forToddlers.results.map((r) => r.listing.id)).toContain('parent-child');
+  });
 });
 
 describe('same-series-same-day occurrences arrive as one result', () => {
