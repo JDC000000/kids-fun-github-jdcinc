@@ -36,6 +36,11 @@ test-results/
 # must resolve from ./node_modules. Removed on exit, but not if the run is killed.
 .search-cap-probe.bundle.mjs
 .safety-audit.bundle.mjs
+.backfill-scope.bundle.mjs
+
+# §3h backfill-scope harness output: a run artefact containing per-row production findings, not
+# source. See docs/worker-fix-backfill-scope.md.
+.backfill-scope.json
 
 # safety-auditor output (a run artefact, not source — see docs/safety-auditor.md)
 .audit/
