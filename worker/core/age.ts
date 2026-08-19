@@ -212,8 +212,15 @@ function gradeToMonths(g: string): number {
  * Eventbrite description and the narrower pattern silently loses it to a bare "family"
  * keyword elsewhere in the same text. Verified against the fixture in
  * worker/adapters/eventbrite/__fixtures__/.
+ *
+ * EXPORTED so a caller can ask "does THIS text state an age on its own?" before deciding
+ * to feed it in. That question is the eventbrite adapter's title gate (see its
+ * `titleStatesAge`), and it must be answered by the SAME pattern extractAgeWording will
+ * later apply — a fourth private copy of "what counts as a stated age" is the drift
+ * hazard documents/kids-fun-open-findings-2026-08-18.md §3e/§3g both flag. Stateless
+ * (no /g), so `.test()` from anywhere is safe.
  */
-const AGE_RANGE_RE = /(?:age[sd]?|grades?)\s*[\dK][^.<\n]{0,40}/i;
+export const AGE_RANGE_RE = /(?:age[sd]?|grades?)\s*[\dK][^.<\n]{0,40}/i;
 /** An audience keyword — the weaker fallback when no numeric range is stated. */
 const AGE_KEYWORD_RE =
   /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers)?|kindergarten|family|families|all ages)[^.<\n]{0,40}/i;

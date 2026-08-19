@@ -21,7 +21,7 @@
 // authorised KIDS FUN, so gate 1 fails and gate 3 has nothing to satisfy it.
 // See config.ts's "HONEST ZERO" block — that is the measured outcome, not a stub.
 import type { Adapter, StructuredRecord, DedupKey } from '../../core/adapter';
-import { extractAgeWording } from '../../core/age';
+import { extractAgeWording, AGE_RANGE_RE } from '../../core/age';
 import { VENUE_GEO_AUTHORITY } from '../../core/venue-geo-authority';
 import {
   EVENTBRITE_ORGANIZERS,
@@ -57,6 +57,35 @@ export function organizerToken(config: EventbriteOrganizerConfig): string | unde
 function textOf(value?: { text?: string | null } | null): string | undefined {
   const text = value?.text?.replace(/\s+/g, ' ').trim();
   return text || undefined;
+}
+
+/** The one age phrase a title can state that carries no digit, so AGE_RANGE_RE cannot see it. */
+const TITLE_ALL_AGES_RE = /\ball\s+ages\b/i;
+
+/**
+ * Does the TITLE state an age by itself?
+ *
+ * THE TITLE USED TO GO INTO extractAgeWording UNCONDITIONALLY, which manufactured an age
+ * claim out of an event name whenever the summary and description were silent. That helper
+ * joins everything it is given into ONE haystack and falls back to a bare audience keyword
+ * (youth/kids/family/…) when no numeric range is present, so "Youth Basketball Meetup" with
+ * an age-silent body emitted `ageText: "Youth Basketball Meetup"` — which parseAgeText then
+ * resolves, confidently, to the 12–18 `youth` band off nothing but a word in the name. Same
+ * defect class as the ActiveNet one removed in f15d6c8; see that adapter's own titleStatesAge
+ * for the shape (its extra date/grade vetoes are NOT reproduced here — they exist because
+ * they were measured in ActiveNet's live corpus, and there is no live Eventbrite data to
+ * justify a veto of any kind).
+ *
+ * So the title now has to earn its place: an explicit numeric age/grade — the same
+ * AGE_RANGE_RE extractAgeWording itself prefers, deliberately reused rather than restated —
+ * or the literal "all ages", which is a real stated audience bound with no digit in it.
+ * A bare audience keyword is NOT enough. Summary and description are unchanged and still go
+ * in unconditionally: prose describing the event is the source's own wording about it, and
+ * a keyword there remains a legitimate weak signal.
+ */
+function titleStatesAge(title: string | undefined): boolean {
+  if (!title) return false;
+  return AGE_RANGE_RE.test(title) || TITLE_ALL_AGES_RE.test(title);
 }
 
 /** Eventbrite prices arrive as `major_value` decimal strings ("12.00"). */
@@ -149,9 +178,11 @@ export class EventbriteAdapter implements Adapter {
             .filter(Boolean)
             .join(', ') ||
           undefined;
+        // Non-null by the `textOf(e.name)` filter above.
+        const title = textOf(e.name)!;
         return {
           sourceRecordId: String(e.id),
-          title: textOf(e.name)!,
+          title,
           venueName,
           venueAddress: venueName ? address : undefined,
           venueLat: coord(venue?.latitude),
@@ -177,7 +208,14 @@ export class EventbriteAdapter implements Adapter {
           startDatetimeUtc: e.start?.utc ?? undefined,
           endDatetimeUtc: e.end?.utc ?? undefined,
           ...cost,
-          ageText: extractAgeWording(textOf(e.name), e.summary, textOf(e.description)),
+          // Whole title when it qualifies, not just the matched span: the words around a
+          // stated age are the context parseAgeText's own rules read ("(6-13 with adult)"),
+          // and clipping to the bare match would change how those resolve.
+          ageText: extractAgeWording(
+            titleStatesAge(title) ? title : undefined,
+            e.summary,
+            textOf(e.description)
+          ),
           // No categoryHint: Eventbrite's own category ids are a different vocabulary
           // and mapping them by guesswork would fabricate certainty. The title-keyword
           // pass in worker/core/taxonomy.ts classifies these, and the confidence formula

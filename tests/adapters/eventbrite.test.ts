@@ -23,6 +23,7 @@ import {
   fetchOrganizerEvents,
 } from '../../worker/adapters/eventbrite/client';
 import { buildAdapterRegistry, resolveAdapterForSourceRow } from '../../worker/core/adapter-registry';
+import { parseAgeText } from '../../worker/core/age';
 import { REQUESTS_PER_MINUTE_BY_FAMILY, clearPolicyState } from '../../worker/health/policy';
 
 const ORIGINAL_ENV = { ...process.env };
@@ -222,5 +223,49 @@ describe('G-T10-2 — the fixture path is inert', () => {
       { id: '3', name: { text: 'Fine' }, start: { utc: '2026-08-01T17:00:00Z' }, status: 'live' },
     ]);
     expect(records.map((r) => r.sourceRecordId)).toEqual(['3']);
+  });
+});
+
+describe('G-T10-2 — the title only contributes an age when it states one', () => {
+  const ageTextFor = (title: string, body: string): string | undefined =>
+    new EventbriteAdapter(TEST_ORGANIZER).extract([
+      {
+        id: 'age-gate',
+        name: { text: title },
+        summary: body,
+        description: { text: body },
+        start: { utc: '2026-08-12T17:00:00Z' },
+        status: 'live',
+        online_event: false,
+      },
+    ])[0]?.ageText;
+
+  it('a title that is only an audience word manufactures NO age claim', () => {
+    const ageText = ageTextFor('Youth Basketball Meetup', 'Drop in and shoot hoops. Gym shoes please.');
+    expect(ageText).toBeUndefined();
+    // Why this matters, and why the fix belongs at the call site: parseAgeText is
+    // deliberately credulous about wording handed to it, so the un-gated title used to
+    // resolve to a CONFIDENT band off a word in the event's name and nothing else.
+    expect(parseAgeText('Youth Basketball Meetup')).toMatchObject({ resolved: true });
+  });
+
+  it('a title that states a numeric range still contributes, exactly as before', () => {
+    expect(ageTextFor('Kids Camp Ages 6-9', 'Register at the front desk.')).toMatch(/ages 6-9/i);
+  });
+
+  it('a title that says "All Ages" still contributes — a stated bound with no digit in it', () => {
+    expect(ageTextFor('Drum Circle — All Ages', 'Bring a drum, or borrow one.')).toMatch(/all ages/i);
+  });
+
+  it('an age stated in the summary/description is unaffected, gate or no gate', () => {
+    expect(ageTextFor('Saturday Science Lab', 'Hands-on experiments for ages 7-11.')).toMatch(
+      /ages 7-11/i
+    );
+    // Including the weaker keyword fallback: prose about the event is the source's own
+    // wording, so a bare audience word THERE remains a legitimate signal. Only the title
+    // is gated.
+    expect(ageTextFor('Saturday Drop-In', 'A quiet morning for toddlers and their grown-ups.')).toMatch(
+      /toddlers/i
+    );
   });
 });
