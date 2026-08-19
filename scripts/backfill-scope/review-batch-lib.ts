@@ -370,6 +370,43 @@ export function summariseBucket(
 
 // ── rendering ────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The caveat that makes this queue safe to work, carried INTO the spreadsheet.
+ *
+ * The markdown leads with "these are CANDIDATES, none may be auto-corrected" and devotes a
+ * paragraph to the open-ended rows, where "correcting" one *removes* an all-ages marking that may
+ * well be right. But the CSVs are what a reviewer actually opens, and they carried none of it —
+ * only a terse `severity` label. That is the wrong way round for two reasons:
+ *
+ *   • The open-ended rows sort to the very TOP of both files (they are all parent-reachable, and
+ *     severity B is second only to A, which is empty inside this bucket). A reviewer working
+ *     top-down therefore meets the rows where the safe answer is most often "leave alone" FIRST,
+ *     with the least context.
+ *   • A worksheet that says "decision" and "notes" but never says "leave alone is a valid answer"
+ *     reads as a to-do list. The markdown saying otherwise elsewhere does not help someone in
+ *     Excel.
+ *
+ * NEITHER STRING IS NEW POLICY. Both compress wording already shipped in `toMarkdown()` below —
+ * the open-ended paragraph ("‘correct’ may mean ‘leave alone’ … judge each on whether the
+ * programme really is all-ages") and "**Candidates. Do not auto-correct. Do not bulk-clear.**".
+ *
+ * KEYED ON SEVERITY, NOT ON THE TITLE. It is tempting to describe this population as "the Family
+ * rows" — every one of the 15 groups does contain the word "family" somewhere. But only 7 of the
+ * 15 groups (and 49 of the 74 rows) literally BEGIN with "Family"; the rest are
+ * `Games Room Drop-In - Family`, `Hastings Family Enrichment Centre`, `|Family Fun Hockey|`,
+ * `Snow-Skin Mooncakes: Kids & Family Workshop`. A title-prefix predicate would silently miss
+ * eight of fifteen, and would be wrong in principle even where it happened to hit: what makes
+ * "leave alone" the likely answer is that the stored claim is OPEN-ENDED (`[0, ∞)` with
+ * `age_notes = "all-ages"`), which is exactly `severityOf()`'s B branch. The title is a
+ * correlation; the severity is the reason.
+ */
+export const GUIDANCE_OPEN_ENDED = 'leave alone unless you can confirm this programme is NOT all-ages';
+export const GUIDANCE_DEFAULT = 'candidate only — do not auto-correct, do not bulk-clear';
+
+export function reviewerGuidance(severity: Severity): string {
+  return severity === 'B-open-ended-claim' ? GUIDANCE_OPEN_ENDED : GUIDANCE_DEFAULT;
+}
+
 export const CSV_COLUMNS = [
   'priority',
   'occurrence_id',
@@ -387,6 +424,10 @@ export const CSV_COLUMNS = [
   're_ingested_by_deployed_build',
   'last_checked_at',
   'why_candidate',
+  // Immediately before the writeback pair, so `reviewer_decision`/`reviewer_notes` stay the two
+  // RIGHTMOST columns — a reviewer types into the far right of a spreadsheet, and a
+  // machine-generated column must not be pushed between them and the edge.
+  'reviewer_guidance',
   'reviewer_decision',
   'reviewer_notes',
 ] as const;
@@ -423,6 +464,7 @@ export function toCsv(rows: readonly ReviewRow[]): string {
         r.reIngestedByDeployedBuild === null ? '' : r.reIngestedByDeployedBuild,
         r.lastCheckedAt,
         r.whyCandidate,
+        reviewerGuidance(r.severity),
         '',
         '',
       ]
@@ -519,6 +561,8 @@ export const GROUP_CSV_COLUMNS = [
   'earliest_last_checked_at',
   'latest_last_checked_at',
   'occurrence_ids',
+  // Same rule as CSV_COLUMNS: the writeback pair stays rightmost.
+  'reviewer_guidance',
   'reviewer_decision',
   'reviewer_notes',
 ] as const;
@@ -539,6 +583,7 @@ export function toGroupCsv(groups: readonly ReviewGroup[]): string {
         g.earliestLastCheckedAt,
         g.latestLastCheckedAt,
         g.occurrenceIds.join(' '),
+        reviewerGuidance(g.severity),
         '',
         '',
       ]
@@ -739,6 +784,10 @@ export function toMarkdown(report: BatchReport): string {
   push('must be re-checked against `isAdultOrSeniorOnly()` first — §9: a note beginning "Adults…" or');
   push('containing "ratio" changes what the search filter concludes, so a correction can silently hide');
   push('a listing it was meant to fix.');
+  push();
+  push('Both CSVs carry this per row as a `reviewer_guidance` column, sitting immediately before the');
+  push('`reviewer_decision`/`reviewer_notes` writeback pair, so the caveat travels with the spreadsheet');
+  push('rather than living only here — and for the open-ended rows it says so explicitly.');
   push();
   push('| # | severity | parent-reachable | occurrences | activity name | stored claim | re-ingested post-deploy | last checked (latest) |');
   push('|---:|---|---|---:|---|---|---:|---|');

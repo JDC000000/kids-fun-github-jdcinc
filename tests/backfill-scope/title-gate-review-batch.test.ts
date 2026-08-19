@@ -17,6 +17,10 @@ import { ADULT_ONLY_AGE_MIN_MONTHS } from '../../lib/search/filters/audience';
 import {
   BOUNDS_DIFFER_REASON,
   CANDIDATE_REASON,
+  CSV_COLUMNS,
+  GROUP_CSV_COLUMNS,
+  GUIDANCE_DEFAULT,
+  GUIDANCE_OPEN_ENDED,
   SOURCE_UNKNOWN_REASON,
   buildReviewRow,
   buildReviewRows,
@@ -27,6 +31,7 @@ import {
   partitionAmbiguous,
   prioritise,
   reIngestedSince,
+  reviewerGuidance,
   severityOf,
   summariseBucket,
   titleReadsAdultOnly,
@@ -404,7 +409,7 @@ describe('groupForReview — one decision per (title, stored claim), not one per
       null
     );
     const csv = toGroupCsv(groupForReview(rows));
-    expect(csv.split('\r\n')[0]).toContain('occurrence_ids,reviewer_decision,reviewer_notes');
+    expect(csv.split('\r\n')[0]).toContain('occurrence_ids,reviewer_guidance,reviewer_decision,reviewer_notes');
     expect(csv).toContain('a b');
     expect(csv.trimEnd().split('\r\n')[1].endsWith(',,')).toBe(true);
   });
@@ -454,5 +459,229 @@ describe('rendering — legibility is a real requirement, a human works this que
     for (const line of toCsv(rows).trimEnd().split('\r\n').slice(1)) {
       expect(line.endsWith(',,')).toBe(true);
     }
+  });
+});
+
+// ── reviewer_guidance ────────────────────────────────────────────────────────────────────────
+//
+// The markdown warns that for the open-ended rows "correct" may mean "leave alone". The CSVs are
+// what a reviewer actually opens, and those rows sort to the very TOP of both files — so the
+// warning has to travel with the spreadsheet. These tests pin three things: the wording is keyed
+// on SEVERITY (not on a title prefix, which would catch 7 of 15 groups and miss 8), the writeback
+// pair stays rightmost, and adding the column moved nothing else.
+
+/** A real RFC 4180 parse — quoted commas, escaped quotes, CRLF record separators. Deliberately
+ *  not `split(',')`: the generic guidance string contains a comma, which is the whole point. */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i += 1; continue;
+      }
+      field += c; i += 1; continue;
+    }
+    if (c === '"') { inQuotes = true; i += 1; continue; }
+    if (c === ',') { row.push(field); field = ''; i += 1; continue; }
+    if (c === '\r' && text[i + 1] === '\n') { row.push(field); rows.push(row); row = []; field = ''; i += 2; continue; }
+    if (c === '\n' || c === '\r') throw new Error(`bare ${c === '\n' ? 'LF' : 'CR'} outside quotes at offset ${i}`);
+    field += c; i += 1;
+  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+/** Spread `total` occurrences over `groups` groups, remainder to the earliest groups. */
+function distribute(total: number, groups: number): number[] {
+  const base = Math.floor(total / groups);
+  const remainder = total % groups;
+  return Array.from({ length: groups }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
+/**
+ * The published artefact's exact proportions: 633 rows in 167 groups —
+ * B 74 rows / 15 groups, C 80 rows / 14 groups, D 479 rows / 138 groups.
+ *
+ * The 15 B titles are the REAL ones, verbatim from the published artefact, because the exact
+ * 7-of-15 split is the point: only 7 literally BEGIN with "Family" — `Games Room Drop-In -
+ * Family`, `Hastings Family Enrichment Centre`, `|Family Fun Hockey|`, `Snow-Skin Mooncakes:
+ * Kids & Family Workshop` and four others do not. A title-prefix predicate fails this fixture.
+ */
+const B_TITLES = [
+  'Family Badminton',
+  'Family Play Gym',
+  'Family Drop In- Rainy Days Only',
+  'Games Room Drop-In - Family',
+  'Hastings Family Enrichment Centre',
+  'Asian Pop / KPOP / Hip Hop - Family',
+  '|Family Fun Hockey|',
+  'Family Drop In',
+  'Family Play Time',
+  'Family Playtime - Saturday',
+  'Family Playtime - Sunday',
+  'FREE TRIAL - Asian Pop / KPOP / Hip Hop - Family',
+  'Reserve In Advance: Family Ringette',
+  'Saturday Family Fun',
+  'Snow-Skin Mooncakes: Kids & Family Workshop',
+];
+
+const OPEN_ENDED_CLAIM = '[0, ∞) bands=5 notes="all-ages"';
+
+function corpusAtPublishedProportions(): RecheckFinding[] {
+  const out: RecheckFinding[] = [];
+  const add = (title: string, storedClaim: string, n: number, tag: string) => {
+    for (let i = 0; i < n; i += 1) {
+      out.push(finding({ occurrenceId: `${tag}-${out.length}`, activityName: title, storedClaim }));
+    }
+  };
+  distribute(74, 15).forEach((n, g) => add(B_TITLES[g], OPEN_ENDED_CLAIM, n, 'b'));
+  // Zero-padded so codepoint order matches numeric order — the queue sorts titles by codepoint.
+  const pad = (n: number) => String(n).padStart(3, '0');
+  distribute(80, 14).forEach((n, g) => add(`Baby Playtime ${pad(g)}`, '[0, 24) bands=1 notes=NULL', n, 'c'));
+  distribute(479, 138).forEach((n, g) => add(`Youth Basketball ${pad(g)}`, '[144, 216) bands=2 notes=NULL', n, 'd'));
+  return out;
+}
+
+describe('reviewer_guidance — the "leave alone" caveat, carried into the spreadsheet', () => {
+  const findings = corpusAtPublishedProportions();
+  const queue = buildReviewRows(findings, '2026-08-18T21:47:41.402Z');
+  const groups = groupForReview(queue);
+  const rowCsv = parseCsv(toCsv(queue));
+  const groupCsv = parseCsv(toGroupCsv(groups));
+
+  it('is keyed on SEVERITY, and every non-B severity gets the generic wording', () => {
+    expect(reviewerGuidance('B-open-ended-claim')).toBe(GUIDANCE_OPEN_ENDED);
+    expect(reviewerGuidance('A-adult-title-child-band')).toBe(GUIDANCE_DEFAULT);
+    expect(reviewerGuidance('C-infant-band')).toBe(GUIDANCE_DEFAULT);
+    expect(reviewerGuidance('D-bounded-band')).toBe(GUIDANCE_DEFAULT);
+  });
+
+  it('does NOT key on a "Family" title prefix — that would catch 7 of 15 groups and miss 8', () => {
+    // The inherited framing called these "the 15 Family rows". The count is right and the key is
+    // wrong: the discriminator is the open-ended stored claim, not the words in the title.
+    const bGroups = groups.filter((g) => g.severity === 'B-open-ended-claim');
+    expect(bGroups).toHaveLength(15);
+    expect(bGroups.filter((g) => g.activityName.startsWith('Family'))).toHaveLength(7);
+    // …yet all 15 get the B wording, because the key is the open-ended claim.
+    expect(bGroups.every((g) => reviewerGuidance(g.severity) === GUIDANCE_OPEN_ENDED)).toBe(true);
+    // And a row with no "family" in the title ANYWHERE still gets it, for the same reason.
+    const noFamily = buildReviewRow(
+      finding({ activityName: 'Open Gym Drop-In', storedClaim: OPEN_ENDED_CLAIM }), null
+    );
+    expect(noFamily.severity).toBe('B-open-ended-claim');
+    expect(reviewerGuidance(noFamily.severity)).toBe(GUIDANCE_OPEN_ENDED);
+    // Conversely a "Family" title that is NOT open-ended gets the generic wording.
+    expect(reviewerGuidance(severityOf(
+      { hasAgeRow: true, ageMinMonths: 0, ageMaxMonths: 24, bandCount: 1, ageNotes: null }, false
+    ))).toBe(GUIDANCE_DEFAULT);
+  });
+
+  it('sits immediately before reviewer_decision in both column lists', () => {
+    for (const columns of [CSV_COLUMNS, GROUP_CSV_COLUMNS]) {
+      const cols = [...columns] as string[];
+      expect(cols).toContain('reviewer_guidance');
+      expect(cols.indexOf('reviewer_guidance')).toBe(cols.indexOf('reviewer_decision') - 1);
+    }
+  });
+
+  it('leaves reviewer_decision and reviewer_notes as the final two columns, still empty', () => {
+    for (const [header, ...data] of [rowCsv, groupCsv]) {
+      expect(header.slice(-3)).toEqual(['reviewer_guidance', 'reviewer_decision', 'reviewer_notes']);
+      for (const r of data) {
+        expect(r[header.length - 2]).toBe('');
+        expect(r[header.length - 1]).toBe('');
+      }
+    }
+  });
+
+  it('populates every cell — an empty one reads as a generator bug', () => {
+    for (const [header, ...data] of [rowCsv, groupCsv]) {
+      const gi = header.indexOf('reviewer_guidance');
+      const si = header.indexOf('severity');
+      expect(data.length).toBeGreaterThan(0);
+      for (const r of data) {
+        expect(r[gi]).not.toBe('');
+        expect(r[gi]).toBe(r[si] === 'B-open-ended-claim' ? GUIDANCE_OPEN_ENDED : GUIDANCE_DEFAULT);
+      }
+    }
+  });
+
+  it('quotes the generic string, because it contains a comma — and does not quote the other', () => {
+    // csvCell's job on exactly these two values. If the generic one ever emitted unquoted it
+    // would split into two fields and shift `reviewer_decision` left by one for 559 of 633 rows.
+    expect(GUIDANCE_DEFAULT).toContain(',');
+    expect(GUIDANCE_OPEN_ENDED).not.toMatch(/[",\r\n]/);
+    const raw = toCsv(queue);
+    expect(raw).toContain(`,"${GUIDANCE_DEFAULT}",,`);
+    expect(raw).toContain(`,${GUIDANCE_OPEN_ENDED},,`);
+    expect(raw).not.toContain(`,${GUIDANCE_DEFAULT},`);
+    expect(toGroupCsv(groups)).toContain(`,"${GUIDANCE_DEFAULT}",,`);
+  });
+
+  it('keeps both files rectangular under a real RFC 4180 parse, with CRLF preserved', () => {
+    for (const [text, parsed] of [[toCsv(queue), rowCsv], [toGroupCsv(groups), groupCsv]] as const) {
+      const [header, ...data] = parsed;
+      for (const r of data) expect(r).toHaveLength(header.length);
+      expect(text.endsWith('\r\n')).toBe(true);
+      expect(/(?<!\r)\n/.test(text)).toBe(false); // no bare LF anywhere, including inside quotes
+    }
+  });
+
+  it('changes no ordering: 167 groups / 633 rows, B at group 1–15 and row 1–74', () => {
+    const groupData = groupCsv.slice(1);
+    const rowData = rowCsv.slice(1);
+    expect(groupData).toHaveLength(167);
+    expect(rowData).toHaveLength(633);
+    expect(groupData.reduce((n, r) => n + Number(r[groupCsv[0].indexOf('occurrences')]), 0)).toBe(633);
+
+    const positionsOf = (parsed: string[][], severity: string) => {
+      const si = parsed[0].indexOf('severity');
+      const pi = parsed[0].indexOf('priority');
+      return parsed.slice(1).filter((r) => r[si] === severity).map((r) => Number(r[pi]));
+    };
+    expect(positionsOf(groupCsv, 'B-open-ended-claim')).toEqual(
+      Array.from({ length: 15 }, (_, i) => i + 1)
+    );
+    expect(positionsOf(rowCsv, 'B-open-ended-claim')).toEqual(
+      Array.from({ length: 74 }, (_, i) => i + 1)
+    );
+    // priority is still a dense 1..N in file order in both files.
+    expect(rowData.map((r) => Number(r[0]))).toEqual(Array.from({ length: 633 }, (_, i) => i + 1));
+    expect(groupData.map((r) => Number(r[0]))).toEqual(Array.from({ length: 167 }, (_, i) => i + 1));
+  });
+
+  it('stripping the new column back out reproduces the pre-change CSV exactly', () => {
+    // The invariant that proves this change ADDED a column and touched nothing else: no
+    // reordering, no requoting, no drifted counts. Same proof the regenerated artefact is held to.
+    for (const [parsed, columns] of [[rowCsv, CSV_COLUMNS], [groupCsv, GROUP_CSV_COLUMNS]] as const) {
+      const gi = parsed[0].indexOf('reviewer_guidance');
+      const stripped = parsed.map((r) => r.filter((_, i) => i !== gi));
+      expect(stripped[0]).toEqual([...columns].filter((c) => c !== 'reviewer_guidance'));
+      for (const r of stripped.slice(1)) expect(r).toHaveLength(stripped[0].length);
+    }
+  });
+
+  it('the markdown says the CSVs carry the column, so the two artefacts cannot drift', () => {
+    const md = toMarkdown({
+      classId: '3+6-activenet-title-gate', generatedFrom: 'x.json', deployedSince: null,
+      headlineAmbiguous: queue.length,
+      buckets: {
+        candidates: summariseBucket(CANDIDATE_REASON, findings, null),
+        sourceUnknown: summariseBucket(SOURCE_UNKNOWN_REASON, [], null),
+        boundsDiffer: summariseBucket(BOUNDS_DIFFER_REASON, [], null),
+      },
+      unclassifiedAmbiguous: 0, queue, groups, severityTally: [], liveCrossCheck: null,
+    });
+    expect(md).toContain('`reviewer_guidance`');
+    // The wording in the CSV is a compression of what the markdown already shipped — not new
+    // policy invented by the CSV writer.
+    expect(md).toMatch(/"correct" may mean "leave alone"|“correct” may mean “leave alone”/);
+    expect(md).toContain('Do not auto-correct. Do not bulk-clear.');
   });
 });
