@@ -100,8 +100,12 @@ function isFrontDoorCandidate(item: SearchItemDto): boolean {
 }
 
 /**
- * The cards this strip renders, in order — the whole selection, as one pure function over a
- * response so it is testable without a DOM (this repo has no jsdom; see vitest.config.ts).
+ * Every card this strip is ALLOWED to show, in rank order and NOT yet capped — the gate on its
+ * own, separated from the cap so each can be tested for what it actually does.
+ *
+ * That separation is not cosmetic. Asserting only on the capped list cannot distinguish "the
+ * filter removed this row" from "the row ranked 4th anyway", so a test written against
+ * `frontDoorCards` alone passes whether or not the gate exists. The gate's invariant lives here.
  *
  * Filtering happens on the RAW response, before `mapSearchResponseToActivities`: the mapped
  * `Activity` keeps `ageNotes` but drops the numeric `ageMinMonths`/`ageMaxMonths` that both gates
@@ -109,15 +113,22 @@ function isFrontDoorCandidate(item: SearchItemDto): boolean {
  * the correct reading of it rather than a special case — it is BY DEFINITION the section for rows
  * whose age the source never stated.
  */
-export function frontDoorCards(body: SearchResponseDto): Activity[] {
+export function frontDoorCandidates(body: SearchResponseDto): Activity[] {
   const vetted: SearchResponseDto = {
     ...body,
     results: (body.results ?? []).filter(isFrontDoorCandidate),
     expected: (body.expected ?? []).filter(isFrontDoorCandidate),
     ...(body.ageUnconfirmed ? { ageUnconfirmed: body.ageUnconfirmed.filter(isFrontDoorCandidate) } : {}),
   };
-  const { confirmed } = partitionSections(mapSearchResponseToActivities(vetted));
-  return confirmed.slice(0, MAX_CARDS);
+  return partitionSections(mapSearchResponseToActivities(vetted)).confirmed;
+}
+
+/**
+ * The cards this strip renders — the candidates above, capped. One pure function over a response
+ * so the whole selection is testable without a DOM (this repo has no jsdom; see vitest.config.ts).
+ */
+export function frontDoorCards(body: SearchResponseDto): Activity[] {
+  return frontDoorCandidates(body).slice(0, MAX_CARDS);
 }
 
 export function HomeTodayStrip() {

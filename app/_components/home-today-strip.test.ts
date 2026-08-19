@@ -30,7 +30,9 @@ import { RegionHierarchy } from '@/lib/geo/region';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
 import { SearchEngine } from '@/lib/search/engine';
 import type { ListingRecord } from '@/lib/search/types';
-import { frontDoorCards, STRIP_REQUEST } from './HomeTodayStrip';
+import { frontDoorCandidates, frontDoorCards, STRIP_REQUEST } from './HomeTodayStrip';
+import { partitionSections } from '../preview/_data/filter';
+import { mapSearchResponseToActivities } from '../preview/_data/search-api';
 import type { ListingRecordDto, SearchItemDto, SearchResponseDto } from '../preview/_data/search-api';
 
 interface RowSpec {
@@ -281,9 +283,19 @@ describe('what /api/search itself already removes, and what it deliberately does
   });
 
   it('and the strip’s own filter is what keeps them off the front door', () => {
-    const cards = frontDoorCards(wire());
-    expect(cards).toHaveLength(MAX_CARDS_EXPECTED);
-    for (const l of UNRESOLVED) expect(ids(cards)).not.toContain(l.id);
-    for (const l of ADULT_ONLY) expect(ids(cards)).not.toContain(l.id);
+    // ASSERTED PRE-CAP, ON PURPOSE. The obvious version of this test — "the three cards do not
+    // contain the bad rows" — is vacuous: it passes whether the gate removed them or they merely
+    // ranked 4th. Verified by neutering the gate, at which point that version still went green.
+    // So the invariant is asserted against the uncapped candidate list, plus an explicit vacuity
+    // check that the bad rows really are in the pre-fix set this is measured against.
+    const body = wire();
+    const beforeFix = partitionSections(mapSearchResponseToActivities(body)).confirmed.map((a) => a.id);
+    for (const l of UNRESOLVED) expect(beforeFix).toContain(l.id); // …or there is nothing to fix
+
+    const vetted = ids(frontDoorCandidates(body));
+    for (const l of UNRESOLVED) expect(vetted).not.toContain(l.id);
+    for (const l of ADULT_ONLY) expect(vetted).not.toContain(l.id);
+    // Still enough left over to fill the strip — the fix must not trade wrong cards for none.
+    expect(frontDoorCards(body)).toHaveLength(MAX_CARDS_EXPECTED);
   });
 });
