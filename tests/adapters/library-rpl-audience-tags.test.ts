@@ -188,7 +188,7 @@ describe('RPL — a catch-all tag must not drown a specific one', () => {
 
 describe('audience tags union their BANDS, not their hull', () => {
   it('two disjoint tags do not claim the bands in the gap between them', () => {
-    // The hull of Babies [0,24) and Adults [216,∞) is [0,∞) — every band. The true union is
+    // The hull of Babies [0,24) and Adults [228,∞) is [0,∞) — every band. The true union is
     // two. `components` is what keeps them apart.
     const p = parseAudienceLabels(['Babies', 'Adults']);
     expect(computeAgeBandMatches(p, BANDS)).toEqual(['under2', '15+']);

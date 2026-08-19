@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ADULT_ONLY_AGE_MIN_MONTHS, isAdultOrSeniorOnly } from '../../lib/search/filters/audience';
+import { parseAudienceLabels } from '../../worker/core/age';
 
 const listing = (activityName: string, ageMinMonths: number | null = null, ageMaxMonths: number | null = null) => ({
   activityName,
@@ -208,5 +209,37 @@ describe('isAdultOrSeniorOnly — keeps everything a child could attend', () => 
     'Teen Summer Reading Club 2026',
   ])('ordinary kids content: %s', (title) => {
     expect(isAdultOrSeniorOnly(listing(title))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The two SIDES of the pipeline agree on where adulthood starts.
+//
+// They used to disagree by a year: worker/core/age.ts resolved an "Adults" TAG to 18 years
+// (216 months) while this filter's floor was 19 (228). Anything landing in that 12-month gap
+// was tagged an adult audience at ingest and then admitted by the filter anyway — the one
+// combination that puts adult programming in front of a parent searching for their kid.
+//
+// This is asserted as a RELATIONSHIP rather than as two literals on purpose. Pinning 228 twice
+// is satisfied by two constants that both changed; asking the ingest side to produce a value
+// the search side accepts is only satisfied by them actually matching.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('ingest and search agree on the adult-only floor', () => {
+  it('an "Adults" audience tag resolves to a floor this filter treats as adult-only', () => {
+    const parsed = parseAudienceLabels(['Adults']);
+    expect(parsed.resolved).toBe(true);
+    expect(parsed.ageMinMonths).toBe(ADULT_ONLY_AGE_MIN_MONTHS);
+    expect(parsed.ageMaxMonths).toBeNull();
+    expect(
+      isAdultOrSeniorOnly(listing('Community Lunch Program', parsed.ageMinMonths, parsed.ageMaxMonths))
+    ).toBe(true);
+  });
+
+  it('19 years, not 18 — an "18+" listing is still a teen listing here', () => {
+    // BC's age of majority is 19, and the product's top band is `15+`, so an 18-year-old is
+    // still a kid in this app. A source that literally writes "18+" therefore stays visible —
+    // that is audience.ts's documented intent and is NOT what the alignment above changed.
+    expect(ADULT_ONLY_AGE_MIN_MONTHS).toBe(19 * 12);
+    expect(isAdultOrSeniorOnly(listing('Richmond Reads: Summer Book Club 2026', 18 * 12))).toBe(false);
   });
 });

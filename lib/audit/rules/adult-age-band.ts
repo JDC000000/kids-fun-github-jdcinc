@@ -25,7 +25,7 @@
 //
 // That reuse is necessary but NOT sufficient, because `parseAudienceLabels` is anchored at the
 // START of a tag (`/^\s*(?:adults?|seniors?|older\s+adults?)\b/i`) and the trap sentence also
-// starts with "Adults". Feeding it that sentence returns min = 216 months — a false positive on
+// starts with "Adults". Feeding it that sentence returns min = 228 months — a false positive on
 // the exact example the codebase warns about. Hence `structuredTags()`, which refuses to
 // treat prose as a tag list: anything carrying supervision/accompaniment language, or running
 // longer than a real audience label ever does, is discarded before the parser sees it.

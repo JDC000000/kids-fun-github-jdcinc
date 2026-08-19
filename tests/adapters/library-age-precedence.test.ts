@@ -162,8 +162,12 @@ describe('BiblioCommons age precedence — structured audience tags beat descrip
   });
 
   it('an Adults-tagged programme resolves to adults, so it cannot surface under ?age=under2', () => {
+    // 228, not 216: an "Adults" TAG resolves to BC's age of majority (19y), the same floor
+    // lib/search/filters/audience.ts's ADULT_ONLY_AGE_MIN_MONTHS uses. The two used to
+    // disagree by a year, so a tag-derived adult listing sat above the ingest floor and below
+    // the search one. The claim under test is unchanged — this tag is never `under2`.
     const { parse, bands } = resolve('ESL Conversation Practice');
-    expect(parse).toMatchObject({ ageMinMonths: 216, ageMaxMonths: null, resolved: true });
+    expect(parse).toMatchObject({ ageMinMonths: 228, ageMaxMonths: null, resolved: true });
     expect(bands).toEqual(['15+']);
     expect(bands).not.toContain('under2');
   });

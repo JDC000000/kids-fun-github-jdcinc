@@ -341,7 +341,14 @@ export function parseAgeText(ageText?: string | null): AgeParse {
  * difference. A tag literally reading "Adults" can.
  */
 const ADULT_AUDIENCE_RE = /^\s*(?:adults?|seniors?|older\s+adults?)\b/i;
-const ADULT_MIN_MONTHS = 18 * YEARS;
+/**
+ * 19 years, BC's age of majority — the SAME floor as
+ * lib/search/filters/audience.ts's ADULT_ONLY_AGE_MIN_MONTHS, and it has to be. This was 18
+ * years, so a tag-derived adult listing resolved to 216 months: above the ingest side's adult
+ * floor, below the search side's, and therefore tagged adult at ingest but never excluded as
+ * adult-only by the filter. Changing either constant alone re-opens that 12-month gap.
+ */
+const ADULT_MIN_MONTHS = 19 * YEARS;
 
 /**
  * A tag that names CHILDREN and then says "all ages" — Richmond publishes exactly this, as
