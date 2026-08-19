@@ -486,6 +486,22 @@ describe('G-T7R-3 parse against real captured payloads', () => {
     expect(parseAgeText(youth?.ageText)).toMatchObject({ ageMinMonths: 156, ageMaxMonths: 228, resolved: true });
   });
 
+  it('reads the SINGULAR "preschooler" in a description, not just the plural', () => {
+    // AGE_PHRASE_KEYWORD anchors every alternative between \b, so `\bpreschool(?:ers)?\b` could
+    // not match "preschooler" at all: \b fails after "preschool" and the "ers" branch needs the
+    // plural. An age-silent title plus a description whose only age word was the singular
+    // emitted NO ageText and produced no occurrence_age row, while the plural resolved to 2-4.
+    // That asymmetry is the bug, so both spellings are asserted.
+    for (const [body, expected] of [
+      ['<p>A weekly session for every preschooler.</p>', 'preschooler'],
+      ['<p>A weekly session for preschoolers.</p>', 'preschoolers'],
+    ] as const) {
+      const ageText = extractAgeText({ title: 'Drop-In Play', description: body });
+      expect(ageText, body).toBe(expected);
+      expect(parseAgeText(ageText), body).toMatchObject({ ageMinMonths: 36, ageMaxMonths: 60, resolved: true });
+    }
+  });
+
   it('reads no age out of a title number that is a clock time, a rating or a price', () => {
     // The numbers rec-centre titles actually carry. Each must leave the title unused, not
     // resolve to an age — the same three mistakes worker/core/age.ts already paid for.

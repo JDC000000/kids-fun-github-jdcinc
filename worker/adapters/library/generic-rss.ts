@@ -316,7 +316,7 @@ const KID_TITLE_RE =
  * kid heading to university" — an event for outgoing high-school graduates).
  */
 const KID_DESCRIPTION_RE =
-  /\b(?:ages?\s*\d|\d+\s*-\s*\d+\s*(?:months?|years?)|up\s+to\s+\d+\s*years?|grades?\s*\d|infants?|babies|toddlers?|preschool(?:ers)?|kindergarten(?:ers)?|tweens?|teens?|children|kids|all\s+ages|whole\s+family|caregivers?)\b/i;
+  /\b(?:ages?\s*\d|\d+\s*-\s*\d+\s*(?:months?|years?)|up\s+to\s+\d+\s*years?|grades?\s*\d|infants?|babies|toddlers?|preschool(?:ers?)?|kindergarten(?:ers)?|tweens?|teens?|children|kids|all\s+ages|whole\s+family|caregivers?)\b/i;
 
 /** Raw age wording to carry forward for T13/normalizeHook. Never a resolved age band. */
 const AGE_TEXT_RE =

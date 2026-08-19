@@ -342,7 +342,7 @@ function eventIdFromLink(link: string): string {
 // resolves it to structured age bands downstream.
 const AGE_RANGE_RE = /(?:ages?|grades?)\s*[\dK][^.<\n]{0,40}/i;
 const AGE_HINT_RE =
-  /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers)?|kindergarten|family|all ages)[^.<\n]{0,40}/i;
+  /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers?)?|kindergarten|family|all ages)[^.<\n]{0,40}/i;
 
 /**
  * Which age signal this BiblioCommons item actually offers, in strength order.

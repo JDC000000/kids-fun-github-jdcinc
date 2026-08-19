@@ -3,6 +3,7 @@ import {
   parseAgeText,
   parseAudienceLabels,
   computeAgeBandMatches,
+  extractAgeWording,
   type AgeBandRow,
 } from '../../worker/core/age';
 import type { Adapter, StructuredRecord } from '../../worker/core/adapter';
@@ -188,6 +189,18 @@ describe('parseAgeText — deterministic age wording', () => {
       expect(parseAgeText(text), text).toMatchObject({ ageMinMonths: 36, ageMaxMonths: 60, resolved: true });
     }
     expect(bandsFor('|Parent and Preschooler|')).toEqual(['2-4']);
+  });
+
+  // The prose EXTRACTOR has to agree with the keyword table on the singular, and the two are
+  // separate regexes that were spelled differently. AGE_KEYWORD_RE never actually LOST the
+  // singular — it has no `\b`, so its trailing `[^.<\n]{0,40}` swallowed the "er" and the
+  // wording came out whole either way — but it is now spelled the same as KEYWORD_BANDS, and
+  // what this pins is the CHAIN: lift the wording out of prose, then resolve it. A future edit
+  // that adds a word boundary to AGE_KEYWORD_RE would break here rather than in production.
+  it('lifts the singular "preschooler" out of prose and resolves it', () => {
+    const wording = extractAgeWording('Parent and Preschooler');
+    expect(wording).toBe('Preschooler');
+    expect(parseAgeText(wording)).toMatchObject({ ageMinMonths: 36, ageMaxMonths: 60, resolved: true });
   });
 
   // A source may change units mid-range, and three real wordings did. The unit was readable

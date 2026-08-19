@@ -223,7 +223,7 @@ function gradeToMonths(g: string): number {
 export const AGE_RANGE_RE = /(?:age[sd]?|grades?)\s*[\dK][^.<\n]{0,40}/i;
 /** An audience keyword — the weaker fallback when no numeric range is stated. */
 const AGE_KEYWORD_RE =
-  /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers)?|kindergarten|family|families|all ages)[^.<\n]{0,40}/i;
+  /(?:children|kids|teens?|tweens?|youth|toddlers?|babies|baby|infants?|preschool(?:ers?)?|kindergarten|family|families|all ages)[^.<\n]{0,40}/i;
 
 /**
  * Pull the age WORDING out of free prose, preferring an explicit numeric range over an

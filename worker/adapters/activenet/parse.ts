@@ -142,7 +142,7 @@ export function classifyCost(event: ActiveNetEvent): CostVerdict {
 const AGE_PHRASE_NUMERIC =
   String.raw`ages?\s*\d{1,2}\s*(?:-|–|to)\s*\d{1,2}|\bages?\s*\d{1,2}\s*\+|\b\d{1,2}\s*(?:-|–|to)\s*\d{1,2}\s*(?:yrs?|years)|\b\d{1,2}\s*\+\s*(?:yrs?|years)`;
 const AGE_PHRASE_KEYWORD =
-  String.raw`\ball\s+ages\b|\bpreschool(?:ers)?\b|\btoddlers?\b|\bbabies\b|\byouth\b|\bteens?\b`;
+  String.raw`\ball\s+ages\b|\bpreschool(?:ers?)?\b|\btoddlers?\b|\bbabies\b|\byouth\b|\bteens?\b`;
 const AGE_PHRASE_RE = new RegExp(`(?:${AGE_PHRASE_NUMERIC}|${AGE_PHRASE_KEYWORD})`, 'i');
 /** Every numeric phrase in the text, in order — the scan statedAgePhrase() walks. */
 const AGE_PHRASE_NUMERIC_RE = new RegExp(`(?:${AGE_PHRASE_NUMERIC})`, 'gi');

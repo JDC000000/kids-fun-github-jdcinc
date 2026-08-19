@@ -321,10 +321,25 @@ describe('CityCalendar adapter — City of Vancouver Trumba feed (Task 9)', () =
     // And the prose fallback is NOT the culprit: it finds nothing in this event's own text.
     const hay = "International Overdose Awareness City Hall's flag will be at half-mast in honour of International Overdose Awareness.";
     expect(
-      /(?:for\s+)?(?:kids|children|families|family|all\s+ages|youth|teens?|tweens?|toddlers?|babies|baby|preschool(?:ers)?|seniors?|adults?)[^.<\n]{0,30}/i.exec(
+      /(?:for\s+)?(?:kids|children|families|family|all\s+ages|youth|teens?|tweens?|toddlers?|babies|baby|preschool(?:ers?)?|seniors?|adults?)[^.<\n]{0,30}/i.exec(
         hay
       )
     ).toBeNull();
+  });
+
+  it('the prose fallback reads the singular "preschooler", and it resolves to 2-4', async () => {
+    // AGE_HINT_RE's `preschool(?:ers?)?` is now spelled the same way worker/core/age.ts's
+    // KEYWORD_BANDS is. This regex never actually lost the singular — it has no `\b`, so the
+    // trailing `[^.<\n]{0,30}` absorbed the "er" — so what is pinned is the CHAIN: a wording
+    // this fallback lifts must be a wording the age table can resolve. An event with no
+    // Audiences field is the only way to reach the fallback at all.
+    process.env.KIDS_FUN_LIVE_CITY_CALENDARS = 'vancouver';
+    stubFetchJson([trumba(1, 'Drop-In Play', 'A weekly session for every preschooler and a grown-up.')]);
+    const adapter = new CityCalendarAdapter(getCityCalendar('vancouver')!);
+    const [record] = await adapter.extract(await adapter.fetch());
+
+    expect(record.ageText).toBe('preschooler and a grown-up');
+    expect(computeAgeBandMatches(parseAgeText(record.ageText), BANDS)).toEqual(['2-4']);
   });
 
   it('still resolves genuine audience claims, and never second-guesses a source that names a child', async () => {

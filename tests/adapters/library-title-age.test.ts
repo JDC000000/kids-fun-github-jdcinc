@@ -209,6 +209,18 @@ describe('library — precedence and the haystack boundary', () => {
     expect(resolveBiblioCommonsAgeSignal('Teen Movie Night', 'Popcorn provided. Drop in.', [])).toEqual({});
   });
 
+  it('the prose keyword tier reads the singular "preschooler", and it resolves', () => {
+    // AGE_HINT_RE's `preschool(?:ers?)?` is now spelled the same way worker/core/age.ts's
+    // KEYWORD_BANDS is. This tier never actually lost the singular — the pattern has no `\b`,
+    // so the trailing `[^.<\n]{0,40}` absorbed the "er" — so what is pinned is the CHAIN: the
+    // wording this tier lifts must be wording the age table can resolve. Extraction and
+    // resolution disagreeing on one character is exactly how "|Parent and Preschooler|" went
+    // out unresolved.
+    const signal = resolveBiblioCommonsAgeSignal('Drop-In Play', 'A weekly session for every preschooler', []);
+    expect(signal).toEqual({ ages: 'preschooler' });
+    expect(parseAgeText(signal.ages)).toMatchObject({ ageMinMonths: 36, ageMaxMonths: 60, resolved: true });
+  });
+
   it('the title cannot be spliced onto the description to manufacture a range', () => {
     // The haystack joins with ". " precisely because every pattern here is bounded by [^.<\n].
     // Without the terminator, "Summer Camp 8" + "12 spaces left" reads as "8. 12" → a range.

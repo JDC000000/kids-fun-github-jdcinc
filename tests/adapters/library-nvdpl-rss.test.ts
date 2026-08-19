@@ -260,6 +260,20 @@ describe('NVDPL generic_rss — kid-relevance classification (trap 5)', () => {
     expect(classifyKidRelevance('Koala Koders: Scratch', 'For ages 9-11.')).toMatchObject({ kidRelevant: true });
   });
 
+  it('admits the SINGULAR "preschooler" in a description, not just the plural', () => {
+    // KID_DESCRIPTION_RE anchors every alternative between \b, so `preschool(?:ers)?` could not
+    // match "preschooler" at all: \b fails after "preschool" and the "ers" branch needs the
+    // plural. A neutral-titled item whose only kid word was the singular classified
+    // `no_kid_signal` and never entered the feed. The plural was always admitted — that
+    // asymmetry is the bug, so both are asserted here.
+    for (const body of ['A weekly session for every preschooler.', 'A weekly session for preschoolers.']) {
+      expect(classifyKidRelevance('Drop-In Play', body), body).toEqual({
+        kidRelevant: true,
+        signal: 'description',
+      });
+    }
+  });
+
   it('rejects the adult programming that actually appears in this feed', () => {
     const adultProgramming: Array<[string, string]> = [
       ['Pins and Needles', 'Pins & Needles welcomes needle workers of all kinds! Gather at the Library for knitting, crocheting, sewing or other fibre arts.'],

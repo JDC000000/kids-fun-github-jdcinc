@@ -210,7 +210,7 @@ function categoryHint(event: TrumbaEvent): string | undefined {
 }
 
 const AGE_HINT_RE =
-  /(?:for\s+)?(?:kids|children|families|family|all\s+ages|youth|teens?|tweens?|toddlers?|babies|baby|preschool(?:ers)?|seniors?|adults?)[^.<\n]{0,30}/i;
+  /(?:for\s+)?(?:kids|children|families|family|all\s+ages|youth|teens?|tweens?|toddlers?|babies|baby|preschool(?:ers?)?|seniors?|adults?)[^.<\n]{0,30}/i;
 
 /**
  * The source stating an age OUTRIGHT — "ages 7-11", "grades K-3". Preferred over
