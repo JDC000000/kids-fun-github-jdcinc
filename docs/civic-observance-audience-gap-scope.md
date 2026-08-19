@@ -1,13 +1,35 @@
 # CityCalendar — civic-observance gap in the adult-subject ingest guard: scope
 
 **Status: SCOPING AND CHARACTERISATION ONLY. No guard code was changed.**
-Branch `design/kf-civic-observance-scope`, off `origin/main` @ `bdd3ad0`. Recorded as
+**This document is MERGED ON MAIN, and being on main does NOT make its recommendation approved.**
+§7.1 is a recommendation awaiting sign-off, not a decision. It was authored on
+`design/kf-civic-observance-scope` off `origin/main` @ `bdd3ad0`; that SHA is the *provenance of the
+measurements below*, not the branch you are reading. Recorded as
 `kids-fun-3h-citycalendar-civic-observance-adult-subject-gap-2026-08-19`.
 
 `ADULT_SUBJECT_RE`, `namesAdultOnlySubject`, `CHILD_AUDIENCE_RE`, `CAREGIVER_PROGRAMME_RE` and
-every other ingest guard are **byte-identical to `bdd3ad0`**. This document recommends a
-mechanism; it does not implement one. The recommendation in §7 is **awaiting Operator sign-off**
-and must not be actioned without it.
+every other ingest guard were **byte-identical to `bdd3ad0`** when this was written, and were
+re-confirmed byte-identical at `0234842` — by object hash, plus a sweep showing *no* file under
+`worker/` or `lib/audit/` changed at all across that range.
+
+**Note the shelf life.** That parity claim is an assertion about files this document does not
+contain, so a later commit can falsify it with nothing here to say so. Do not trust it as it ages —
+re-check it in one line:
+
+```bash
+git diff --stat bdd3ad0..HEAD -- worker/ lib/audit/ lib/search/filters/age.ts   # expect: empty
+```
+
+**Do not widen that path set — the boundary is load-bearing.** It covers every file this document
+makes a *line-number citation* into, which is the set of claims that can silently rot. It
+deliberately excludes the `tests/**` files and `scripts/backfill-scope/*` named in §9, because those
+are not parity claims: §9 records what passed *when this was written*, correctly dated, and stays
+true as history even once someone adds a test and the per-file counts move. Adding `tests/` here
+would make the check fail on every unrelated test addition — and a self-check that cries wolf gets
+deleted, taking the real guarantee with it.
+
+This document recommends a mechanism; it does not implement one. The recommendation in §7 is
+**awaiting Operator sign-off** and must not be actioned without it.
 
 Measurements dated **2026-08-19**. Production counts are read-only via
 `scripts/backfill-scope/readonly-db.ts` (`BEGIN TRANSACTION READ ONLY`, SELECT/WITH only). Feed
@@ -36,8 +58,11 @@ counts are from the captured `bdd3ad0` artefact plus two read-only GETs of the p
    suppressed today**. Four leak. See §2.
 
 4. **The real blast radius is 9 distinct observances a year, not 5** — measured, §4. The four in
-   the store are the four that happen to be inside today's ~4.5-month feed window. Five more are
-   already visible further out, including one the mourning-vocabulary fix would *not* catch.
+   the store are the four that happen to be inside today's ~4.5-month feed window. **Four more
+   distinct observances** are already visible further out — five more leaking *occurrences*, one
+   of them a 2027 repeat of an observance already stored — including one the mourning-vocabulary
+   fix would *not* catch. The 9 decomposes as 4 stored-leaking + 4 new-distinct-leaking + 1
+   correctly suppressed (International Overdose Awareness); it is **not** 4 + 5.
 
 5. **The false-positive cost is smaller than assumed, in a way that matters.** Suppression yields
    silence, and `lib/search/filters/age.ts:17` admits an empty band list under **every** age
