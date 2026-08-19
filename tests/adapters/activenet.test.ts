@@ -553,6 +553,152 @@ describe('G-T7R-3 parse against real captured payloads', () => {
     }
   });
 
+  // ── the description states a number AND a vaguer word ────────────────────────────
+  //
+  // `AGE_PHRASE_RE` is first-position-wins, and on this platform the vaguer word usually
+  // comes first: "for pre-teens and youth ages 8-18" published as 12–18 off `teens`,
+  // excluding the 8–11-year-olds the sentence names. Measured on the same 17,209 live
+  // records: 153 records / 25 programmes are that shape.
+  //
+  // The SAME regex space is what correctly refuses 1,088 supervision-rule records — "children
+  // 6-12 years must be accompanied by a participating adult" would narrow an all-ages public
+  // badminton to a 6–12 programme — so the two directions are tested together, deliberately,
+  // and every description below is verbatim from that pull. A precedence change alone breaks
+  // the second set; the disqualifying anchor is what separates them.
+
+  it('prefers the stated range over the vaguer word that happens to come first', () => {
+    const recovered: Array<[string, string, string, number, number | null]> = [
+      [
+        'Games Room Drop-in - Youth',
+        'This free designated Games Room drop-in time is for pre-teens and youth ages 8-18. Come by afterschool and check out the Games Room with your friends! We have a pool table, table tennis, and foosball available! Please ask a staff member for equipment. No drop-in sessions on statutory holidays.',
+        'ages 8-18',
+        96,
+        228,
+      ],
+      [
+        // "Toddlers" published this as 1–3 years while the sentence after it says 2 to 5.
+        'Little Movers Gymnastics',
+        'Our Little Movers program is specially designed for curious toddlers who love to jump, climb, and explore! In this playful and safe environment, children ages 2 to 5 develop their motricity, coordination, and balance through engaging movement activities. Parents are welcome to join the class to help their little ones. No sess Oct 12. $30 Drop-In',
+        'ages 2 to 5',
+        24,
+        72,
+      ],
+      [
+        'Games Room - Friday',
+        'Games Room drop-in is open to youth ages 10-18! Come hang out and chat with the youth leader, play some games, or do your homework! No registration required. No session Friday, October 30th due to Special Event.',
+        'ages 10-18',
+        120,
+        228,
+      ],
+      [
+        'Mandarin Play Club',
+        'Mandarin Play Club is an immersive, play-based Mandarin Chinese program for preschoolers ages 3 to 5. In each 60 minute drop-off class, children build early listening and speaking confidence through movement activities, interactive games, music, stories, and dramatic play. No sess Oct 13.',
+        'ages 3 to 5',
+        36,
+        72,
+      ],
+      [
+        'Red Cross Babysitting Course',
+        'This course offers basic first aid and caregiving skills for youth 11-15 years old. Participants learn how to provide care to children in a variety of age groups, and how to prevent and respond to emergencies.',
+        '11-15 years',
+        132,
+        192,
+      ],
+    ];
+    for (const [title, description, phrase, ageMinMonths, ageMaxMonths] of recovered) {
+      const ageText = extractAgeText({ title, description: `<p>${description}</p>` });
+      expect(ageText, title).toBe(phrase);
+      expect(parseAgeText(ageText), title).toMatchObject({ ageMinMonths, ageMaxMonths, resolved: true });
+    }
+  });
+
+  it('does not promote a number that is a rule about supervision, money or paperwork', () => {
+    // One per FALSE_* class in the scope document's §2 taxonomy, each description verbatim and
+    // each expectation the value this adapter produced BEFORE the precedence change — these
+    // records are the 1,681 the extractor already gets right, and the whole risk of this fix is
+    // converting them into narrowed age claims.
+    const unchanged: Array<[string, string, string, string | undefined]> = [
+      [
+        'FALSE_SUPERVISION (participating adult)',
+        'Reserve In Advance: Table Tennis All Ages',
+        'Please arrive early to claim your reservation. For all ages programs, children 6-12 years must be accompanied by a participating adult. Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity.',
+        'Reserve In Advance: Table Tennis All Ages — all ages',
+      ],
+      [
+        'FALSE_SUPERVISION (supervised on the ice)',
+        '|Public Skate|',
+        'Date & Time Sundays, 1:45-3:15pm Sessions June 28 - August 30, 2026 Open skate for all ages Children under 8 years MUST be supervised on the ice by an individual 16 years old or over *Monthly Flexipass and 10-Visit passes are accepted for this program .',
+        'all ages',
+      ],
+      [
+        // The "range" here is a row of the admission fee table, not an audience.
+        'FALSE_PRICE (fee table)',
+        'Play Palace - 0-12yrs',
+        'Date &amp; Time Monday - Thursday, 12:00pm - 4:30pm Sessions April 10 - Aug 21, 2026 All Ages No Pre Registration Required Admission Fees Age 1 Visit 10-visit card Under 6mos FREE FREE 6-23mos $4.94 $44.92 2-5yrs $6.35 $57.17 6-12yrs $7.06 $63.50 For detailed admission fees, rental fee and discount information please visit: Vancouver.ca/PlayPalace',
+        'Play Palace - 0-12yrs — All Ages',
+      ],
+      [
+        'FALSE_PRICE (under-N is free)',
+        'Gym Bugs Drop In',
+        'Come and play, climb and run with your child on Sunday mornings. Parent participation required. A great place to meet other families! No class Nov 4. Drop-in price is per child $3.25. Children 12 months and under are free.',
+        undefined,
+      ],
+      [
+        'FALSE_PASS (pass duration)',
+        'Group Fitness: Classic Stretch w/ Ferial',
+        'Please bring your own mat. Registration not required. This class is part of the KCCA Fit Card. A 10-visit, 1 month Fit Card can be used. Drop-in $6.00, space permitting.',
+        undefined,
+      ],
+      [
+        'FALSE_REGPRIORITY (early-registration privilege)',
+        'Luk Tung Kuen Association',
+        'Luk Tung Kuen is a set of health exercises which consist of 36 forms. No session Oct 12. Space Permitting - Drop-in $2 Adults 19yrs+ can register into this program 1 week prior to program start date, if spaces available.',
+        undefined,
+      ],
+      [
+        'FALSE_WAIVER (paperwork threshold)',
+        'Basketball (Adults) - Monday',
+        'Recreational 3 on 3 basketball - Games are organized by the players. In person drop-in sign up starts 30 minutes before start time. Completed waiver forms required for participants under 19 years. $6.50 drop in, if space permits. No session Oct 12.',
+        undefined,
+      ],
+      [
+        'FALSE_GRADE_MUSIC (conservatory grade)',
+        'Piano',
+        "Musical Expressions takes on a creative and intuitive approach to music learning. Each class session is 30 minutes long. If you're learning at a grade 5 level or above, please book two half hour sessions to ensure enough time for the lesson.",
+        undefined,
+      ],
+    ];
+    for (const [label, title, description, expected] of unchanged) {
+      expect(extractAgeText({ title, description: `<p>${description}</p>` }), label).toBe(expected);
+    }
+  });
+
+  it('keeps the disqualifier windowed, so ordinary "free"/"registration" copy still recovers', () => {
+    // The scope document proposed a bare `free` (and `fee`, `registration`, `pass`, `staff`)
+    // as disqualifiers. Measured, each blocks a real recovery: this platform writes "this free
+    // basketball drop-in is for youth (ages 13-18)" and "No registration required" as ordinary
+    // copy in the very descriptions the fix exists to read.
+    const ageText = extractAgeText({
+      title: 'Friday Youth Basketball Drop-In',
+      description:
+        '<p>Dribble and shoot! A Friday afternoon favourite, this free basketball drop-in is for youth (ages 13-18) to come and play basketball in a relaxed setting. No registration necessary. Be sure to sign-in with a Youth Staff upon arrival.</p>',
+    });
+    expect(ageText).toBe('ages 13-18');
+    expect(parseAgeText(ageText)).toMatchObject({ ageMinMonths: 156, ageMaxMonths: 228, resolved: true });
+  });
+
+  it('leaves the record alone when the description states more than one age', () => {
+    // Two sittings, two ranges: the programme is genuinely 11–18 and neither range is its age.
+    // Picking whichever came first would drop the 14–18s, which is a different wrong answer
+    // rather than a fix, so the existing answer stands. The only such record in the pull.
+    const ageText = extractAgeText({
+      title: 'Youth Gym Drop-In',
+      description:
+        '<p>Looking for something to do on Friday nights? Younger youth, aged 11-13 years are welcome to join from 3:30pm - 5pm. Older youth, aged 13-18 years are welcome to join from 5:00pm -7:45pm.</p>',
+    });
+    expect(ageText).toBe('youth');
+  });
+
   it('reports a zero-yield calendar as a finding, not an absence', () => {
     const empty: CalendarFetchResult = {
       calendarId: 60,

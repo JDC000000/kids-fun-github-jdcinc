@@ -132,9 +132,113 @@ export function classifyCost(event: ActiveNetEvent): CostVerdict {
 
 /** A bounded age phrase from prose, so the whole description is not fed to the
  *  normaliser (a full paragraph produces confident nonsense — e.g. "Children 12
- *  months and under are free" would read as an age range). */
-const AGE_PHRASE_RE =
-  /(?:ages?\s*\d{1,2}\s*(?:-|–|to)\s*\d{1,2}|\bages?\s*\d{1,2}\s*\+|\b\d{1,2}\s*(?:-|–|to)\s*\d{1,2}\s*(?:yrs?|years)|\b\d{1,2}\s*\+\s*(?:yrs?|years)|\ball\s+ages\b|\bpreschool(?:ers)?\b|\btoddlers?\b|\bbabies\b|\byouth\b|\bteens?\b)/i;
+ *  months and under are free" would read as an age range).
+ *
+ *  Split into its two halves because the halves are not equally good evidence, and
+ *  statedAgePhrase() below has to be able to tell them apart. The UNION is byte-for-byte
+ *  the pattern this constant has always been — no alternative was added, removed or
+ *  reordered, and `.source`/`.flags` were compared against the previous literal to prove
+ *  it — so nothing this regex used to reject is reachable now. */
+const AGE_PHRASE_NUMERIC =
+  String.raw`ages?\s*\d{1,2}\s*(?:-|–|to)\s*\d{1,2}|\bages?\s*\d{1,2}\s*\+|\b\d{1,2}\s*(?:-|–|to)\s*\d{1,2}\s*(?:yrs?|years)|\b\d{1,2}\s*\+\s*(?:yrs?|years)`;
+const AGE_PHRASE_KEYWORD =
+  String.raw`\ball\s+ages\b|\bpreschool(?:ers)?\b|\btoddlers?\b|\bbabies\b|\byouth\b|\bteens?\b`;
+const AGE_PHRASE_RE = new RegExp(`(?:${AGE_PHRASE_NUMERIC}|${AGE_PHRASE_KEYWORD})`, 'i');
+/** Every numeric phrase in the text, in order — the scan statedAgePhrase() walks. */
+const AGE_PHRASE_NUMERIC_RE = new RegExp(`(?:${AGE_PHRASE_NUMERIC})`, 'gi');
+/** Is a matched phrase a bare audience WORD rather than a stated number? */
+const AGE_PHRASE_IS_KEYWORD_RE = new RegExp(`^(?:${AGE_PHRASE_KEYWORD})$`, 'i');
+
+/**
+ * Wording that makes a nearby number a rule about SOMEONE ELSE, or about money — not a
+ * statement of who the programme is for.
+ *
+ * THIS LIST IS THE WHOLE FIX AND EVERY ENTRY IN IT IS MEASURED. `AGE_PHRASE_RE` is
+ * first-position-wins, and on this platform the vaguer word usually sits earlier in the
+ * paragraph than the specific range: "for pre-teens and youth ages 8-18" publishes as
+ * 12–18 off `teens`, excluding the 8–11-year-olds the sentence names. Preferring the
+ * number is the obvious fix and, done bluntly, it is a much bigger defect than the one it
+ * closes: the same `N-N yrs` alternative also matches "children 6-12 years must be
+ * accompanied by a participating adult", which would narrow 785 correct all-ages listings
+ * (measured, Vancouver + Burnaby, 2026-08-18) to a 6–12 programme. So the number is only
+ * promoted over the word when nothing within ±80 characters of it disqualifies it.
+ *
+ * MEASURED, on all 17,209 live records. 951 records / 34 distinct (title × number) tuples
+ * are candidates — i.e. a bare keyword currently wins and a numeric phrase exists elsewhere
+ * in the same description. Of those:
+ *   • `accompanied` alone catches all 792 records that must NOT change: 785 supervision-rule
+ *     records ("children 6-12 years must be accompanied by a participating adult") and,
+ *     via `$\d`, the 7 `Play Palace - 0-12yrs` records whose "numeric range" is a row of the
+ *     admission fee table ("6-23mos $4.94 2-5yrs $6.35 6-12yrs $7.06").
+ *   • it fires on NONE of the other 26 tuples / 159 records, which are the real age claims.
+ *     (153 of those 159 go on to change; the "exactly one" rule below holds the other 6.)
+ * The window is not a tuned constant holding that split together: every window from ±30 to
+ * ±240 produces the byte-identical outcome on all 17,209 records. ±80 is the middle of that
+ * plateau — wide enough for "must be accompanied by a participating adult" to sit after the
+ * number with room to spare, narrow enough not to reach the next paragraph's boilerplate.
+ *
+ * THE SCOPE DOC'S OWN SUGGESTED DISQUALIFIER LIST INCLUDED A BARE `free`, AND MEASURING IT
+ * IS THE REASON IT IS NOT HERE: "this free basketball drop-in is for youth (ages 13-18)"
+ * and "Who: Youth (ages 12–18) Cost: FREE" are ordinary copy here, and a bare `free` term
+ * blocks 5 genuine recoveries. Bare `fee`/`admission`, `registration`, `pass`/`visit card`
+ * and `staff`/`ratio` were each measured the same way and each block a real recovery too;
+ * they appear below only in the precise forms that do not.
+ *
+ * The last four entries are DEFENSIVE, not measured-firing: no record in this corpus reaches
+ * them, because the numbers in waiver / registration-priority / conservatory-grade / staff-
+ * ratio copy ("under 19 years", "19yrs+", "grade 5", "between 18 and 22 years old") are not
+ * shapes `AGE_PHRASE_NUMERIC` matches at all. They are here because that is an accident of
+ * one snapshot's wording, not a property of the pattern, and each is the §2 taxonomy's own
+ * evidence phrase quoted narrowly enough to have cost nothing when measured.
+ */
+const AGE_CLAIM_DISQUALIFIER_RE =
+  /must\s+be\s+accompanied|accompanied\s+(?:by|into)|must\s+be\s+supervised|supervised\s+(?:by|on)|\bguardian\b|\bchaperone\b|\$\s*\d|\bwaiver\b|register\s+into\s+this\s+program|\bgrades?\s*\d{1,2}\s*level\b|staff-to-participant|participant\s+ratio/i;
+
+/** How far either side of the number the disqualifier is allowed to sit. */
+const AGE_CLAIM_WINDOW = 80;
+
+/**
+ * The age phrase this description actually states, preferring a stated NUMBER over a bare
+ * audience word — but only when the number is the programme's own age, and only when the
+ * description states ONE of them.
+ *
+ * Deliberately shaped as an exception to the old behaviour rather than a new precedence
+ * order, because that makes the blast radius provable rather than argued: the leftmost
+ * match is still what this returns unless it is a bare keyword AND exactly one qualified
+ * number exists elsewhere. A description that yields nothing today still yields nothing (no
+ * pattern was added), and a description whose leftmost match is already a number is
+ * untouched (only the keyword branch can be overridden).
+ *
+ * WHY "EXACTLY ONE", AND WHAT IT COSTS: two different stated ranges in one description is
+ * not a precedence problem, it is a description that does not state a single programme age —
+ * `Youth Gym Drop-In` runs "Younger youth, aged 11-13 years … 3:30pm - 5pm. Older youth, aged
+ * 13-18 years … 5:00pm - 7:45pm", i.e. genuinely 11–18 in two sittings. Taking whichever
+ * range came first publishes 11–13 and drops the 14–18s; taking the word publishes 12–18 and
+ * drops the 11s. Both are wrong, so this returns the existing answer and leaves the record
+ * alone rather than trading one wrong band set for another. Measured: 26 distinct programmes
+ * qualify at all and exactly ONE (6 records) states more than one range, so this rule costs
+ * no recovery and removes the only change in the set that was not a strict improvement.
+ * Resolving that record properly needs a union-of-ranges capability this adapter does not
+ * have and should not grow here.
+ */
+function statedAgePhrase(description: string): string | undefined {
+  const leftmost = AGE_PHRASE_RE.exec(description)?.[0];
+  if (!leftmost || !AGE_PHRASE_IS_KEYWORD_RE.test(leftmost)) return leftmost;
+
+  const stated = new Map<string, string>();
+  AGE_PHRASE_NUMERIC_RE.lastIndex = 0;
+  for (let m = AGE_PHRASE_NUMERIC_RE.exec(description); m; m = AGE_PHRASE_NUMERIC_RE.exec(description)) {
+    const window = description.slice(
+      Math.max(0, m.index - AGE_CLAIM_WINDOW),
+      m.index + m[0].length + AGE_CLAIM_WINDOW
+    );
+    if (AGE_CLAIM_DISQUALIFIER_RE.test(window)) continue;
+    // Keyed on the claim, not the spelling: one age repeated is still one age.
+    stated.set(m[0].toLowerCase().replace(/\s+/g, ''), m[0]);
+    if (stated.size > 1) return leftmost;
+  }
+  return stated.size === 1 ? [...stated.values()][0] : leftmost;
+}
 
 /** A number that is plausibly an AGE. The guards are worker/core/age.ts's, and for its
  *  reasons: a clock time ("6:00-8:00"), a decimal skill rating ("3.0-4.0") and a price
@@ -225,7 +329,7 @@ function titleStatesAge(title: string): boolean {
  */
 export function extractAgeText(event: ActiveNetEvent): string | undefined {
   const title = (event.title ?? '').trim();
-  const phrase = AGE_PHRASE_RE.exec(stripHtml(event.description))?.[0];
+  const phrase = statedAgePhrase(stripHtml(event.description));
   // Whole title, not just the matched phrase: when a title DOES state an age, the surrounding
   // words are the context parseAgeText's own rules read ("(6-13 with adult)", "0-12 yrs"), and
   // clipping to the bare match would change how those resolve.
