@@ -46,6 +46,25 @@ describe('FilterRail — consistent "Any X" default pill across chip groups (Rou
     }
   });
 
+  it('the "Any age" pill emits `age=any`, not a bare URL indistinguishable from a landing', () => {
+    // The rendered proof of params.ts's ANY_AGE_PARAM fix, at the one control the defect is
+    // about. Tapping "Any age" used to produce `hrefFor(state, { ages: [] })` — a URL with no
+    // `age=` at all, byte-identical to a parent who never mentioned age. A future profile
+    // default reads that as "apply my children's ages", which would make this chip a silent
+    // no-op. Asserted on the MARKUP because the href is what a parent actually taps.
+    const html = render(st({ ages: ['5-9'], regions: ['van'] }));
+    const anyAge = chipTag(html, 'Any age');
+    expect(anyAge).toContain('age=any');
+    expect(anyAge).toContain('region=van'); // and it still clears only its own group
+    // Toggling OFF the last selected band is the same statement by a different tap, so the
+    // band chip's own href must carry the sentinel too — half a fix is the failure mode here.
+    expect(chipTag(html, '5–9')).toContain('age=any');
+    // …while a band chip that leaves a selection behind carries the bands, never the sentinel.
+    const two = render(st({ ages: ['5-9', '10-14'] }));
+    expect(chipTag(two, '5–9')).toContain('age=10-14');
+    expect(chipTag(two, '5–9')).not.toContain('age=any');
+  });
+
   it('the "Any X" pill DESELECTS once its group has a selection', () => {
     const html = render(st({ ages: ['5-9'], regions: ['van'] }));
     expect(isActive(html, 'Any age')).toBe(false); // an age is chosen

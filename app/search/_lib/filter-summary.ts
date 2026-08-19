@@ -4,6 +4,7 @@ import {
   REGION_CHIPS,
   TIME_OF_DAY_OPTIONS,
   WHEN_OPTIONS,
+  ageSelectionPatch,
   hasDateRange,
   hasNearMeCoords,
   hasOrigin,
@@ -181,8 +182,19 @@ export function appliedFilterTokens(state: SearchState, savedLocation: SummaryLo
   if (state.ages.length > 0) {
     // Ages read as ONE phrase ("Ages 5-9 & 10-14") rather than one token per band: the
     // bands are an either-or set a parent picked as a single "who is this for" answer.
+    //
+    // The `clear` patch goes through `ageSelectionPatch`, exactly as the rail's chips do. This
+    // "×" is the THIRD control that can empty the age group (the "Any age" chip and toggling
+    // off the last band are the other two), and all three have to spell the result the same
+    // way — `age=any`, not a bare URL. Fixing two of three would leave one path silently
+    // producing a landing-page URL, which is the defect params.ts's "Any age" note describes.
     const labels = state.ages.map((band) => AGE_OPTIONS.find((a) => a.key === band)?.label ?? band);
-    tokens.push({ key: 'ages', label: `Ages ${labels.join(' & ')}`, scope: 'other', clear: { ages: [] } });
+    tokens.push({
+      key: 'ages',
+      label: `Ages ${labels.join(' & ')}`,
+      scope: 'other',
+      clear: ageSelectionPatch([]),
+    });
   }
   if (state.bookableNow) {
     tokens.push({ key: 'bookableNow', label: 'Bookable now', scope: 'other', clear: { bookableNow: false } });

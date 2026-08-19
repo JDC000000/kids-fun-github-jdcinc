@@ -1,5 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { query, closePool } from '../lib/db/client';
+import { AGE_BAND_LOWER_MONTHS, ageMonthsToBand } from '../lib/profile/child-age-bands';
 
 // G-T3-1 — age-band boundary test (TSD §6.2 BR-01/02, scope-to-task v1.1 §T3).
 // Requires DATABASE_URL (migrations 0002-0007 + supabase/seeds/age_bands.sql
@@ -49,5 +50,24 @@ describe.skipIf(!hasDb)('age_band boundaries (G-T3-1)', () => {
        HAVING count(*) > 1`
     );
     expect(overlapping).toHaveLength(0);
+  });
+
+  it('the client-side band table agrees with the seed, month for month (drift guard)', async () => {
+    // lib/profile/child-age-bands.ts has to derive a band from a stored child's age in the
+    // BROWSER, where these rows are unreachable, so it restates each band's lower bound. That
+    // is a second copy of a boundary, and a second copy drifts — silently re-banding every
+    // stored child the day a seed moves. This is the assertion that makes it fail loudly here
+    // instead. (Only the LOWERS are restated: the bands partition [0, ∞), so every upper is the
+    // next band's lower, which the query below re-derives rather than trusting.)
+    const rows = await query<{ key: string; lower: number }>(
+      `SELECT key, lower_months_inclusive AS lower FROM age_band ORDER BY lower_months_inclusive`
+    );
+    expect(Object.fromEntries(rows.map((r) => [r.key, Number(r.lower)]))).toEqual(AGE_BAND_LOWER_MONTHS);
+
+    // …and the derivation itself agrees with the database at every month in range, boundaries
+    // included — the property, not just the table it is built from.
+    for (const month of [0, 23, 24, 59, 60, 119, 120, 179, 180, 240]) {
+      expect(ageMonthsToBand(month), `month ${month}`).toBe(await bandForMonths(month));
+    }
   });
 });

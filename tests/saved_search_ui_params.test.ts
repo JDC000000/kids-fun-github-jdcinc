@@ -30,6 +30,9 @@ const RICH_STATE: SearchState = {
   dropIn: false,
   free: true,
   ages: ['2-4', '5-9'],
+  // A real band selection, so the explicit "any age" sentinel is off — the two are mutually
+  // exclusive by construction (params.ts's ANY_AGE_PARAM note).
+  anyAge: false,
   lat: null,
   lng: null,
   useSavedLocation: true,

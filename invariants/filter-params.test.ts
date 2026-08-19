@@ -238,13 +238,22 @@ const CASES: ParamCase[] = [
 ];
 
 /**
- * `home=1` is the ONE page param the API deliberately does not read, and it is listed here rather
- * than left as an omission. It carries the saved-location INTENT; the postal itself is never in a
- * shareable URL, so the /search page resolves the signed-in user's saved postal server-side and
- * forwards it as `postal=…&signedIn=1`. The exception is pinned by its own test below, so "the API
- * ignores it" stays a stated design decision rather than the next dead param.
+ * The page params the API deliberately does not read. Listed here rather than left as omissions,
+ * each with the reason it is a routing decision instead of the next dead param.
+ *
+ * `useSavedLocation` (`home=1`) carries the saved-location INTENT; the postal itself is never in
+ * a shareable URL, so the /search page resolves the signed-in user's saved postal server-side and
+ * forwards it as `postal=…&signedIn=1`. Pinned by its own test below.
+ *
+ * `anyAge` (`age=any`) is the explicit "no age filter" spelling that distinguishes the "Any age"
+ * chip from a bare landing (app/search/_lib/params.ts, the `ANY_AGE_PARAM` note). It must NOT
+ * reach /api/search: that endpoint's `age=` means "these bands and no others", and giving the
+ * two layers a value they have to agree about is precisely the removed-`includeUnknownCost`
+ * defect. It also has no echo to assert — it applies no constraint, so by design the response is
+ * byte-identical to the unfiltered one, which is the opposite of what this file's case table
+ * proves. Its own coverage lives in app/search/_lib/params.test.ts.
  */
-const PAGE_ONLY_FIELDS: Array<keyof SearchState> = ['useSavedLocation'];
+const PAGE_ONLY_FIELDS: Array<keyof SearchState> = ['useSavedLocation', 'anyAge'];
 
 beforeAll(() => {
   pinClock(CLOCKS[0]);

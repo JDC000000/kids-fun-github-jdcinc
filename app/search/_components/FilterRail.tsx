@@ -9,6 +9,7 @@ import {
   REGION_CHIPS,
   TIME_OF_DAY_OPTIONS,
   WHEN_OPTIONS,
+  ageSelectionPatch,
   dateRangeFormFields,
   hasClearableFilters,
   hasDateRange,
@@ -242,10 +243,17 @@ export function FilterRail({ state, savedLocation, plan }: FilterRailProps) {
        "Any age" default pill (checkmarked when no band is chosen) so an unset group reads as
        "all ages" — the SAME "Any X" default-chip rule the When / Time of day / Max price
        groups use. Tapping it clears every selected band. Leaving it unset composes no age
-       phrase, so results span every age (params.ts intentPhrases). */
+       phrase, so results span every age (params.ts intentPhrases).
+
+       BOTH hrefs go through `ageSelectionPatch`, which pairs the band list with the explicit
+       `anyAge` flag (params.ts's "Any age" note). Tapping "Any age" and toggling OFF the last
+       remaining band are the same statement reached two ways, so both must emit `age=any`
+       rather than a bare URL indistinguishable from a parent who never mentioned age. The
+       checkmark rule is unchanged — an empty selection reads as "any age" however it got
+       there — so nothing about this group LOOKS different; only the URL it produces does. */
     ages: (
       <Group label="Ages" id="kf-fg-ages" key="ages">
-        <Chip href={hrefFor(state, { ages: [] })} active={state.ages.length === 0}>
+        <Chip href={hrefFor(state, ageSelectionPatch([]))} active={state.ages.length === 0}>
           Any age
         </Chip>
         {AGE_OPTIONS.map((opt) => {
@@ -253,7 +261,7 @@ export function FilterRail({ state, savedLocation, plan }: FilterRailProps) {
           return (
             <Chip
               key={opt.key}
-              href={hrefFor(state, { ages: toggleAge(state, opt.key as AgeBandKey) })}
+              href={hrefFor(state, ageSelectionPatch(toggleAge(state, opt.key as AgeBandKey)))}
               active={active}
             >
               {opt.label}

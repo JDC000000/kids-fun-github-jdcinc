@@ -152,6 +152,53 @@ export const AGE_OPTIONS: { key: AgeBandKey; label: string; phrase: string }[] =
  *  share this exact vocabulary rather than re-deriving/duplicating it. */
 export const AGE_ORDER: AgeBandKey[] = AGE_OPTIONS.map((a) => a.key);
 
+// ── "Any age": the THIRD state of the age filter (`age=any`) ─────────────────────────────
+//
+// THE DEFECT THIS CLOSES, WHICH IS LATENT RATHER THAN VISIBLE TODAY. Until now the age group
+// could spell only TWO of the three things a parent can mean, and it spelled two of them the
+// same way:
+//   1. "I have not said anything about age"  → no `age=` param  (a bare landing)
+//   2. "I explicitly want ALL ages"          → no `age=` param  (the "Any age" chip, which is
+//      `hrefFor(state, { ages: [] })`, and `pageParams` writes `age=` only when the list is
+//      non-empty — so tapping it emits nothing)
+//   3. "I want these bands"                  → `age=under2,5-9`
+// (1) and (2) are byte-identical URLs. That is harmless while nothing reads an absent `age=`
+// as anything but "no filter" — and it stops being harmless the moment anything does.
+//
+// WHAT WOULD BREAK, AND WHY IT IS WORTH FIXING BEFORE THAT LANDS. The child-profile design
+// (docs/child-first-class-profile-design.md §5d) proposes that a bare /search with a stored
+// profile applies the parent's children's ages as a default. Under that rule, meaning (1)
+// becomes "apply my profile" — and because (2) is spelled identically, THE "ANY AGE" CHIP
+// WOULD SILENTLY BECOME A NO-OP. The one control whose entire job is to remove the age filter
+// would re-apply it. A parent would tap it, watch the results not change, and reasonably
+// conclude the site is broken. Every existing test would still pass, because from the URL's
+// point of view nothing changed.
+//
+// THIS EXACT MISTAKE HAS BEEN MADE HERE BEFORE. Read the removed-`includeUnknownCost` note
+// below (:202-218): two layers disagreed about what an ABSENT param meant, and the fix was
+// never "stop sending the param" — it was to remove the absent-value ambiguity entirely. Same
+// shape here: a third meaning is being loaded onto an absent param. So the third meaning gets
+// its own SPELLING (`age=any`) rather than a second reading of silence.
+//
+// WHY A SENTINEL VALUE ON `age=` AND NOT A SECOND PARAM (`noprofile=1` or similar). One param
+// carries the whole age state, so there is no pair of params to get out of sync and no
+// combination (`age=5-9&noprofile=1`) that has to be adjudicated. The sentinel is also
+// self-describing in a shared link, and it round-trips through everything that already
+// round-trips `age=`: `pageParams` → `parseSearchState`, `serializeStateToParams` (saved
+// searches), `hrefForParams`, and the hidden form fields.
+//
+// SCOPE — THIS CHANGES NOTHING A PARENT SEES, AND THAT IS THE POINT. `anyAge` is inert today:
+// it composes no intent phrase, emits no analytics token, is NOT an active/clearable filter
+// (it is the ABSENCE of one — counting it would drop `minResults` from 60 to 3 on a browse
+// nobody filtered and would offer "Clear filters" to a parent who has cleared nothing), and is
+// deliberately NEVER sent to /api/search. It is a carrier of parent intent in the page URL and
+// has exactly ONE reader — `parseSearchState`, in this file. Keeping the API out of it is the
+// whole lesson of the `includeUnknownCost` removal: a value two layers must agree about is a
+// value two layers can disagree about. When the profile tier lands, it resolves the default
+// into `state.ages` BEFORE `apiQuery` runs, so the API keeps seeing only real bands.
+/** The `age=` value meaning "explicitly no age filter", as distinct from an absent param. */
+export const ANY_AGE_PARAM = 'any';
+
 // ── Time of day (FR-09 day-part windows) ─────────────────────────────────────────
 // Radio-like single-select. Each option maps to the backend `DayPart` the query parser
 // already resolves (morning/afternoon/evening — lib/search/filters/time.ts), composed as
@@ -255,6 +302,18 @@ export interface SearchState {
   free: boolean;
   /** Selected age bands (composed into `q`). */
   ages: AgeBandKey[];
+  /**
+   * The parent EXPLICITLY asked for any age (`age=any`), as opposed to never having mentioned
+   * age at all (no `age=` param). Only meaningful while `ages` is empty — a band selection is
+   * the stronger statement and wins, in both directions (`pageParams` writes the bands and not
+   * the sentinel; `parseSearchState` reads `age=any,5-9` as the band with `anyAge: false`).
+   *
+   * Behaviourally inert today, deliberately — see the "Any age" note above `ANY_AGE_PARAM`.
+   * It is the URL spelling that lets a future profile default tell "nothing was said" from
+   * "all ages was asked for", and it exists NOW so that it is already in every shared link,
+   * saved search and back-button entry by the time anything reads it.
+   */
+  anyAge: boolean;
   /** Near-me origin coords (structured lat/lng). Radius search is active iff both set. */
   lat: number | null;
   lng: number | null;
@@ -273,6 +332,14 @@ export interface SearchState {
  * Filter fields reset to defaults, preserving the text query + sort/cost preferences.
  * `includeRegistration` IS reset: "Clear filters" should return a parent to the default
  * drop-in-only view, not silently leave course content switched on.
+ *
+ * `anyAge` resets to false — to the DEFAULT, i.e. "nothing has been said about age", not to
+ * "all ages was explicitly asked for". "Clear filters" means return me to the default view,
+ * and it must not be repurposed as a way of ALSO expressing an opt-out; that is what the "Any
+ * age" chip is for, and it stays reachable one tap later. (This is also the field a future
+ * profile default would read: whether a cleared search re-applies a stored profile is a
+ * question for that tier — design §4e / §10 P2 — and resetting to the default state is the
+ * choice that keeps this unit from pre-deciding it.)
  */
 export const CLEARED_FILTERS: Partial<SearchState> = {
   includeRegistration: false,
@@ -286,6 +353,7 @@ export const CLEARED_FILTERS: Partial<SearchState> = {
   dropIn: false,
   free: false,
   ages: [],
+  anyAge: false,
   lat: null,
   lng: null,
   useSavedLocation: false,
@@ -306,6 +374,7 @@ export const DEFAULT_STATE: SearchState = {
   dropIn: false,
   free: false,
   ages: [],
+  anyAge: false,
   lat: null,
   lng: null,
   useSavedLocation: false,
@@ -338,6 +407,20 @@ function parseOrderedCsv<T extends string>(raw: string | string[] | undefined, o
   const values = (Array.isArray(raw) ? raw : [raw]).flatMap((v) => v.split(',')).map((s) => s.trim());
   const set = new Set(values);
   return order.filter((v) => set.has(v));
+}
+
+/**
+ * Does the raw `age=` param carry the explicit "any age" sentinel? Tolerates exactly the
+ * spellings `parseOrderedCsv` tolerates — csv, repeated params, a mixture, surrounding
+ * whitespace — so `age=any` and `age=ANY` and `age=5-9&age=any` all mean here what they mean
+ * there. The sentinel is not in `AGE_ORDER`, so `parseOrderedCsv` drops it from the band list
+ * on its own; this only recovers the fact that it was written.
+ */
+function hasAnyAgeSentinel(raw: string | string[] | undefined): boolean {
+  if (raw == null) return false;
+  return (Array.isArray(raw) ? raw : [raw])
+    .flatMap((v) => v.split(','))
+    .some((v) => v.trim().toLowerCase() === ANY_AGE_PARAM);
 }
 
 function parseCoord(raw: string | undefined): number | null {
@@ -395,6 +478,12 @@ export function parseSearchState(sp: RawParams): SearchState {
   // Near-me coords take precedence over the saved-location intent if both are present.
   const useSavedLocation = !bothCoords && parseBool(first(sp.home));
 
+  // The age group's three states, resolved from ONE param (see the `ANY_AGE_PARAM` note).
+  // A real band selection is the stronger statement, so `age=any,5-9` is the band — the two
+  // can never both be set, which is what keeps this from being two fields that can disagree.
+  const ages = parseOrderedCsv(sp.age, AGE_ORDER as AgeBandKey[]);
+  const anyAge = ages.length === 0 && hasAnyAgeSentinel(sp.age);
+
   return {
     q,
     sort,
@@ -412,7 +501,8 @@ export function parseSearchState(sp: RawParams): SearchState {
     rainyDay: parseBool(first(sp.rainy)),
     dropIn: parseBool(first(sp.dropin)),
     free: parseBool(first(sp.free)),
-    ages: parseOrderedCsv(sp.age, AGE_ORDER as AgeBandKey[]),
+    ages,
+    anyAge,
     lat: bothCoords ? lat : null,
     lng: bothCoords ? lng : null,
     useSavedLocation,
@@ -436,6 +526,20 @@ export function toggleAge(state: SearchState, band: AgeBandKey): AgeBandKey[] {
   return toggleInList(state.ages, band, AGE_ORDER as AgeBandKey[]);
 }
 
+/**
+ * The complete age patch a tap in the Ages group produces — the new band list AND the explicit
+ * "any age" flag, together, so the two can never be set independently.
+ *
+ * EVERY control that can leave the group empty must go through here, not just the "Any age"
+ * chip: toggling OFF the last selected band is the same statement ("I no longer want an age
+ * filter") arrived at by a different tap, and it must produce the same URL. Fixing only the
+ * chip would leave the second path emitting a bare URL — half a fix, which is the failure mode
+ * the removed-`includeUnknownCost` note in this file exists to warn about.
+ */
+export function ageSelectionPatch(ages: AgeBandKey[]): Pick<SearchState, 'ages' | 'anyAge'> {
+  return { ages, anyAge: ages.length === 0 };
+}
+
 /** Serialize a state to URLSearchParams for the /search PAGE (clean, structured, non-default only). */
 function pageParams(state: SearchState): URLSearchParams {
   const p = new URLSearchParams();
@@ -457,7 +561,12 @@ function pageParams(state: SearchState): URLSearchParams {
   if (state.rainyDay) p.set('rainy', '1');
   if (state.dropIn) p.set('dropin', '1');
   if (state.free) p.set('free', '1');
+  // Bands win over the sentinel, so exactly one of the three age states is ever spelled and a
+  // state carrying both round-trips back as the bands alone. `age=any` is intentionally NOT
+  // "non-default only" in the usual sense: it IS a non-default statement (the parent said
+  // something), it is just a statement that happens to narrow nothing.
   if (state.ages.length) p.set('age', state.ages.join(','));
+  else if (state.anyAge) p.set('age', ANY_AGE_PARAM);
   // Origin: near-me coords OR the saved-location intent flag (never the postal itself).
   if (hasNearMeCoords(state)) {
     p.set('lat', String(state.lat));
@@ -571,6 +680,12 @@ export function hrefForParams(params: Record<string, unknown>): string {
  * is to decide how hard the engine should broaden (`apiQuery` minResults), and a widener being
  * on is not a reason to stop filling a thin browse.
  * For "is there anything the parent might want to clear?", use `hasClearableFilters`.
+ *
+ * `anyAge` is excluded for a stronger reason than `includeRegistration`: it is the ABSENCE of
+ * an age filter, spelled out loud. Counting it would drop `minResults` from 60 to 3 on a
+ * browse nobody narrowed, offer "Clear filters" to a parent who has cleared nothing, and pin
+ * a rail group open — i.e. `age=any` would become observably different from a bare landing,
+ * which is exactly what it must not be until (and unless) a profile default ships.
  */
 export function hasActiveFilters(state: SearchState): boolean {
   return (
@@ -702,6 +817,12 @@ export function apiQuery(
   // (Stage 2b, later, retires the text half once this is independently verified). Same
   // non-default-only shape as `pageParams()` above, and the same param names it already
   // reserves, so a value here can never collide with what the page URL means by that key.
+  // Bands only. The `age=any` sentinel is PAGE-URL vocabulary and is deliberately never
+  // forwarded: /api/search is a public endpoint whose `age=` means "these bands and no others"
+  // (route.ts `parseCsvAgainstAllowed` against AGE_ORDER), and a value the two layers would
+  // have to agree about is a value they can disagree about — see the removed-`includeUnknownCost`
+  // note above. A profile-derived default, when that tier lands, resolves into `state.ages`
+  // before this runs, so the API keeps seeing exactly one kind of age value: real bands.
   if (state.ages.length) params.set('age', state.ages.join(','));
   if (state.when !== 'any') params.set('when', state.when);
   if (state.timeOfDay !== 'any') params.set('time', state.timeOfDay);

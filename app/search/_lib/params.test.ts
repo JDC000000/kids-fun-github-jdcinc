@@ -1,23 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import {
   AGE_OPTIONS,
+  ANY_AGE_PARAM,
+  CLEARED_FILTERS,
   DEFAULT_STATE,
   SORT_OPTIONS,
+  ageSelectionPatch,
   analyticsFilterTokens,
   apiQuery,
   dateRangeFormFields,
   hasActiveFilters,
+  hasClearableFilters,
   hasDateRange,
   hasNearMeCoords,
   hasOrigin,
   hiddenStateFields,
   hrefFor,
+  hrefForParams,
   intentPhrases,
   parseSearchState,
+  serializeStateToParams,
   toggleAge,
   toggleRegion,
   type SearchState,
 } from './params';
+import { appliedFilterTokens } from './filter-summary';
 import { parseQuery } from '@/lib/search/parse';
 
 /** Build a state from partial overrides on top of the defaults. */
@@ -460,9 +467,13 @@ describe('Round 30 — an unset filter group means "no filter / show everything"
   });
 
   it('the "Any X" reset links clear ONLY their own group (the href the Any-age/Any-area pills use)', () => {
-    // "Any age" pill → hrefFor(state, { ages: [] }); clears ages, leaves areas intact.
-    const ap = new URLSearchParams(hrefFor(st({ ages: ['5-9', '10-14'], regions: ['van'] }), { ages: [] }).split('?')[1] ?? '');
-    expect(ap.has('age')).toBe(false);
+    // "Any age" pill → hrefFor(state, ageSelectionPatch([])); clears ages, leaves areas intact.
+    // The age group now spells its cleared state explicitly (`age=any`) instead of emitting
+    // nothing — see the ANY_AGE_PARAM note in params.ts and its own describe block below. What
+    // this case still pins is the SCOPE of the reset: no band survives, and `region` is untouched.
+    const ap = new URLSearchParams(hrefFor(st({ ages: ['5-9', '10-14'], regions: ['van'] }), ageSelectionPatch([])).split('?')[1] ?? '');
+    expect(ap.get('age')).toBe(ANY_AGE_PARAM);
+    expect(parseSearchState({ age: ap.get('age')! }).ages).toEqual([]);
     expect(ap.get('region')).toBe('van');
     // "Any area" pill → hrefFor(state, { regions: [] }); clears areas, leaves ages intact.
     const rp = new URLSearchParams(hrefFor(st({ ages: ['5-9'], regions: ['van', 'bby'] }), { regions: [] }).split('?')[1] ?? '');
@@ -533,5 +544,130 @@ describe('time-of-day and drop-in filters (Round 17 / T21 — G-T21-3/4)', () =>
     const typed = parseQuery('swim under $20');
     expect(Object.keys(typed)).not.toContain('costMaxCad');
     expect(typed.terms).toEqual(parseQuery('swim').terms);
+  });
+});
+
+describe('"Any age" is a THIRD state, distinct from "nothing was said about age"', () => {
+  // The latent defect these pin (docs/child-first-class-profile-design.md §5d, params.ts's
+  // ANY_AGE_PARAM note): "no age filter" and "the age filter was just cleared" used to produce
+  // BYTE-IDENTICAL URLs, because `pageParams` wrote `age=` only for a non-empty list and the
+  // "Any age" chip was `hrefFor(state, { ages: [] })`. Harmless while nothing reads an absent
+  // `age=` as anything but "no filter" — and the moment a profile default reads it as "apply my
+  // children's ages", the one control whose job is to REMOVE the age filter starts re-applying
+  // it, with every existing test still green. Same shape as the removed `includeUnknownCost`
+  // toggle this file has a 17-line note about.
+  //
+  // These cases are the guard, and they are deliberately written against today's behaviour: the
+  // sentinel must be carried everywhere a shareable URL goes, and must change NOTHING a parent
+  // sees or the backend receives until a later tier reads it.
+
+  it('the three states have three distinct URL spellings', () => {
+    expect(hrefFor(st())).toBe('/search'); // 1. nothing said
+    expect(hrefFor(st(ageSelectionPatch([])))).toBe('/search?age=any'); // 2. explicitly any age
+    expect(hrefFor(st({ ages: ['5-9'] }))).toBe('/search?age=5-9'); // 3. a band selection
+  });
+
+  it('each spelling round-trips through parse → serialise unchanged', () => {
+    const roundTrip = (qs: Record<string, string>) =>
+      hrefFor(parseSearchState(qs));
+    expect(roundTrip({})).toBe('/search');
+    expect(roundTrip({ age: 'any' })).toBe('/search?age=any');
+    expect(roundTrip({ age: '5-9' })).toBe('/search?age=5-9');
+  });
+
+  it('parses the sentinel into anyAge, and an absent param into neither state', () => {
+    expect(parseSearchState({ age: 'any' })).toMatchObject({ ages: [], anyAge: true });
+    expect(parseSearchState({})).toMatchObject({ ages: [], anyAge: false });
+    expect(DEFAULT_STATE.anyAge).toBe(false);
+  });
+
+  it('accepts the sentinel in every spelling parseOrderedCsv accepts (csv, repeated, spaced, cased)', () => {
+    expect(parseSearchState({ age: 'ANY' }).anyAge).toBe(true);
+    expect(parseSearchState({ age: ' any ' }).anyAge).toBe(true);
+    expect(parseSearchState({ age: ['any'] }).anyAge).toBe(true);
+    // A junk value is NOT the sentinel — widening the vocabulary must not turn the parser into
+    // a pass-through where anything unrecognised means "explicitly any".
+    expect(parseSearchState({ age: 'anything' }).anyAge).toBe(false);
+    expect(parseSearchState({ age: 'nonsense' }).anyAge).toBe(false);
+  });
+
+  it('a real band selection always WINS over the sentinel, in both directions', () => {
+    // The two can never both be set, which is what stops this being two fields that disagree.
+    const parsed = parseSearchState({ age: 'any,5-9' });
+    expect(parsed.ages).toEqual(['5-9']);
+    expect(parsed.anyAge).toBe(false);
+    expect(parseSearchState({ age: ['any', '2-4'] })).toMatchObject({ ages: ['2-4'], anyAge: false });
+    // Serialising a contradictory state writes the bands, so it parses back consistent.
+    expect(hrefFor(st({ ages: ['5-9'], anyAge: true }))).toBe('/search?age=5-9');
+  });
+
+  it('EVERY control that empties the age group emits the sentinel, not just the "Any age" chip', () => {
+    // Three paths reach "no age filter": the Any-age chip, toggling off the last selected band,
+    // and the "×" on the applied-Ages token in the summary. All three go through
+    // ageSelectionPatch. Fixing only one would leave the others emitting a bare landing URL.
+    const one = st({ ages: ['5-9'] });
+    expect(hrefFor(one, ageSelectionPatch([]))).toBe('/search?age=any'); // the chip
+    expect(hrefFor(one, ageSelectionPatch(toggleAge(one, '5-9')))).toBe('/search?age=any'); // last band off
+    // …while toggling off ONE of two bands is not an empty selection and carries no sentinel.
+    const two = st({ ages: ['5-9', '10-14'] });
+    expect(hrefFor(two, ageSelectionPatch(toggleAge(two, '5-9')))).toBe('/search?age=10-14');
+    expect(ageSelectionPatch(['5-9'])).toEqual({ ages: ['5-9'], anyAge: false });
+  });
+
+  it('is behaviourally INERT: no phrase, no analytics token, not an active or clearable filter', () => {
+    const any = st(ageSelectionPatch([]));
+    expect(intentPhrases(any)).toEqual([]);
+    expect(analyticsFilterTokens(any)).toEqual([]);
+    // Critical: counting it would drop minResults from 60 to 3 on a browse nobody narrowed and
+    // offer "Clear filters" to a parent who has cleared nothing.
+    expect(hasActiveFilters(any)).toBe(false);
+    expect(hasClearableFilters(any)).toBe(false);
+    expect(apiParams(any).get('minResults')).toBe('60');
+  });
+
+  it('is NEVER forwarded to /api/search — the sentinel is page-URL vocabulary only', () => {
+    // /api/search's `age=` means "these bands and no others". Sending a value the two layers
+    // would have to agree about is exactly the removed-includeUnknownCost defect.
+    const p = apiParams(st(ageSelectionPatch([])));
+    expect(p.has('age')).toBe(false);
+    expect(apiQuery(st(ageSelectionPatch([])))).not.toContain('any');
+    // …and the resulting API query is byte-identical to a bare browse, which is the proof that
+    // nothing a parent sees changes today.
+    expect(apiQuery(st(ageSelectionPatch([])))).toBe(apiQuery(DEFAULT_STATE));
+  });
+
+  it('survives every shareable surface a band selection survives', () => {
+    const any = st({ q: 'swim', anyAge: true });
+    // Saved searches (Task B) — a saved "any age" stays an explicit any age when re-run.
+    expect(serializeStateToParams(any).age).toBe(ANY_AGE_PARAM);
+    expect(parseSearchState(serializeStateToParams(any)).anyAge).toBe(true);
+    // Hidden form fields, so submitting a new query from the text box does not lose it.
+    expect(hiddenStateFields(any).map((f) => f.name)).toContain('age');
+    // The /account "Open in search" link.
+    expect(hrefForParams(serializeStateToParams(any))).toContain('age=any');
+  });
+
+  it('"Clear filters" resets it to the DEFAULT state, not to an explicit opt-out', () => {
+    // Clearing filters means "return me to the default view". It must not double as a way of
+    // ALSO saying "and never age-filter me" — that is the Any-age chip's job, one tap away.
+    expect(CLEARED_FILTERS.anyAge).toBe(false);
+    expect(hrefFor(st({ ages: ['5-9'], regions: ['van'] }), CLEARED_FILTERS)).toBe('/search');
+    expect(hrefFor(st({ anyAge: true, regions: ['van'] }), CLEARED_FILTERS)).toBe('/search');
+  });
+
+  it('DECISIVE: a bare landing and a tapped "Any age" are distinguishable in the URL, and only there', () => {
+    // The whole point, stated as one case. If someone reverts pageParams to `if (ages.length)`
+    // alone, the first assertion fails; if someone makes the sentinel reach the engine or the
+    // rail, the rest fail.
+    const bare = st();
+    const cleared = st(ageSelectionPatch([]));
+    expect(hrefFor(bare)).not.toBe(hrefFor(cleared)); // distinguishable to a future profile default
+    expect(parseSearchState({}).anyAge).not.toBe(parseSearchState({ age: 'any' }).anyAge);
+    // …and identical in every way that reaches a parent or the backend, today.
+    expect(apiQuery(cleared)).toBe(apiQuery(bare));
+    expect(intentPhrases(cleared)).toEqual(intentPhrases(bare));
+    expect(analyticsFilterTokens(cleared)).toEqual(analyticsFilterTokens(bare));
+    expect(hasActiveFilters(cleared)).toBe(hasActiveFilters(bare));
+    expect(appliedFilterTokens(cleared, null)).toEqual(appliedFilterTokens(bare, null));
   });
 });
