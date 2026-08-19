@@ -31,17 +31,13 @@
 // 4. NOTHING HERE PERSISTS A COORDINATE (ruling 7.4). The origin arrives as an argument and
 //    leaves as a distance on a card. This module has no storage of any kind.
 //
-// ── WHAT IS DELIBERATELY NOT HERE YET ──────────────────────────────────────────────────────
-// Cross-slot de-duplication and the recommendation ordering (design §3d, §10.7 — unit A3) are
-// NOT implemented. The design doc's own author declined to design them and said so; that pass is
-// being reviewed separately before it is wired in. The seam is `SlotChooser` below, and the
-// placeholder this build ships (`firstEligiblePerSlot`) is named for what it is: it hands each
-// slot its own best card with no idea what the other two took. That is not a hypothetical
-// hazard — measured 2026-08-19, the three gated pools hold 41 rows but only 33 distinct
-// listings, the free pool's #2 IS the nearby pool's #2, and "LEGO® Block Party" occupies two of
-// the four showable indoor cards at two different library branches (two different `seriesId`s,
-// so `collapseSeries` cannot see it). See docs/three-things-selection-design.md.
-// DO NOT RENDER THIS MODULE'S OUTPUT ON A REAL SURFACE UNTIL A3 LANDS.
+// ── CROSS-SLOT DE-DUPE AND ORDERING (A3) ───────────────────────────────────────────────────
+// Designed in docs/three-things-selection-design.md and approved by Jon on 2026-08-19; the
+// reasoning behind every rule below lives there rather than being restated here. The short
+// version of WHY it is needed at all, measured the same day: the three gated pools hold 41 rows
+// but only 33 distinct listings, the free pool's #2 IS the nearby pool's #2, and "LEGO® Block
+// Party" occupies two of the four showable indoor cards at two different library branches — two
+// different `seriesId`s, so `collapseSeries` cannot see it and neither could a de-dupe on ids.
 
 import type { SearchEngine, SearchRequest, SearchResultItem } from '@/lib/search/engine';
 import type { AgeBandKey, GeoPoint } from '@/lib/search/types';
@@ -49,7 +45,12 @@ import type { AgeBandKey, GeoPoint } from '@/lib/search/types';
 // authority on the word "free" for every surface in this product; `isAdultOrSeniorOnly` is the
 // audience exclusion HomeTodayStrip already applies. There is no third copy of either.
 import { isFree } from '@/lib/search/filters/cost';
-import { isAdultOrSeniorOnly } from '@/lib/search/filters/audience';
+import { isAdultOrSeniorOnly, type AudienceSignalInput } from '@/lib/search/filters/audience';
+import { isConfirmedSection } from '@/lib/search/filters/status';
+// The venue-identity rule the engine's own diversity cap runs on, shared rather than restated so
+// the block's cross-slot preference and `capVenueRepetition`'s within-list cap cannot disagree
+// about when two cards are at the same place.
+import { venueIdentity } from '@/lib/search/venue-diversity';
 
 /** The three things the front door offers. Order here is the order they are asked for. */
 export type SlotKey = 'free' | 'indoor' | 'nearby';
@@ -153,36 +154,247 @@ export interface SlotCandidates {
 }
 
 /**
- * THE A3 SEAM. Given every slot's eligible candidates, decide which card each slot shows.
+ * Given every slot's eligible candidates, decide which card each slot shows.
  *
- * Separated from candidate-gathering because the two are different kinds of decision and only
- * the second is contested: gathering is "what may this slot honestly show", which the rulings
- * settle; choosing is "which one, and how do we stop three slots printing one listing three
- * times", which design §3d flags as genuinely new logic and §10.7 leaves undesigned. Keeping the
- * seam explicit means A3 replaces one function against pinned candidate lists, rather than
- * editing selection logic that tests have already been written around.
+ * Separated from candidate-gathering because the two are different kinds of decision: gathering
+ * is "what may this slot honestly show", which the rulings settle; choosing is "which one, and
+ * how do we stop three slots printing one listing three times", which is A3. Keeping the seam
+ * explicit is what lets T1 pin the gates against fixed candidate lists without also pinning the
+ * assignment policy, and vice versa.
  *
  * A chooser MUST return a card the slot actually offered, or null. It may return null for a slot
  * whose candidate list is non-empty — that is exactly how a de-dupe policy declines a duplicate —
  * and the slot then reports `none_showable`.
  */
-export type SlotChooser = (pools: SlotCandidates[]) => Map<SlotKey, SearchResultItem | null>;
+export type SlotChooser = (pools: SlotCandidates[], now: Date) => Map<SlotKey, SearchResultItem | null>;
 
 /**
- * PLACEHOLDER (Phase 1). Each slot takes its own best-ranked eligible card, independently.
+ * Each slot takes its own best-ranked eligible card, independently — NO cross-slot de-dupe.
  *
- * NO CROSS-SLOT DE-DUPE AND NO RECOMMENDATION ORDERING — it is the engine's order, sliced. That
- * is a knowingly incomplete policy, named so nobody mistakes it for the shipped one: measured
- * 2026-08-19, six listings sit in BOTH the free and the nearby pool (identical `listing.id`) and
- * two sit in both the free and the indoor pool, so this chooser prints the same card twice as
- * soon as either overlap reaches a pool's head. A3 replaces it; until then this module must not
- * be rendered.
+ * Kept, exported and named for what it is because it is the control T1 measures the real chooser
+ * against: a de-dupe test that cannot show the duplicate happening without the rule is a test
+ * that would pass on an empty implementation. Never use it on a real surface — measured
+ * 2026-08-19, six listings sit in BOTH the free and the nearby pool (identical `listing.id`), so
+ * this prints one card twice as soon as either overlap reaches a pool's head.
  */
 export const firstEligiblePerSlot: SlotChooser = (pools) => {
   const picks = new Map<SlotKey, SearchResultItem | null>();
   for (const pool of pools) picks.set(pool.key, pool.candidates[0] ?? null);
   return picks;
 };
+
+// ── A3: "is this the same thing?" ───────────────────────────────────────────────────────────
+
+/** `$3`, `$3.00`, `$0.00 - $8.75` — the currency sign is the whole evidence, as at ingest. */
+const PRICE_RE = /\$\s*\d[\d.,]*/g;
+/** A clock time needs a colon or a meridiem: `3:30`, `5pm`, `5 p.m.`. A bare number never is. */
+const TIME_RE = /\b\d{1,2}:\d{2}\s*(?:[ap]\.?m\.?)?|\b\d{1,2}\s*[ap]\.?m\.?/g;
+/** `0-12yrs`, `8yrs+`, `Ages 6-13` — never what distinguishes two different activities. */
+const AGE_TOKEN_RE = /\b(?:ages?\s*)?\d{1,2}\s*(?:-|–|to)\s*\d{1,2}\s*(?:yrs?|years?)?\b|\b\d{1,2}\s*(?:yrs?|years?)\s*\+?/g;
+/** A weekday. Only ever stripped from the END — see `foldTitleForComparison`. */
+const TRAILING_WEEKDAY_RE = /\b(?:mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?\s*$/;
+/** "- Set Two", "- Two Sets" — a timetable's own session numbering, not a different activity. */
+const SESSION_QUALIFIER_RE = /\b(?:sets?\s+(?:one|two|three|\d)|(?:one|two|three|\d)\s+sets?)\b/g;
+
+/**
+ * A title reduced to something two cards can be COMPARED on. Never rendered — nobody reads this.
+ *
+ * WHY THIS IS NOT `worker/core/title.ts`, checked rather than assumed (design §2b). That module
+ * already ran: `worker/core/upsert.ts` writes its output into `activity_occurrence.activity_name`
+ * and keeps the source's wording in `source_title` (migration 0032), and
+ * `lib/search/postgres-repository.ts:196` maps `activityName: row.activity_name` — so the string
+ * arriving here is ALREADY normalised, for every row re-ingested since. Three reasons that is not
+ * the end of it:
+ *
+ *   1. Coverage is partial. 0032's own header states the invariant — `source_title IS NULL` ⇔ the
+ *      row has not been re-ingested since it shipped — so the live catalogue is MIXED and a
+ *      comparison cannot assume the normaliser has run on both sides of it. The first four rules
+ *      below deliberately repeat what ingest already removes, so the key is stable across both.
+ *   2. Different job, opposite posture. `normalizeTitle` produces a string a PARENT READS, and is
+ *      documented as deliberately timid for exactly that reason ("a bare number is NEVER a price
+ *      here") after this project was burned by an over-eager title rule. A comparison key is read
+ *      by nobody, so it can drop things a display normaliser must keep — the last two rules here
+ *      are precisely those: a bare weekday is part of "Monday Funday" on a card and is noise in a
+ *      key, and "- Set Two" is a real distinction on a timetable and not two things to do.
+ *   3. `worker/` is outside this app's compilation unit (`tsconfig.json` excludes it).
+ *
+ * The VENUE IS DELIBERATELY NOT PART OF THE KEY. Including it would make the two "LEGO® Block
+ * Party" cards distinct, which is the exact case this exists to catch. A three-card hero offers
+ * three things to DO; the same thing somewhere else is not a second thing, and where-to-go is the
+ * question the nearby slot's own framing answers.
+ */
+export function foldTitleForComparison(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '') // combining marks left behind by NFKD
+    .toLowerCase()
+    .replace(/[®™]/g, '')
+    .replace(PRICE_RE, ' ')
+    .replace(TIME_RE, ' ')
+    .replace(AGE_TOKEN_RE, ' ')
+    .replace(SESSION_QUALIFIER_RE, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(TRAILING_WEEKDAY_RE, '')
+    .trim();
+}
+
+/** The identities a placed card occupies, so a later slot can tell it is being offered again. */
+interface PlacedKeys {
+  seriesIds: Set<string>;
+  titles: Set<string>;
+  venues: Set<string>;
+}
+
+function emptyPlaced(): PlacedKeys {
+  return { seriesIds: new Set(), titles: new Set(), venues: new Set() };
+}
+
+/**
+ * Would showing this card repeat something already on the page?
+ *
+ * Two independent tests, and neither subsumes the other:
+ *   • `seriesId` — the same programme. Each slot is its OWN pipeline run, and `collapseSeries`
+ *     keeps whichever member ranked best UNDER THAT RUN'S ORDERING; the nearby slot sorts by
+ *     distance and the free slot by best_match, so one series can hand two slots two different
+ *     representative `listing.id`s. A de-dupe on ids alone would not see it.
+ *   • the folded title — the same programme run as two different series, which is what the two
+ *     library branches' "LEGO® Block Party" is and what the design document's two Zumba classes
+ *     were. Nothing else in the codebase can catch this class at all.
+ *
+ * ERRING TOWARD MERGING IS DELIBERATE (design §2d). A false merge costs one slot one candidate
+ * and it moves to the next. A false split puts two cards reading the same name side by side on
+ * the product's primary claim, in front of a parent who has typed nothing and has no reason to
+ * give it a second chance. The costs are not comparable and this must not pretend they are.
+ */
+function repeatsPlaced(item: SearchResultItem, placed: PlacedKeys): boolean {
+  const { listing } = item;
+  if (placed.seriesIds.has(listing.seriesId)) return true;
+  const title = foldTitleForComparison(listing.activityName);
+  return title !== '' && placed.titles.has(title);
+}
+
+function remember(item: SearchResultItem, placed: PlacedKeys): void {
+  const { listing } = item;
+  placed.seriesIds.add(listing.seriesId);
+  const title = foldTitleForComparison(listing.activityName);
+  if (title !== '') placed.titles.add(title);
+  const venue = venueIdentity(listing.venueName);
+  if (venue) placed.venues.add(venue);
+}
+
+/**
+ * Can a parent still START this today?
+ *
+ * The read model keeps an occurrence until its `end_datetime_utc`, so `when=today` at 3 p.m.
+ * includes a programme that began at noon. /search can show that honestly in a list; a card under
+ * a heading that says you could do this now cannot, because its own printed time reads as past.
+ *
+ * A PREFERENCE, NEVER A FILTER (design §3b). As a hard filter this empties every slot at 8 p.m.
+ * on a night the catalogue still holds content, and it would throw away a two-hour drop-in that
+ * started twenty minutes ago — a perfectly good answer. Measured 2026-08-19 at 15:15 PT: 32 of 48
+ * free, 3 of 4 indoor and 15 of 19 nearby gated cards still qualified, so on real data it changes
+ * WHICH card is picked without emptying anything.
+ *
+ * An open-hours card (null start) always qualifies: an aquarium is available whenever it is open,
+ * which is the entire meaning of that null (see `ListingRecord.openHours`).
+ */
+export function hasUsableStart(item: SearchResultItem, now: Date): boolean {
+  const cutoff = now.getTime();
+  return item.slots.some((slot) => {
+    if (slot.startDatetimeUtc == null) return true;
+    const start = Date.parse(slot.startDatetimeUtc);
+    return Number.isNaN(start) || start >= cutoff;
+  });
+}
+
+/**
+ * How much this surface would rather show this card, among ones it is equally allowed to show.
+ *
+ * Two preferences, and the ordering between them is the decision: a card that has already
+ * finished starting is closer to being WRONG, while a repeated venue is merely LESS GOOD, so a
+ * usable start outranks venue variety rather than being traded against it. Both are preferences —
+ * neither can empty a slot (see `chooseThreeThings`), which is the same posture
+ * `capVenueRepetition` takes within a list and for the same reason: ruling 7.5's empty state is
+ * for genuine scarcity, and must never be spent on a rule of ours.
+ */
+function preferenceScore(item: SearchResultItem, placed: PlacedKeys, now: Date): number {
+  const usable = hasUsableStart(item, now) ? 2 : 0;
+  const venue = venueIdentity(item.listing.venueName);
+  const fresh = venue && placed.venues.has(venue) ? 0 : 1;
+  return usable + fresh;
+}
+
+/**
+ * THE SHIPPED CHOOSER (A3). Fill greedily, POOREST POOL FIRST.
+ *
+ * Tonight that order is indoor (4 candidates) → free (18) → nearby (19). The reasoning is not
+ * that indoor matters most; it is that a slot holding four candidates which loses its only good
+ * one to a slot holding nineteen alternatives goes empty for no reason, and an empty slot is the
+ * most expensive thing this surface can print. The order is COMPUTED from the pools rather than
+ * hard-coded because the ranking is seasonal — on a rainy Saturday indoor is plausibly the
+ * fattest pool and free the thinnest, and a fixed `indoor → free → nearby` would then be
+ * systematically backwards.
+ *
+ * DELIBERATELY GREEDY, NOT AN OPTIMAL MATCHING. A 3×N bipartite matching would fill strictly more
+ * slots in a rare arrangement; the gain is at most one card and the cost is code no future reader
+ * can check by eye against what the page shows. If a measurement ever shows greedy leaving slots
+ * empty that a matching would fill, that is the moment to revisit.
+ *
+ * The residual case is NOT a bug and must not be routed around: greedy can leave slot A empty
+ * while slot B holds a card A would have accepted, when B chose first and A's remaining
+ * candidates all repeat placed cards. That is ruling 7.5's case exactly — fewer cards, honestly.
+ *
+ * Fill order is not render order. `selectThreeThings` returns slots in `SLOT_KEYS` order however
+ * this filled them, because a parent must not see the page reshuffle between visits for reasons
+ * invisible to them.
+ */
+export const chooseThreeThings: SlotChooser = (pools, now) => {
+  const picks = new Map<SlotKey, SearchResultItem | null>();
+  const placed = emptyPlaced();
+
+  // Total comparator — never relies on sort stability. Scarcest first; ties by declared slot
+  // order so the same pools always produce the same page.
+  const order = [...pools].sort(
+    (a, b) =>
+      a.candidates.length - b.candidates.length ||
+      SLOT_KEYS.indexOf(a.key) - SLOT_KEYS.indexOf(b.key),
+  );
+
+  for (const pool of order) {
+    let best: SearchResultItem | null = null;
+    let bestScore = -1;
+    for (const item of pool.candidates) {
+      if (repeatsPlaced(item, placed)) continue;
+      const score = preferenceScore(item, placed, now);
+      // Strictly greater — ties keep the EARLIER card, i.e. the engine's own ranking decides
+      // whenever the preferences do not. That is what keeps this a tie-breaker rather than a
+      // second opinion about what is best (design §3).
+      if (score > bestScore) {
+        best = item;
+        bestScore = score;
+        if (score === 3) break; // nothing can outrank both preferences; stop looking.
+      }
+    }
+    picks.set(pool.key, best);
+    if (best) remember(best, placed);
+  }
+
+  return picks;
+};
+
+/**
+ * The subset of a listing the front-door gate reads — so the engine's `ListingRecord` and the
+ * wire DTO both satisfy it without a cast.
+ *
+ * Same idiom as `cost.ts#CostFacts` and `audience.ts#AudienceSignalInput`, and for the same
+ * reason those exist: the alternative is a second copy of the rule living in whatever tool wants
+ * to measure the pool (scripts/three-things-pool-probe.ts is exactly that caller), and a
+ * measurement that reimplements the thing it measures cannot detect the thing going wrong.
+ */
+export interface FrontDoorSignalInput extends AudienceSignalInput {
+  statusState: string;
+}
 
 /**
  * Is this a card the FRONT DOOR may show, with no section heading and no caveat to carry it?
@@ -205,9 +417,19 @@ export const firstEligiblePerSlot: SlotChooser = (pools) => {
  *
  * Unlike the strip, this reads a full `ListingRecord` rather than a UI DTO, so the numeric age
  * bounds and `ageNotes` are both first-hand — no mapping stands between the gate and the row.
+ *
+ * THE THIRD GATE IS NOT IN THE STRIP'S FUNCTION, AND HAS TO BE HERE. The strip reached its
+ * status rule a layer later, by taking `partitionSections(...).confirmed` over already-mapped
+ * activities. This module reads the ENGINE's `results`, which is the `primary` status class —
+ * a wider set that includes `stale`, `full`, `waitlist`, `postponed` and `not_yet_bookable`.
+ * Those are honest in a list where every card wears its own status stamp, and wrong as one of
+ * three bare recommendations: a parent sent to a postponed session has been sent to something
+ * that is not happening. Reading `results` without this gate would therefore have REGRESSED the
+ * component it replaces while appearing to carry its rules forward — which is exactly what the
+ * ported test caught, and why the port ran before the delete rather than after.
  */
-export function isShowableOnFrontDoor(item: SearchResultItem): boolean {
-  const { listing } = item;
+export function isShowableOnFrontDoor(listing: FrontDoorSignalInput): boolean {
+  if (!isConfirmedSection(listing)) return false;
   if (listing.ageMinMonths == null) return false;
   return !isAdultOrSeniorOnly(listing);
 }
@@ -320,7 +542,7 @@ export function gatherSlotCandidates(input: ThreeThingsInput): SlotCandidates[] 
     // `results` ONLY — see rule 2 in this file's header. `ageUnconfirmed` and `expected` are
     // never read here, by any slot, under any condition.
     const candidates = response.results
-      .filter(isShowableOnFrontDoor)
+      .filter((item) => isShowableOnFrontDoor(item.listing))
       .filter((item) => (extra ? extra(item) : true));
 
     pools.push({ key, candidates, reached: response.total, unaskable: null });
@@ -336,10 +558,10 @@ export function gatherSlotCandidates(input: ThreeThingsInput): SlotCandidates[] 
  */
 export function selectThreeThings(
   input: ThreeThingsInput,
-  chooser: SlotChooser = firstEligiblePerSlot,
+  chooser: SlotChooser = chooseThreeThings,
 ): ThreeThings {
   const pools = gatherSlotCandidates(input);
-  const picks = chooser(pools);
+  const picks = chooser(pools, input.now);
 
   const slots: ThingSlot[] = pools.map((pool) => {
     const pick = picks.get(pool.key) ?? null;

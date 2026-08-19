@@ -132,8 +132,25 @@ function sameVenueThroughout(seats: Seat[]): boolean {
   return true;
 }
 
+/**
+ * Case/whitespace-insensitive venue identity; null when nothing names a venue.
+ *
+ * Exported because the front door's "three things" block (lib/recommend/three-things.ts) applies
+ * the same soft preference ACROSS its three slots that this module applies WITHIN one list, and
+ * the two must agree on when two cards are at the same place. Taking the raw name rather than a
+ * card keeps it usable from a caller holding any shape — the cap below still reads it off a
+ * `CollapsedListing`, one hop away in `venueKey`.
+ *
+ * The null is the load-bearing part and is the rule stated in `capVenueRepetition`'s header: an
+ * empty venue name is the ABSENCE of a fact, not a venue two cards can share. Every caller must
+ * treat null as "no opinion", never as a group.
+ */
+export function venueIdentity(venueName: string | null | undefined): string | null {
+  const name = venueName?.trim().toLowerCase();
+  return name ? name : null;
+}
+
 /** Case/whitespace-insensitive venue identity; null when the listing names no venue. */
 function venueKey(card: CollapsedListing): string | null {
-  const name = card.representative.candidate.listing.venueName?.trim().toLowerCase();
-  return name ? name : null;
+  return venueIdentity(card.representative.candidate.listing.venueName);
 }

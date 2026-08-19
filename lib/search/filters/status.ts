@@ -79,6 +79,40 @@ export function isDropIn(listing: ListingRecord): boolean {
   return tags.includes(DROP_IN_TAG);
 }
 
+/**
+ * The statuses that are VERIFIED AND ACTIONABLE RIGHT NOW — the only ones a surface with no room
+ * for a caveat may present as an answer.
+ *
+ * Narrower than `primary`, and the gap is the point. `primary` means "belongs in the result
+ * LIST", which is a list a parent reads with each card's own status stamp beside it: `stale`
+ * ("last check is a few days old"), `full`, `waitlist` and `postponed` are all primary, all
+ * honestly labelled there, and all wrong as one of three bare recommendations on the front door —
+ * a parent who acts on "postponed" has been sent somewhere that is not happening.
+ *
+ * THIS IS THE DOMAIN-SIDE STATEMENT OF A RULE THE RENDER LAYER ALREADY MAKES.
+ * `app/preview/_data/format.ts#statusMeta` assigns `section: 'confirmed'` to exactly these two
+ * statuses and `section: 'expected'` to all fourteen others, and says so in its own header note
+ * (1). That switch cannot be reused here — it is a UI module returning labels, copy, icons and
+ * tones, and `lib/` does not import `app/` — so the set is stated once here for the domain, and
+ * `tests/recommend/status-section-parity.test.ts` pins the two against each other across all 16
+ * states so they cannot drift apart silently.
+ */
+export const CONFIRMED_SECTION_STATUSES: readonly StatusState[] = ['confirmed', 'bookable_open'] as const;
+
+/**
+ * True when a listing is verified and actionable now — see `CONFIRMED_SECTION_STATUSES`.
+ *
+ * Takes a plain `string` rather than `StatusState` so the surfaces holding a narrower shape can
+ * ask this module instead of hand-rolling a second copy of the rule — the same reason
+ * `cost.ts#isFree` takes a structural `CostFacts` and `audience.ts` takes an
+ * `AudienceSignalInput`. The DTO that crosses the wire types `statusState` as `string`, and an
+ * unrecognised value answers `false`, which is the correct fail-safe direction for a gate that
+ * decides whether something may be presented with no caveat.
+ */
+export function isConfirmedSection(listing: { statusState: string }): boolean {
+  return (CONFIRMED_SECTION_STATUSES as readonly string[]).includes(listing.statusState);
+}
+
 /** Belongs in the primary result list. */
 export function isPrimaryResult(listing: ListingRecord): boolean {
   return STATUS_CLASS[listing.statusState] === 'primary';
