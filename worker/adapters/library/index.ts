@@ -28,6 +28,8 @@ import { LIBRARY_SYSTEMS, getLibrarySystem, type LibraryBranchLocation, type Lib
 import { decodeXmlText, finiteFloat, firstTag, stripHtml, tagBlocks } from './rss-text';
 import {
   GENERIC_RSS_FIXTURE_XML,
+  ageHaystack,
+  anchoredBareAgeWording,
   assessGenericRssRun,
   parseGenericRss,
   type GenericRssEvent,
@@ -284,7 +286,7 @@ function mapBiblioCommonsGateway(system: LibrarySystemConfig, body: BiblioCommon
         // ("Toddlers, Preschool Age Children — children ages …") into a single phrase, which
         // hands the prose parser a string containing both claims and lets its keyword ordering,
         // not the source, decide which one is heard.
-        ...resolveBiblioCommonsAgeSignal(descriptionText, audienceNames),
+        ...resolveBiblioCommonsAgeSignal(def.title, descriptionText, audienceNames),
         url: detailUrl,
         // Both halves from ONE rule — see gatewayRegistrationVerdict for why they can no
         // longer be derived separately.
@@ -378,10 +380,24 @@ const AGE_HINT_RE =
  * tenant's vocabulary is what let it through. See `audienceTagsOf`.
  */
 export function resolveBiblioCommonsAgeSignal(
+  title: string,
   descriptionText: string,
   audienceLabels: string[]
 ): Pick<BiblioEvent, 'ages' | 'audienceLabels'> {
-  const explicitRange = descriptionText.match(AGE_RANGE_RE)?.[0]?.trim();
+  // TITLE-BLINDNESS, fixed here (docs/age-pattern-extraction-scope.md §8d). The explicit
+  // tier used to read the DESCRIPTION only, so an age stated outright in the title never
+  // reached parseAgeText at all — and, worse, an audience TAG then won by default. Measured
+  // on the live 2026-08-18 RPL feed, that cost two rows in twenty, one of them the wrong way
+  // round on safety: "Richmond Reads: Summer Book Club 2026" says "Must be 18+ to enter" and
+  // published [0, ∞) — every band, under-2 included — off the tag "All Ages".
+  //
+  // The anchored bare-range form (`must be 6-12 years old`, `Must be 18+`, `aged 4-8 years`)
+  // is tried only AFTER AGE_RANGE_RE, so no record that already resolves can change winner;
+  // and only the two EXPLICIT tiers see the title. AGE_HINT_RE below deliberately still
+  // reads the description alone — see ageHaystack in ./generic-rss.ts for why a keyword in a
+  // title is the one inference this codebase has already measured and thrown away.
+  const hay = ageHaystack(title, descriptionText);
+  const explicitRange = hay.match(AGE_RANGE_RE)?.[0]?.trim() ?? anchoredBareAgeWording(hay);
   if (explicitRange) return { ages: explicitRange };
   if (audienceLabels.length && parseAudienceLabels(audienceLabels).resolved) return { audienceLabels };
   const proseHint = descriptionText.match(AGE_HINT_RE)?.[0]?.trim();
@@ -585,7 +601,7 @@ export function parseBiblioCommonsRss(
       // `<category>` is a flat MIXTURE — audiences, topics, languages, series names — so the
       // per-tenant allowlist decides which of them are claims about who the programme is for,
       // and only those outrank a keyword pulled out of the description prose.
-      ...resolveBiblioCommonsAgeSignal(descriptionText, audienceTagsOf(system, categories)),
+      ...resolveBiblioCommonsAgeSignal(title, descriptionText, audienceTagsOf(system, categories)),
       url: link,
       registrationRequired: /registration\s+required/i.test(descriptionText),
       registrationSignal: 'description-prose',

@@ -322,6 +322,88 @@ const KID_DESCRIPTION_RE =
 const AGE_TEXT_RE =
   /(?:ages?|grades?)\s*[\dK][^.\n]{0,40}|\b(?:best\s+for|suitable\s+for|for)\s+[^.\n]{0,60}(?:months?|years?\s+old|year-olds?)|\ball\s+ages\b/i;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The ANCHORED bare-range acceptance — shared with the BiblioCommons parser.
+//
+// WHY IT LIVES HERE AND NOT IN ./index.ts, which is the more natural home: index.ts
+// already imports from this module (the generic_rss parser, its fixture and its run
+// assessor), so the dependency runs index → generic-rss. Defining it there and importing
+// it back would close that into a module cycle, and a cycle over module-scoped `const`
+// RegExps is a TDZ fault at import time, not a lint warning. One definition, in the file
+// that is already the leaf.
+//
+// WHAT IT IS FOR. Both library parsers used to require the literal word `ages`/`grades`
+// IMMEDIATELY before the number, so a source stating its age in any other English shape
+// was silently dropped — measured 2026-08-18 on the live feeds:
+//   NVDPL "Camp Parkgate Stuffy Sleepover"  "best suited for children aged 4-8 years"
+//                                           → no ageText at all
+//   RPL   "Kids' Bookmark Contest"          "You must be 6-12 years old by August 31st"
+//                                           → beaten by the tag "Children-All Ages" (0-15)
+//   RPL   "Richmond Reads: Summer Book Club" "Must be 18+ to enter"
+//                                           → beaten by the tag "All Ages" → ALL FIVE BANDS
+//
+// WHY IT IS ANCHORED, and this is the whole design. A BARE `N+` or `N-M years` is not an
+// age claim — it is a quantity. `parseAgeText('10+ crafts')` returns [120, null], i.e. a
+// craft-kit size published as "ages 10 and up"; the same string is why worker/core/age.ts
+// is NOT the place for this and why the gate is at the adapter. So the number must be
+// preceded, within a short window, by wording that makes it a statement about PEOPLE. The
+// anchor list is docs/age-pattern-extraction-scope.md §8d's, plus `aged` — the exact word
+// the one NVDPL record uses, and unambiguous in a way `for` alone is not.
+//
+// A number that can be an AGE. Lookarounds lifted verbatim from
+// worker/adapters/activenet/parse.ts's AGE_NUMBER, which is where they were measured: they
+// reject a clock time (6:00-8:00), a decimal skill rating (3.0-4.0) and a price ($5+).
+const AGE_NUMBER = '(?<![\\d.,:$])\\d{1,2}(?![.,:]\\d)';
+/** Wording that makes the number that follows a claim about people. */
+const AGE_ANCHOR =
+  '(?:ages?|aged|grades?|must\\s+be|suited\\s+for|best\\s+for|recommended\\s+for|for\\s+children)';
+/**
+ * The bare value itself: `4-8 years` / `6-12 years old` / `18+`. A range MUST carry a unit
+ * — without one, "June 24 - August 31"-shaped copy and "1-2 winners" are indistinguishable
+ * from an age. `N+` needs no unit because `+` after a small bare integer is already the
+ * age idiom, which is exactly why it may only ever appear behind an anchor.
+ */
+const BARE_AGE_VALUE = `${AGE_NUMBER}\\s*(?:(?:-|–|—|to)\\s*${AGE_NUMBER}\\s*(?:yrs?|years?|months?|mos?)|\\+)`;
+/** Group 1 is the age expression alone — the anchor is a guard, not part of the wording. */
+const ANCHORED_BARE_AGE_RE = new RegExp(
+  `${AGE_ANCHOR}\\b[^.<\\n]{0,20}?(${BARE_AGE_VALUE}(?:\\s+old)?)`,
+  'i'
+);
+
+/**
+ * The age wording a bare `N-M years` / `N+` offers, or undefined when nothing ANCHORS it.
+ *
+ * Deliberately a FALLBACK everywhere it is used, never a new alternative inside an existing
+ * regex: JS alternation is leftmost-POSITION-wins, so folding this into `AGE_TEXT_RE` /
+ * `AGE_RANGE_RE` could change which phrase wins on records that already resolve correctly.
+ * As a separate second attempt it can only ever add wording where there was none.
+ */
+export function anchoredBareAgeWording(text: string): string | undefined {
+  return ANCHORED_BARE_AGE_RE.exec(text)?.[1]?.trim();
+}
+
+/**
+ * The haystack the EXPLICIT age tiers scan: the title as well as the description.
+ *
+ * NOT used by the keyword/audience tiers, deliberately. A title stating an age outright
+ * ("… (Ages 8-12)") is the source's own claim and is strictly more precise than anything
+ * downstream; a title merely CONTAINING a kid word is the kid-coded-title-marker inference
+ * that was measured at a 57% error rate and killed (see worker/core/title.ts's header).
+ * Widening the explicit tiers to the title is the fix; widening the keyword tier to it
+ * would be that dead inference coming back through the side door.
+ */
+export function ageHaystack(title: string, descriptionText: string): string {
+  // The '.' terminator matters: every pattern here is bounded by `[^.<\n]`, so it stops a
+  // title's trailing words being spliced onto the description's opening ones.
+  return `${title}. ${descriptionText}`;
+}
+
+/** This feed's raw age wording: the vetted pattern first, the anchored bare form second. */
+export function genericRssAgeWording(title: string, descriptionText: string): string | undefined {
+  const hay = ageHaystack(title, descriptionText);
+  return hay.match(AGE_TEXT_RE)?.[0]?.trim() ?? anchoredBareAgeWording(hay);
+}
+
 export type KidRelevance =
   | { kidRelevant: true; signal: 'title' | 'description' }
   | { kidRelevant: false; reason: 'non_event_notice' | 'adult_only' | 'no_kid_signal' };
@@ -578,7 +660,9 @@ export function parseGenericRss(system: LibrarySystemConfig, xml: string): Gener
       venueName,
       startsAt,
       endsAt: zonedLocalToUtcIso(parsed.endLocal),
-      ages: descriptionText.match(AGE_TEXT_RE)?.[0]?.trim(),
+      // Title AND description — see ageHaystack. The anchored bare-range form is a second
+      // attempt, not a widened first one, so it can only speak where AGE_TEXT_RE is silent.
+      ages: genericRssAgeWording(title, descriptionText),
       url: link,
       descriptionText,
       categoryHint: genericRssCategoryHint(title, descriptionText),

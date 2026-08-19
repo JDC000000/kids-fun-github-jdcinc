@@ -212,6 +212,30 @@ function categoryHint(event: TrumbaEvent): string | undefined {
 const AGE_HINT_RE =
   /(?:for\s+)?(?:kids|children|families|family|all\s+ages|youth|teens?|tweens?|toddlers?|babies|baby|preschool(?:ers)?|seniors?|adults?)[^.<\n]{0,30}/i;
 
+/**
+ * The source stating an age OUTRIGHT — "ages 7-11", "grades K-3". Preferred over
+ * AGE_HINT_RE's window whenever both are present (docs/age-pattern-extraction-scope.md §8e).
+ *
+ * THE ROW THIS EXISTS FOR, measured on the live 2026-08-18 Trumba feed, 1 of 32:
+ *   "Free Synchronized Swimming Try-it Class for Kids" — the description says "a FREE class
+ *   for kids ages 7-11 who can swim 1 lap unassisted". With no structured Audiences field to
+ *   consult, AGE_HINT_RE's 30-character window opened on "for Kids" and closed before the
+ *   number, lifting "for Kids Come try Artistic Swimming (S" — which worker/core/age.ts
+ *   scores [60,144], four years too wide at the bottom and one too wide at the top.
+ *
+ * DELIBERATELY BELOW the structured Audiences field, not above it. That precedence is the
+ * one this adapter already got right and it is not being disturbed: a curated tag is the
+ * city's own claim about who a programme is for, and this pattern is still a scan of prose.
+ * It only ever competes with the OTHER prose scan, and it wins because a stated range is
+ * strictly more specific than a keyword plus thirty characters of whatever followed it.
+ *
+ * The `ages`/`grades` word must sit IMMEDIATELY before the number — no bare `N+`, no bare
+ * `N-M`. A Trumba description is dense with dates, times and street numbers, and this
+ * adapter has no measured corpus of anchor phrases behind it the way the library family now
+ * does; the narrow form fixes the measured defect and cannot manufacture an age from a date.
+ */
+const AGE_RANGE_RE = /(?:ages?|grades?)\s*[\dK][^.<\n]{0,40}/i;
+
 // ── a catch-all audience is not a child-audience claim when the subject is adult-only ──
 //
 // THE ROW THIS EXISTS FOR, and it is not a parsing bug:
@@ -322,8 +346,12 @@ function ageText(event: TrumbaEvent): string | undefined {
   // clean, unambiguous token that worker/core/age.ts resolves into an age band
   // accurately, avoiding the misfires a 30-char description window produces
   // (e.g. "kids" inside "Kids' Place desk for a chance to win").
+  // Within the PROSE fallback, a stated range beats a keyword window — see AGE_RANGE_RE.
   const hay = `${decodeEntities(event.title)} ${decodeEntities(event.description ?? '')}`;
-  const wording = customField(event, 'Audiences') ?? AGE_HINT_RE.exec(hay)?.[0]?.trim();
+  const wording =
+    customField(event, 'Audiences') ??
+    AGE_RANGE_RE.exec(hay)?.[0]?.trim() ??
+    AGE_HINT_RE.exec(hay)?.[0]?.trim();
   if (!wording) return undefined;
   // Precedence above is untouched; this only withholds a wording that claims every age
   // while the source's subject is adult-only. See the block comment above.

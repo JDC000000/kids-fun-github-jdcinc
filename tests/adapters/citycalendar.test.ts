@@ -148,7 +148,11 @@ describe('CityCalendar adapter — City of Vancouver Trumba feed (Task 9)', () =
     expect(swim.venueMunicipalityName).toBe('Vancouver');
     expect(swim.costStatus).toBe('free');
     expect(swim.categoryHint).toBe('public_swim');
-    expect(swim.ageText?.toLowerCase()).toContain('kids');
+    // The fixture description reads "Free swim for kids … ages 6-12 at the pool". This
+    // assertion USED to read `toContain('kids')` — i.e. it pinned the very clipping §8e
+    // fixes, where AGE_HINT_RE's 30-char window opens on "kids" and closes before the
+    // number. The stated range is now preferred, so the age wording is the range itself.
+    expect(swim.ageText?.toLowerCase()).toContain('ages 6-12');
     expect(adapter.dedupKeys(swim).key).toBe('city_calendar::vancouver::204262940');
 
     const fifa = records[1];
@@ -387,5 +391,62 @@ describe('CityCalendar adapter — City of Vancouver Trumba feed (Task 9)', () =
     expect(fetchMock).not.toHaveBeenCalled();
     expect(records).toHaveLength(1);
     expect(records[0].costStatus).toBe('free');
+  });
+});
+
+// docs/age-pattern-extraction-scope.md §8e — inside the PROSE fallback, a stated numeric range
+// beats AGE_HINT_RE's 30-character keyword window.
+//
+// THE ROW THIS EXISTS FOR, measured on the live 2026-08-18 Trumba feed, 1 defect in 32:
+//   "Free Synchronized Swimming Try-it Class for Kids" — description "a FREE class for kids
+//   ages 7-11 who can swim 1 lap unassisted". No structured Audiences field, so the window
+//   opened on "for Kids" and closed 30 characters later — before the number — lifting
+//   "for Kids Come try Artistic Swimming (S" and scoring it [60,144]: four years too wide at
+//   the bottom, one too wide at the top, on a class that requires swimming a lap unassisted.
+describe('CityCalendar age wording — a stated range beats the keyword window (§8e)', () => {
+  const extract = (events: unknown[]) => new CityCalendarAdapter(getCityCalendar('vancouver')!).extract(events);
+
+  it('lifts "ages 7-11", not the 30 characters that happened to follow "for kids"', () => {
+    const [r] = extract([
+      trumba(
+        1,
+        'Free Synchronized Swimming Try-it Class for Kids',
+        'Come try Artistic Swimming (Synchronized Swimming)! This is a FREE class for kids ages 7-11 who can swim 1 lap unassisted in deep water.'
+      ),
+    ]);
+    expect(r.ageText).toContain('ages 7-11');
+    expect(computeAgeBandMatches(parseAgeText(r.ageText!), BANDS).sort()).toEqual(['10-14', '5-9']);
+    // The measured before-state — 5-to-12 — pinned as the thing that must not come back.
+    expect(parseAgeText(r.ageText!).ageMinMonths).not.toBe(60);
+  });
+
+  it('the STRUCTURED Audiences field still outranks both prose scans', () => {
+    // The precedence this adapter already had right, re-asserted so §8e cannot erode it: a
+    // curated city tag is a claim about who a programme is for; prose is a scan.
+    const [r] = extract([trumba(2, 'Family Day', 'Drop in for ages 7-11 activities and more.', 'All ages')]);
+    expect(r.ageText).toBe('All ages');
+  });
+
+  it('the adult-subject suppression is untouched — a numeric range is never a catch-all', () => {
+    // A stated range is a specific claim, so isCatchAllAudience() is false for it and the
+    // suppression branch simply does not apply. The catch-all case still suppresses.
+    const [suppressed] = extract([
+      trumba(3, 'International Overdose Awareness', "City Hall's flag will be at half-mast.", 'All ages'),
+    ]);
+    expect(suppressed.ageText).toBeUndefined();
+  });
+
+  it('a description with no stated range falls back to the keyword window exactly as before', () => {
+    const [r] = extract([trumba(4, 'Music in the Park', 'Free outdoor concert for all ages in the park.')]);
+    expect(r.ageText).toBe('for all ages in the park');
+  });
+
+  it('a date or a street number in the prose is not read as an age', () => {
+    // The `ages`/`grades` word must sit IMMEDIATELY before the number — no bare-range branch
+    // here, deliberately. A Trumba description is dense with dates, times and addresses.
+    const [r] = extract([
+      trumba(5, 'Pop-up Recycling Event', 'Drop off at 453 W 12th Ave, August 24-28, from 9:00-11:00 am.'),
+    ]);
+    expect(r.ageText).toBeUndefined();
   });
 });
