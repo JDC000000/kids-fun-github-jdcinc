@@ -144,6 +144,11 @@ const AGE_PHRASE_RE =
  *  change parseAgeText for every adapter, which is not this change. */
 const AGE_NUMBER = /(?<![\d.,:$])\d{1,2}(?![.,:]\d)/.source;
 
+/** The age UNIT this platform writes between the number and its connector: "8yrs+",
+ *  "Ball Hockey - Men (40yrs+)", "Parent and Tot Gym (6 mo-5 yrs)", "(18mo-3yrs)". Optional,
+ *  because the bare forms ("19+", "13-18") are just as common. */
+const AGE_UNIT = '(?:\\s*(?:yrs?|years?|mos?|months?))';
+
 /**
  * Does the TITLE itself state an age?
  *
@@ -153,11 +158,53 @@ const AGE_NUMBER = /(?<![\d.,:$])\d{1,2}(?![.,:]\d)/.source;
  * "Adult Open Gym (19+)", "Badminton All Ages" — so the disqualifier is the age-adjacent
  * WORD, not the title. Explicit numeric ranges, minimums and the literal "all ages" pass;
  * "Youth"/"Baby"/"Family"/"Preschool" on their own do not.
+ *
+ * THE UNIT IS OPTIONAL AND THAT IS THE POINT. The first version of this gate required the
+ * number to be IMMEDIATELY followed by its `+` or `-`, so a unit token in between defeated it:
+ * `8+` passed and `8yrs+` — the reported example — did not. Measured on 17,209 live records
+ * (Vancouver + Burnaby, 2026-08-18): 86 records across 16 programmes state an age in the
+ * title that the gate rejected, among them "Parent and Tot Gym (6 mo-5 yrs)", published as
+ * 1–3 years off the word "Toddlers" in its description while its own name said 6 months to 5.
  */
 const TITLE_STATES_AGE_RE = new RegExp(
-  `\\bages?\\s*\\d|${AGE_NUMBER}\\s*(?:-|–|—|to)\\s*${AGE_NUMBER}|${AGE_NUMBER}\\s*\\+|\\ball\\s+ages\\b`,
+  `\\bages?\\s*\\d|${AGE_NUMBER}${AGE_UNIT}?\\s*\\+` +
+    `|${AGE_NUMBER}${AGE_UNIT}?\\s*(?:-|–|—|to)\\s*${AGE_NUMBER}${AGE_UNIT}?|\\ball\\s+ages\\b`,
   'i'
 );
+
+/** A number range introduced by a month name is a DATE. Anchored on `\b` after the month
+ *  specifically: the unanchored draft read "Novice" as "Nov" and threw away
+ *  "Wushu Beginner/Novice 15+". */
+const TITLE_DATE_RE =
+  /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\.?\s*\d/i;
+
+/** A number range introduced by a grade label is a GRADE. Grades are not ages and the shared
+ *  normaliser cannot rescue them here — `parseAgeText('grade 4-7')` returns ages 4–8, because
+ *  its RANGE_RE reaches the bare `4-7` before its GRADE_RE can convert. Refusing the title is
+ *  this adapter's business; that core defect is logged separately and is not fixed by faking a
+ *  conversion at the call site. */
+const TITLE_GRADE_LABEL_RE = /\b(?:gr\.?|grades?)\s*[k0-9]/i;
+
+/**
+ * The gate, plus the two things that look like an age range and are not.
+ *
+ * MEASURED (same 17,209 records): the gate above, unguarded, publishes
+ * "Art of Tennis Summer Camp - Aug 17-21" as ages 17–22 and "Future Bounce Basketball
+ * (Gr. 6-7)" as ages 6–8 — 14 records across 3 programmes asserting an age from a date or a
+ * school grade. That is the same class of false claim this gate exists to remove, so it is
+ * removed here rather than left for the normaliser, which cannot see the difference.
+ *
+ * The veto is on the WHOLE TITLE, not just the matched span, and that is deliberate: what
+ * extractAgeText hands downstream is the whole title (see its note), so one date anywhere in
+ * it is live — "Summer Camp Aug 5-9 (6-12yrs)" resolves to ages 5–10 off the DATE even though
+ * the real age is right there in the same string. Measured cost of the blunt form: nil. Only
+ * 90 of 17,209 records carry a month or grade token at all, and the 14 above are the only ones
+ * the gate ever admitted.
+ */
+function titleStatesAge(title: string): boolean {
+  if (!TITLE_STATES_AGE_RE.test(title)) return false;
+  return !TITLE_DATE_RE.test(title) && !TITLE_GRADE_LABEL_RE.test(title);
+}
 
 /**
  * Capture the age WORDING this event actually states. Both halves must be evidence.
@@ -182,7 +229,7 @@ export function extractAgeText(event: ActiveNetEvent): string | undefined {
   // Whole title, not just the matched phrase: when a title DOES state an age, the surrounding
   // words are the context parseAgeText's own rules read ("(6-13 with adult)", "0-12 yrs"), and
   // clipping to the bare match would change how those resolve.
-  const titleClaim = TITLE_STATES_AGE_RE.test(title) ? title : undefined;
+  const titleClaim = titleStatesAge(title) ? title : undefined;
   const parts = [titleClaim, phrase].filter(Boolean);
   return parts.length ? parts.join(' — ') : undefined;
 }

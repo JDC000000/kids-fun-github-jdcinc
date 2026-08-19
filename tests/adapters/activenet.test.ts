@@ -495,6 +495,64 @@ describe('G-T7R-3 parse against real captured payloads', () => {
     }
   });
 
+  // ── the unit token between the number and its connector ──────────────────────────
+  //
+  // The first version of the gate required the number to be IMMEDIATELY followed by its `+`
+  // or `-`, so "19+" passed and "19yrs+" did not. Measured on 17,209 live Vancouver + Burnaby
+  // records (2026-08-18): 86 records across 16 programmes state an age in their own title that
+  // the gate threw away. Every title below is verbatim from that pull, and every description
+  // here is age-silent on purpose — the title is the only claim there is, so a gate that drops
+  // it publishes nothing at all for these records.
+  const AGE_SILENT = '<p>Drop in at the community centre. No registration needed.</p>';
+
+  it('uses a title whose age carries a unit between the number and its connector', () => {
+    const stated: Array<[string, number, number | null]> = [
+      ['Reserve In Advance: Table Tennis 18yrs+', 216, null],
+      ['Ball Hockey - Men (40yrs+) SUN', 480, null],
+      ['Chinese Folk Dance (55yrs+)', 660, null],
+      ['Reserve In Advance: Figure Skating 16yrs+ (Star 2)', 192, null],
+      // Published as 1–3 years before this fix, inferred from "Toddlers" in its description,
+      // while its own name said six months to five years.
+      ['Parent and Tot Gym (6 mo-5 yrs)', 6, 72],
+      ['Jump into Music (6months-4yrs)', 6, 60],
+      ['Brit Gymnastics - Dynamic Duo A (18mo-3yrs)', 18, 48],
+    ];
+    for (const [title, ageMinMonths, ageMaxMonths] of stated) {
+      const ageText = extractAgeText({ title, description: AGE_SILENT });
+      expect(ageText, `${title} was rejected by the title gate`).toBe(title);
+      expect(parseAgeText(ageText), title).toMatchObject({ ageMinMonths, ageMaxMonths, resolved: true });
+    }
+  });
+
+  it('reads no age out of a title date range or a grade label', () => {
+    // The other half of the same regex, and the direction that publishes a WRONG age rather
+    // than none: 14 records across 3 programmes in the same pull. The tennis camp is a
+    // children's camp whose description says "going into Grade 1 or be 6 years old"; it was
+    // published as ages 17–22 and 24–29 off its own dates. "Gr. 6-7" is grades, i.e. roughly
+    // 11–13 years, and was published as ages 6–8.
+    for (const title of [
+      'Art of Tennis Summer Camp - Aug 17-21 - Garden Park',
+      'Art of Tennis Summer Camp - Aug 24-28 - Garden Park',
+      'Future Bounce Basketball (Gr. 6-7)',
+    ]) {
+      const ageText = extractAgeText({ title, description: AGE_SILENT });
+      expect(ageText, `${title} published its dates/grades as an age`).toBeUndefined();
+    }
+  });
+
+  it('does not let the date guard eat a real age that merely looks like a month', () => {
+    // "Novice" begins with "Nov" and "March Break" begins with "Mar". The month guard is
+    // anchored so neither costs a genuine title-stated age — an unanchored draft lost both.
+    for (const [title, ageMinMonths] of [
+      ['Wushu Beginner/Novice 15+', 180],
+      ['March Break Camp (5-12yrs)', 60],
+    ] as Array<[string, number]>) {
+      const ageText = extractAgeText({ title, description: AGE_SILENT });
+      expect(ageText, `${title} was swallowed by the date guard`).toBe(title);
+      expect(parseAgeText(ageText), title).toMatchObject({ ageMinMonths, resolved: true });
+    }
+  });
+
   it('reports a zero-yield calendar as a finding, not an absence', () => {
     const empty: CalendarFetchResult = {
       calendarId: 60,
