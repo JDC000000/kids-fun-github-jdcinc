@@ -49,9 +49,10 @@ counts are from the captured `bdd3ad0` artefact plus two read-only GETs of the p
 
 6. **No candidate pattern can be validated to this codebase's own standard, and that is the
    binding constraint.** `adult-subject-child-bands.ts:84-86` requires each entry be checked
-   "against a live sweep". Production stores `description_snippet = ''` on **0 of 15,050** live
-   rows (§5). The guard reads title *and description*. The sweep that would validate a widening
-   therefore cannot see the guard's input. Every false-positive number below is title-only.
+   "against a live sweep". Production stores a **non-empty** `description_snippet` on **0 of
+   15,050** live rows (§5) — i.e. the column is empty on every row. The guard reads title *and
+   description*. The sweep that would validate a widening therefore cannot see the guard's input.
+   Every false-positive number below is title-only.
 
 ---
 
@@ -266,7 +267,7 @@ Corpora used, and what each can and cannot show:
 
 | corpus | n | has descriptions? |
 |---|---|---|
-| production, all live rows | 15,050 (2,727 distinct titles) | **no** — `description_snippet = ''` on 0/15,050 |
+| production, all live rows | 15,050 (2,727 distinct titles) | **no** — non-empty `description_snippet` on 0/15,050 |
 | production, all-ages rows | 2,172 | no |
 | production, affirmed-child-band rows | 5,148 | no |
 | captured Trumba window (`bdd3ad0`) | 30 | yes |
