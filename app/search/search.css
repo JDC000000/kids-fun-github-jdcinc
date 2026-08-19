@@ -1653,3 +1653,26 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* Profile-derived age default: where the "Ages …" token above actually came from
+   (app/search/_components/ProfileAgeDefault.tsx).
+
+   It wears the CONFIRMED palette rather than the "expected" one its neighbouring notices use,
+   because it is the only line in that stack that is not a caveat about the catalogue — nothing
+   is missing, thin or widened; the parent's own saved ages are simply narrowing the page, and
+   this says so. Same geometry and voice as .kf-dayremainder / .kf-coverage so the notices still
+   read as one family, and it renders only while that filter is genuinely the profile's. */
+.kf-profnote {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--confirmed-text);
+  background: var(--confirmed-bg);
+  border-radius: 12px;
+  text-align: left;
+}
+
+.kf-profnote__lede {
+  font-weight: 700;
+}

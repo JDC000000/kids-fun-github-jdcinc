@@ -24,6 +24,7 @@ import { QuerySummary } from './_components/QuerySummary';
 import { SearchResultsView } from './_components/SearchResultsView';
 import { SaveSearchButton } from './_components/SaveSearchButton';
 import { ResumeSearch } from './_components/ResumeSearch';
+import { ProfileAgeDefault } from './_components/ProfileAgeDefault';
 import { buildMarkers, geoIndex } from './_lib/markers';
 import { distanceAvailability, distanceNote } from './_lib/distance-note';
 import { groupActivitiesByDay, buildDayIndex, formatRangeLabel, type DayGroup } from './_lib/day-groups';
@@ -522,6 +523,15 @@ export default async function SearchPage({
             clearHref={hrefFor(state, CLEARED_FILTERS)}
             countsKnown={result.ok}
           />
+
+          {/* The on-device child profile's age default (design §5c option 2a). A client island:
+              it reads localStorage after mount and, ONLY when the URL says nothing about age,
+              replaces it with the same `age=` URL a chip tap would produce — so every consumer
+              below (facets, ladder, analytics, the applied-filter token above) is fed by the path
+              it already had. Mounted directly under QuerySummary because the note it renders
+              explains the "Ages …" token in that summary, and a provenance line that appears
+              before the thing it explains is a riddle. Renders nothing when no profile applies. */}
+          <ProfileAgeDefault state={state} />
 
           {/* "We hold almost nothing for this area" is a different fact from every other notice
               on this page, and it outranks them: the day-remainder note explains the shape of ONE

@@ -75,9 +75,14 @@ export const CHILD_PROFILE_VERSION = 1;
  * children the header copy can carry). 4 is the doc's own starting point. 216 months is the
  * 18th birthday — past it, "child profile" has stopped meaning anything, and the cap's real
  * job is to reject 9_999_999, not to adjudicate a 17-year-old.
+ *
+ * EXPORTED so the capture UI enforces the SAME caps this module enforces, rather than carrying
+ * its own copy of "4" and "216". A form that let a parent add a fifth child would have that
+ * child silently dropped on write — the validation would still be correct and the parent would
+ * still be lied to.
  */
-const MAX_CHILDREN = 4;
-const MAX_AGE_MONTHS = 216;
+export const MAX_CHILDREN = 4;
+export const MAX_AGE_MONTHS = 216;
 const MAX_RAW_BYTES = 1024;
 const MAX_ID_LEN = 24;
 

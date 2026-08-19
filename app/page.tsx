@@ -4,6 +4,7 @@ import { Button, Input } from '@/components/ui';
 import { CategoryTile } from './preview/_components/CategoryTile';
 import type { Category } from './preview/_data/types';
 import { HomeTodayStrip } from './_components/HomeTodayStrip';
+import { ChildProfilePrompt } from './_components/ChildProfilePrompt';
 
 // Home / front door (M3 Screen 1, Visual Blueprint v0.2). The first thing a
 // first-time parent sees: it introduces KIDS FUN in the civic field-guide voice,
@@ -11,9 +12,10 @@ import { HomeTodayStrip } from './_components/HomeTodayStrip';
 // /search (the scan page) and /preview/[id] (detail). It is deliberately NOT a
 // second results page: it is the entry point that ties the built surfaces together.
 //
-// Server component: static, zero-JS to first paint, fast. The only client island
-// is the small "on now" taste strip, which degrades to nothing if data is unavailable
-// so the front door is always complete.
+// Server component: static, zero-JS to first paint, fast. The client islands are the
+// small "on now" taste strip and the ask-once child-profile prompt — both degrade to
+// nothing (no data / storage unavailable / already answered) so the front door is
+// always complete without either of them.
 
 export const metadata = {
   title: 'KIDS FUN — What’s on for your kids across Metro Vancouver',
@@ -105,6 +107,11 @@ export default function Home() {
           </header>
 
           <main className="kf-home__main">
+            {/* ── Ask once: "who are you looking for" (U1). The HOME PAGE ONLY, by ruling
+                (design §9-Q7). Renders nothing once answered, once dismissed for the session,
+                or when storage is unavailable — so it is a first-visit question, not chrome. ── */}
+            <ChildProfilePrompt />
+
             {/* ── Browse by activity — category tiles into real /search results ── */}
             <section className="kf-home__section" aria-labelledby="kf-home-browse">
               <div className="kf-section__head">

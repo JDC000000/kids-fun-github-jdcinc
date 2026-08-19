@@ -1,0 +1,183 @@
+/* child-profile.css — the ask-once prompt (home) and the header profile bar (every route).
+ *
+ * Self-contained and NOT scoped under `.kf`, matching site-nav.css/account-nav.css and for the
+ * same reason: the bar renders in the root layout, on routes that never load the search or
+ * preview stylesheets. Every colour comes from the canonical --kf-* tokens (app/design-tokens.css)
+ * so nothing here restates a hex.
+ *
+ * The two surfaces share one block (`.kf-cprof`) with two modifiers, because they are the same
+ * component wearing two densities: a card on the front door, a slim strip under the nav. The form
+ * inside them is literally the same component (ChildAgeForm), so its styles are stated once. */
+
+.kf-cprof {
+  font-family: var(--kf-font-ui);
+  color: var(--kf-ink);
+  box-sizing: border-box;
+}
+
+/* ── The ask-once prompt: a real card on the home page's main column. ── */
+.kf-cprof--prompt {
+  margin: 0 0 var(--kf-space-5);
+  padding: var(--kf-space-4);
+  background: var(--kf-confirmed-bg);
+  border: 1px solid var(--kf-hairline);
+  border-left: 3px solid var(--kf-leaf);
+  border-radius: var(--kf-r-card);
+}
+
+.kf-cprof__head {
+  margin-bottom: var(--kf-space-3);
+}
+
+.kf-cprof__eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--kf-confirmed-text);
+}
+
+.kf-cprof__title {
+  margin: var(--kf-space-1) 0 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--kf-ink);
+}
+
+.kf-cprof__text {
+  margin: var(--kf-space-1) 0 0;
+  max-width: 62ch;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--kf-ink-secondary);
+}
+
+/* ── The header bar: a slim strip under the global nav, on every route. ── */
+.kf-cprof--bar {
+  background: var(--kf-surface-subtle);
+  border-bottom: 1px solid var(--kf-hairline);
+  padding: var(--kf-space-2) var(--kf-space-5);
+}
+
+.kf-cprof__bar-line,
+.kf-cprof__editor {
+  /* Aligned to the same shell the nav uses, so the two bars read as one piece of chrome. */
+  max-width: min(1504px, 100%);
+  margin: 0 auto;
+}
+
+.kf-cprof__bar-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--kf-space-1) var(--kf-space-3);
+}
+
+.kf-cprof__for {
+  margin: 0;
+  font-size: 13px;
+  color: var(--kf-ink-secondary);
+}
+
+.kf-cprof__ages {
+  font-weight: 700;
+  color: var(--kf-ink);
+}
+
+.kf-cprof__bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--kf-space-2);
+}
+
+.kf-cprof__editor {
+  padding-top: var(--kf-space-2);
+}
+
+.kf-cprof__hint {
+  margin: var(--kf-space-2) 0 0;
+  max-width: 62ch;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--kf-ink-muted);
+}
+
+/* ── The shared age form. ── */
+.kf-cprof__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kf-cprof__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--kf-space-2);
+  margin-bottom: var(--kf-space-2);
+}
+
+.kf-cprof__row-label {
+  min-width: 9ch;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kf-ink-secondary);
+}
+
+.kf-cprof__row-input {
+  width: 6.5em;
+  font-feature-settings: var(--kf-font-feature);
+}
+
+.kf-cprof__row-unit {
+  font-size: 13px;
+  color: var(--kf-ink-muted);
+}
+
+.kf-cprof__error {
+  margin: var(--kf-space-2) 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kf-cancelled-text);
+}
+
+.kf-cprof__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--kf-space-2) var(--kf-space-3);
+  margin-top: var(--kf-space-3);
+}
+
+/* Secondary text actions ("Not now" / "Cancel" / "Forget my children"), matching the
+   .kf-resume__btn contract they are modelled on — WCAG 44px target, real focus ring,
+   never colour-only state. */
+.kf-cprof__btn {
+  min-height: 44px;
+  padding: var(--kf-space-1) var(--kf-space-2);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kf-anchor);
+  background: none;
+  border: 0;
+  border-radius: var(--kf-r-control);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.kf-cprof__btn:hover {
+  color: var(--kf-forest-ink);
+}
+
+.kf-cprof__btn--muted {
+  color: var(--kf-ink-muted);
+}
+
+.kf-cprof__btn:focus-visible {
+  outline: 2px solid var(--kf-anchor);
+  outline-offset: 2px;
+}
