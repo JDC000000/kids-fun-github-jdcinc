@@ -9,7 +9,15 @@
 import { useRef, useState, useTransition } from 'react';
 import { dedupReviewAction, type ReviewActionState } from '../actions';
 
-export function DedupReviewForm({ duplicateId, canonicalId }: { duplicateId: string; canonicalId: string }) {
+export function DedupReviewForm({
+  duplicateId,
+  canonicalId,
+  page,
+}: {
+  duplicateId: string;
+  canonicalId: string;
+  page: number;
+}) {
   const [state, setState] = useState<ReviewActionState>({});
   const [pending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
@@ -29,6 +37,8 @@ export function DedupReviewForm({ duplicateId, canonicalId }: { duplicateId: str
     <form ref={formRef} className="resolve-form" onSubmit={(e) => e.preventDefault()} noValidate>
       <input type="hidden" name="duplicateId" value={duplicateId} />
       <input type="hidden" name="canonicalId" value={canonicalId} />
+      {/* See ReviewForm — keeps the reviewer on the queue page they acted from. */}
+      <input type="hidden" name="page" value={page} />
       {state.message && (
         <p className="form-error" role="alert">
           {state.message}

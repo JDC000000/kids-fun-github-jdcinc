@@ -8,7 +8,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { resolveSessionAdmin } from '../_lib/gate';
-import { isReviewIntent, isDedupIntent, parseReviewNote } from './_lib/vocab';
+import { isReviewIntent, isDedupIntent, parseReviewNote, parseQueuePageParam } from './_lib/vocab';
 import { reviewOccurrence, confirmDedupMerge, rejectDedupPair } from './_lib/data';
 
 export interface ReviewActionState {
@@ -16,6 +16,17 @@ export interface ReviewActionState {
   message?: string;
   /** Field-level message for the optional reviewer note. */
   noteError?: string;
+}
+
+/**
+ * Where to send the reviewer after a successful decision: back to the queue PAGE they acted
+ * from, not page 1. The page arrives as a hidden form field and is re-parsed here rather than
+ * trusted — it lands in a redirect URL, and parseQueuePageParam only ever yields a bounded
+ * integer, so a forged value cannot smuggle anything into the Location header.
+ */
+function queueRedirect(formData: FormData, flash: string): string {
+  const page = parseQueuePageParam(str(formData.get('page')));
+  return page > 1 ? `/admin/qa-queue?page=${page}&flash=${flash}` : `/admin/qa-queue?flash=${flash}`;
 }
 
 const NEEDS_SESSION_ADMIN: ReviewActionState = {
@@ -60,7 +71,7 @@ export async function reviewAction(formData: FormData): Promise<ReviewActionStat
   }
 
   revalidatePath('/admin/qa-queue');
-  redirect(`/admin/qa-queue?flash=${intent === 'confirm' ? 'confirmed' : 'rejected'}`);
+  redirect(queueRedirect(formData, intent === 'confirm' ? 'confirmed' : 'rejected'));
 }
 
 /**
@@ -106,7 +117,7 @@ export async function dedupReviewAction(formData: FormData): Promise<ReviewActio
       };
     }
     revalidatePath('/admin/qa-queue');
-    redirect('/admin/qa-queue?flash=merged');
+    redirect(queueRedirect(formData, 'merged'));
   }
 
   // reject_merge — keep both records separate.
@@ -135,7 +146,7 @@ export async function dedupReviewAction(formData: FormData): Promise<ReviewActio
     };
   }
   revalidatePath('/admin/qa-queue');
-  redirect('/admin/qa-queue?flash=kept_separate');
+  redirect(queueRedirect(formData, 'kept_separate'));
 }
 
 function str(v: FormDataEntryValue | null): string {

@@ -5,7 +5,8 @@
 // second action on the same record is a safe no-op (already_handled).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closePool, query } from '@/lib/db/client';
-import { listReviewQueue, reviewOccurrence, QA_AUDIT_ACTIONS } from '@/app/admin/qa-queue/_lib/data';
+import { reviewOccurrence, QA_AUDIT_ACTIONS } from '@/app/admin/qa-queue/_lib/data';
+import { collectReviewQueue } from './review-queue-walk';
 import { REVIEW_STATES } from '@/app/admin/qa-queue/_lib/vocab';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
@@ -69,7 +70,7 @@ describe.skipIf(!hasDb)('QA review queue (G-T34-5)', () => {
   });
 
   it('listReviewQueue surfaces both queued records with context', async () => {
-    const queue = await listReviewQueue();
+    const queue = await collectReviewQueue();
     const a = queue.find((r) => r.id === needsReviewId);
     const b = queue.find((r) => r.id === manualCandidateId);
     expect(a?.statusState).toBe('needs_review');
@@ -102,7 +103,7 @@ describe.skipIf(!hasDb)('QA review queue (G-T34-5)', () => {
     expect(audit.after_json.note).toBe('Verified against source.');
 
     // and it leaves the queue.
-    expect((await listReviewQueue()).some((r) => r.id === needsReviewId)).toBe(false);
+    expect((await collectReviewQueue()).some((r) => r.id === needsReviewId)).toBe(false);
   });
 
   it('reject sets archived_at (soft-delete) + audit, and it leaves the queue', async () => {
@@ -123,7 +124,7 @@ describe.skipIf(!hasDb)('QA review queue (G-T34-5)', () => {
     );
     expect(audit.after_json.archived).toBe(true);
 
-    expect((await listReviewQueue()).some((r) => r.id === manualCandidateId)).toBe(false);
+    expect((await collectReviewQueue()).some((r) => r.id === manualCandidateId)).toBe(false);
   });
 
   it('a second action on an already-handled record is a safe no-op', async () => {

@@ -7,7 +7,7 @@
 import { useRef, useState, useTransition } from 'react';
 import { reviewAction, type ReviewActionState } from '../actions';
 
-export function ReviewForm({ occurrenceId }: { occurrenceId: string }) {
+export function ReviewForm({ occurrenceId, page }: { occurrenceId: string; page: number }) {
   const [state, setState] = useState<ReviewActionState>({});
   const [pending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
@@ -26,6 +26,9 @@ export function ReviewForm({ occurrenceId }: { occurrenceId: string }) {
   return (
     <form ref={formRef} className="resolve-form" onSubmit={(e) => e.preventDefault()} noValidate>
       <input type="hidden" name="occurrenceId" value={occurrenceId} />
+      {/* The queue page this row was reviewed from, so the post-action redirect returns here
+          instead of dumping the reviewer back on page 1 after every single decision. */}
+      <input type="hidden" name="page" value={page} />
       {state.message && (
         <p className="form-error" role="alert">
           {state.message}

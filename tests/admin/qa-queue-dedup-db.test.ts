@@ -11,11 +11,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closePool, query } from '@/lib/db/client';
 import {
-  listReviewQueue,
   confirmDedupMerge,
   rejectDedupPair,
   QA_AUDIT_ACTIONS,
 } from '@/app/admin/qa-queue/_lib/data';
+import { collectReviewQueue } from './review-queue-walk';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const FAMILY = 'test_yy_dedup';
@@ -113,7 +113,7 @@ describe.skipIf(!hasDb)('QA queue — dedup-pair review (G-T34-6)', () => {
   });
 
   it('listReviewQueue surfaces the flagged candidate WITH its suspected canonical + the "why"', async () => {
-    const queue = await listReviewQueue();
+    const queue = await collectReviewQueue();
     const row = queue.find((r) => r.id === dup1);
     expect(row?.statusState).toBe('manual_candidate');
     expect(row?.dedup).toBeTruthy();
@@ -155,7 +155,7 @@ describe.skipIf(!hasDb)('QA queue — dedup-pair review (G-T34-6)', () => {
     expect(audit.after_json.mergedInto).toBe(canon1);
 
     // It leaves the queue.
-    expect((await listReviewQueue()).some((r) => r.id === dup1)).toBe(false);
+    expect((await collectReviewQueue()).some((r) => r.id === dup1)).toBe(false);
   });
 
   it('confirm merge refuses a forged pair (no route_to_review decision) → not_a_pair', async () => {
@@ -183,7 +183,7 @@ describe.skipIf(!hasDb)('QA queue — dedup-pair review (G-T34-6)', () => {
     expect(audit.after_json.statusState).toBe('confirmed');
     expect(audit.after_json.archived).toBe(false);
 
-    expect((await listReviewQueue()).some((r) => r.id === dup2)).toBe(false);
+    expect((await collectReviewQueue()).some((r) => r.id === dup2)).toBe(false);
   });
 
   it('a second dedup action on an already-handled row is a safe no-op', async () => {

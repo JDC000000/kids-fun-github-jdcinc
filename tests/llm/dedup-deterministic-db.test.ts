@@ -10,7 +10,8 @@
 // schema or UI change it was scoped not to need.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closePool, query } from '@/lib/db/client';
-import { confirmDedupMerge, listReviewQueue } from '@/app/admin/qa-queue/_lib/data';
+import { confirmDedupMerge } from '@/app/admin/qa-queue/_lib/data';
+import { collectReviewQueue } from '../admin/review-queue-walk';
 import { recordDecision } from '@/lib/llm/watermark';
 import { JOB_NAMES } from '@/lib/llm/config';
 import { detectDedupCandidates, runDedupDetectOnlyUseCase } from '@/lib/llm/dedup';
@@ -149,7 +150,7 @@ describe.skipIf(!hasDb)('Option D — deterministic dedup routed to review (real
     expect(stored.llm_confidence).toBeNull(); // the premise under test, not an incidental
 
     // (a) it RENDERS as a dedup pair.
-    const queue = await listReviewQueue(500);
+    const queue = await collectReviewQueue();
     const mine = queue.find((r) => r.id === dupId);
     expect(mine, 'null-confidence dedup row must appear in the QA queue').toBeTruthy();
     expect(mine!.dedup, 'must render as a dedup PAIR, not a generic single record').toBeTruthy();
@@ -278,7 +279,7 @@ describe.skipIf(!hasDb)('Option D — deterministic dedup routed to review (real
         [[rplId, vplId]]
       );
       expect(flagged, 'one side was routed to review').toBeTruthy();
-      const queue = await listReviewQueue(500);
+      const queue = await collectReviewQueue();
       const mine = queue.find((r) => r.id === flagged.id);
       expect(mine, 'the routed pair reaches the human queue').toBeTruthy();
       expect(mine!.dedup).toBeTruthy();

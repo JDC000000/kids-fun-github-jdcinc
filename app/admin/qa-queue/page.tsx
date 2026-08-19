@@ -18,7 +18,7 @@ import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access'
 import { resolveAdminAccess } from '../_lib/gate';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { listReviewQueue, type ReviewItem, type DedupPairing } from './_lib/data';
-import { REVIEW_STATES } from './_lib/vocab';
+import { REVIEW_QUEUE_PAGE_SIZE, REVIEW_STATES, parseQueuePageParam } from './_lib/vocab';
 import { ReviewForm } from './_components/ReviewForm';
 import { DedupReviewForm } from './_components/DedupReviewForm';
 
@@ -33,6 +33,10 @@ const DEDUP_CSS = `
   .dedup-col.keep { border-color: #b6e0c4; background: #f4fbf6; }
   .dedup-col .line { margin: 2px 0; }
   @media (max-width: 720px) { .dedup-compare { grid-template-columns: 1fr; } }
+  .pager { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 0; }
+  .pager .pager-pos { color: #555; font-size: 13px; }
+  .pager a, .pager span.off { border: 1px solid #d8dee9; border-radius: 6px; padding: 4px 10px; font-size: 13px; }
+  .pager span.off { color: #aaa; border-color: #eceff4; }
 `;
 
 export const dynamic = 'force-dynamic';
@@ -52,6 +56,28 @@ const FLASH: Record<string, string> = {
 
 function shortTimeOrHours(startIso: string | null, openHours: string | null): string {
   return openHours ? openHours : startIso ? startIso.replace('T', ' ').replace(/\..+$/, ' UTC') : '—';
+}
+
+/**
+ * Page links for the review queue. Rendered above AND below the table: with a full page of
+ * records the bottom control is the one a reviewer actually reaches, and the top one is what
+ * tells them on arrival that more exists — the thing the old fixed cap never said at all.
+ */
+function QueuePager({ page, totalPages, total, from, to }: { page: number; totalPages: number; total: number; from: number; to: number }) {
+  const href = (p: number) => `/admin/qa-queue?page=${p}`;
+  return (
+    <nav className="pager" aria-label="Review queue pages">
+      {/* Oldest-flagged first, so a LOWER page number is older and a higher one is more recent. */}
+      {page > 1 ? <Link href={href(page - 1)}>← Older</Link> : <span className="off">← Older</span>}
+      <span className="pager-pos">
+        {to >= from ? `Showing ${from}–${to} of ${total}` : `No records on this page — ${total} in queue`} · page {page} of{' '}
+        {totalPages}
+      </span>
+      {page < totalPages ? <Link href={href(page + 1)}>More recent →</Link> : <span className="off">More recent →</span>}
+      {page > 1 && <Link href={href(1)}>« First</Link>}
+      {page < totalPages && <Link href={href(totalPages)}>Last (most recently flagged) »</Link>}
+    </nav>
+  );
 }
 
 /** Side-by-side comparison of a flagged duplicate vs its suspected canonical (G-T34-6). */
@@ -120,7 +146,15 @@ export default async function AdminQaQueuePage({
   if (!grant.ok) notFound();
 
   const canMutate = grant.via === 'session';
-  const queue = await listReviewQueue();
+  const page = parseQueuePageParam(searchParams.page);
+  const {
+    items: queue,
+    total,
+    limit,
+  } = await listReviewQueue({ limit: REVIEW_QUEUE_PAGE_SIZE, offset: (page - 1) * REVIEW_QUEUE_PAGE_SIZE });
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const from = (page - 1) * limit + 1;
+  const to = (page - 1) * limit + queue.length;
   const flashKey = typeof searchParams.flash === 'string' ? searchParams.flash : '';
   const flash = FLASH[flashKey];
 
@@ -131,7 +165,10 @@ export default async function AdminQaQueuePage({
 
       <header className="adm-head">
         <h1>KIDS FUN — QA Queue</h1>
-        <p className="adm-sub">Records awaiting review · {queue.length} in queue</p>
+        <p className="adm-sub">
+          Records awaiting review · {total} in queue
+          {totalPages > 1 && ` · ${totalPages} pages`}
+        </p>
         <nav className="adm-nav">
           <Link href="/admin/dashboard">Ops dashboard</Link>
           <Link href="/admin/data-health">Data health</Link>
@@ -166,88 +203,100 @@ export default async function AdminQaQueuePage({
               <span className="mono">{s}</span>
             </span>
           ))}{' '}
-          state, oldest first. Confirming marks a record trusted; rejecting soft-deletes it (
-          <span className="mono">archived_at</span>).
+          state, oldest first, {REVIEW_QUEUE_PAGE_SIZE} per page. Confirming marks a record trusted; rejecting soft-deletes
+          it (<span className="mono">archived_at</span>).
         </p>
-        {queue.length === 0 ? (
+        {total === 0 ? (
           <p className="empty">🎉 Nothing awaiting review — the queue is clear.</p>
+        ) : queue.length === 0 ? (
+          <>
+            <p className="empty">
+              Page {page} is past the end of the queue — {total} record{total === 1 ? '' : 's'} awaiting review across{' '}
+              {totalPages} page{totalPages === 1 ? '' : 's'}.
+            </p>
+            <QueuePager page={page} totalPages={totalPages} total={total} from={from} to={to} />
+          </>
         ) : (
-          <table className="grid">
-            <thead>
-              <tr>
-                <th>Record</th>
-                <th>State</th>
-                <th>When</th>
-                <th>Created</th>
-                {canMutate && <th>Review</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {queue.map((r) => {
-                const isDedup = Boolean(r.dedup);
-                const mergeable = canMutate && r.dedup?.canonicalAvailable === true;
-                const colSpan = canMutate ? 5 : 4;
-                return (
-                  <Fragment key={r.id}>
-                    <tr>
-                      <td>
-                        <div className="src-name">{r.activityName}</div>
-                        <div className="src-family mono">{r.id}</div>
-                        <div className="dim">
-                          {r.seriesTitle} · {r.sourceName}
-                        </div>
-                        {r.sourceUrl && (
-                          <a className="mono" href={r.sourceUrl} target="_blank" rel="noreferrer noopener">
-                            source ↗
-                          </a>
-                        )}
-                      </td>
-                      <td>
-                        <span className={`badge ${r.statusState === 'manual_candidate' ? 'info' : 'warn'}`}>{r.statusState}</span>
-                        {isDedup && (
-                          <div>
-                            <span className="badge muted">possible duplicate</span>
-                          </div>
-                        )}
-                        <div className="dim mono">conf: {r.confidenceLabel}</div>
-                      </td>
-                      <td className="mono dim">{r.openHoursState ? r.openHoursState : shortTime(r.startDatetimeUtc)}</td>
-                      <td className="mono dim">{shortTime(r.createdAt)}</td>
-                      {canMutate && (
+          <>
+            <QueuePager page={page} totalPages={totalPages} total={total} from={from} to={to} />
+            <table className="grid">
+              <thead>
+                <tr>
+                  <th>Record</th>
+                  <th>State</th>
+                  <th>When</th>
+                  <th>Created</th>
+                  {canMutate && <th>Review</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {queue.map((r) => {
+                  const isDedup = Boolean(r.dedup);
+                  const mergeable = canMutate && r.dedup?.canonicalAvailable === true;
+                  const colSpan = canMutate ? 5 : 4;
+                  return (
+                    <Fragment key={r.id}>
+                      <tr>
                         <td>
-                          {mergeable ? (
-                            <span className="dim">⇔ dedup review below</span>
-                          ) : (
-                            <details>
-                              <summary className="edit-toggle">Review…</summary>
-                              {isDedup && (
-                                <p className="dedup-why">
-                                  Flagged as a possible duplicate, but the suspected canonical is no longer available —
-                                  review as a standalone record.
-                                </p>
-                              )}
-                              <ReviewForm occurrenceId={r.id} />
-                            </details>
+                          <div className="src-name">{r.activityName}</div>
+                          <div className="src-family mono">{r.id}</div>
+                          <div className="dim">
+                            {r.seriesTitle} · {r.sourceName}
+                          </div>
+                          {r.sourceUrl && (
+                            <a className="mono" href={r.sourceUrl} target="_blank" rel="noreferrer noopener">
+                              source ↗
+                            </a>
                           )}
                         </td>
-                      )}
-                    </tr>
-                    {mergeable && r.dedup && (
-                      <tr className="dedup-row">
-                        <td colSpan={colSpan}>
-                          <details>
-                            <summary className="edit-toggle">⇔ Dedup review — compare &amp; decide…</summary>
-                            <DedupCompare item={r} dedup={r.dedup} />
-                            <DedupReviewForm duplicateId={r.id} canonicalId={r.dedup.canonicalId} />
-                          </details>
+                        <td>
+                          <span className={`badge ${r.statusState === 'manual_candidate' ? 'info' : 'warn'}`}>{r.statusState}</span>
+                          {isDedup && (
+                            <div>
+                              <span className="badge muted">possible duplicate</span>
+                            </div>
+                          )}
+                          <div className="dim mono">conf: {r.confidenceLabel}</div>
                         </td>
+                        <td className="mono dim">{r.openHoursState ? r.openHoursState : shortTime(r.startDatetimeUtc)}</td>
+                        <td className="mono dim">{shortTime(r.createdAt)}</td>
+                        {canMutate && (
+                          <td>
+                            {mergeable ? (
+                              <span className="dim">⇔ dedup review below</span>
+                            ) : (
+                              <details>
+                                <summary className="edit-toggle">Review…</summary>
+                                {isDedup && (
+                                  <p className="dedup-why">
+                                    Flagged as a possible duplicate, but the suspected canonical is no longer available —
+                                    review as a standalone record.
+                                  </p>
+                                )}
+                                <ReviewForm occurrenceId={r.id} page={page} />
+                              </details>
+                            )}
+                          </td>
+                        )}
                       </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                      {mergeable && r.dedup && (
+                        <tr className="dedup-row">
+                          <td colSpan={colSpan}>
+                            <details>
+                              <summary className="edit-toggle">⇔ Dedup review — compare &amp; decide…</summary>
+                              <DedupCompare item={r} dedup={r.dedup} />
+                              <DedupReviewForm duplicateId={r.id} canonicalId={r.dedup.canonicalId} page={page} />
+                            </details>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                </tbody>
+            </table>
+            <QueuePager page={page} totalPages={totalPages} total={total} from={from} to={to} />
+          </>
         )}
       </section>
 
