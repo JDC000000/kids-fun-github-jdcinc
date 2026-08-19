@@ -37,10 +37,18 @@ test-results/
 .search-cap-probe.bundle.mjs
 .safety-audit.bundle.mjs
 .backfill-scope.bundle.mjs
+.backfill-scope-review.bundle.mjs
 
 # §3h backfill-scope harness output: a run artefact containing per-row production findings, not
 # source. See docs/worker-fix-backfill-scope.md.
 .backfill-scope.json
+
+# §3h title-gate REVIEW-CANDIDATE queue (scripts/backfill-scope/review-batch.sh): 633 rows of
+# live parent-facing catalogue data — activity names and occurrence ids pulled from production.
+# This repository is PUBLIC. The generator and its tests are source and are committed; the
+# generated queue is an operator artefact and is not, for the same reason .backfill-scope.json
+# and /.snapshots/ are not.
+.backfill-scope-review/
 
 # safety-auditor output (a run artefact, not source — see docs/safety-auditor.md)
 .audit/

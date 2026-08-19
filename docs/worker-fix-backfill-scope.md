@@ -399,6 +399,37 @@ Files:
 | `scripts/backfill-scope/fix-classes.ts` | One re-derivation rule per fix class. Pure; no DB, no network, no clock. |
 | `scripts/backfill-scope/measure.ts` | Driver: fetch → classify → tally → render. |
 | `scripts/backfill-scope/measure.sh` | esbuild wrapper, same pattern as `safety-audit.sh`. |
+| `scripts/backfill-scope/review-batch-lib.ts` | §8.1's bucket partition, masking and rendering. Pure; no DB, no clock. |
+| `scripts/backfill-scope/review-batch.ts` | §8.1 driver: partition → prioritise → render, plus an optional read-only live cross-check. |
+| `scripts/backfill-scope/review-batch.sh` | esbuild wrapper. Offline by default; `--live` is the only path that touches a database. |
+
+### 8.1 Building the class 3+6 review queue from a measurement
+
+`measure.sh --json` writes a **complete** per-row `findings` array, so the diff-and-flag queue §3.3
+recommends is built from that file rather than from a fresh production read:
+
+```bash
+bash scripts/backfill-scope/review-batch.sh --recheck .backfill-scope.json
+# optional read-only cross-check of masking against the live rows:
+DATABASE_URL='<connection string>' bash scripts/backfill-scope/review-batch.sh \
+  --recheck .backfill-scope.json --live
+```
+
+**It queues the candidate bucket only.** The class's headline `ambiguous` count is three
+populations with three different causes (§6), and only `candidate-title-manufactured-claim` is
+caused by `f15d6c8`/`3b29456`. The other two are counted, characterised, and left alone — queueing
+them would put rows in front of a reviewer that this fix did not make wrong. The tool refuses to
+emit anything if it meets an ambiguous reason it does not recognise, so that split cannot silently
+stop being exhaustive.
+
+Post-deploy re-measurement (2026-08-19, 11,540 rows in scope) bears out this section's prediction:
+the candidate bucket **shrank 672 → 633** after a full ActiveNet cycle on the fixed build, exactly
+the self-healing predicted above. The aggregate grew only because the *source-unknown* bucket grew
+1,154 → 1,534 with overall ingest — a different population, and not one this fix touches. Masking
+recomputed for the candidate bucket **specifically** (rather than across all ambiguous rows) is
+**0 of 633**: every queued row is reachable by a parent today, and all 64 masked ambiguous rows sit
+in the excluded source-unknown bucket. Output is gitignored — it is live catalogue data, and this
+repository is public.
 
 Each class drives the **real shipped parser** through its exported entry point with a synthetic
 record — `resolveAgeText({ EventName, NoAgeRestriction: true })`,
