@@ -27,7 +27,15 @@ export function SiteFooter() {
     <footer className="kf-site-footer">
       <div className="kf-site-footer__inner">
         <span className="kf-site-footer__word">KIDS FUN</span>
-        <nav className="kf-site-footer__nav" aria-label="Legal">
+        {/* aria-label is "Site information", not "Legal": the coverage link is not a legal
+            document, and this is the only global surface it can be reached from. */}
+        <nav className="kf-site-footer__nav" aria-label="Site information">
+          {/* /coverage-status has been live since the public-coverage work and was linked from
+              NOWHERE in the app until this line. It is the one page that lets a parent check a
+              coverage claim rather than take it, so it belongs in global chrome, not on one page. */}
+          <Link className="kf-site-footer__link" href="/coverage-status">
+            Sources &amp; coverage
+          </Link>
           <Link className="kf-site-footer__link" href="/privacy">
             Privacy Policy
           </Link>

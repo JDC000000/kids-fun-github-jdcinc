@@ -145,72 +145,21 @@
   text-decoration: underline;
 }
 
-/* ── How it works — the honesty/trust differentiator ── */
-.kf-home__trust {
-  list-style: none;
+/* ── Evidence line (replaces the old three-card trust section) ──
+ * Small print by design: it is a pointer to something checkable, not a banner asserting
+ * we are trustworthy. The link carries the emphasis because the link is the point. */
+.kf-home__evidence {
   margin: 4px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.kf-home__trust-item {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 14px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-card);
-}
-.kf-home__trust-badge {
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 800;
-  color: var(--confirmed-text);
-  background: var(--confirmed-bg);
-  border-radius: 9999px;
-}
-.kf-home__trust-title {
-  display: block;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-  margin-bottom: 2px;
-}
-.kf-home__trust-copy {
-  display: block;
   font-size: 13px;
   line-height: 1.5;
   color: var(--ink-secondary);
 }
-
-/* ── Footer ── */
-.kf-home__footer {
-  margin-top: 24px;
-  padding: 20px 16px 26px;
-  background: var(--anchor);
-  color: var(--anchor-text);
+.kf-home__evidence-link {
+  font-weight: 700;
+  color: var(--leaf-hover);
 }
-.kf-home__footer-word {
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  opacity: 0.85;
-  margin: 0 0 6px;
-}
-.kf-home__footer-note {
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--rainy-fog);
-  margin: 0;
+.kf-home__evidence-link:hover {
+  text-decoration: underline;
 }
 
 /* ── Desktop / tablet layer ───────────────────────────────────────────────────
@@ -249,24 +198,8 @@
   }
 }
 
-@media (min-width: 1024px) {
-  /* The three trust points are peers — reading them as a row makes that legible
-     and stops the page running long for no reason. */
-  .kf-home__trust {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-  .kf-home__trust-item {
-    height: 100%;
-  }
-}
-
 @media (min-width: 1280px) {
   .kf-home__today {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .kf-home__footer {
-    padding: 24px var(--kf-gutter) 30px;
   }
 }

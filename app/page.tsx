@@ -2,7 +2,11 @@ import Link from 'next/link';
 import './_components/home.css';
 import { Button, Input } from '@/components/ui';
 import { CategoryTile } from './preview/_components/CategoryTile';
-import type { Category } from './preview/_data/types';
+import {
+  QUICK_START_FILTERS,
+  destinationHref,
+  liveCategoryDestinations,
+} from './_lib/nav-destinations';
 import { HomeTodayStrip } from './_components/HomeTodayStrip';
 import { ChildProfilePrompt } from './_components/ChildProfilePrompt';
 
@@ -24,49 +28,16 @@ export const metadata = {
 };
 
 /**
- * Category entry points. Each `q` is a free-text query the /search parser resolves —
- * the only category mechanism /search actually supports (no invented structured param).
- * Every query here is confirmed to return REAL staging-database listings (2026-07-14):
- * family swim→5 public_swim · storytime→15 · soft play→6 indoor_play · festival→6
- * festival_event · program→34 class_program. Deliberately NO open_gym / skate / nature
- * tiles — those categories have zero real listings on the three live sources today.
- * `glyph` is the illustration-system category (D4); it matches how /search's mapCategory
- * renders the same rows (class_program → museum_arts glyph).
+ * Category entry points — the SAME list the global nav renders (app/_lib/nav-destinations.ts).
+ *
+ * These were two hand-maintained copies until this change, and they had already drifted:
+ * different labels for the same query, two encodings of the same URL, and a "Festivals" tile
+ * the nav had already dropped as dead. The list now decides labels, captions, glyphs, hrefs
+ * and which destinations are offered at all, once, for both surfaces. Deliberately NO
+ * open_gym / skate / nature tiles — those categories have no real listings on the live
+ * sources today.
  */
-const CATEGORIES: { label: string; caption: string; glyph: Category; q: string }[] = [
-  { label: 'Swimming', caption: 'Pools & family swim', glyph: 'swim', q: 'family swim' },
-  { label: 'Storytime', caption: 'Libraries & early years', glyph: 'storytime', q: 'storytime' },
-  { label: 'Indoor play', caption: 'Rainy-day soft play', glyph: 'indoor_play', q: 'soft play' },
-  { label: 'Festivals', caption: 'Free community events', glyph: 'festival', q: 'festival' },
-  { label: 'Classes & programs', caption: 'Community-centre programs', glyph: 'museum_arts', q: 'program' },
-];
-
-// Concrete "Quick starts" (Blueprint D5) — saved filter searches, not marketing tiles.
-// Each uses a structured param /search supports; all confirmed non-empty on staging.
-const QUICK_STARTS: { label: string; href: string }[] = [
-  { label: 'Free things to do', href: '/search?free=1' },
-  { label: 'Rainy-day & indoor', href: '/search?rainy=1' },
-  { label: 'Browse everything on now', href: '/search' },
-];
-
-const TRUST: { title: string; copy: string }[] = [
-  {
-    title: 'Approved public sources only',
-    copy: 'Listings come from public library and City of Vancouver calendars — nothing scraped behind a login, no invented events.',
-  },
-  {
-    title: 'Source & last-checked on every listing',
-    copy: 'Each card shows where it came from and when we last checked it, so you can trust the details before you head out.',
-  },
-  {
-    title: 'Confirmed and expected are never blurred',
-    copy: 'Not-yet-posted or seasonal listings sit in their own labelled section — we never dress up an expectation as a confirmed plan.',
-  },
-];
-
-function searchHref(q: string): string {
-  return `/search?q=${encodeURIComponent(q)}`;
-}
+const CATEGORIES = liveCategoryDestinations();
 
 export default function Home() {
   return (
@@ -125,8 +96,8 @@ export default function Home() {
               </p>
               <ul className="kf-home__tiles">
                 {CATEGORIES.map((c) => (
-                  <li key={c.q}>
-                    <Link className="kf-home__tile" href={searchHref(c.q)}>
+                  <li key={c.key}>
+                    <Link className="kf-home__tile" href={destinationHref(c)}>
                       <CategoryTile category={c.glyph} />
                       <span className="kf-home__tile-text">
                         <span className="kf-home__tile-label">{c.label}</span>
@@ -138,7 +109,12 @@ export default function Home() {
               </ul>
             </section>
 
-            {/* ── Quick starts — concrete saved-filter searches (D5) ── */}
+            {/* ── Quick starts — CONSTRAINTS, not a second copy of the categories (D5).
+                The tiles above answer "where do I want to go"; this row answers "what am I
+                stuck with". It used to hold three chips, two of which were byte-identical
+                to global-nav links ("Free things to do" → /search?free=1, "Browse everything
+                on now" → /search) — a worse duplicate of navigation that already exists on
+                every page. Those are gone; what is left is the row's actual job. ── */}
             <section className="kf-home__section" aria-labelledby="kf-home-quick">
               <div className="kf-section__head">
                 <h2 className="kf-section__title" id="kf-home-quick">
@@ -146,10 +122,14 @@ export default function Home() {
                 </h2>
                 <span className="kf-section__rule" aria-hidden="true" />
               </div>
+              <p className="kf-home__note">
+                Narrow any search in one tap — these change what you get back, they don&apos;t pick an
+                activity.
+              </p>
               <div className="kf-home__quick" role="list">
-                {QUICK_STARTS.map((q) => (
-                  <Link key={q.href} className="kf-home__quick-chip" href={q.href} role="listitem">
-                    {q.label}
+                {QUICK_START_FILTERS.map((f) => (
+                  <Link key={f.key} className="kf-home__quick-chip" href={f.href} role="listitem">
+                    {f.label}
                   </Link>
                 ))}
               </div>
@@ -158,37 +138,22 @@ export default function Home() {
             {/* ── A live taste of what's on now (client island; hides if empty) ── */}
             <HomeTodayStrip />
 
-            {/* ── How KIDS FUN works — the honesty/trust differentiator ── */}
-            <section className="kf-home__section" aria-labelledby="kf-home-trust">
-              <div className="kf-section__head">
-                <h2 className="kf-section__title" id="kf-home-trust">
-                  How KIDS FUN works
-                </h2>
-                <span className="kf-section__rule" aria-hidden="true" />
-              </div>
-              <ul className="kf-home__trust">
-                {TRUST.map((t) => (
-                  <li className="kf-home__trust-item" key={t.title}>
-                    <span className="kf-home__trust-badge" aria-hidden="true">
-                      ✓
-                    </span>
-                    <span>
-                      <span className="kf-home__trust-title">{t.title}</span>
-                      <span className="kf-home__trust-copy">{t.copy}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </main>
-
-          <footer className="kf-home__footer">
-            <p className="kf-home__footer-word">KIDS FUN</p>
-            <p className="kf-home__footer-note">
-              A civic field guide to kids&apos; activities across Metro Vancouver. Staging preview — coverage grows as
-              more public sources come online.
+            {/* ── One line of evidence, not three of assertion.
+                This was a three-card "How KIDS FUN works" section, and each card was a claim
+                about ourselves with nothing behind it. Two of the three were already stated
+                elsewhere on their own merits — the hero says every listing carries its source
+                and last-checked date, and the "confirmed vs expected" split is visible on
+                /search where the sections actually are. What was missing was the checkable
+                part: /coverage-status has been live and linked from NOWHERE. A parent can now
+                go and read what we cover instead of reading that we are trustworthy. ── */}
+            <p className="kf-home__evidence">
+              We only list activities from sources with confirmed permission.{' '}
+              <Link className="kf-home__evidence-link" href="/coverage-status">
+                See which areas we cover, and when each was last checked
+              </Link>
+              .
             </p>
-          </footer>
+          </main>
         </div>
       </div>
     </div>

@@ -3,6 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AccountNav } from './AccountNav';
+import {
+  SEARCH_SHORTCUTS,
+  destinationHref,
+  liveCategoryDestinations,
+} from '@/app/_lib/nav-destinations';
 import './site-nav.css';
 
 /**
@@ -23,9 +28,10 @@ import './site-nav.css';
  *
  * WHY THE DESTINATIONS ARE SEARCH QUERIES
  * `/search?q=…` free text is the only category mechanism /search actually supports — there
- * is no structured category param. These are the same queries the home page's category
- * tiles use, and each one is confirmed to return real listings. See DEAD_CATEGORY below for
- * the one that is deliberately absent.
+ * is no structured category param. These are LITERALLY the same queries the home page's
+ * category tiles use: both surfaces render app/_lib/nav-destinations.ts, so a label, a
+ * caption or a retirement changes in one place for the whole product. This bar's own link
+ * SET is unchanged by that move — "What's on now" and "Free" still bracket the category run.
  *
  * CLIENT COMPONENT, BUT NOT A CLIENT-ONLY ONE
  * `usePathname` resolves during server rendering too, so the full bar is in the HTML on
@@ -34,18 +40,6 @@ import './site-nav.css';
  * rendering for the sake of marking a shortcut link.
  */
 
-/**
- * NOT LINKED, ON PURPOSE: "Festivals" (`/search?q=festival`).
- *
- * The home page still carries that tile, and it returns ZERO results — verified against
- * both the fixture engine and the deployed build. app/page.tsx's own comment records the
- * query returning 6 real listings on 2026-07-14, so this is a data regression, not a
- * missing feature. Putting a known-dead link into new, MORE prominent navigation would
- * multiply the damage, so it stays out until the underlying zero-result bug is fixed.
- * Raised separately; deliberately not fixed as a side effect of this work.
- */
-const DEAD_CATEGORY = '/search?q=festival';
-
 interface NavLink {
   href: string;
   label: string;
@@ -53,13 +47,19 @@ interface NavLink {
   primary?: boolean;
 }
 
+/**
+ * NOT LINKED, ON PURPOSE: "Festivals" (`/search?q=festival`) — it returns ZERO results.
+ *
+ * This used to be a local `DEAD_CATEGORY` href that `LINKS` was filtered against, and that
+ * filter was inert: the href it excluded was never in `LINKS`, so it matched nothing while
+ * the home page went on rendering the dead tile. The exclusion now comes from the shared
+ * list's `status` field, which is the single place that decides it for every surface at
+ * once and which tests/nav-destinations.test.tsx checks against a real search.
+ */
 const LINKS: NavLink[] = [
-  { href: '/search', label: 'What’s on now', primary: true },
-  { href: '/search?q=family+swim', label: 'Swimming' },
-  { href: '/search?q=storytime', label: 'Storytime' },
-  { href: '/search?q=soft+play', label: 'Indoor play' },
-  { href: '/search?q=program', label: 'Classes' },
-  { href: '/search?free=1', label: 'Free' },
+  { href: SEARCH_SHORTCUTS.onNow.href, label: SEARCH_SHORTCUTS.onNow.label, primary: true },
+  ...liveCategoryDestinations().map((d) => ({ href: destinationHref(d), label: d.label })),
+  { href: SEARCH_SHORTCUTS.free.href, label: SEARCH_SHORTCUTS.free.label },
 ];
 
 export function SiteNav() {
@@ -83,7 +83,7 @@ export function SiteNav() {
 
         <nav className="kf-nav__primary" aria-label="Main">
           <ul className="kf-nav__list">
-            {LINKS.filter((l) => l.href !== DEAD_CATEGORY).map((link) => (
+            {LINKS.map((link) => (
               <li key={link.href}>
                 <Link
                   className={link.primary ? 'kf-nav__link kf-nav__link--strong' : 'kf-nav__link'}

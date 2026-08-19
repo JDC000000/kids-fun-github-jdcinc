@@ -282,10 +282,10 @@ test.describe('the site finally has navigation', () => {
   });
 
   test('does NOT surface the known-dead Festivals category', async ({ page }) => {
-    // /search?q=festival returns zero results with no empty state — a data regression
-    // (app/page.tsx records the same query returning 6 listings on 2026-07-14). Promoting
-    // a dead link into new, more prominent navigation would multiply the damage, so it
-    // stays out until the underlying bug is fixed. Flagged, deliberately not fixed here.
+    // /search?q=festival returns zero results with no empty state — a data regression (the
+    // same query returned 6 listings on 2026-07-14). It is now `status: 'retired'` in
+    // app/_lib/nav-destinations.ts, which is what keeps it off EVERY surface at once; this
+    // stays as the browser-level check that the nav specifically never carries it.
     await page.goto('/search');
     expect(await page.locator('.kf-nav a[href*="festival"]').count()).toBe(0);
   });

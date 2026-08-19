@@ -65,10 +65,14 @@ export default async function CoveragePage() {
       <div className="kf-cov">
         <header className="kf-cov__head">
           <h1>Coverage &amp; status</h1>
+          {/* The "nothing scraped … no invented events" half was the home page's first trust
+              card. It was MERGED into this existing sentence rather than added as a second
+              paragraph: the sentence already made the permission claim, so a separate card
+              restating it here would have been the same duplication this page is replacing. */}
           <p className="kf-cov__sub">
             Where KIDS FUN is actively connected, and when each area was last checked. We only ever
-            show activities from sources with confirmed permission to be listed — this page is
-            about coverage, not content.
+            show activities from sources with confirmed permission to be listed — nothing scraped
+            from behind a login, and no invented events. This page is about coverage, not content.
           </p>
         </header>
 
