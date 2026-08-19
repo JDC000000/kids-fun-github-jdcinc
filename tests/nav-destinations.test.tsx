@@ -27,6 +27,20 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: () => {}, refresh: () => {}, replace: () => {} }),
 }));
 
+// The home page's "three things" block is an ASYNC server component (it awaits the search
+// engine), and `renderToStaticMarkup` is the legacy synchronous renderer — handed a promise for
+// a child it throws "Objects are not valid as a React child", which takes the whole FILE down
+// rather than one test. Stubbed to a marker so this file can go on rendering <Home /> for the
+// only thing it is about: which destination links the page emits.
+//
+// NOT A CONVENIENT SILENCE. Stubbing it would hide a real collision if the block's own links
+// overlapped the shared destination list, so the thing the stub costs is asserted directly
+// instead — see "the three-things block does not smuggle a second copy of a nav destination"
+// at the end of this file, which reads the block's real hrefs rather than a rendering of them.
+vi.mock('../app/_components/ThreeThings', () => ({
+  ThreeThings: () => <div data-testid="three-things-stub" />,
+}));
+
 const { GET } = await import('../app/api/search/route');
 const { FIXTURE_NOW } = await import('../lib/search/__fixtures__/engine');
 const { CATEGORY_DESTINATIONS, QUICK_START_FILTERS, SEARCH_SHORTCUTS, destinationHref, liveCategoryDestinations } =
@@ -34,6 +48,8 @@ const { CATEGORY_DESTINATIONS, QUICK_START_FILTERS, SEARCH_SHORTCUTS, destinatio
 const { SiteNav } = await import('../app/_components/SiteNav');
 const { SiteFooter } = await import('../app/_components/SiteFooter');
 const { default: Home } = await import('../app/page');
+// The block's own link table, imported rather than restated — see the last test in this file.
+const { SLOT_HREF, HOME_TODAY_HREF } = await import('../app/_components/three-things-links');
 
 /**
  * Destinations that are `live` in the product but have NO row of their kind in the fixture
@@ -195,5 +211,31 @@ describe('every surface renders the one shared list', () => {
   it('drops the home page’s duplicate footer, leaving the global one', () => {
     expect(homeHtml).not.toContain('kf-home__footer');
     expect(footerHtml).toContain('kf-site-footer');
+  });
+
+  it('the three-things block does not smuggle a second copy of a nav destination', () => {
+    // THE ASSERTION THE STUB AT THE TOP OF THIS FILE WOULD OTHERWISE HAVE COST.
+    //
+    // The block (app/_components/ThreeThings.tsx) emits its own /search links: one per slot, as
+    // the escape hatch an empty slot offers, plus a "see everything on today". Track B's rule is
+    // that the home page must not carry a byte-identical duplicate of a link the global nav
+    // already gives every page — that is why "Free things to do" left the quick-start row.
+    //
+    // These are not that, and the difference is not cosmetic: every one of them is scoped to
+    // TODAY, which is the whole subject of the block, and each belongs to the slot it sits in
+    // rather than standing on its own as navigation. The nav's `/search?free=1` means "show me
+    // free things"; the block's `/search?free=1&when=today` means "there is nothing free on
+    // today — here is the rest of today". Asserted rather than argued, so that if a future edit
+    // trims one of these back to the bare nav URL, this fails and the decision gets made again
+    // on purpose.
+    const slotHrefs = Object.values(SLOT_HREF);
+    const navHrefs = Object.values(SEARCH_SHORTCUTS).map((s) => s.href);
+    for (const href of [...slotHrefs, HOME_TODAY_HREF]) {
+      expect(navHrefs).not.toContain(href);
+      expect(href).toContain('when=today');
+    }
+    // …and the tile-grid assertion above filters on '/search?q=', so none of these may take that
+    // shape either, or they would silently join the category grid's expected list.
+    for (const href of slotHrefs) expect(href.startsWith('/search?q=')).toBe(false);
   });
 });

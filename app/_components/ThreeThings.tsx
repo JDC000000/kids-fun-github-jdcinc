@@ -30,6 +30,7 @@ import {
 } from '@/lib/recommend/three-things';
 import { ActivityCard } from '../preview/_components/ActivityCard';
 import { mapSearchItemToActivity } from '../preview/_data/search-api';
+import { DEFAULT_AREA_GEO, DEFAULT_AREA_LABEL, HOME_TODAY_HREF, SLOT_HREF } from './three-things-links';
 
 /**
  * Ruling 7.4's default area — downtown Vancouver, the same coordinate
@@ -44,10 +45,7 @@ import { mapSearchItemToActivity } from '../preview/_data/search-api';
  * The label is carried explicitly and is NOT the engine's own — `resolveOrigin`'s `near_me` mode
  * calls its result "Near me", a sentence about the reader that a cold page load cannot know.
  */
-const DEFAULT_AREA: ThreeThingsOrigin = {
-  geo: { lat: 49.2827, lng: -123.1207 },
-  label: 'downtown Vancouver',
-};
+const DEFAULT_AREA: ThreeThingsOrigin = { geo: DEFAULT_AREA_GEO, label: DEFAULT_AREA_LABEL };
 
 /**
  * What each slot promises, and what it says when it cannot keep the promise.
@@ -74,20 +72,13 @@ const SLOT_COPY: Record<SlotKey, { label: string; empty: Record<string, string> 
     },
   },
   nearby: {
-    label: `Something near ${DEFAULT_AREA.label}`,
+    label: `Something near ${DEFAULT_AREA_LABEL}`,
     empty: {
-      nothing_on: `Nothing is listed near ${DEFAULT_AREA.label} today.`,
-      none_showable: `We have listings near ${DEFAULT_AREA.label} today, but none we can confirm is for children.`,
+      nothing_on: `Nothing is listed near ${DEFAULT_AREA_LABEL} today.`,
+      none_showable: `We have listings near ${DEFAULT_AREA_LABEL} today, but none we can confirm is for children.`,
       no_origin: 'Pick an area to see what’s on near you.',
     },
   },
-};
-
-/** The `/search` URL each slot's "see them all" link points at — the same question, unfiltered. */
-const SLOT_HREF: Record<SlotKey, string> = {
-  free: '/search?free=1&when=today',
-  indoor: '/search?rainy=1&when=today',
-  nearby: `/search?when=today&lat=${DEFAULT_AREA.geo.lat}&lng=${DEFAULT_AREA.geo.lng}&radius=${DEFAULT_NEARBY_RADIUS_KM}&sort=distance`,
 };
 
 function SlotBlock({ slot }: { slot: ThingSlot }) {
@@ -154,7 +145,7 @@ export async function ThreeThings() {
         ))}
       </ul>
       {filled > 0 ? (
-        <Link className="kf-home__more" href="/search?when=today">
+        <Link className="kf-home__more" href={HOME_TODAY_HREF}>
           See everything on today →
         </Link>
       ) : null}
