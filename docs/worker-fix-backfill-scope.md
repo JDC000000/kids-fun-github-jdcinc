@@ -79,7 +79,7 @@ a 12,000-row one.
 | 1 | LLM age-fallback provenance | `e88ebe8`, `2e6af0f` | yes | **0** | 0 | 0 | fully |
 | 2 | venue open-hours "All ages" | `959d123` | yes | **1** | 0 | 0 | fully |
 | 3 | ActiveNet title age-claim gate | `f15d6c8` | yes | 0 provable | **672 + 1,154 + 116** | 0 | partial |
-| 4 | CityCalendar adult-subject | `f59cd71` | yes | 0 from stored data | 0 identifiable | 0 | candidate-only |
+| 4 | CityCalendar adult-subject | `f59cd71` | yes¹ | **0** (re-ingest) | 3 (was 10) | 0 | **fully, via re-ingest** |
 | 5 | PerfectMind NoAgeRestriction | `9f95e31` | **NO** | **109** | 0 | 0 | via proxy |
 | 6 | ActiveNet title-gate widen | `3b29456` | **NO** | (folded into 3) | (folded into 3) | 0 | partial |
 | 7 | ActiveNet description precedence | `6637ae5` | **NO** | — | — | — | **not measurable** |
@@ -89,6 +89,15 @@ a 12,000-row one.
 between 20:33 and 21:09 on 2026-08-18 and are *probably* in that build, but the exact release
 contents cannot be determined from the database or from `/healthz` — **the Operator should
 confirm against the Fly release log.** Nothing below depends on that: see §3.3.
+
+¹ Addendum, 2026-08-19: the worker has since been **redeployed** — `/healthz` now reports
+`bootedAt: 2026-08-19T06:28:06.333Z`, after all four of the 2026-08-19 commits, so the "**NO**"s
+in the Live? column above are a snapshot of the earlier build and should be re-read against the
+new one. For class 4 specifically the question is now settled by observation rather than by
+release-log archaeology: the deployed build re-ingested `city_calendar` at
+2026-08-19T15:39Z and was watched suppressing the flagship row's catch-all tag
+(`docs/citycalendar-reingest-reconciliation.md` §4.2), and watched self-healing a class-7-shaped
+bounds error on another (§4.3).
 
 ### 3.1 Class 1 — LLM age-fallback provenance (`e88ebe8`, `2e6af0f`) — **0 stale rows**
 
@@ -203,6 +212,16 @@ adapter is a pure function of a feed that is still online. Re-fetching
 `activity_occurrence.source_record_id` reconstructs the true inputs exactly. Caveat, and it is
 the reason this is not free: a rolling calendar feed no longer carries past-dated occurrences, so
 some stored rows will have no counterpart and must be flagged rather than assumed correct.
+
+> **Done, 2026-08-19 — `docs/citycalendar-reingest-reconciliation.md`.** The re-ingest was run as
+> a read-only reconciliation. 49 rows in scope, 30 joined to the live feed: **30 confirm, 0
+> contradict, 19 cannot-speak**. Of the 10 §6 rows, 7 confirm with the true inputs restored and 3
+> have no live counterpart. **No §3h-stale row exists in this class.** The flagship
+> `150181808` row is closed by observation: the deployed build re-ingested it and recorded no
+> resolved age fact, so `f59cd71` is confirmed firing in production. Separately, that document
+> records an observation this reconciliation surfaced — five civic-observance rows whose
+> identically-templated "flags at half-mast" descriptions still resolve to `[0, ∞)` because
+> `ADULT_SUBJECT_RE` does not name them.
 
 ### 3.5 Class 5 — PerfectMind NoAgeRestriction (`9f95e31`) — **109 stale rows**
 
@@ -335,7 +354,7 @@ diff-and-flag for manual review. **No single mechanism fits all eight.**
 | 1 | age-fallback | **none** | 0 rows. Re-measure after the job's first prod run. |
 | 2 | venue-allages | **hand-correct, 1 row** | Unambiguous by construction; too small to automate; immune to reversion. |
 | 3+6 | ActiveNet title gate | **(c) diff-and-flag** | Description unrecoverable ⇒ candidates only. 672 to review, 1,879 parent-reachable. Re-measure post-deploy first. |
-| 4 | CityCalendar | **(b) targeted re-ingest** | 49 rows, feed still online, true inputs reconstructable by `eventID`. Expired occurrences must be flagged, not assumed. |
+| 4 | CityCalendar | **(b) targeted re-ingest — DONE, read-only** | 49 rows, feed still online, true inputs reconstructable by `eventID`. Expired occurrences must be flagged, not assumed. Ran 2026-08-19: 30 confirm, **0 contradict**, 19 no live counterpart ⇒ **no write to request**. `docs/citycalendar-reingest-reconciliation.md`. |
 | 5 | PerfectMind | **(a) re-derive from title, reviewed batch** | Fixed parser's decision fully reproducible; corrective write exactly computable. **Deploy first.** |
 | 7 | ActiveNet description precedence | **(b) re-ingest only** | Backfill impossible — inputs and even the candidate set are unrecoverable. |
 | 8 | Library | **none** | Fix only adds claims; 9 rows self-heal on re-ingest. |
@@ -356,7 +375,7 @@ Following the Operator's own discipline on the ~55 PerfectMind rows they deliber
 | ActiveNet, title rejected, stored bounds match a title-only parse | **672** | Consistent with a title-manufactured claim, but a description phrase resolving to the same bounds cannot be excluded. |
 | ActiveNet, title rejected, stored bounds do **not** match a title-only parse | **1,154** | The stored claim came from somewhere other than the title. This fix is probably not what made it wrong. |
 | ActiveNet, title admitted, bounds differ | **116** | Only the unmeasurable class 7 could explain the difference. |
-| CityCalendar `all-ages` rows, title alone does not trigger suppression | **10** | The lost description can move the guard in *both* directions. |
+| CityCalendar `all-ages` rows, title alone does not trigger suppression | **10** → **3** | The lost description can move the guard in *both* directions. **Closed for 7 of the 10** by the targeted re-ingest of 2026-08-19 (`docs/citycalendar-reingest-reconciliation.md` §4.1): with the real description and `customFields` restored from the live feed, the shipped guard does not fire and the stored claim is confirmed. The remaining 3 have no live counterpart and stay ambiguous. |
 | PerfectMind grade-in-title rows inside the 109 | (subset) | The fixed gate reads `Grade 4-7` as an age range; withholding is safe but discards a real grade band. |
 
 None of these should be auto-corrected. The 672 are the only bucket worth queueing for review.
@@ -402,6 +421,7 @@ Files:
 | `scripts/backfill-scope/review-batch-lib.ts` | §8.1's bucket partition, masking and rendering. Pure; no DB, no clock. |
 | `scripts/backfill-scope/review-batch.ts` | §8.1 driver: partition → prioritise → render, plus an optional read-only live cross-check. |
 | `scripts/backfill-scope/review-batch.sh` | esbuild wrapper. Offline by default; `--live` is the only path that touches a database. |
+| `scripts/backfill-scope/citycalendar-recon{.ts,-run.ts,.sh}` | Class 4's targeted re-ingest, run as a read-only reconciliation against the live Trumba feed. Same locks. `docs/citycalendar-reingest-reconciliation.md`. |
 
 ### 8.1 Building the class 3+6 review queue from a measurement
 

@@ -38,10 +38,15 @@ test-results/
 .safety-audit.bundle.mjs
 .backfill-scope.bundle.mjs
 .backfill-scope-review.bundle.mjs
+.citycalendar-recon.bundle.mjs
 
 # §3h backfill-scope harness output: a run artefact containing per-row production findings, not
 # source. See docs/worker-fix-backfill-scope.md.
 .backfill-scope.json
+# §3.4 CityCalendar reconciliation: same — per-row production findings, plus the captured feed
+# snapshot the run classified. Artefacts of a run, not source.
+.citycalendar-recon*.json
+.citycalendar-feed*.json
 
 # §3h title-gate REVIEW-CANDIDATE queue (scripts/backfill-scope/review-batch.sh): 633 rows of
 # live parent-facing catalogue data — activity names and occurrence ids pulled from production.
