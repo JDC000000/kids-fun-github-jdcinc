@@ -17,9 +17,6 @@ import {
   statusMeta,
 } from '../app/preview/_data/format';
 import { mapSearchItemToActivity, searchApiUrl, type ListingRecordDto } from '../app/preview/_data/search-api';
-// The home strip's own request shape, imported rather than restated — see the `search API mapping`
-// block. What that pool size is FOR is pinned in app/_components/home-today-strip.test.ts.
-import { STRIP_REQUEST } from '../app/_components/HomeTodayStrip';
 import type { StatusState } from '../app/preview/_data/types';
 
 describe('formatAges', () => {
@@ -506,18 +503,12 @@ describe('search API mapping', () => {
     expect(p.get('minResults')).toBe('100');
   });
 
-  it('cuts the home strip down to a candidate pool, and declines broadening', () => {
-    // docs/answer-before-search-design.md §9.1 X2/X3. The strip used to pull 100 rows (165,596
-    // bytes measured 2026-08-18) and arm the broadening ladder to fill a page nobody sees.
-    // Asserted against the request the COMPONENT holds, not a restatement of it, so the two
-    // cannot drift.
-    const p = params(STRIP_REQUEST);
-    expect(p.get('q')).toBe('');
-    expect(p.get('limit')).toBe('24');
-    // '0' EXPLICITLY, not omitted: app/api/search/route.ts drops an absent `minResults` and the
-    // engine then defaults to 3 (`req.minResults ?? 3`), which still arms the ladder.
-    expect(p.get('minResults')).toBe('0');
-  });
+  // The home strip's own request assertion lived here (X2/X3: limit=24, minResults=0). The strip
+  // is gone — app/_components/ThreeThings.tsx replaced it and evaluates the search in process, so
+  // it issues no /api/search URL at all and there is no request shape here to pin. The invariant
+  // that mattered did not go with it: `minResults: 0` is now guarded for EVERY request the
+  // feature makes, at the seam rather than on one constant, in
+  // tests/recommend/three-things-guards.test.ts (T2, with a positive control).
 
   it('overrides one dimension without disturbing the other', () => {
     expect(params({ limit: 3 }).get('minResults')).toBe('100');

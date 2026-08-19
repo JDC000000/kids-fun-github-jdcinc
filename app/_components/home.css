@@ -129,10 +129,50 @@
   background: var(--canvas);
 }
 
-/* ── Live "on now" taste strip (cards bring their own .kf-card styles) ── */
-.kf-home__today {
+/* ── "Three things you could do today" (cards bring their own .kf-card styles) ──
+   One column on a phone; the two breakpoints below widen it. Each slot is labelled, and a
+   slot that could not be filled still occupies its place in the list — the block claims three
+   things, so it has to account for three (ruling 7.5). */
+.kf-three__slots {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+.kf-three__slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kf-three__slot-label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted, var(--ink));
+}
+/* An unfilled slot is a sentence, not a hole: same footprint as a card so the row does not
+   collapse around it, and visibly quieter so it never reads as a listing. */
+.kf-three__slot-empty {
+  margin: 0;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--canvas);
+  border: 1px dashed var(--neutral-300);
+  border-radius: var(--r-card, 8px);
+}
+.kf-three__slot-link {
+  font-weight: 700;
+  color: var(--leaf-hover);
+  white-space: nowrap;
+}
+.kf-three__slot-link:hover {
+  text-decoration: underline;
 }
 .kf-home__more {
   display: inline-block;
@@ -186,20 +226,24 @@
   .kf-home__search-input {
     max-width: 480px;
   }
-  .kf-home__today {
+  .kf-three__slots {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
     align-items: start;
   }
-  .kf-home__today .kf-card {
+  .kf-three__slot,
+  .kf-three__slot-empty {
+    height: 100%;
+  }
+  .kf-three__slot .kf-card {
     margin-bottom: 0;
     height: 100%;
   }
 }
 
 @media (min-width: 1280px) {
-  .kf-home__today {
+  .kf-three__slots {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

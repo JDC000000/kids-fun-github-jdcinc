@@ -29,8 +29,10 @@
 //
 // ─── SCOPE: /search AND NOTHING ELSE ─────────────────────────────────────────────────────
 // The design lists four surfaces that "age-filter everything by default" would touch (§8a). This
-// is one of them. `HomeTodayStrip` is explicitly flagged as colliding with the answer-before-
-// search initiative ("coordinate before touching this", §8c), /preview runs a separate client
+// is one of them. The front door's own surface has since been rebuilt as
+// `app/_components/ThreeThings.tsx` (which superseded `HomeTodayStrip`); it renders on the SERVER
+// and so cannot read the on-device profile at all — it says "on today" rather than "for your kid"
+// by ruling 7.6, and that is deliberate rather than pending. /preview runs a separate client
 // filter in a different vocabulary, and whether the public `/api/search` honours a profile is its
 // own decision (§8a row 4 / R3). None of those is changed here, and adding them later is a
 // decision, not a follow-up.

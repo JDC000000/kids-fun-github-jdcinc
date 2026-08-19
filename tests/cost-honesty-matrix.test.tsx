@@ -337,3 +337,99 @@ describe('OUT OF SCOPE, PINNED NOT FIXED: known-with-no-usable-bounds vs genuine
     expect(matchesCost(trulyUnknown, { free: true })).toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T4 — THE THIRD SURFACE: the front door's "Something free" slot.
+//
+// The card and the digest each state a cost. This one does something neither of them does: it
+// puts a listing under a HEADING THAT MAKES THE CLAIM ITSELF ("Something free"), where the words
+// a parent reads first are the block's, not the card's. So the invariant has a second half here —
+// the slot must only ever offer a genuinely free listing, AND the card it renders must corroborate
+// the heading rather than contradict it two lines below.
+//
+// This is the cell the whole feature could have got wrong. `free: true` is a FILTER and admits
+// unknown/check_source prices deliberately (Jon, 2026-08-11/17: an unpriced listing is never
+// suppressed) — measured live 2026-08-19, `when=today&free=1` reached 101 cards of which 20 of
+// the first 100 were genuinely free. A slot built on the filter would have printed "Something
+// free" over a listing whose price nobody knows roughly four times in five. `isFree()` is what
+// decides, and this asserts that across all 100 cells rather than on the examples someone
+// happened to think of — the same argument the top of this file makes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { SearchEngine } from '../lib/search/engine';
+import { InMemoryListingRepository } from '../lib/search/repository';
+import { FixtureAliasResolver } from '../lib/search/expand';
+import { RegionHierarchy } from '../lib/geo/region';
+import { fsaGeocoder } from '../lib/geo/postal-fsa';
+import { REGIONS } from '../lib/search/__fixtures__/regions';
+import { ALIAS_SEED } from '../lib/search/__fixtures__/aliases';
+import { FIXTURE_NOW } from '../lib/search/__fixtures__/engine';
+import { gatherSlotCandidates } from '../lib/recommend/three-things';
+
+/** The same cost cell, as a listing that is on TODAY relative to FIXTURE_NOW and clears the gates. */
+function frontDoorRecord(cell: Cell) {
+  return makeListing({
+    id: `fd-${cell.status}-${String(cell.min)}-${String(cell.max)}`,
+    seriesId: `fd-series-${cell.status}-${String(cell.min)}-${String(cell.max)}`,
+    activityName: 'Public Swim',
+    venueName: 'Kitsilano Pool',
+    costStatus: cell.status,
+    costMinCad: cell.min,
+    costMaxCad: cell.max,
+    statusState: 'confirmed',
+    ageMinMonths: 60,
+    ageMaxMonths: 120,
+    startDatetimeUtc: '2026-07-13T21:00:00.000Z',
+    endDatetimeUtc: '2026-07-13T22:00:00.000Z',
+    geo: { lat: 49.27, lng: -123.15 },
+  });
+}
+
+/** Is this cost shape something the front door's free slot would actually offer a parent? */
+function freeSlotOffers(cell: Cell): boolean {
+  const record = frontDoorRecord(cell);
+  const pools = gatherSlotCandidates({
+    engine: new SearchEngine({
+      repository: new InMemoryListingRepository([record]),
+      aliasResolver: new FixtureAliasResolver(ALIAS_SEED),
+      regionHierarchy: new RegionHierarchy(REGIONS),
+      geocoder: fsaGeocoder,
+    }),
+    now: FIXTURE_NOW,
+    origin: null,
+  });
+  return pools.find((p) => p.key === 'free')!.candidates.some((c) => c.listing.id === record.id);
+}
+
+describe('T4 — the front door’s free slot obeys the same one rule', () => {
+  it('offers a cell if and only if isFree() is true for it, across all 100', () => {
+    const disagreements = CELLS.filter((cell) => freeSlotOffers(cell) !== isFree(record(cell)));
+    expect(disagreements.map((c) => c.name)).toEqual([]);
+  });
+
+  it('is non-vacuous: the slot really does accept some cells and reject others', () => {
+    // Without this, the assertion above passes on a slot that offers nothing at all — which is
+    // exactly how a broken gate looks from the outside.
+    const offered = CELLS.filter(freeSlotOffers);
+    expect(offered.length).toBe(27); // the same 27 free cells the isFree() block above counts
+    expect(offered.length).toBeLessThan(EXPECTED_CELL_COUNT);
+  });
+
+  it('never offers a cell the FILTER admits but isFree() rejects — the 4-in-5 defect', () => {
+    // The concrete shape measured live: check_source with no bounds. matchesCost lets it through
+    // under `free`, and it must still never reach a slot headed "Something free".
+    const unpriced: Cell = { name: 'check_source / min=null / max=null', status: 'check_source', min: null, max: null };
+    expect(matchesCost(record(unpriced), { free: true })).toBe(true); // the filter admits it…
+    expect(isFree(record(unpriced))).toBe(false); // …and it is not free…
+    expect(freeSlotOffers(unpriced)).toBe(false); // …so the slot declines it.
+  });
+
+  it('and the card under the heading corroborates it — the block and the card cannot disagree', () => {
+    // The cross-surface claim this file exists for, applied to the new pairing: whenever the slot
+    // offers a listing, the card rendered inside that slot says "Free" — never a number, never
+    // "check source" two lines under a heading that already promised free.
+    for (const cell of CELLS.filter(freeSlotOffers)) {
+      expect({ cell: cell.name, label: cardCostLabel(cell) }).toEqual({ cell: cell.name, label: FREE });
+    }
+  });
+});

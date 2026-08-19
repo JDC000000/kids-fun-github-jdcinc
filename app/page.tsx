@@ -7,7 +7,7 @@ import {
   destinationHref,
   liveCategoryDestinations,
 } from './_lib/nav-destinations';
-import { HomeTodayStrip } from './_components/HomeTodayStrip';
+import { ThreeThings } from './_components/ThreeThings';
 import { ChildProfilePrompt } from './_components/ChildProfilePrompt';
 
 // Home / front door (M3 Screen 1, Visual Blueprint v0.2). The first thing a
@@ -16,10 +16,28 @@ import { ChildProfilePrompt } from './_components/ChildProfilePrompt';
 // /search (the scan page) and /preview/[id] (detail). It is deliberately NOT a
 // second results page: it is the entry point that ties the built surfaces together.
 //
-// Server component: static, zero-JS to first paint, fast. The client islands are the
-// small "on now" taste strip and the ask-once child-profile prompt — both degrade to
-// nothing (no data / storage unavailable / already answered) so the front door is
-// always complete without either of them.
+// Server component. The one client island left is the ask-once child-profile prompt, which
+// degrades to nothing (storage unavailable / already answered) so the front door is complete
+// without it.
+
+/**
+ * PER-REQUEST RENDER, and this is the architectural consequence of the whole feature.
+ *
+ * This page was statically prerendered: no `dynamic`, no `fetch`, no `headers()` — HTML built
+ * once and served with no data access. `<ThreeThings />` evaluates a real search in process, so
+ * the page has to be rendered per request, exactly as /search already declares itself
+ * (app/search/page.tsx). The Operator ruled on the alternative and the reasoning is worth keeping
+ * next to the line it justifies: "the whole feature's premise is 'the answer is already there
+ * when you arrive' and a client-hydrated version would defeat that". A static page whose answer
+ * arrives after hydration is not an answer before search; it is the old strip with a new name.
+ *
+ * WHAT IT COSTS, MEASURED RATHER THAN ASSUMED (docs/answer-before-search-measurements.md). The
+ * expensive half of a search — the catalogue load — is already cached per warm instance
+ * (lib/search/postgres-repository.ts `getCachedPostgresListings`), and this page's three slot
+ * queries are in-memory passes over that same warm set, sharing it with /search rather than
+ * adding a second read model. It is a real cost on a cold instance and a small one when warm.
+ */
+export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'KIDS FUN — What’s on for your kids across Metro Vancouver',
@@ -83,6 +101,11 @@ export default function Home() {
                 or when storage is unavailable — so it is a first-visit question, not chrome. ── */}
             <ChildProfilePrompt />
 
+            {/* ── The answer, before any search (Track A, Jon's rulings 2026-08-19). Server
+                rendered, above the category tiles per ruling 7.1, and it does NOT hide itself
+                when a slot is empty — it says so. Replaces the old client-side taste strip. ── */}
+            <ThreeThings />
+
             {/* ── Browse by activity — category tiles into real /search results ── */}
             <section className="kf-home__section" aria-labelledby="kf-home-browse">
               <div className="kf-section__head">
@@ -134,9 +157,6 @@ export default function Home() {
                 ))}
               </div>
             </section>
-
-            {/* ── A live taste of what's on now (client island; hides if empty) ── */}
-            <HomeTodayStrip />
 
             {/* ── One line of evidence, not three of assertion.
                 This was a three-card "How KIDS FUN works" section, and each card was a claim
