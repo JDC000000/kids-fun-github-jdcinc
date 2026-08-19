@@ -3,6 +3,11 @@
 // The user's selected bands are matched against the listing's derived
 // `ageBandMatches[]` (non-empty intersection). Orthogonal to geo/time — combined
 // in the query, never a dropdown-first gate (§5B age × geography independence).
+//
+// It also holds the EXACT per-child predicate (`fitsChild`/`fitsAllChildren`), which answers a
+// different question against the same listing's raw month bounds rather than its bands — see the
+// comment above `fitsChild` for why that has to be a separate mechanism and not a composition of
+// the band predicates.
 
 import type { AgeBandKey, ListingRecord } from '../types';
 
@@ -37,6 +42,77 @@ export function matchesAge(listing: ListingRecord, userBands: AgeBandKey[]): boo
 export function hasConfirmedAgeMatch(listing: ListingRecord, userBands: AgeBandKey[]): boolean {
   if (userBands.length === 0) return false; // nothing asked for → nothing to confirm
   return userBands.some((b) => listing.ageBandMatches.includes(b));
+}
+
+/**
+ * Does this ONE listing admit a child of exactly this age — an exact month-bounds containment
+ * test against the listing's own `[ageMinMonths, ageMaxMonths)`, deliberately not routed through
+ * bands at all.
+ *
+ * WHY THIS CANNOT BE ASKED OF THE TWO PREDICATES ABOVE. Both of those read `ageBandMatches`,
+ * which `computeAgeBandMatches` (worker/core/age.ts) fills by interval OVERLAP, not containment.
+ * Overlap is the right relation for the question those predicates answer — "does this listing
+ * fall within ANY band the parent selected" — and a programme running 48–72 months genuinely does
+ * partially sit in both `2-4` (24–60) and `5-9` (60–120), so showing it under either single-band
+ * filter is correct and intentional. Overlap is the WRONG relation for "does this listing work
+ * for THIS child", because band membership is a claim about the band, not about any particular
+ * child inside it.
+ *
+ * THE FALSE POSITIVE THAT MAKES THIS ITS OWN FUNCTION (design doc §6b, pinned in
+ * tests/search/sibling-fit.test.ts). Composing the existing band predicates with AND — requiring
+ * `ageBandMatches ⊇ {'2-4','5-9'}` for a 3-year-old and a 7-year-old — looks like the cheap way
+ * to answer "works for both kids" and is unsound in the direction that hurts. A listing titled
+ * "Ages 4–5" has bounds `[48, 72)` and therefore claims BOTH of those bands under overlap, so
+ * band-AND reports it as fitting a 36-month-old and an 84-month-old when 36 and 84 are both
+ * outside `[48, 72)`: it fits NEITHER. Band-AND is a strict over-approximation — no false
+ * negatives, real false positives — and a false positive here is a parent taking two children to
+ * a rec centre where one of them is turned away. Month bounds are already on `ListingRecord`
+ * (lib/search/types.ts) and already populated through the whole read path, so the exact answer
+ * costs no migration, no new column and no read-model change (§6c).
+ *
+ * BOUNDS CONVENTION. min INCLUSIVE, max EXCLUSIVE, null = open-ended — worker/core/age.ts:16-20,
+ * where a written "Ages 4–5" becomes `[48, 72)` precisely so it still admits five-year-olds up to
+ * their sixth birthday. A degenerate inverted range (`min >= max`) admits nobody and needs no
+ * special case: no age is both `>= 72` and `< 48`.
+ *
+ * UNKNOWN BOUNDS ARE NOT A FIT — the guard that is easy to forget. With both bounds null the
+ * containment test is vacuously true for every age, which would make an unresolved-age listing a
+ * perfect fit for every child on earth. That is the "unresolved is not neutral, it is MAXIMALLY
+ * permissive" trap that lib/audit/rules/adult-age-band.ts:13 documents. It is the right trade for
+ * `matchesAge`, whose answer only decides visibility and errs toward showing more; it is the
+ * wrong trade here, because this predicate exists to back a CONFIDENT claim about a specific
+ * child, and a claim with nothing behind it is worse than no claim. So unknown → false. A
+ * half-open listing ("Ages 4+", `[48, null)`) is a real claim and is honoured normally.
+ *
+ * A non-finite or negative `ageMonths` also fails closed rather than propagating: `NaN` from a
+ * `Number()` on unparseable input would otherwise silently answer "no fit" on one branch and
+ * "fit" on another depending on which bound happened to be null.
+ */
+export function fitsChild(listing: ListingRecord, ageMonths: number): boolean {
+  if (!Number.isFinite(ageMonths) || ageMonths < 0) return false;
+  if (listing.ageMinMonths == null && listing.ageMaxMonths == null) return false;
+  return (
+    (listing.ageMinMonths == null || ageMonths >= listing.ageMinMonths) &&
+    (listing.ageMaxMonths == null || ageMonths < listing.ageMaxMonths)
+  );
+}
+
+/**
+ * Does this ONE listing admit EVERY child in the list — the sibling-fit primitive, AND across
+ * children where `matchesAge` is OR across bands.
+ *
+ * The two are different products and the distinction is the point: the rail's own copy promises
+ * "we'll match either age" (FilterRail.tsx), and "either" is not "both". Whichever surface
+ * eventually consumes this — a section, a badge, a filter — the primitive underneath is the same,
+ * which is why it lands correct and tested ahead of that decision.
+ *
+ * An EMPTY list returns false, matching `hasConfirmedAgeMatch`'s "nothing asked for → nothing to
+ * confirm". `[].every()` is true, so the natural reading of this function would otherwise claim
+ * every listing fits all zero children — the same vacuity trap as unknown bounds, one level up.
+ */
+export function fitsAllChildren(listing: ListingRecord, childAgesMonths: number[]): boolean {
+  if (childAgesMonths.length === 0) return false;
+  return childAgesMonths.every((ageMonths) => fitsChild(listing, ageMonths));
 }
 
 /** The bands in order, youngest first. Adjacency is only meaningful against this ordering. */
