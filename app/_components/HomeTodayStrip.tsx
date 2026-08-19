@@ -14,10 +14,30 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ActivityCard } from '../preview/_components/ActivityCard';
 import { partitionSections } from '../preview/_data/filter';
-import { mapSearchResponseToActivities, searchApiUrl, type SearchResponseDto } from '../preview/_data/search-api';
+import {
+  mapSearchResponseToActivities,
+  searchApiUrl,
+  type SearchApiRequest,
+  type SearchResponseDto,
+} from '../preview/_data/search-api';
 import type { Activity } from '../preview/_data/types';
 
 const MAX_CARDS = 3;
+
+/**
+ * Ask for what this strip renders, and nothing more (docs/answer-before-search-design.md §9.1,
+ * X2 and X3 — both pre-scoped there, neither touching what class of content the strip may show).
+ *
+ * `limit: MAX_CARDS` rather than a second literal 3, so the request cannot drift from the render.
+ * `minResults: 0` declines the broadening ladder: on a thin day `minResults=100` had the engine
+ * relaxing constraints to fill a hundred-row page for a fixed three-card teaser (§2c). Both are
+ * about the REQUEST — nothing below changes about which cards qualify or about the strip
+ * rendering nothing when none do.
+ *
+ * Exported so the request this strip actually sends is assertable (tests/preview-format.test.ts)
+ * rather than only the builder's ability to accept an override — the values are the fix.
+ */
+export const STRIP_REQUEST: SearchApiRequest = { limit: MAX_CARDS, minResults: 0 };
 
 export function HomeTodayStrip() {
   const [cards, setCards] = useState<Activity[]>([]);
@@ -25,7 +45,7 @@ export function HomeTodayStrip() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(searchApiUrl(), { signal: controller.signal, headers: { accept: 'application/json' } })
+    fetch(searchApiUrl(STRIP_REQUEST), { signal: controller.signal, headers: { accept: 'application/json' } })
       .then((res) => (res.ok ? (res.json() as Promise<SearchResponseDto>) : Promise.reject(new Error(String(res.status)))))
       .then((body) => {
         const { confirmed } = partitionSections(mapSearchResponseToActivities(body));

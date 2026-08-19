@@ -26,13 +26,49 @@
 // PROFILE gets that treatment (lib/profile/child-profile.ts); a boolean about a panel does not.
 
 import { useEffect, useState } from 'react';
-import { writeProfile, type ChildInput } from '@/lib/profile/child-profile';
+import { useRouter } from 'next/navigation';
+import { sanitizeChildren, writeProfile, type ChildInput } from '@/lib/profile/child-profile';
+import { childrenToAgeBands } from '@/lib/profile/child-age-bands';
+import { hrefForParams } from '@/app/search/_lib/params';
 import { ChildAgeForm } from './ChildAgeForm';
 import { notifyChildProfileChanged, useChildProfile } from './useChildProfile';
 import './child-profile.css';
 
 /** Session-scoped "not now". Deliberately sessionStorage: it should not outlive the visit. */
 const DISMISSED_KEY = 'kf_child_prompt_dismissed';
+
+/**
+ * Where "Show what fits" goes, or `null` for "stay on the front door".
+ *
+ * The button is labelled with a promise and until now it kept none of it: `save()` wrote the
+ * profile, closed the panel, and left the parent on the same static home page they submitted
+ * from. This is the whole of the destination decision, exported so it is testable without a DOM
+ * — the same split `app/search/_lib/profile-default.ts` uses for the /search-side rule (policy in
+ * a pure function, mechanics in the component).
+ *
+ * The ages are read from the SUBMITTED list, not back out of storage, so the filter the parent
+ * asked for still lands when the write failed (private mode, quota, storage disabled). The URL is
+ * the only thing /search needs — `writeProfile`'s success only decides whether the answer is
+ * remembered NEXT visit. `sanitizeChildren` is the store's own normaliser, so the bands are
+ * derived from exactly the entries that would have been persisted rather than a second reading
+ * of the raw input.
+ *
+ * `hrefForParams({ age })` is byte-identical to what an Ages chip tap on a bare /search produces
+ * (`hrefFor(DEFAULT_STATE, ageSelectionPatch(bands))` — every other param is at its default and
+ * `pageParams` writes only non-defaults), so everything downstream reads this as an ordinary
+ * parent-made selection: facets, the broadening ladder, analytics, the applied-filter token, and
+ * `profileDefaultBands`'s rule 1, which correctly declines to re-apply a filter already in the URL.
+ *
+ * `null` — no band resolved from any child — falls back to today's behaviour (dismiss in place,
+ * no navigation) rather than pushing a bare `/search`. `ChildAgeForm` validates before calling
+ * back so this should be unreachable, but the carve-out mirrors `profileDefaultBands`'s: an
+ * unreadable profile is not a reason to send a parent somewhere they did not ask to go.
+ */
+export function searchHrefForChildren(children: readonly ChildInput[]): string | null {
+  const bands = childrenToAgeBands(sanitizeChildren(children));
+  if (bands.length === 0) return null;
+  return hrefForParams({ age: bands.join(',') });
+}
 
 function readDismissed(): boolean {
   try {
@@ -51,6 +87,7 @@ function rememberDismissed(): void {
 }
 
 export function ChildProfilePrompt() {
+  const router = useRouter();
   const { profile, ready } = useChildProfile();
   const [dismissed, setDismissed] = useState(true); // assume hidden until storage says otherwise
 
@@ -68,6 +105,12 @@ export function ChildProfilePrompt() {
     rememberDismissed();
     setDismissed(true);
     notifyChildProfileChanged('saved');
+    // …and then do what the button says. `push`, NOT `replace`: this is a destination the parent
+    // chose by clicking a labelled control, so it belongs in their history — the opposite of
+    // ProfileAgeDefault's bare-landing fill, which is a default nobody navigated to and uses
+    // `replace` for exactly that reason.
+    const href = searchHrefForChildren(children);
+    if (href) router.push(href);
   };
 
   // `ready` gates the whole panel: before storage is read, "no profile" is not yet a fact, and

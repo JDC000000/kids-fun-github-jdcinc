@@ -113,11 +113,45 @@ export interface SearchResponseDto {
   meta: { fixtureBacked: boolean; sort: string; backend?: 'fixture' | 'database'; fallbackReason?: string };
 }
 
-export function searchApiUrl(): string {
+/**
+ * What a caller is asking `/api/search` for, in the two dimensions its consumers genuinely
+ * differ on. Everything else about the request (a bare `q=''` browse) is shared.
+ *
+ * THIS IS PARAMETERISED RATHER THAN RE-TUNED because `searchApiUrl` has TWO consumers with
+ * opposite needs, which is what made the home-strip defect (§9.1 X2/X3 of
+ * docs/answer-before-search-design.md) un-fixable as a one-line edit here:
+ *   • `/preview`'s ResultsShell fetches ONCE and then filters, sorts and sections the whole
+ *     response as local state — it needs the full page of rows, and it renders the
+ *     empty/broadening fork, so it wants the ladder armed.
+ *   • `HomeTodayStrip` renders three cards and hides itself otherwise. Fetching 100 rows
+ *     (165,596 bytes, measured 2026-08-18) to show three is waste, and arming the broadening
+ *     ladder on a fixed teaser relaxes the parent's constraints for results nobody will see.
+ * Editing the defaults in place would have silently capped /preview's browse at three rows and
+ * disarmed its broadening fork — a regression in a surface neither fix is about.
+ */
+export interface SearchApiRequest {
+  /** Rows to ask for. Should never exceed what the caller will actually render. */
+  limit?: number;
+  /**
+   * How thin a result set the engine may pad by relaxing the parent's own filters (its
+   * broadening ladder — lib/search/engine.ts). `0` declines broadening outright.
+   *
+   * NOTE an omitted `minResults` is NOT the same as `0`: app/api/search/route.ts drops the
+   * absent param and the engine falls back to its own default of 3 (engine.ts `req.minResults ?? 3`),
+   * so a caller that wants no broadening has to say `0` out loud.
+   */
+  minResults?: number;
+}
+
+/** The /preview browse shell's request: a full page of rows, and broaden hard to fill it. */
+const BROWSE_REQUEST: Required<SearchApiRequest> = { limit: 100, minResults: 100 };
+
+export function searchApiUrl(request: SearchApiRequest = {}): string {
+  const { limit, minResults } = { ...BROWSE_REQUEST, ...request };
   const params = new URLSearchParams({
     q: '',
-    minResults: '100',
-    limit: '100',
+    minResults: String(minResults),
+    limit: String(limit),
   });
   return `/api/search?${params.toString()}`;
 }

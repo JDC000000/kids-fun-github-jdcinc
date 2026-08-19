@@ -1,8 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+
+// ChildProfilePrompt now navigates on submit, so it calls `useRouter` during render and needs an
+// app-router context that a bare `renderToStaticMarkup` does not provide. Same stub the other UI
+// suites use (tests/ui/registration-and-slots.test.tsx).
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: () => {}, replace: () => {}, refresh: () => {}, prefetch: () => {} }),
+}));
+
 import { ChildAgeForm } from './ChildAgeForm';
 import { ChildProfileBar } from './ChildProfileBar';
-import { ChildProfilePrompt } from './ChildProfilePrompt';
+import { ChildProfilePrompt, searchHrefForChildren } from './ChildProfilePrompt';
 import { MAX_CHILDREN } from '@/lib/profile/child-profile';
 import { MAX_AGE_YEARS } from '@/lib/profile/child-age-display';
 
@@ -34,6 +42,56 @@ describe('the profile islands render NOTHING before storage is read', () => {
     const html = renderToStaticMarkup(<ChildProfileBar />);
     expect(html).toBe('');
     expect(html).not.toMatch(/year-old/);
+  });
+});
+
+describe('"Show what fits" actually shows what fits', () => {
+  // The defect: the prompt's submit wrote the profile and closed the panel, full stop. A parent
+  // who answered "who are you looking for?" on the front door stayed on the front door, looking
+  // at the same static tiles — with the button that promised otherwise now gone.
+  //
+  // This asserts the DESTINATION, which is the whole of the decision (the component's remaining
+  // job is one `router.push(href)`). Firing the submit itself is not assertable here: the suite
+  // runs in the node environment with no DOM and no jsdom — see this file's header.
+
+  it('sends one child to /search filtered to that child’s band', () => {
+    expect(searchHrefForChildren([{ ageMonths: 36 }])).toBe('/search?age=2-4');
+  });
+
+  it('sends siblings to the OR-set of their bands, youngest first', () => {
+    expect(searchHrefForChildren([{ ageMonths: 84 }, { ageMonths: 36 }])).toBe('/search?age=2-4%2C5-9');
+  });
+
+  it('collapses two children in the same band to one band', () => {
+    expect(searchHrefForChildren([{ ageMonths: 36 }, { ageMonths: 48 }])).toBe('/search?age=2-4');
+  });
+
+  it('spells every band the store can hold, including 15+ and under2', () => {
+    expect(searchHrefForChildren([{ ageMonths: 6 }])).toBe('/search?age=under2');
+    expect(searchHrefForChildren([{ ageMonths: 132 }])).toBe('/search?age=10-14');
+    expect(searchHrefForChildren([{ ageMonths: 192 }])).toBe('/search?age=15%2B');
+  });
+
+  it('stays put rather than navigating to a bare /search when no band resolves', () => {
+    // Defensive only — ChildAgeForm validates first. But a bare /search would be a navigation the
+    // parent's answer did not earn, so "no bands" means "no navigation", as on the /search side
+    // (app/search/_lib/profile-default.ts's null-vs-empty distinction).
+    expect(searchHrefForChildren([])).toBeNull();
+    expect(searchHrefForChildren([{ ageMonths: -1 }])).toBeNull();
+    expect(searchHrefForChildren([{ ageMonths: 1.5 }])).toBeNull();
+  });
+
+  it('leaves the "Not now" path with nowhere to go — dismissing is not a search', () => {
+    // The dismiss control is the caller's own button, rendered beside Save; it never reaches the
+    // submit path, so there is no href for it. Pinned as markup: the panel offers exactly one
+    // control that leads to /search, and it is the submit.
+    const html = renderToStaticMarkup(
+      <ChildAgeForm idPrefix="t" submitLabel="Show what fits" onSubmit={() => {}}>
+        <button type="button">Not now</button>
+      </ChildAgeForm>
+    );
+    expect(html).toContain('Not now');
+    expect(html).not.toContain('/search');
   });
 });
 

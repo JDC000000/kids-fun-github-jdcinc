@@ -17,6 +17,9 @@ import {
   statusMeta,
 } from '../app/preview/_data/format';
 import { mapSearchItemToActivity, searchApiUrl, type ListingRecordDto } from '../app/preview/_data/search-api';
+// The home strip's own request shape, imported rather than restated — see the `search API mapping`
+// block. `limit` is tied to the strip's MAX_CARDS there, which is the fix: ask for what you render.
+import { STRIP_REQUEST } from '../app/_components/HomeTodayStrip';
 import type { StatusState } from '../app/preview/_data/types';
 
 describe('formatAges', () => {
@@ -491,10 +494,34 @@ describe('search API mapping — a dateless listing keeps its null', () => {
 });
 
 describe('search API mapping', () => {
+  const params = (request?: Parameters<typeof searchApiUrl>[0]) =>
+    new URL(searchApiUrl(request), 'https://example.test').searchParams;
+
   it('defaults the preview shell to browse approved API rows', () => {
-    const url = new URL(searchApiUrl(), 'https://example.test');
-    expect(url.searchParams.get('q')).toBe('');
-    expect(url.searchParams.get('limit')).toBe('100');
+    // /preview fetches once and then filters/sorts/sections the whole response locally, and it
+    // renders the empty/broadening fork — so its request is unchanged by the home-strip fix.
+    const p = params();
+    expect(p.get('q')).toBe('');
+    expect(p.get('limit')).toBe('100');
+    expect(p.get('minResults')).toBe('100');
+  });
+
+  it('asks for only the rows the home strip renders, and declines broadening', () => {
+    // docs/answer-before-search-design.md §9.1 X2/X3. The strip shows three cards and hides
+    // itself otherwise; it used to pull 100 rows (165,596 bytes measured 2026-08-18) and arm the
+    // broadening ladder to fill a page nobody sees. Asserted against the request the COMPONENT
+    // holds, not a restatement of it, so the two cannot drift.
+    const p = params(STRIP_REQUEST);
+    expect(p.get('q')).toBe('');
+    expect(p.get('limit')).toBe('3');
+    // '0' EXPLICITLY, not omitted: app/api/search/route.ts drops an absent `minResults` and the
+    // engine then defaults to 3 (`req.minResults ?? 3`), which still arms the ladder.
+    expect(p.get('minResults')).toBe('0');
+  });
+
+  it('overrides one dimension without disturbing the other', () => {
+    expect(params({ limit: 3 }).get('minResults')).toBe('100');
+    expect(params({ minResults: 0 }).get('limit')).toBe('100');
   });
 
   it('keeps live API cards on the internal detail path and preserves official source links', () => {
