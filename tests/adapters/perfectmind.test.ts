@@ -753,6 +753,153 @@ describe('G-T8-4 deterministic ages from the STRUCTURED fields', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────────────
+// The vendor's "no age restriction" flag versus the venue's own title.
+//
+// MEASURED on a live NVRC pull (2026-08-18, 1,146 occurrences / 566 distinct titles): 293
+// records carry `NoAgeRestriction: true`; 95 of them across 34 programmes have a title that
+// states an age the flag contradicts; 55 across 19 programmes are ADULT-ONLY and were being
+// published as [0, ∞), matching every age band including under-2. Every title asserted below
+// is verbatim from that corpus, not invented — including the two "All Ages" ones, which are
+// the reason the gate is narrower than activenet's.
+//
+// The assertion that matters in every case is the BAND, not the string: `ageText: undefined`
+// only helps if it also means no `occurrence_age` row and therefore no band match, which is
+// what parseAgeText(...).resolved === false pins.
+// ─────────────────────────────────────────────────────────────────────────────────────
+describe('perfectmind — a vendor "no age restriction" flag does not overrule the title', () => {
+  const flagged = (EventName: string): BookMe4Class => ({ EventName, NoAgeRestriction: true });
+
+  /** The 19 adult-only programmes, by their three measured shapes. */
+  it.each([
+    'Adult 19yrs+ Swim Karen Magnussen Monday 8:00-9:00am',
+    'Adult 19yr+ Hot Tub & Steam Karen Magnussen Wednesday 3:30-7:15pm',
+    "$2 Women's Only Swim 12yrs+ Ron Andrews Sunday 8:15-9:45pm",
+    'Adult Swim 19yrs+ Delbrook Leisure Pool Wednesday 9:00-10:00pm',
+    'Public Swim 19yrs+ Ron Andrews Thursday 8:30-10:00pm',
+  ])('adult-only "%s" claims no age rather than all ages', (title) => {
+    const verdict = resolveAgeText(flagged(title));
+    expect(verdict.ageText, 'silence, not a false all-ages claim').toBeUndefined();
+    expect(verdict.code).toBe('no-age-restriction-contradicted');
+    // The consequence, stated as the consequence: no resolved age → no occurrence_age row →
+    // no band. Before this change every one of these matched under2.
+    const age = parseAgeText(verdict.ageText);
+    expect(age.resolved).toBe(false);
+    expect(age.ageMinMonths).not.toBe(0);
+  });
+
+  /** The other 40 records: a narrower range the flag flattened to all-ages. */
+  it.each([
+    '$3 Open Gym 8yrs+ Parkgate Wednesday 6:15-7:45am',
+    'Adult / Early Years (0-6years) Swim Karen Magnussen Wednesday 9:00am-12:45pm',
+    'Youth Swim 8-14yrs Karen Magnussen Saturday 6:00-8:00pm',
+    'Youth Swim 14-18yrs Karen Magnussen Saturday 6:00-8:00pm',
+  ])('a narrower stated range "%s" is not flattened to all ages either', (title) => {
+    expect(resolveAgeText(flagged(title)).ageText).toBeUndefined();
+  });
+
+  it('a grade label is withheld rather than run through age.ts, whose grade rule it would trip', () => {
+    // worker/core/age.ts resolves 'Grade 4-7' to [48, 96] — ages 4 to 8 — because RANGE_RE
+    // matches the bare 4-7 before GRADE_RE can convert grades to ages (grades 4-7 are ~9-13).
+    // That is a real core defect, logged separately and deliberately NOT fixed here. Emitting
+    // the title would have imported it; withholding routes around it. This test exists to
+    // fail if someone later switches this adapter to "prefer the title".
+    const title = 'Lynn Creek Youth Centre Tuesday 3:30pm-5:30pm (Grade 4-7)';
+    expect(parseAgeText(title).ageMinMonths, 'the core defect, pinned as the reason').toBe(48);
+    expect(resolveAgeText(flagged(title)).ageText).toBeUndefined();
+  });
+
+  it('the flag still means all ages when the title makes no age claim', () => {
+    // 198 of the 293 measured records. This is the majority case and must not move.
+    for (const title of [
+      'Public Swim Delbrook Leisure Pool Saturday 4:00-7:00pm',
+      '$2 Public Swim Karen Magnussen Tuesday 6:30 - 9:00pm',
+      'Family Skate Karen Magnussen Wednesday  12:30-2:00pm',
+      'Public Low Sensory Swim Karen Magnussen Monday 7:15-9:00pm',
+      'Open Gym',
+    ]) {
+      const verdict = resolveAgeText(flagged(title));
+      expect(verdict.ageText, title).toBe('All ages');
+      expect(verdict.code, title).toBe('no-age-restriction');
+      expect(verdict.deterministic, title).toBe(true);
+    }
+  });
+
+  it('a title that says "All Ages" AGREES with the flag and is left alone', () => {
+    // The one deliberate divergence from activenet's TITLE_STATES_AGE_RE, which includes an
+    // `all ages` alternative. There the question is "may the title be used as an age claim";
+    // here it is "does the title contradict the flag". Both measured records, verbatim.
+    for (const title of [
+      '$2 Queer All Ages Skate Karen Magnussen Monday 2:30-3:45pm',
+      '$2 Queer All Ages Swim Karen Magnussen Saturday 6:30-8:00pm',
+    ]) {
+      expect(resolveAgeText(flagged(title)).ageText, title).toBe('All ages');
+    }
+  });
+
+  it('a clock time or a price in the title is not an age', () => {
+    // Nearly every NVRC title carries its session time, and many carry a drop-in price.
+    // Without worker/core/age.ts's numeric lookarounds this gate would fire on the whole feed
+    // and silence it — the opposite failure, and a much larger one.
+    for (const title of [
+      'Public Swim Ron Andrews Monday 11:15am-1:00pm',
+      'Public Swim Karen Magnussen Sunday 12:45 - 8:00pm',
+      'Public Swim Delbrook Leisure Pool Saturday 7:00-1:15pm',
+      '$2 Public Swim Ron Andrews Tuesday 6:30-7:30pm',
+      '$3 Family Open Gym Delbrook',
+    ]) {
+      expect(resolveAgeText(flagged(title)).ageText, title).toBe('All ages');
+    }
+  });
+
+  it('a bare audience word is not an age assertion — same evidence bar as activenet', () => {
+    // "Adult Swim" with no number is a NAME. Promoting it would be the kid-coded-title
+    // inference measured at a 57% band-error rate and removed elsewhere in this system
+    // (worker/core/title.ts's header), pointed the other way.
+    for (const title of ['Adult Swim Ron Andrews', 'Youth Night Lynn Creek', 'Family Skate', "Women's Only Swim"]) {
+      expect(resolveAgeText(flagged(title)).ageText, title).toBe('All ages');
+    }
+  });
+
+  it('only the flag branch is affected — a stated age with the flag OFF still reads structured fields', () => {
+    const verdict = resolveAgeText({
+      EventName: 'Adult 19yrs+ Swim Karen Magnussen Monday 8:00-9:00am',
+      NoAgeRestriction: false,
+      MinAge: 19,
+    });
+    expect(verdict.ageText).toBe('ages 19 years and up');
+    expect(verdict.code).toBe('structured-min-open');
+  });
+
+  it('the suppression is counted as its own verdict type, not folded into "no signal"', () => {
+    const date = zonedDateStringForTest();
+    const cls = (EventName: string, EventId: string): BookMe4Class => ({
+      EventId,
+      EventName,
+      OccurrenceDate: date,
+      EventTimeDescription: '10:00 am - 11:30 am',
+      NoAgeRestriction: true,
+    });
+    const { records, stats } = parseTenantCalendars(nvrc, [
+      asCalendar([
+        cls('Adult 19yrs+ Swim Karen Magnussen Monday 8:00-9:00am', 'a'),
+        cls('$3 Open Gym 8yrs+ Parkgate Wednesday 6:15-7:45am', 'b'),
+        cls('Public Swim Delbrook Leisure Pool Saturday 4:00-7:00pm', 'c'),
+        { EventId: 'd', EventName: 'Nothing stated', OccurrenceDate: date, EventTimeDescription: '10:00 am - 11:30 am' },
+      ]),
+    ]);
+
+    expect(records.map((r) => r.ageText)).toEqual([undefined, undefined, 'All ages', undefined]);
+    expect(stats.ageSignalCounts['no-age-restriction-contradicted']).toBe(2);
+    expect(stats.ageSignalCounts['no-age-restriction']).toBe(1);
+    expect(stats.ageSignalCounts.none, 'a withheld claim is NOT "the feed said nothing"').toBe(1);
+    // Three records publish no age, and the rollup says so rather than counting the two
+    // suppressions as deterministic coverage.
+    expect(stats.ageUnresolved).toBe(3);
+    expect(stats.ageDeterministic).toBe(1);
+  });
+});
+
 describe('G-T8-4 venue, identity and record shape', () => {
   it('takes the venue — including coordinates — straight off the record', () => {
     const cls = classesFixture('nvrc.classes.open-gym.page1.json')[0];

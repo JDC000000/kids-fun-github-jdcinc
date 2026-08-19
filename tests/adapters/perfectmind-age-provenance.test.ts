@@ -77,6 +77,17 @@ const CASES: Array<{
     reason: 'NoAgeRestriction',
   },
   {
+    // Added after the fact and NOT part of the "unchanged" premise this file was written
+    // around: this verdict type did not exist when the eight above were pinned. It is listed
+    // here because the coverage assertion below refuses any code without a case; its
+    // behaviour is owned by perfectmind.test.ts's contradiction block.
+    code: 'no-age-restriction-contradicted',
+    input: { NoAgeRestriction: true, EventName: 'Adult 19yrs+ Swim Karen Magnussen Monday 8:00-9:00am' },
+    ageText: undefined,
+    deterministic: false,
+    reason: 'NoAgeRestriction contradicted by an age stated in the title',
+  },
+  {
     code: 'structured-min-max',
     input: { MinAge: 5, MaxAge: 12, NoAgeRestriction: false },
     ageText: 'ages 5-12',
@@ -204,7 +215,9 @@ describe('perfectmind age provenance — the run-level breakdown', () => {
     expect(stats.ageFromDisplayText, 'the two free-text codes').toBe(
       stats.ageSignalCounts['display-restrictions'] + stats.ageSignalCounts['age-restrictions']
     );
-    expect(stats.ageUnresolved).toBe(stats.ageSignalCounts.none);
+    expect(stats.ageUnresolved, 'both codes that emit no ageText').toBe(
+      stats.ageSignalCounts.none + stats.ageSignalCounts['no-age-restriction-contradicted']
+    );
   });
 
   it('zero-fills every code, so "never fired" cannot read as "no longer exists"', () => {

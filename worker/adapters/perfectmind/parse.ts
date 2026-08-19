@@ -28,7 +28,10 @@
 //     structured fields FIRST and emits a canonical phrase that T13's existing
 //     deterministic normaliser (worker/core/age.ts) resolves exactly. That is deliberate
 //     reuse, not a fork: this adapter does not compute month bounds itself, so there is
-//     one age convention in the codebase, not two.
+//     one age convention in the codebase, not two. The ONE place a structured field is not
+//     taken at face value is `NoAgeRestriction: true` on a record whose own title states an
+//     age — measured to publish 55 adult-only sessions as all-ages — where the flag is
+//     withheld rather than believed. See resolveAgeText().
 //
 //  4. IDENTITY. `EventId` is the EVENT (series) id and repeats across dates; `CourseId`
 //     likewise. Occurrence identity is EventId + OccurrenceDate + start time + facility.
@@ -264,9 +267,16 @@ export function classifyCost(record: BookMe4Class): CostVerdict {
  * emit "N years and up", but one is the vendor saying "no maximum" and the other is us
  * DISCARDING a maximum we could not make sense of. Collapsing them would hide the only case
  * here where information was dropped.
+ *
+ * `no-age-restriction-contradicted` is kept apart from `none` for the same reason and it is
+ * the more important of the two: both publish no age, but one is a source that said nothing
+ * and the other is us REFUSING a claim the vendor made. Collapsed into `none` the suppression
+ * would be invisible in the run breakdown, and the first question after a listing loses its
+ * bands ("did the feed go quiet, or did we withhold it?") would have no answer.
  */
 export const AGE_SIGNAL_CODES = [
   'no-age-restriction',
+  'no-age-restriction-contradicted',
   'structured-min-max',
   'structured-min-open',
   'structured-min-incoherent-max',
@@ -293,6 +303,58 @@ export interface AgeVerdict {
  *  when the structured fields are unusable. */
 const DISPLAY_AGE_RE = /^\s*age\s*:\s*(.+?)\s*$/i;
 
+/** A number that is plausibly an AGE. Guards copied from activenet/parse.ts:145, which
+ *  copied them from worker/core/age.ts, and for the same measured reasons: this platform
+ *  puts the session's CLOCK TIME in the title of nearly every record ("Ron Andrews Monday
+ *  11:15am-1:00pm"), and a price too ("$3 Open Gym", "$2 Public Swim"). Without the
+ *  lookarounds a wall clock reads as an age range on essentially the whole feed. Verified on
+ *  the frozen 2026-08-18 NVRC corpus: of the 198 `NoAgeRestriction` records whose titles
+ *  carry a time range and no age, zero match. */
+const AGE_NUMBER = /(?<![\d.,:$])\d{1,2}(?![.,:]\d)/.source;
+
+/** A unit token BETWEEN the number and its connector — the exact gap measured in
+ *  docs/age-pattern-extraction-scope.md §3b, where activenet's own gate misses `18yrs+`
+ *  because `yrs` sits between the digits and the `+`. NVRC states nearly every age that way
+ *  ("Adult 19yrs+ Swim", "$3 Open Gym 8yrs+"), so omitting it here would miss 62 of the 95
+ *  contradicted records. */
+const AGE_UNIT = '(?:\\s*(?:yrs?|years?|mos?|months?))';
+
+/**
+ * Does the record's own TITLE state an age, in words, that a "no age restriction" flag
+ * contradicts?
+ *
+ * SAME EVIDENCE BAR as activenet/parse.ts's TITLE_STATES_AGE_RE, and for its reason: a title
+ * is an activity NAME, and a name is not an age claim. An explicit numeric age, range or
+ * minimum passes; "Adult", "Youth", "Family", "Women's Only" on their own do not. This
+ * project has already paid for a blunt title heuristic once (57% band-error rate, cited in
+ * worker/core/title.ts's header) and for a title gate narrower than believed once
+ * (docs/age-pattern-extraction-scope.md §3b), so both directions of error are deliberate
+ * here rather than incidental.
+ *
+ * ONE DELIBERATE DIVERGENCE from activenet's copy: its `\ball\s+ages\b` alternative is NOT
+ * included. There, the gate asks "may this title be used as an age claim?" and "all ages" is
+ * a valid one. Here it asks "does this title CONTRADICT the vendor's no-age-restriction
+ * flag?" — and a title saying "all ages" AGREES with that flag. Measured on the frozen
+ * corpus: `$2 Queer All Ages Skate` and `$2 Queer All Ages Swim` carry the flag and say
+ * "All Ages" in their own words. Including the alternative would suppress those two correct
+ * all-ages claims; excluding it leaves them exactly as they are.
+ *
+ * MEASURED on the frozen 2026-08-18 NVRC pull (1,146 occurrences, 566 distinct titles), all
+ * 34 matched titles hand-checked: 95 records match, every one a genuine age assertion
+ * ("Adult 19yrs+ Swim", "$3 Open Gym 8yrs+", "Youth Swim 8-14yrs", "(Grade 4-7)"), and 0 of
+ * the 198 non-matching are a missed assertion. Unlike activenet (§5 of the scope doc, where
+ * `Summer Camp - Aug 17-21` is published as ages 17-22) a date-range false positive here
+ * costs nothing: this gate only ever WITHHOLDS, so its failure mode is silence, not a wrong
+ * age. Zero date ranges occur in NVRC titles today; no month guard is carried for a case
+ * that neither exists nor would do damage.
+ */
+const TITLE_STATES_AGE_RE = new RegExp(
+  `\\bages?\\s*\\d` +
+    `|${AGE_NUMBER}${AGE_UNIT}?\\s*\\+` +
+    `|${AGE_NUMBER}${AGE_UNIT}?\\s*(?:-|–|—|to)\\s*${AGE_NUMBER}${AGE_UNIT}?`,
+  'i'
+);
+
 /**
  * Resolve age deterministically from the STRUCTURED fields, emitting a canonical phrase
  * that worker/core/age.ts resolves exactly.
@@ -304,7 +366,8 @@ const DISPLAY_AGE_RE = /^\s*age\s*:\s*(.+?)\s*$/i;
  * result deterministic, because the phrase is generated from numbers, not scraped.
  *
  * Vendor quirks handled, all measured on 2026-07-31:
- *   • `NoAgeRestriction: true` → "All ages".
+ *   • `NoAgeRestriction: true` → "All ages" — UNLESS the record's own title states an age
+ *     that contradicts it, in which case nothing is emitted. See the block below.
  *   • `MinAgeMonths` is an ADDITIONAL months component, not a substitute:
  *     `MinAge: 7, MinAgeMonths: 12` renders as "7 y 12m", i.e. 8 years. Normalised.
  *   • `MaxAge: 0, MaxAgeMonths: 0` is the vendor's "no maximum" (it renders as the
@@ -314,6 +377,50 @@ const DISPLAY_AGE_RE = /^\s*age\s*:\s*(.+?)\s*$/i;
  */
 export function resolveAgeText(record: BookMe4Class): AgeVerdict {
   if (record.NoAgeRestriction === true) {
+    // A VENDOR FLAG MUST NOT OVERRULE THE VENUE'S OWN WORDS.
+    //
+    // `NoAgeRestriction: true` on a BookMe4 class means "no registration age gate is
+    // configured in the booking system". It does NOT mean "this programme is suitable for a
+    // baby". Read as the second, it publishes `All ages` → [0, ∞), which matches all five
+    // age bands. MEASURED on a live NVRC pull (2026-08-18, 1,146 occurrences): 293 records
+    // carry the flag, 95 of them across 34 programmes have a title that states an age the
+    // flag contradicts, and 55 of those across 19 programmes are ADULT-ONLY — "Adult 19yrs+
+    // Swim", "Adult 19yr+ Hot Tub & Steam", "$2 Women's Only Swim 12yrs+". A parent
+    // filtering to ages=under2 was being offered NVRC's adult lane swim and its hot tub and
+    // steam room. That is the defect lib/audit/rules/adult-subject-child-bands.ts exists to
+    // catch at audit time, asked here at ingest, where the claim is actually made — and it
+    // is the same defect class as venue/separate.ts's hard-coded `ageText: 'All ages'`,
+    // sourced from a vendor boolean instead of one of our own constants.
+    //
+    // THE REMEDY IS SUPPRESSION, NOT SUBSTITUTION, and that is the deliberate half. Emitting
+    // the title's own age instead would be more useful and is the option this adapter does
+    // NOT take: it would turn the adapter into an inference engine over a title, and it
+    // would inherit a known worker/core/age.ts defect (`grade 4-7` resolves to ages 4-8 —
+    // RANGE_RE beats GRADE_RE), which the 17 grade-labelled records in the measured set
+    // would hit immediately: "(Grade 4-7)" ×8 → ages 4-8, "(Grade 7+)" ×8 → ages 7+,
+    // "(Grade 6-9)" ×1 → ages 6-10, none of them within four years of the truth.
+    // The result of suppression is SILENCE — a known unknown, which the search filter keeps
+    // visible — instead of a false statement of fact. Same remedy, same reasoning and same
+    // posture as citycalendar/index.ts's adult-subject case (see its header, ~:232-239).
+    // The source's own wording is not lost: `raw` keeps the whole vendor record.
+    //
+    // WHY THIS RETURNS RATHER THAN FALLING THROUGH to the structured fields below: on all 95
+    // measured records `MinAge`, `MaxAge`, `DisplayableRestrictionsForCourses` and
+    // `AgeRestrictions` are ALL empty, so falling through is a no-op that reaches `none`.
+    // Returning a code of its own keeps "we withheld a claim" distinguishable from "the feed
+    // said nothing" in the per-run breakdown, which is the whole point of AGE_SIGNAL_CODES.
+    if (TITLE_STATES_AGE_RE.test((record.EventName ?? '').trim())) {
+      return {
+        ageText: undefined,
+        // No ageText was emitted, so there is nothing for this flag to describe the
+        // provenance OF — and parseCalendar's rollup counts `deterministic` FIRST, so a
+        // `true` here would file a record that publishes no age under `ageDeterministic`
+        // and inflate the coverage headline with silence. Same choice as `none`.
+        deterministic: false,
+        code: 'no-age-restriction-contradicted',
+        reason: 'NoAgeRestriction contradicted by an age stated in the title',
+      };
+    }
     return { ageText: 'All ages', deterministic: true, code: 'no-age-restriction', reason: 'NoAgeRestriction' };
   }
 
@@ -547,7 +654,7 @@ export interface ParseResult {
     /**
      * Per-record age provenance, kept at VERDICT-TYPE resolution.
      *
-     * resolveAgeText() distinguishes eight inputs; the three rollups below collapse them
+     * resolveAgeText() distinguishes nine inputs; the three rollups below collapse them
      * into "structured / display string / nothing", which cannot answer the first question
      * anyone asks when a band looks wrong — WHICH rule produced it. A run where every age
      * came from `NoAgeRestriction` and a run where every age came from a parsed
@@ -559,7 +666,11 @@ export interface ParseResult {
      * times" and "this rule no longer exists" must not read alike.
      */
     ageSignalCounts: Record<AgeSignalCode, number>;
-    /** Coarse rollups of the above, kept for the coverage report's headline numbers. */
+    /** Coarse rollups of the above, kept for the coverage report's headline numbers.
+     *  `ageUnresolved` is "no ageText was emitted", which is now TWO different facts —
+     *  `none` (the feed said nothing) and `no-age-restriction-contradicted` (we withheld a
+     *  claim the feed made). Only `ageSignalCounts` tells them apart; that is the reason it
+     *  exists and the reason a run whose suppressions jump should be read there. */
     ageDeterministic: number;
     ageFromDisplayText: number;
     ageUnresolved: number;
