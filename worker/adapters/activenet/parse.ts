@@ -135,10 +135,14 @@ export function classifyCost(event: ActiveNetEvent): CostVerdict {
  *  months and under are free" would read as an age range).
  *
  *  Split into its two halves because the halves are not equally good evidence, and
- *  statedAgePhrase() below has to be able to tell them apart. The UNION is byte-for-byte
- *  the pattern this constant has always been — no alternative was added, removed or
- *  reordered, and `.source`/`.flags` were compared against the previous literal to prove
- *  it — so nothing this regex used to reject is reachable now. */
+ *  statedAgePhrase() below has to be able to tell them apart. THE SPLIT ITSELF was inert:
+ *  no alternative was added, removed or reordered by it, and `.source`/`.flags` were
+ *  compared against the previous literal to prove it.
+ *
+ *  That is a claim about the split, NOT about the pattern today. The vocabulary has moved
+ *  on since: `preschool(?:ers)?` → `preschool(?:ers?)?` deliberately made the singular
+ *  "preschooler" reachable, which this regex previously rejected. Read the union below as
+ *  current, not as frozen. */
 const AGE_PHRASE_NUMERIC =
   String.raw`ages?\s*\d{1,2}\s*(?:-|–|to)\s*\d{1,2}|\bages?\s*\d{1,2}\s*\+|\b\d{1,2}\s*(?:-|–|to)\s*\d{1,2}\s*(?:yrs?|years)|\b\d{1,2}\s*\+\s*(?:yrs?|years)`;
 const AGE_PHRASE_KEYWORD =

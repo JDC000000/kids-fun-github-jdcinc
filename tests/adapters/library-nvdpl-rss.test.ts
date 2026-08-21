@@ -274,6 +274,17 @@ describe('NVDPL generic_rss — kid-relevance classification (trap 5)', () => {
     }
   });
 
+  it('admits "preschooler"/"preschoolers" in a TITLE, the sixth instance of the same defect', () => {
+    // KID_TITLE_RE carried a BARE `preschool` between \b, so it matched NEITHER inflection —
+    // not the singular and not even the plural, unlike KID_DESCRIPTION_RE above which at
+    // least admitted "preschoolers". "Preschooler Drop-In" therefore had no title signal at
+    // all and fell through to the description tier, which for a bare programme blurb is
+    // silence. The uninflected "Preschool Storytime" form must keep matching too.
+    for (const title of ['Preschooler Drop-In', 'Preschoolers Gym Time', 'Preschool Storytime']) {
+      expect(classifyKidRelevance(title, ''), title).toEqual({ kidRelevant: true, signal: 'title' });
+    }
+  });
+
   it('rejects the adult programming that actually appears in this feed', () => {
     const adultProgramming: Array<[string, string]> = [
       ['Pins and Needles', 'Pins & Needles welcomes needle workers of all kinds! Gather at the Library for knitting, crocheting, sewing or other fibre arts.'],

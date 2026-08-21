@@ -306,7 +306,7 @@ const ADULT_ONLY_RE =
  * ages", not by the word "chess".
  */
 const KID_TITLE_RE =
-  /\b(?:story\s*time|storytime|babytime|baby|toddler(?:time)?|preschool|kindergarten|lego|duplo|tween|teen|kid|child(?:ren)?|famil(?:y|ies)|summer\s+reading|summer\s+fun|koala\s+koders|tinkercad|crafternoon|stuffy|dungeons\s+and\s+dragons|bubble\s+dance|math\s+lab|book\s+bags?)\b/i;
+  /\b(?:story\s*time|storytime|babytime|baby|toddler(?:time)?|preschool(?:ers?)?|kindergarten|lego|duplo|tween|teen|kid|child(?:ren)?|famil(?:y|ies)|summer\s+reading|summer\s+fun|koala\s+koders|tinkercad|crafternoon|stuffy|dungeons\s+and\s+dragons|bubble\s+dance|math\s+lab|book\s+bags?)\b/i;
 
 /**
  * AGE / AUDIENCE wording in the DESCRIPTION — the secondary signal, for programming whose
