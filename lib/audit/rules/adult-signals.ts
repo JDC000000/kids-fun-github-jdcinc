@@ -21,7 +21,26 @@
 // adult subjects) stays in the rule that owns it.
 import { parseAudienceLabels } from '@/worker/core/age';
 
-/** 18 years in months — worker/core/age.ts's own ADULT_MIN_MONTHS. */
+/**
+ * 18 years in months. DELIBERATELY LOWER than the two other "age of adulthood" constants in this
+ * codebase, and NOT a copy of either: worker/core/age.ts's own ADULT_MIN_MONTHS and
+ * lib/search/filters/audience.ts's ADULT_ONLY_AGE_MIN_MONTHS are both 19 years (228), BC's real
+ * age of majority. An earlier version of this comment claimed to mirror worker/core/age.ts; that
+ * became false when that file moved to 19 and is corrected here.
+ *
+ * DO NOT "align" this to 228. The direction of caution is OPPOSITE between the two roles:
+ *   - Those two are FILTERS. They decide what to HIDE from a child's search results, so a HIGHER
+ *     floor is the cautious setting - it keeps more listings visible only to adults.
+ *   - This is a DETECTOR floor. It decides what to FLAG for a human on the child-safety report, so
+ *     a LOWER floor is the cautious setting. At 216 the auditor reports both 18+ and 19+ listings
+ *     that a child's search can reach; at 228 it would silently stop reporting the 18+ ones.
+ * Raising this number would make the auditor catch LESS, not more.
+ *
+ * Ruled by Jon 2026-08-22, verbatim: "Regarding the adult signals age cutoff from the earlier
+ * brief, yes, I approve your recommendation" - the recommendation being to leave this at 18 and
+ * document why it differs. See _open_notes id kids-fun-3b-adult-signals-third-copy-2026-08-19 in
+ * documents/agent-brains/development-orchestrator/activity/pending-gates.json.
+ */
 export const ADULT_MIN_MONTHS = 18 * 12;
 
 /** Bands whose presence puts the listing in front of a child. */
