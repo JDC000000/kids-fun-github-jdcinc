@@ -9,7 +9,10 @@ import {
   CONSENT_TEXT_VERSION,
   FORM_HEADING,
   FORM_INTRO,
-  MISSING_SENDER_IDENTITY,
+  SENDER_IDENTITY,
+  SENDER_IDENTITY_LEAD,
+  SUPPORT_LINE,
+  SUPPORT_PHONE_HREF,
 } from '@/lib/sms/consent-copy';
 import { SmsSignupForm } from './_components/SmsSignupForm';
 
@@ -83,17 +86,6 @@ export default async function SmsSignupPage() {
   return (
     <main className="kf-sms-signup">
       <div className="kf-sms-signup__panel">
-        {/*
-          DRAFT BANNER — do not delete while any of the three facts below is still missing.
-          Same reasoning as /terms' visible draft notice: a code comment reaches developers, and
-          the person who could be misled by an incomplete consent form is the parent reading the
-          live page. This is also honest to a Toll-Free Verification reviewer, who should not be
-          shown a screenshot that implies a sender identity we have not filled in.
-        */}
-        <p className="kf-sms-signup__draft" role="note">
-          <strong>Draft form.</strong> {MISSING_SENDER_IDENTITY}
-        </p>
-
         <h1 className="kf-sms-signup__heading">{FORM_HEADING}</h1>
         <p className="kf-sms-signup__intro">{FORM_INTRO}</p>
 
@@ -106,6 +98,27 @@ export default async function SmsSignupPage() {
           anything. Bundling them into the consent sentence would make an already-long sentence
           longer and blur what is actually being consented to.
         */}
+        {/* ── CASL sender identification (§1.4), Jon-approved 2026-08-26. ──
+            This block and the support line REPLACED a visible draft banner that stood here while
+            the legal name, mailing address and support contact did not exist. They exist now.
+            Shared from lib/sms/consent-copy.ts with the other surface that needs them, so the
+            address can never be right in one place and stale in the other. */}
+        <section className="kf-sms-signup__identity">
+          <p className="kf-sms-signup__identity-lead">{SENDER_IDENTITY_LEAD}</p>
+          <address className="kf-sms-signup__identity-block">
+            {SENDER_IDENTITY.legalName}, operating as {SENDER_IDENTITY.operatingAs}
+            <br />
+            {SENDER_IDENTITY.mailingAddress}
+            <br />
+            {SENDER_IDENTITY.businessRegistration}
+          </address>
+          <p className="kf-sms-signup__identity-support">
+            {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[0]}
+            <a href={SUPPORT_PHONE_HREF}>{SENDER_IDENTITY.supportPhone}</a>
+            {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[1]}
+          </p>
+        </section>
+
         <ul className="kf-sms-signup__disclosures">
           {CARRIER_DISCLOSURES.map((line) => (
             <li key={line}>{line}</li>

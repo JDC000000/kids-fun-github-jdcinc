@@ -30,19 +30,6 @@
   box-shadow: var(--kf-e-100);
 }
 
-/* The visible draft banner. Deliberately loud and deliberately at the top — same reasoning as
- * /terms' notice: a code comment reaches developers, and the person who could be misled by an
- * incomplete consent form is the parent (or the verification reviewer) reading the live page. */
-.kf-sms-signup__draft {
-  background: var(--kf-expected-bg);
-  color: var(--kf-expected-text);
-  border-radius: var(--kf-r-control);
-  padding: var(--kf-space-3);
-  margin: 0 0 var(--kf-space-5);
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-
 .kf-sms-signup__heading {
   font-size: 1.5rem;
   line-height: 1.25;
@@ -227,4 +214,37 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ── CASL sender identification (§1.4). ──
+ * Quiet but not hidden: this is the block a regulator or a Toll-Free Verification reviewer looks
+ * for, so it must be legible and unambiguous, while not competing with the controls above it.
+ * It replaced a loud amber draft banner that stood here while these facts did not exist. */
+.kf-sms-signup__identity {
+  margin-top: var(--kf-space-5);
+  padding-top: var(--kf-space-4);
+  border-top: 1px solid var(--kf-hairline);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--kf-ink-muted);
+}
+
+.kf-sms-signup__identity-lead {
+  margin: 0 0 var(--kf-space-1);
+  font-weight: 600;
+}
+
+/* <address> italicises by default in every browser; a mailing address on a compliance block reads
+ * better upright, and the semantic element is still the right one. */
+.kf-sms-signup__identity-block {
+  font-style: normal;
+  margin: 0 0 var(--kf-space-2);
+}
+
+.kf-sms-signup__identity-support {
+  margin: 0;
+}
+
+.kf-sms-signup__identity-support a {
+  color: var(--kf-anchor);
 }

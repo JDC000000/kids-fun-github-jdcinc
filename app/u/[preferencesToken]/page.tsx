@@ -1,7 +1,10 @@
 import './preferences.css';
 import {
   CARRIER_DISCLOSURES,
-  MISSING_SENDER_IDENTITY,
+  SENDER_IDENTITY,
+  SENDER_IDENTITY_LEAD,
+  SUPPORT_LINE,
+  SUPPORT_PHONE_HREF,
   PREFS_HEADING,
   PREFS_LAST_WEEK_EMPTY,
   PREFS_LAST_WEEK_HEADING,
@@ -124,12 +127,6 @@ export default async function PreferencesPage({
   return (
     <main className="kf-prefs">
       <div className="kf-prefs__panel">
-        {/* Same visible draft banner as the signup form, from the SAME constant — the missing
-            legal sender name, mailing address and support contact are one set of facts, not two. */}
-        <p className="kf-prefs__draft" role="note">
-          <strong>Draft page.</strong> {MISSING_SENDER_IDENTITY}
-        </p>
-
         <h1 className="kf-prefs__heading">{PREFS_HEADING}</h1>
         <p className="kf-prefs__status" data-status={view.status}>
           {statusLine(view)}
@@ -160,6 +157,27 @@ export default async function PreferencesPage({
           view={view}
           editable={!view.purged && view.status !== 'stopped'}
         />
+
+        {/* ── CASL sender identification (§1.4), Jon-approved 2026-08-26. ──
+            This block and the support line REPLACED a visible draft banner that stood here while
+            the legal name, mailing address and support contact did not exist. They exist now.
+            Shared from lib/sms/consent-copy.ts with the other surface that needs them, so the
+            address can never be right in one place and stale in the other. */}
+        <section className="kf-prefs__identity">
+          <p className="kf-prefs__identity-lead">{SENDER_IDENTITY_LEAD}</p>
+          <address className="kf-prefs__identity-block">
+            {SENDER_IDENTITY.legalName}, operating as {SENDER_IDENTITY.operatingAs}
+            <br />
+            {SENDER_IDENTITY.mailingAddress}
+            <br />
+            {SENDER_IDENTITY.businessRegistration}
+          </address>
+          <p className="kf-prefs__identity-support">
+            {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[0]}
+            <a href={SUPPORT_PHONE_HREF}>{SENDER_IDENTITY.supportPhone}</a>
+            {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[1]}
+          </p>
+        </section>
 
         <ul className="kf-prefs__disclosures">
           {CARRIER_DISCLOSURES.map((line) => (

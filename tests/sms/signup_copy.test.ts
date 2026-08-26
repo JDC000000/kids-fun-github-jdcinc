@@ -13,7 +13,11 @@ import {
   CARRIER_DISCLOSURES,
   CONSENT_CHECKBOX_TEXT,
   CONSENT_TEXT_VERSION,
-  MISSING_SENDER_IDENTITY,
+  SENDER_IDENTITY,
+  SUPPORT_LINE,
+  SUPPORT_PHONE_DISPLAY,
+  SUPPORT_PHONE_E164,
+  ACTIVITY_GONE_BODY,
   OUT_OF_AREA_NOTICE,
   PREFERENCES_LINK_LABEL,
   SPARSE_AREA_NOTICE,
@@ -73,9 +77,46 @@ describe('the CASL / double-opt-in copy (PRD §1.4)', () => {
     expect(WHAT_HAPPENS_NEXT).not.toMatch(/reply yes/i);
   });
 
-  it('renders a visible marker for the sender identity we do not have yet', () => {
-    expect(MISSING_SENDER_IDENTITY).toMatch(/mailing address/i);
-    expect(MISSING_SENDER_IDENTITY).toMatch(/support contact/i);
+  it('carries the real CASL sender identification (Jon-approved 2026-08-26)', () => {
+    // These replaced a deliberate gap marker that rendered a visible draft banner while the three
+    // facts did not exist. CASL's identification rules require a sender name, a mailing address
+    // and a reachable contact on the page linked from every message.
+    expect(SENDER_IDENTITY.legalName).toBe('Jon Cartwright');
+    expect(SENDER_IDENTITY.operatingAs).toBe('KIDS FUN');
+    expect(SENDER_IDENTITY.mailingAddress).toContain('2288 Adanac Street');
+    expect(SENDER_IDENTITY.mailingAddress).toContain('Vancouver, BC V5L 2E8');
+    expect(SENDER_IDENTITY.mailingAddress).toContain('Canada');
+    expect(SENDER_IDENTITY.businessRegistration).toContain('852296375');
+    expect(SENDER_IDENTITY.businessRegistration).toMatch(/sole proprietor/i);
+  });
+
+  it('writes the support number down exactly ONCE, and derives everything from it', () => {
+    // Three surfaces need it (signup footer, preferences footer, the "activity gone" page). A
+    // phone number typed three times is a phone number that will eventually be three different
+    // numbers, so everything derives from SUPPORT_PHONE_E164.
+    expect(SUPPORT_PHONE_E164).toBe('+18778357776');
+    // The display form is the same digits, differently punctuated — asserted rather than assumed.
+    expect(SUPPORT_PHONE_DISPLAY.replace(/[^\d+]/g, '')).toBe(SUPPORT_PHONE_E164);
+    expect(SENDER_IDENTITY.supportPhone).toBe(SUPPORT_PHONE_DISPLAY);
+    expect(SUPPORT_LINE).toContain(SUPPORT_PHONE_DISPLAY);
+    // And it satisfies migration 0034's E.164 CHECK, like every other number this product holds.
+    expect(SUPPORT_PHONE_E164).toMatch(/^\+[1-9][0-9]{7,14}$/);
+  });
+
+  it('the support contact is SMS on the SAME number, not an email or a second line', () => {
+    // Jon's ruling: a subscriber's whole relationship with this product is over SMS, and an email
+    // address would be inventing a channel nobody is watching.
+    expect(SUPPORT_LINE).toMatch(/text us/i);
+    expect(SUPPORT_LINE).toMatch(/same number/i);
+    expect(SUPPORT_LINE).not.toMatch(/@/);
+  });
+});
+
+describe('the "activity gone" interstitial (PRD §8 Q3)', () => {
+  it('is Jon\'s wording VERBATIM — do not smooth it', () => {
+    expect(ACTIVITY_GONE_BODY).toBe(
+      "Oops, looks like that's been canceled! Let me know if you have any other questions. Keep moving."
+    );
   });
 });
 

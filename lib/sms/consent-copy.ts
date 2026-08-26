@@ -25,7 +25,7 @@
  * wording in this file. Date-prefixed so it sorts, suffixed so more than one revision can land
  * on one day.
  */
-export const CONSENT_TEXT_VERSION = '2026-08-26.v1';
+export const CONSENT_TEXT_VERSION = '2026-08-26.v2';
 
 /** What the page is, in one line, above the fields. */
 export const FORM_HEADING = 'Get weekend activity picks by text';
@@ -84,8 +84,8 @@ export const WHAT_HAPPENS_NEXT =
  * !! they change. The claim being made in this comment is only that these are the elements such
  * !! submissions are commonly rejected for missing, not that this list is authoritative.
  *
- * The support contact and mailing address that CASL §1.4 requires are deliberately NOT here:
- * they are real-world facts nobody on the build side may invent. See MISSING_SENDER_IDENTITY.
+ * The support contact and mailing address that CASL §1.4 requires are not in THIS list because
+ * they are sender identification rather than carrier disclosure. See SENDER_IDENTITY.
  */
 export const CARRIER_DISCLOSURES: readonly string[] = [
   'Message frequency: 1 message per week, plus a one-time confirmation message.',
@@ -94,16 +94,60 @@ export const CARRIER_DISCLOSURES: readonly string[] = [
 ];
 
 /**
- * !! NOT COPY — A GAP MARKER. CASL's identification rules require a legal sender name, a mailing
- * !! address and a reachable support contact, and PRD §1.4 puts them in the preferences-page
- * !! footer, checked at the sign-off gate before this form sees real traffic. None of the three
- * !! is invented here, because inventing a business address is worse than lacking one. The form
- * !! renders this marker so a reviewer LOOKING AT THE PAGE sees the hole rather than having to
- * !! know to look for it — the same reason /terms renders its visible draft banner.
+ * THE SUPPORT CONTACT, AND THE ONE PLACE THE NUMBER IS WRITTEN DOWN.
+ *
+ * It is the KIDS FUN toll-free number itself — the same number the weekly texts come FROM, reached
+ * by replying to any of them or texting it directly. No email, no second number: a subscriber's
+ * whole relationship with this product is over SMS, and giving them an email address to write to
+ * would be inventing a channel nobody is watching.
+ *
+ * WRITTEN ONCE. Three surfaces need it (the signup form's footer, the preferences page's footer,
+ * and the "activity gone" interstitial's "let me know if you have any other questions"), and a
+ * phone number typed three times is a phone number that will eventually be three different
+ * numbers. Everything else derives from these two constants.
+ *
+ * NOT env config, deliberately: this is a business FACT like the mailing address below, not a
+ * per-environment value. The outbound sender comes from TWILIO_MESSAGING_SERVICE_SID
+ * (lib/sms/config.ts) and is a separate concern — this constant exists only to be DISPLAYED.
  */
-export const MISSING_SENDER_IDENTITY =
-  'Draft — the legal sender name, mailing address and support contact required by CASL are not ' +
-  'filled in yet and must be added before this form is shown to real traffic.';
+export const SUPPORT_PHONE_E164 = '+18778357776';
+/** The same number, as a human reads it. */
+export const SUPPORT_PHONE_DISPLAY = '+1 877-835-7776';
+
+/** `tel:` href for the support number, so a phone can dial or text it from a tap. */
+export const SUPPORT_PHONE_HREF = `tel:${SUPPORT_PHONE_E164}`;
+
+/**
+ * The CASL sender identification (PRD §1.4), Jon-approved 2026-08-26.
+ *
+ * CASL's identification rules require every commercial electronic message to identify the sender
+ * and give a way to reach them — and, because a text has no room for it, the rules permit that
+ * identification to live one click away on a linked page. That page is the preferences/hub page
+ * linked in every message, which is why this block renders there and on the signup form.
+ *
+ * These replaced a deliberate gap marker that rendered a visible "draft" banner on both surfaces
+ * while the three facts did not exist. They exist now, so the banner is gone.
+ *
+ * Business registration is included even though Twilio's Toll-Free Verification API lists
+ * `BusinessRegistrationNumber` as "required for all business types EXCEPT SOLE_PROPRIETOR"
+ * (checked 2026-08-26 against twilio.com/docs/messaging/compliance/toll-free/api-onboarding — see
+ * the round-9 notes). Jon is a sole proprietor, so it is optional there; it is stated here anyway
+ * because CASL identification is better served by more precision, not less.
+ */
+export const SENDER_IDENTITY = {
+  legalName: 'Jon Cartwright',
+  operatingAs: 'KIDS FUN',
+  mailingAddress: '2288 Adanac Street, Vancouver, BC V5L 2E8, Canada',
+  businessRegistration: 'CRA Business Number 852296375 (sole proprietor)',
+  supportPhone: SUPPORT_PHONE_DISPLAY,
+} as const;
+
+/** One-line lead-in above the identity block, so it reads as a statement rather than a data dump. */
+export const SENDER_IDENTITY_LEAD = 'These messages are sent by:';
+
+/** How to reach a human, stated in the same breath as who is sending. */
+export const SUPPORT_LINE =
+  `Questions? Text us at ${SUPPORT_PHONE_DISPLAY} - the same number your picks come from.`;
 
 /**
  * The sparse-municipality warning, shown inline BEFORE submit when the typed postal code lands
@@ -156,10 +200,9 @@ export const SUBMITTED_BODY =
 //
 // LIVES HERE RATHER THAN IN THE PAGE, for the same reason the signup copy does: this page carries
 // the CASL footer and the unsubscribe wording, and both are things a regulator reads. It also
-// SHARES `MISSING_SENDER_IDENTITY` and `CARRIER_DISCLOSURES` with the signup form rather than
-// restating them — the legal sender name, mailing address and support contact are the same three
-// missing facts on both surfaces, and two hand-written copies would be two things to remember to
-// fill in.
+// SHARES `SENDER_IDENTITY` and `CARRIER_DISCLOSURES` with the signup form rather than restating
+// them — the legal sender name, mailing address and support contact are the same facts on both
+// surfaces, and two hand-written copies would eventually be two different addresses.
 
 export const PREFS_HEADING = 'Your KIDS FUN texts';
 
@@ -237,3 +280,27 @@ export const PREFS_UNKNOWN_TOKEN_HEADING = 'This link is not working';
 export const PREFS_UNKNOWN_TOKEN_BODY =
   'It may be incomplete, or it may belong to a subscription that has since been deleted. ' +
   'You can sign up again any time.';
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE "ACTIVITY GONE" INTERSTITIAL (PRD §8 Q3, Jon-approved 2026-08-26)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// Where a tapped weekly link goes when the token verified but the activity has since been
+// archived — a cancelled session, a source that stopped publishing. Round 6 built the distinct
+// `occurrence_gone` outcome and sent it to /search because no such page existed; this is that
+// page's copy, and the outcome now has somewhere of its own to go.
+
+/**
+ * Jon's wording, VERBATIM. Do not smooth it — the voice is the point, and it is the one piece of
+ * copy on this branch written by the product owner rather than drafted and approved.
+ */
+export const ACTIVITY_GONE_BODY =
+  "Oops, looks like that's been canceled! Let me know if you have any other questions. Keep moving.";
+
+/**
+ * "Let me know if you have any other questions" needs somewhere to be let known. It points at the
+ * SAME support contact as everything else — see SUPPORT_PHONE_E164 for why the number is written
+ * down exactly once.
+ */
+export const ACTIVITY_GONE_HEADING = 'That one is gone';
+export const ACTIVITY_GONE_ONWARD = 'See what else is on this weekend';
