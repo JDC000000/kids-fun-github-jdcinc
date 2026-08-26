@@ -1606,3 +1606,126 @@ not run — no database here, and no Postgres has parsed any of the four migrati
 The version-bump discipline worked as designed: changing this copy broke the copy test, which is
 what that test is for. `CONSENT_TEXT_VERSION` is now `2026-08-26.v2` and the assertions were updated
 to the new facts rather than relaxed.
+
+---
+---
+
+# Round 11 — the welcome text (PRD §2.1 / §2.6)
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+
+PRD §2.1 is one sentence with two halves: *"JOIN reply (tolerant match) → status = active,
+confirmed_timestamp set → same send path immediately fires one static welcome text."* Round 5 built
+the first half. This is the second.
+
+| file | change |
+|---|---|
+| `lib/sms/welcome.ts` | **NEW** — the welcome-send step |
+| `lib/sms/message.ts` | `renderWelcomeMessage`; **extension-table correction** (see §ap) |
+| `lib/sms/signup-validate.ts` | `agesFromBirthYears` — the inverse of `birthYearFromAge`, moved beside it |
+| `lib/sms/preferences.ts` | `childAgesFrom` delegates rather than keeping a second implementation |
+| `app/api/sms/inbound/route.ts` | `confirmAndWelcome` — the JOIN branch |
+| `tests/sms/welcome.test.ts` | **NEW**, 17 tests |
+| `tests/sms/weekly_send.test.ts` | the welcome added to the all-templates GSM-7 wall |
+
+---
+
+## ap. A correction to this branch's own GSM-7 implementation
+
+**Implementing §2.6's approved welcome copy broke the guard — for a reason that was not true.**
+
+The copy contains *"land Friday ~4pm"*. Round 4's `GSM7_BASIC` deliberately excluded the GSM 03.38
+**extension table** (`^ { } \ [ ~ ] | €`) with the comment: *"they are encodable, but each one
+costs TWO characters of the budget, which makes them a trap rather than a saving."*
+
+The reasoning about cost was right. **Leaving them out of the set was not**, because it made
+`isGsm7` conflate two different things — *"not in the basic table"* and *"forces UCS-2"*. A message
+containing `~` is **GSM-7 with one double-width character**, not a UCS-2 message. The old code
+reported it as UCS-2 at 70 characters per segment, and `assertGsm7Safe` would have rejected Jon's
+own approved wording.
+
+Fixed properly rather than by editing the copy: a `GSM7_EXTENDED_SET`, a `septetCost` helper, and
+`estimateSegments` now measuring **septets** rather than characters — which is the unit the segment
+budget is actually in.
+
+**The round-4 finding is unaffected and still stands.** An em dash is in *neither* table, so UCS-2
+was and is the correct verdict for it, and the 3-segments-vs-1 measurement is untouched. Only these
+nine characters were misclassified. A test pins both facts side by side.
+
+---
+
+## aq. Where the dispatch belongs — **not inside `confirmSubscriber`**, and not merely for symmetry
+
+The lean was to keep the transition decision-only and let the route trigger the send. That is what
+was built, but the reason is stronger than consistency:
+
+`confirmSubscriber` decides against **`ConsentRow`**, which is `{ id, status, stoppedAt }`, and
+whose own doc says why:
+
+> *Deliberately the minimum: no phone number, no postal code, no birth years. A decision function
+> that cannot see personal data cannot leak it into a result object or a log line.*
+
+The welcome text needs **a phone number** (to send to), **a postal code** (to name the area),
+**birth years** (to name the ages) and **a preferences token** (for the link). **Every one of those
+is a field `ConsentRow` deliberately excludes.** Putting the send inside the transition would mean
+widening that type with exactly the four things it was defined to keep out, and round 5's property
+— that a consent *decision* cannot leak personal data — would be gone.
+
+So the decision layer stays PII-free and `sendWelcomeText` does its own read, keyed on the `id` the
+transition already resolved.
+
+**The guard is a positive test on `applied`**, not a list of exclusions, so a future outcome is
+silent by default rather than accidentally triggering a text. What each other outcome means:
+
+| outcome | why it must send nothing |
+|---|---|
+| `already_in_state` | they were **already active** — a repeat JOIN is normal (a parent replying twice, a carrier redelivering) and re-welcoming them is the duplicate-message failure this ordering prevents |
+| `awaiting_confirmation` | not reachable from JOIN today (it is START's pending case), but covered by the positive guard anyway |
+| `no_such_subscriber` | there is nobody to welcome |
+| `dry_run` | nothing was written, so nothing should be announced |
+| `error` | the transition failed; a welcome would announce something that did not happen |
+
+**The welcome never changes what the webhook returns.** `sendWelcomeText` does not throw and its
+result is deliberately discarded: the subscription is already active, which is the part that
+matters, and a non-2xx would make Twilio **retry the whole inbound message and replay the
+transition**. One lost welcome beats one duplicated confirmation.
+
+---
+
+## ar. Reuse rather than second implementations
+
+- **The area label** comes from `areaLabelForPostal` (lib/geo/postal-fsa) — the same resolver the
+  weekly send uses, so the area named in the welcome is the area the picker will actually search.
+- **The ages** come from `agesFromBirthYears`, which this round **moved beside its own inverse**
+  (`birthYearFromAge`) in `signup-validate.ts`. It previously lived in `preferences.ts` and read the
+  local year through `Intl` directly while its inverse used `localIsoDate` — *two ways of asking
+  what year it is in Vancouver, which is one more than is safe on December 31st.* Both now go
+  through `localIsoDate`. `childAgesFrom` is kept as a delegating export so its existing callers are
+  unchanged.
+- **The dispatch and the send-log write** are `dispatchSms` and `recordSmsSend` from
+  `weekly-send-io.ts` — one Twilio call site, one `sms_send_log` writer, one place that knows the
+  columns. `SendLogType` already listed `'welcome'`; this is its first caller.
+
+**Two small deliberate choices inside the loader**, both in its doc comment: it is keyed on `id`
+rather than the phone number (the transition already resolved it, and re-matching would be a second
+place that has to get 0034's purge semantics right), and it has **no `status = 'active'` clause** —
+re-asserting a status that was just set introduces a race with nothing to gain.
+
+**The copy degrades in two independent directions.** An unresolvable postal code drops the area
+clause; an empty age list drops the ages clause. Neither prints a placeholder — *"for null, ages"*
+would be a worse first impression than a shorter sentence. Both are tested.
+
+---
+
+## as. Verification
+
+17 new tests. The copy matches §2.6's shape exactly; the welcome passes the same
+`assertGsm7Safe` wall as every other template **and has been added to the all-templates wall test**
+so it is not exempt; the `~`-is-two-septets correction is pinned alongside the em-dash-is-UCS-2 fact;
+exactly one dispatch and one `sms_send_log` row with `send_type = 'welcome'` and
+`picks_snapshot: null`; dry-run by default writes nothing; missing subscriber, Twilio failure and a
+21610 carrier opt-out each map to the right log outcome; nothing throws and no error string carries
+the number; and the JOIN guard sends for `applied` and for **no** other outcome.
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **264 tests across 16
+files**. Full `unit` lane: **222 files / 3730 tests passing**.
