@@ -17,6 +17,7 @@ import {
   assertGsm7Safe,
   estimateSegments,
   renderConfirmRequestMessage,
+  renderUnknownKeywordMessage,
 } from '@/lib/sms/message';
 import {
   sendConfirmationRequest,
@@ -24,7 +25,8 @@ import {
 } from '@/lib/sms/signup-store';
 import { areaLabelForPostal, REGION_LABEL } from '@/lib/geo/postal-fsa';
 import { parseSmsSignupBody, type SmsSignup } from '@/lib/sms/signup-validate';
-import type { RecordSendInput } from '@/lib/sms/weekly-send-io';
+import type { RecordSendInput } from '@/lib/sms/send-log';
+import { dispatchSms } from '@/lib/sms/twilio-client';
 
 const NOW = new Date('2026-08-26T19:00:00Z');
 
@@ -65,11 +67,23 @@ afterEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the confirmation request (PRD §2.6)', () => {
-  it("is §2.6's wording VERBATIM", () => {
+  it("is §2.6's wording VERBATIM, with Jon's HELP clause", () => {
     expect(renderConfirmRequestMessage('Vancouver').body).toBe(
       'KIDS FUN: Reply JOIN to confirm weekly kid activity picks for Vancouver. ' +
-        'Msg&data rates may apply. Reply STOP to opt out anytime.'
+        'Msg&data rates may apply. Reply STOP to opt out anytime, or HELP for info.'
     );
+  });
+
+  it('names HELP in the SAME words the other templates use', () => {
+    // Round 12 flagged that this message carried STOP but not HELP, while CTIA's Messaging
+    // Principles expect an opt-in confirmation to carry both. Jon's ruling extended the existing
+    // sentence rather than adding a new one, reusing the phrase already in the unknown-keyword
+    // reply — so a parent meets one wording for the same instruction wherever they meet it.
+    const confirm = renderConfirmRequestMessage('Vancouver').body;
+    expect(confirm).toContain('HELP for info');
+    expect(renderUnknownKeywordMessage(null).body).toContain('HELP for info');
+    // One sentence, not two: the opt-out and the help instruction share it.
+    expect(confirm).toContain('Reply STOP to opt out anytime, or HELP for info.');
   });
 
   it('says JOIN and never YES', () => {
@@ -80,12 +94,15 @@ describe('the confirmation request (PRD §2.6)', () => {
     expect(body).not.toMatch(/reply yes/i);
   });
 
-  it('carries the brand tag, the rates disclosure and a free opt-out', () => {
-    // The three things a carrier / TFV reviewer looks for on a confirmation message.
+  it('carries all four things a carrier / TFV reviewer looks for', () => {
+    // Brand identity, message purpose incl. frequency, the rates disclosure, and BOTH keyword
+    // instructions. The fourth is what Jon's ruling added.
     const body = renderConfirmRequestMessage('Burnaby').body;
     expect(body.startsWith('KIDS FUN:')).toBe(true);
+    expect(body).toContain('weekly');
     expect(body).toContain('Msg&data rates may apply.');
-    expect(body).toContain('Reply STOP to opt out anytime.');
+    expect(body).toContain('Reply STOP to opt out anytime');
+    expect(body).toContain('HELP');
   });
 
   it('uses its OWN opt-out sentence, not the STOP_LINE every other template ends with', () => {
@@ -107,15 +124,32 @@ describe('the confirmation request (PRD §2.6)', () => {
   });
 
   it('stays inside ONE segment for every area we cover, including the longest', () => {
-    // The measurement, not an assumption. "North Vancouver" is the worst case at 135 septets of
-    // the 160 a single GSM-7 segment holds, so the whole covered set fits with 25 to spare — the
-    // headroom any future addition to this copy has to fit inside.
+    // THE MEASUREMENT, RE-RUN AFTER JON'S HELP CLAUSE — not adjusted from the old number.
+    // "North Vancouver" is the worst case at 153 septets of the 160 a single GSM-7 segment holds.
     for (const label of Object.values(REGION_LABEL)) {
       const estimate = estimateSegments(renderConfirmRequestMessage(label).body);
       expect(estimate.encoding, label).toBe('GSM-7');
       expect(estimate.segments, label).toBe(1);
     }
-    expect(estimateSegments(renderConfirmRequestMessage('North Vancouver').body).characters).toBe(135);
+    expect(estimateSegments(renderConfirmRequestMessage('North Vancouver').body).characters).toBe(153);
+    expect(estimateSegments(renderConfirmRequestMessage(null).body).characters).toBe(133);
+  });
+
+  it('has 7 septets of headroom left, which bounds any FUTURE edit to this copy', () => {
+    // The HELP clause cost 18 septets and took the headroom from 25 to 7. Pinned as a number
+    // rather than described, because it is now the tightest template this product sends and the
+    // next person to add a word to it needs to know that before they do.
+    const worst = estimateSegments(renderConfirmRequestMessage('North Vancouver').body);
+    expect(160 - worst.characters).toBe(7);
+
+    // Restated as the constraint that actually matters if coverage ever expands beyond the five
+    // municipalities: an area label of 22 characters still fits, 23 does not.
+    expect(estimateSegments(renderConfirmRequestMessage('x'.repeat(22)).body).segments).toBe(1);
+    expect(estimateSegments(renderConfirmRequestMessage('x'.repeat(23)).body).segments).toBe(2);
+    // Every Metro Vancouver name a future round could plausibly add is inside that.
+    for (const candidate of ['New Westminster', 'Port Coquitlam', 'Maple Ridge', 'White Rock']) {
+      expect(estimateSegments(renderConfirmRequestMessage(candidate).body).segments, candidate).toBe(1);
+    }
   });
 
   it('drops the area clause rather than printing a placeholder', () => {
@@ -123,6 +157,7 @@ describe('the confirmation request (PRD §2.6)', () => {
     // but the renderer is pure and must not rely on its one caller's guarantee.
     const body = renderConfirmRequestMessage(null).body;
     expect(body).toContain('confirm weekly kid activity picks. Msg&data');
+    expect(body).toContain('or HELP for info.');
     expect(body).not.toContain('null');
     expect(body).not.toContain(' for .');
     assertGsm7Safe(body);
@@ -284,11 +319,44 @@ describe('sendConfirmationRequest', () => {
     expect(result.outcome).toBe('sent');
   });
 
-  it('the default seams are inert — an unwired real send does not reach Twilio', async () => {
-    // `dispatchSms` is still a stub, so this is the honest current state of the branch: the
-    // MESSAGE is real, the transport is not.
+  it('an unwired real send now reaches the REAL Twilio client, and fails closed', async () => {
+    // Round 16 replaced the `dispatchSms` stub with an actual Messages API call. With no
+    // credentials in the environment the call path is still reachable and still safe — it returns
+    // the client's own "not configured" failure rather than the old
+    // 'not implemented (draft scaffold)'. That difference IS the proof the stub is gone.
     const result = await sendConfirmationRequest(SIGNUP, { dryRun: false, subscriberId: null });
     expect(result.outcome).toBe('error');
+    expect(result.error).toBe('twilio credentials not configured');
     expect(result.segments).toBe(1); // built and costed all the same
+  });
+
+  it('hands the REAL dispatcher the number and the rendered body', async () => {
+    // The seam under test is the wiring, not Twilio: a fake client stands in for the socket, and
+    // what is asserted is that this call site passes the right two things to the shared
+    // dispatcher rather than reimplementing a send of its own.
+    vi.stubEnv('TWILIO_ACCOUNT_SID', `AC${'a'.repeat(32)}`);
+    vi.stubEnv('TWILIO_AUTH_TOKEN', 'token');
+    vi.stubEnv('TWILIO_MESSAGING_SERVICE_SID', `MG${'b'.repeat(32)}`);
+    const sent: Array<{ to: string; body: string }> = [];
+    const result = await sendConfirmationRequest(SIGNUP, {
+      dryRun: false,
+      subscriberId: null,
+      dispatch: (phone, message, opts) =>
+        dispatchSms(phone, message, {
+          ...opts,
+          client: {
+            messages: {
+              create: async (o) => {
+                sent.push({ to: o.to, body: o.body });
+                return { sid: 'SM_ok', status: 'queued' };
+              },
+            },
+          },
+        }),
+    });
+    expect(result.outcome).toBe('sent');
+    expect(sent).toEqual([
+      { to: '+16045550123', body: renderConfirmRequestMessage('Vancouver').body },
+    ]);
   });
 });

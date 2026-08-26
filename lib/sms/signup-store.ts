@@ -16,7 +16,8 @@ import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { smsSendingEnabled } from './config';
 import { renderConfirmRequestMessage } from './message';
 import type { SmsSignup } from './signup-validate';
-import { dispatchSms, recordSmsSend, type DispatchResult } from './weekly-send-io';
+import { dispatchSms, type DispatchResult } from './twilio-client';
+import { recordSmsSend } from './send-log';
 
 export type SignupWriteOutcome =
   | 'created'

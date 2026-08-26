@@ -14,8 +14,9 @@
 // ── WHAT IS REAL HERE AND WHAT IS A STUB ────────────────────────────────────────────────
 // REAL: the deps loading shape, the per-subscriber flow, the dry-run gate, the outcome mapping,
 // the empty-week/pause transition wiring, and the PII discipline. All of it runs today.
-// STUB: `loadActiveSubscribers`, `dispatchSms`, `recordSmsSend`, `applyEmptyWeekState` and
-// `markStoppedViaCarrier`. `sms_consent` and `sms_send_log` exist only as unapplied SQL
+// STUB: `loadActiveSubscribers`, `applyEmptyWeekState` and `markStoppedViaCarrier`.
+// REAL AS OF ROUND 16: `dispatchSms` (lib/sms/twilio-client.ts) issues an actual Twilio Messages
+// API call. `recordSmsSend` (lib/sms/send-log.ts) is still a stub. `sms_consent` and `sms_send_log` exist only as unapplied SQL
 // (migrations 0034/0035) and nobody on this branch holds write credentials, so each carries the
 // exact query it will issue and its non-obvious notes. Same posture as
 // lib/sms/consent-transitions.ts and lib/sms/signup-store.ts.
@@ -45,7 +46,27 @@ import {
   type SmsSubscriber,
   type WeeklySmsPlan,
 } from './weekly-send';
-import type { RenderedMessage } from './message';
+import { dispatchSms, type DispatchResult } from './twilio-client';
+import { recordSmsSend, type SendLogType } from './send-log';
+
+// ── Re-exported so every existing importer of this module keeps working ─────────────────
+// `dispatchSms` and `recordSmsSend` moved to lib/sms/twilio-client.ts and lib/sms/send-log.ts in
+// round 16 — see those files' headers for why. They are re-exported rather than left as a
+// breaking change because this module is the documented I/O boundary for the weekly send, and
+// there is no reason for its own callers to care that two functions changed file.
+export {
+  dispatchSms,
+  twilioClient,
+  TWILIO_ERROR_OPTED_OUT,
+  type DispatchOutcome,
+  type DispatchResult,
+} from './twilio-client';
+export {
+  recordSmsSend,
+  type SendLogOutcome,
+  type SendLogType,
+  type RecordSendInput,
+} from './send-log';
 
 // ── Deps: load the read model ONCE, reuse it for every subscriber ───────────────────────
 
@@ -191,105 +212,6 @@ export const loadRecentlySentPickIds: RecentPickIdsLoader = async () => {
   // Draft scaffold: sms_send_log is unapplied SQL and this branch holds no read credentials.
   return new Set<string>();
 };
-
-export type DispatchOutcome = 'sent' | 'dry_run' | 'stopped_via_carrier' | 'failed';
-
-export interface DispatchResult {
-  outcome: DispatchOutcome;
-  twilioSid: string | null;
-  /** Twilio's numeric error code, when it gave one. Kept for the 21610 branch and the log. */
-  errorCode: number | null;
-  /** Safe to log — never contains the number or the body. */
-  error?: string;
-}
-
-/**
- * Twilio error code for "the recipient has opted out at the carrier level".
- *
- * PRD §2.2 step 6 makes this a SEND-TIME SAFEGUARD independent of the inbound webhook: if the
- * STOP webhook was missed or is late, this is how we find out — at the moment we try to text
- * someone who has told the carrier not to hear from us. It is the second of two independent
- * paths into `status = 'stopped'`, and the faster one.
- */
-export const TWILIO_ERROR_OPTED_OUT = 21610;
-
-/**
- * Send one message. STUB.
- *
- * TODO: POST https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json with
- *   MessagingServiceSid = TWILIO_MESSAGING_SERVICE_SID, To = the E.164 number, Body = the
- *   rendered body, and a StatusCallback pointing at the delivery-status route. Basic auth with
- *   TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN (lib/sms/config.ts — never logged, never returned).
- *
- * ON `dryRun` IT MUST RETURN WITHOUT DISPATCHING, and it must still return the same result shape,
- * so the whole pipeline is verifiable end-to-end with zero real messages — the posture
- * lib/email/resend.ts takes with its payload.
- *
- * ERROR MAPPING, the one part that is not boilerplate: a 21610 response is NOT a failure to
- * retry. It is the carrier telling us this number has opted out, and the correct handling is to
- * mark the subscriber stopped immediately (see TWILIO_ERROR_OPTED_OUT) rather than to log a
- * failed send and try again next Friday. Every other error code is a genuine 'failed'.
- *
- * NOTHING THIS FUNCTION RETURNS MAY CONTAIN THE NUMBER OR THE BODY — see the file header.
- */
-export async function dispatchSms(
-  _phoneNumber: string,
-  _message: RenderedMessage,
-  options: { dryRun: boolean }
-): Promise<DispatchResult> {
-  if (options.dryRun) return { outcome: 'dry_run', twilioSid: null, errorCode: null };
-  return {
-    outcome: 'failed',
-    twilioSid: null,
-    errorCode: null,
-    error: 'not implemented (draft scaffold)',
-  };
-}
-
-export type SendLogOutcome = 'sent' | 'empty' | 'paused' | 'stopped_via_carrier' | 'failed';
-export type SendLogType = 'confirm_request' | 'welcome' | 'weekly' | 'empty_week' | 'pause_notice';
-
-export interface RecordSendInput {
-  subscriberId: string;
-  sendType: SendLogType;
-  outcome: SendLogOutcome;
-  picksSnapshot: Array<{ occurrence_id: string; rank: number }> | null;
-  twilioSid: string | null;
-  consentTextVersion: string;
-}
-
-/**
- * Append one `sms_send_log` row — the per-subscriber watermark AND the CASL audit trail. STUB.
- *
- * TODO:
- *   INSERT INTO sms_send_log
- *     (subscriber_id, phone_hash, phone_hash_version, send_type, picks_snapshot,
- *      outcome, twilio_sid, consent_text_version)
- *   VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
- *
- * GET THESE FOUR RIGHT — a future implementation copies this shape verbatim:
- *
- *   phone_hash          NOT NULL on EVERY row, including rows whose subscriber still exists.
- *                       Populating it only after a purge would leave the pre-purge history
- *                       unsearchable by number, which is the only way anyone will ever search it
- *                       (migration 0035). Salted with SMS_PHONE_HASH_SALT.
- *   phone_hash_version  The salt generation that produced it. Without it, rotating the salt
- *                       silently makes every historical hash unmatchable, with no error anywhere.
- *   picks_snapshot      Weekly sends ONLY — migration 0035 has a CHECK enforcing it, so passing
- *                       an array on an 'empty_week' row fails the insert. `picksSnapshot()`
- *                       already returns null for every non-'picks' plan.
- *   consent_text_version  The wording in force AT SEND TIME, COPIED not joined. A join would
- *                       report today's wording for a message sent under last year's, which is
- *                       precisely the fact an audit is asking about.
- *
- * DRY RUNS DO NOT REACH HERE AT ALL. `weekly_email_send` carries a `dry_run` column and records
- * both; this table has no such column by design (migration 0035 defines it as a record of
- * messages that were SENT), so the orchestrator simply does not call this on a dry run. Same net
- * effect as the email job's watermark rule — a verification run never moves real state.
- */
-export async function recordSmsSend(_input: RecordSendInput): Promise<void> {
-  // Draft scaffold: sms_send_log is unapplied SQL.
-}
 
 /**
  * Write back `consecutive_empty_weeks` and `status` after a week. STUB.

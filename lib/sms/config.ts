@@ -146,6 +146,27 @@ export function twilioMessagingServiceSid(): string | null {
   return env('TWILIO_MESSAGING_SERVICE_SID') ?? null;
 }
 
+/**
+ * The absolute URL Twilio should POST delivery receipts to, or null if unconfigured.
+ *
+ * ONE VALUE FOR BOTH SIDES, and that is the point rather than a convenience: `dispatchSms` sends
+ * this string to Twilio as the `StatusCallback` parameter, and app/api/sms/status/route.ts
+ * verifies the resulting POST's signature against the same string. Twilio computes that signature
+ * over the full URL it was given, so the two MUST be character-identical — deriving one from the
+ * other, or rebuilding it from request headers, is how a signature check silently starts failing
+ * in production. Same reasoning as `webhookPublicUrl` below, one step further: here we control
+ * both ends, so a single config value makes them consistent by construction.
+ *
+ * SEPARATE FROM `webhookPublicUrl` because they are different routes with different Twilio console
+ * configuration; sharing one would mean delivery receipts arriving at the inbound message handler.
+ *
+ * Null means no callback is requested at all — the send still happens, and
+ * `sms_send_log.delivery_status` simply never gets its later truth.
+ */
+export function statusCallbackUrl(): string | null {
+  return env('SMS_STATUS_CALLBACK_URL') ?? null;
+}
+
 /** HMAC secret for short-link tokens, or null if unconfigured. */
 export function shortLinkSecret(): string | null {
   return env('SMS_SHORT_LINK_SECRET') ?? null;

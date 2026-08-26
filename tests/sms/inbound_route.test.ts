@@ -219,7 +219,10 @@ describe('startReplyFor — the three-way mapping', () => {
     expect(startReplyFor('awaiting_confirmation')).toBe(CONFIRM_AGAIN);
     expect(startReplyFor('awaiting_confirmation')).toContain('Reply JOIN to confirm');
     // Degraded by design: no area clause, because this reply does no database read.
-    expect(startReplyFor('awaiting_confirmation')).not.toContain(' for ');
+    // Asserted against the ACTUAL clause, not against the substring " for " — that proxy broke
+    // the moment Jon's approved copy added "or HELP for info.", which is a different " for ".
+    expect(startReplyFor('awaiting_confirmation')).toContain('activity picks. Msg&data');
+    expect(startReplyFor('awaiting_confirmation')).not.toMatch(/picks for /);
   });
 
   it('every other outcome is SILENT, and the guard is a positive test', () => {

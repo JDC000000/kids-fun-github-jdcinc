@@ -2335,3 +2335,167 @@ three degradation paths; and an archived pick staying listed. Gone-from-hub: `oc
 
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **328 tests across 18
 files**. Full `unit` lane: **224 files / 3794 tests passing**.
+
+---
+
+# Round 16 — Jon's HELP clause, and the real Twilio integration
+
+## bp. The confirmation-request HELP clause (Jon-approved) — MEASURED, not estimated
+
+New copy: `Reply STOP to opt out anytime, or HELP for info.` This closes PRD v3.7's last open item
+(the round-12 CTIA flag).
+
+**The real numbers, from the suite rather than from arithmetic:**
+
+| area | septets | segments |
+|---|---|---|
+| *(no area)* | **133** | 1 |
+| Burnaby | 145 | 1 |
+| Richmond | 146 | 1 |
+| Vancouver | 147 | 1 |
+| West Vancouver | 152 | 1 |
+| **North Vancouver** | **153** | **1** |
+
+The Operator's estimate was 133 exactly for the no-area case and "~152 with a long area name" —
+152 is right for West Vancouver, and the true worst case is 153.
+
+🔴 **Headroom went from 25 septets to 7.** This is now the tightest template the product sends.
+Restated as the constraint that will actually bite: **an area label of 22 characters still fits, 23
+does not.** Every Metro Vancouver name a coverage expansion could plausibly add is inside that
+(New Westminster 15, Port Coquitlam 14, Maple Ridge 11, White Rock 10) — but "City of North
+Vancouver" (23) is not. Pinned by a test that asserts both sides of the boundary.
+
+`HELP for info` is the **exact phrase** already in `renderUnknownKeywordMessage`, reused so a
+parent meets one wording for the same instruction wherever they meet it. Not hoisted into a shared
+constant: three occurrences of a four-word phrase inside three different sentences is copy, not a
+rule, and hoisting would make each sentence unreadable at its own call site to enforce something a
+test asserts more cheaply.
+
+**One fragile assertion surfaced.** `inbound_route.test.ts` proved "no area clause" with
+`not.toContain(' for ')`, which broke the moment the approved copy added "or HELP **for** info."
+The intent was right and the proxy was lazy; now asserted against the actual clause
+(`not.toMatch(/picks for /)`).
+
+## bq. The Twilio integration is real code now
+
+| File | What |
+|---|---|
+| `lib/sms/twilio-client.ts` | **NEW** — real `dispatchSms`, memoised client, error mapping |
+| `lib/sms/send-log.ts` | **NEW** — `recordSmsSend` moved out (still a stub) |
+| `lib/sms/delivery-status.ts` | **NEW** — parse/verify/record the callback |
+| `app/api/sms/status/route.ts` | **NEW** — the `StatusCallback` endpoint |
+| `lib/sms/config.ts` | `statusCallbackUrl()` |
+| `lib/sms/weekly-send-io.ts` | definitions removed, re-exported |
+| `lib/sms/welcome.ts`, `signup-store.ts` | import from the new modules |
+| `tests/sms/twilio_client.test.ts` | **NEW**, 16 tests |
+| `tests/sms/delivery_status.test.ts` | **NEW**, 20 tests |
+
+### bq.1 — Web access: I HAVE it, and I used it
+
+Checked rather than assumed (`curl` to twilio.com returned 200). Two things were verified against
+sources rather than recalled:
+
+1. **The SDK surface**, read from `node_modules/twilio` at version **6.1.0** — `MessageStatus`
+   union, `MessageListInstanceCreateOptions`, `RestException` (`{status, code, message}`), and the
+   `httpClient` injection point. Also exercised at runtime to confirm `RestException` carries
+   `code` as a number.
+2. **The status-callback contract**, from Twilio's own docs page: POST,
+   `application/x-www-form-urlencoded`, `MessageSid` / `MessageStatus` / `SmsSid` / `SmsStatus` /
+   `ErrorCode`, and the warning that properties "vary by messaging channel and event type and are
+   subject to change… Twilio occasionally adds new properties without advance notice."
+
+That warning is honoured structurally: the signature is verified over the whole `URLSearchParams`
+rather than a list of expected fields, and an unrecognised `MessageStatus` is stored verbatim
+(0035's `delivery_status` is plain text with no CHECK, which now has a reason attached).
+
+### bq.2 — How it is tested without an account
+
+**Differentially, against the real SDK, with no network.** The genuine `twilio` client is
+constructed with its documented `httpClient` option pointed at a fake, so the SDK does all the
+request shaping and the assertions are on what it actually produced:
+
+```
+POST https://api.twilio.com/2010-04-01/Accounts/{AC…}/Messages.json
+{ To, Body, MessagingServiceSid, StatusCallback }
+```
+
+A hand-written fake asserting our code called our own fake would pass on a wrong field name, a
+wrong URL, or a `From` where a `messagingServiceSid` belongs. This will not.
+
+**What genuinely cannot be verified here, stated plainly:** that Twilio's servers accept the
+request, and that a real toll-free number is provisioned behind the Messaging Service. Those need
+the credential and the account. Everything up to the socket is covered.
+
+### bq.3 🔴 The PII rule is hardest to keep in exactly this file
+
+**Twilio's own error messages contain the recipient's phone number.** Error 21211 is literally
+*"The 'To' number +1604… is not a valid phone number."* Passing `err.message` into
+`DispatchResult.error` — the obvious implementation — would have piped a subscriber's number into
+every log line and Sentry breadcrumb the send job produces, defeating the discipline
+`weekly-send-io.ts` documents at length.
+
+So the error **code** is reported and the message is discarded. The code is the better diagnostic
+anyway: it maps to one documented cause and it is what Twilio's console is searchable by. Tested by
+serialising the whole result and asserting the number and the body are absent on every failure path.
+
+### bq.4 — Module-graph consolidation: DONE, and the swap is what settled it
+
+Round 12 flagged it and deferred it as unrequested churn. Two things changed:
+
+1. **The new code needed a home, and `weekly-send-io.ts` was the wrong one.** Making the dispatch
+   real adds the Twilio SDK to a module that already top-level imports the SearchEngine, the
+   postgres listing repository, the alias resolver and the pg pool. Three unrelated features would
+   have been importing a search engine *and* an HTTP client to send one text.
+2. **Moving only the Twilio half would have fixed nothing.** Every caller pairs a dispatch with a
+   log write, so `recordSmsSend` had to move too or `welcome.ts` and `signup-store.ts` would have
+   kept importing `weekly-send-io` anyway. That is why there are two new modules rather than one:
+   an external API client and a table writer have nothing to do with each other beyond being called
+   in sequence, so `lib/sms/outbound.ts` (round 12's suggestion) would have been a bag.
+
+**Risk checked before doing it**, not after: the only `vi.mock` of `weekly-send-io` is in
+`weekly_run_route.test.ts`, and it replaces four functions the run route uses — none of them moved.
+`weekly-send-io` re-exports both, so every existing importer keeps working, and the SMS suite went
+from 330 to 330 on the move itself before a single new test was added.
+
+### bq.5 — The delivery-status callback, and the two things it deliberately does not do
+
+**It does not touch `outcome`.** 0035's header already settled this: the callback is "a
+late-arriving fact about the same message, not a rewrite of history." `outcome = 'sent'` is the
+CASL fact — what *we* did. `delivery_status = 'undelivered'` is what the carrier then did. Collapse
+the second into the first and an audit asking "did you text this person on this date" starts
+answering "no" for messages we demonstrably sent.
+
+**It does not stop anyone.** A delivery failure is not an opt-out — phones are off, numbers get
+reassigned, `30003` (unreachable handset) is the most common delivery failure there is. The two
+paths into `status = 'stopped'` stay exactly the two PRD §2.2 step 6 specifies.
+
+**It is the one write on this branch NOT gated on `SMS_SENDING_ENABLED`**, and the divergence is
+deliberate: a callback can only arrive for a message that was actually sent, so the flag cannot
+protect anything here — it could only discard delivery receipts for messages **already in flight**.
+Recording what happened to a message we already sent is not sending. Tested as its own assertion so
+it reads as a decision rather than an omission.
+
+**A separate route from the inbound webhook**, and not only for tidiness: Twilio signs over the full
+configured URL, so two endpoints need two configured URLs or neither verifies. Sharing one would
+also mean delivery receipts arriving at the handler that classifies inbound keywords — where
+`MessageStatus=delivered` would classify as `unknown` and, since round 13, earn an SMS reply to a
+parent who never texted us.
+
+### bq.6 — Flagged, not built
+
+- **`SMS_STATUS_CALLBACK_URL` is a new environment variable** and needs Operator provisioning
+  alongside the existing `SMS_WEBHOOK_PUBLIC_URL`. Unset, sends still work and the `StatusCallback`
+  parameter is simply omitted — `delivery_status` then never gets its later truth.
+- **Twilio returns `numSegments` on every create**, and our `estimateSegments` is documented as an
+  *estimate* with Twilio as the authority. Comparing the two would make a segmentation surprise
+  visible on the first real send. Not done — it would widen `DispatchResult`, which this round was
+  explicitly scoped not to redesign. Cheap follow-up.
+- **No retry, anywhere.** A failed dispatch is logged and left. That matches the existing design
+  (the weekly job explicitly does not advance the empty-week counter on a failure), but it is worth
+  being explicit that "real Twilio integration" does not mean "resilient Twilio integration".
+
+## br. Verification
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds with `/api/sms/status` registered.
+SMS suite **368 tests across 20 files** (was 330/18). Full `unit` lane: **226 files / 3834 tests
+passing**.

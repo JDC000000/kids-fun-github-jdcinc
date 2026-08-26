@@ -269,7 +269,7 @@ export function renderWeeklyMessage(input: WeeklyMessageInput): RenderedMessage 
  * The confirmation request (PRD §1.4, §2.1, §2.6) — the FIRST message this product ever sends,
  * fired on form submit, to a number that has not yet proved it wants to hear from us.
  *
- *     KIDS FUN: Reply JOIN to confirm weekly kid activity picks for Vancouver. Msg&data rates may apply. Reply STOP to opt out anytime.
+ *     KIDS FUN: Reply JOIN to confirm weekly kid activity picks for Vancouver. Msg&data rates may apply. Reply STOP to opt out anytime, or HELP for info.
  *
  * JOIN, NOT YES. Twilio's Advanced Opt-Out treats YES (with START and UNSTOP) as a carrier-level
  * resubscribe keyword and can intercept the reply before our webhook ever sees it, which would
@@ -277,11 +277,26 @@ export function renderWeeklyMessage(input: WeeklyMessageInput): RenderedMessage 
  *
  * ── IT DOES NOT USE `STOP_LINE`, AND THAT IS DELIBERATE ─────────────────────────────────
  * Every other template ends with "Reply STOP to end" on its own line. §2.6 gives this one its own
- * opt-out sentence instead — "Reply STOP to opt out anytime." — inline, alongside the rates
- * disclosure. Not normalised to match the others, for two reasons: it is the approved copy of
- * record, and the wording is better suited to its moment. "Reply STOP to end" addresses a
- * subscriber who has something to end; this message reaches someone who has not confirmed
- * anything yet, and "opt out anytime" is the accurate thing to tell them.
+ * opt-out sentence instead — inline, alongside the rates disclosure. Not normalised to match the
+ * others, for two reasons: it is the approved copy of record, and the wording is better suited to
+ * its moment. "Reply STOP to end" addresses a subscriber who has something to end; this message
+ * reaches someone who has not confirmed anything yet, and "opt out anytime" is the accurate thing
+ * to tell them.
+ *
+ * ── THE HELP CLAUSE (Jon-approved, relayed by the Operator) ─────────────────────────────
+ * Round 12 flagged that this message named STOP but not HELP, while CTIA's Messaging Principles
+ * expect an opt-in confirmation to carry both, and measured 25 septets of headroom against the
+ * longest covered municipality. Jon's ruling extends the existing sentence rather than adding a
+ * new one: "Reply STOP to opt out anytime, or HELP for info."
+ *
+ * "HELP for info" IS THE EXACT PHRASE already used by `renderUnknownKeywordMessage` and quoted in
+ * the START invite's sibling copy — deliberately, so a parent meets one wording for the same
+ * instruction wherever they meet it. Not extracted into a shared constant: three occurrences of a
+ * four-word phrase inside three different sentences is copy, not a rule, and hoisting it would
+ * make each sentence unreadable at its own call site to enforce a consistency a test can assert
+ * more cheaply. tests/sms/confirm_request.test.ts does assert it.
+ *
+ * THE MEASUREMENT IS IN THE TEST, not in this comment — see `stays inside ONE segment`.
  *
  * ── AND IT IS ONE LINE, WHERE THE OTHERS ARE SEVERAL ────────────────────────────────────
  * The weekly, welcome, empty-week and pause templates all break before a URL, because a link
@@ -298,7 +313,7 @@ export function renderConfirmRequestMessage(areaLabel: string | null): RenderedM
   const area = areaLabel ? ` for ${areaLabel}` : '';
   return render(
     `${BRAND} Reply JOIN to confirm weekly kid activity picks${area}. ` +
-      `Msg&data rates may apply. Reply STOP to opt out anytime.`
+      `Msg&data rates may apply. Reply STOP to opt out anytime, or HELP for info.`
   );
 }
 

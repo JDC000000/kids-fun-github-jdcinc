@@ -18,7 +18,7 @@ import {
   type WelcomeSubscriber,
   type WelcomeOptions,
 } from '@/lib/sms/welcome';
-import type { RecordSendInput } from '@/lib/sms/weekly-send-io';
+import type { RecordSendInput } from '@/lib/sms/send-log';
 
 const NOW = new Date('2026-08-28T23:00:00Z'); // Friday, local year 2026
 
@@ -237,6 +237,22 @@ describe('sendWelcomeText', () => {
   it('the default seams are inert — an unwired call finds nothing and sends nothing', async () => {
     withConfig();
     expect((await sendWelcomeText('sub-1', { dryRun: false })).outcome).toBe('no_such_subscriber');
+  });
+
+  it('reaches the REAL Twilio dispatcher once a subscriber IS found', async () => {
+    // Round 16 replaced the dispatch stub with an actual Messages API call. Only the loader is
+    // injected here; the dispatch is the real one, with no credentials, so it fails closed at the
+    // client rather than at a scaffold.
+    withConfig();
+    const result = await sendWelcomeText('sub-1', {
+      now: NOW,
+      dryRun: false,
+      loadSubscriber: async () => SUBSCRIBER,
+    });
+    expect(result.outcome).toBe('failed');
+    expect(result.error).toBe('twilio credentials not configured');
+    // And the message was still built and costed on the way there.
+    expect(result.segments).toBeGreaterThan(0);
   });
 });
 

@@ -37,7 +37,8 @@ import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { preferencesUrl as buildPreferencesUrl } from './config';
 import { renderWelcomeMessage, type RenderedMessage } from './message';
 import { agesFromBirthYears } from './signup-validate';
-import { dispatchSms, recordSmsSend, type DispatchResult } from './weekly-send-io';
+import { dispatchSms, type DispatchResult } from './twilio-client';
+import { recordSmsSend } from './send-log';
 import { smsSendingEnabled } from './config';
 
 /**
