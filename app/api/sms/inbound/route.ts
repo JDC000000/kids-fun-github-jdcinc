@@ -38,6 +38,7 @@ import {
   recordHelpRequest,
   type TransitionResult,
 } from '@/lib/sms/consent-transitions';
+import { sendWelcomeText } from '@/lib/sms/welcome';
 import { withObservedRoute } from '@/lib/observability/route-handler';
 
 export const dynamic = 'force-dynamic';
@@ -124,7 +125,7 @@ async function smsInboundPost(request: Request): Promise<NextResponse> {
   return twiml();
 }
 
-/** Route a classified keyword to its transition. Every branch is a stub today — see the module. */
+/** Route a classified keyword to its transition, and fire the one send a transition triggers. */
 async function dispatch(
   keyword: InboundKeyword,
   from: string,
@@ -132,7 +133,7 @@ async function dispatch(
 ): Promise<TransitionResult | null> {
   switch (keyword) {
     case 'join':
-      return confirmSubscriber(from, { dryRun });
+      return confirmAndWelcome(from, dryRun);
     case 'stop':
       return mirrorCarrierStop(from, { dryRun });
     case 'start':
@@ -148,4 +149,45 @@ async function dispatch(
       void redactPhone(from);
       return null;
   }
+}
+
+/**
+ * JOIN: apply the transition, then — and ONLY then — send the welcome text (PRD §2.1).
+ *
+ * ═══ WHY THE SEND LIVES HERE AND NOT INSIDE `confirmSubscriber` ═══
+ * `confirmSubscriber` decides against `ConsentRow`, which is `{ id, status, stoppedAt }` and whose
+ * own doc says why: "no phone number, no postal code, no birth years. A decision function that
+ * cannot see personal data cannot leak it." The welcome text needs a phone number, a postal code,
+ * birth years and a preferences token — every one of them a field that type deliberately excludes.
+ * Putting the send inside the transition would mean widening `ConsentRow` with exactly the four
+ * things it was defined to keep out. So the decision stays PII-free and the send does its own read.
+ *
+ * ═══ ONLY ON `applied`, AND THAT GUARD IS THE POINT ═══
+ * `applied` is the one outcome meaning "a subscription just became active". Every other outcome
+ * must send nothing, and the reasons differ:
+ *   already_in_state      they were ALREADY active. A JOIN from an active subscriber is normal —
+ *                         a parent replying twice, a carrier redelivering — and re-welcoming them
+ *                         is the exact duplicate-message failure this ordering prevents.
+ *   awaiting_confirmation not reachable from JOIN today (it is START's pending case), but the
+ *                         guard is written as a positive test on `applied` rather than a list of
+ *                         exclusions, so a future outcome is silent by default rather than
+ *                         accidentally triggering a text.
+ *   no_such_subscriber    there is nobody to welcome.
+ *   dry_run               nothing was written, so nothing should be announced. Passing `dryRun`
+ *                         through would ALSO stop the send, but returning early means an
+ *                         unconfigured environment does not even perform the lookup.
+ *   error                 the transition failed; a welcome would be announcing something that did
+ *                         not happen.
+ *
+ * THE WELCOME NEVER CHANGES WHAT THE WEBHOOK RETURNS. `sendWelcomeText` does not throw, and its
+ * result is deliberately discarded: the subscription is already active, which is the part that
+ * matters, and a non-2xx here would make Twilio retry the whole inbound message and replay the
+ * transition. One lost welcome beats one duplicated confirmation.
+ */
+async function confirmAndWelcome(from: string, dryRun: boolean): Promise<TransitionResult> {
+  const result = await confirmSubscriber(from, { dryRun });
+  if (result.outcome === 'applied' && result.subscriberId) {
+    await sendWelcomeText(result.subscriberId, { dryRun });
+  }
+  return result;
 }

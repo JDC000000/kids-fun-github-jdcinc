@@ -19,6 +19,7 @@ import {
   isGsm7,
   renderEmptyWeekMessage,
   renderPauseNoticeMessage,
+  renderWelcomeMessage,
 } from '@/lib/sms/message';
 import {
   buildWeeklySms,
@@ -339,11 +340,18 @@ describe('SMS encoding and segment cost', () => {
 
   it('every template this product sends is GSM-7 safe', () => {
     // The wall. If a future copy edit reintroduces a nicer dash, this is where it stops.
+    // EVERY renderer belongs here — a template that is exempt from the wall is a template that
+    // will eventually cost three segments without anyone noticing.
     withConfig();
     const url = 'https://kidsfun.example/u/8fJ2q';
     assertGsm7Safe(renderEmptyWeekMessage(url).body);
     assertGsm7Safe(renderPauseNoticeMessage(url).body);
     assertGsm7Safe(build(catalogue(6)).message!.body);
+    assertGsm7Safe(
+      renderWelcomeMessage({ areaLabel: 'East Van', childAges: [5, 8], preferencesUrl: url }).body
+    );
+    // And its degraded shapes, which a future edit could break independently of the full one.
+    assertGsm7Safe(renderWelcomeMessage({ areaLabel: null, childAges: [], preferencesUrl: url }).body);
   });
 
   it('reports the segment count on every rendered message', () => {
