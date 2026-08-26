@@ -130,6 +130,27 @@ export function birthYearFromAge(ageYears: number, now: Date): number {
   return Number(localIsoDate(now).slice(0, 4)) - ageYears;
 }
 
+/**
+ * The inverse of `birthYearFromAge`: stored birth years back to ages, AT `now`.
+ *
+ * LIVES HERE, BESIDE ITS INVERSE, and that is the whole point of moving it — birth-year↔age
+ * conversion is one rule with two directions, and the two directions reading the local year two
+ * different ways is exactly how they drift apart on New Year's Eve. Both now go through
+ * `localIsoDate`, so both agree about what year it is in Vancouver.
+ *
+ * Callers: the preferences page (showing a subscriber what we hold) and the welcome text (echoing
+ * it back at the moment they confirm). Both are showing a parent their own numbers, so both must
+ * produce exactly what the picker will use.
+ *
+ * A negative age — a birth year in the future, which the validator rejects but a hand-edited row
+ * could hold — is dropped rather than displayed. "ages -1" is worse than a shorter sentence.
+ */
+export function agesFromBirthYears(birthYears: readonly number[] | null | undefined, now: Date): number[] {
+  if (!birthYears) return [];
+  const currentYear = Number(localIsoDate(now).slice(0, 4));
+  return birthYears.map((year) => currentYear - year).filter((age) => age >= 0);
+}
+
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }

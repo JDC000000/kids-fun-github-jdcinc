@@ -48,7 +48,12 @@ import {
   type ConsentRow,
   type ConsentStatus,
 } from './consent-transitions';
-import { parseProfileFields, type ProfileFields, type SmsSignupField } from './signup-validate';
+import {
+  agesFromBirthYears,
+  parseProfileFields,
+  type ProfileFields,
+  type SmsSignupField,
+} from './signup-validate';
 
 /** The `sms_consent` columns this page reads. NO phone number — see point 6 in the header. */
 export interface PreferencesRow extends ConsentRow {
@@ -199,11 +204,11 @@ export type PreferencesResolution =
 
 /** Ages to display, recomputed from the stored birth years at render time (PRD §1.2). */
 export function childAgesFrom(birthYears: number[] | null, now: Date): number[] {
-  if (!birthYears) return [];
-  const currentYear = Number(
-    new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', year: 'numeric' }).format(now)
-  );
-  return birthYears.map((year) => currentYear - year).filter((age) => age >= 0);
+  // Delegates to the conversion that lives beside its own inverse in signup-validate.ts. This used
+  // to be a second implementation reading the local year a different way (Intl directly rather
+  // than localIsoDate) — two ways of asking what year it is in Vancouver, which is one more than
+  // is safe on December 31st.
+  return agesFromBirthYears(birthYears, now);
 }
 
 export interface PreferencesDeps {
