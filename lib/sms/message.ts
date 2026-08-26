@@ -17,9 +17,15 @@
 //     —  em dash          ’  curly apostrophe        “ ”  curly quotes
 //     –  en dash          …  ellipsis                 ' '  curly single quotes
 //
-// PRD §2.6's own example copy contains an em dash and curly apostrophes. Rendered verbatim, the
-// empty-week message is ~150 characters — one GSM-7 segment, or **THREE** UCS-2 segments. Same
-// words, three times the per-subscriber cost, every week, forever.
+// PRD §2.6's empty-week example contained an EM DASH. That one character is the whole finding —
+// rendered verbatim the message is 143 characters, which is one GSM-7 segment or **THREE** UCS-2
+// ones. Same words, three times the per-subscriber cost, every week, forever.
+//
+// (Precision, because an earlier draft of this comment overstated it: the copy contained an em
+// dash and NOT curly apostrophes — its apostrophes were already straight. The em dash alone is
+// sufficient; a single character outside the alphabet converts the entire message. The PRD's
+// message examples have since adopted the ASCII form, so the copy of record is now safe and this
+// file is what keeps it that way.)
 //
 // SO THE TEMPLATES BELOW ARE WRITTEN IN GSM-7-SAFE ASCII. The substitutions are mechanical and
 // semantically identical: em dash becomes " - ", curly apostrophes and quotes become straight

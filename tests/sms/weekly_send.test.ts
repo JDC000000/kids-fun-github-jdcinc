@@ -294,12 +294,14 @@ describe('SMS encoding and segment cost', () => {
     expect(estimateSegments('a'.repeat(70) + '—').segments).toBe(2); // 71 chars, UCS-2
   });
 
-  it('MEASURES the cost of the PRD §2.6 copy rendered verbatim vs GSM-7-safe', () => {
-    // PRD §2.6's empty-week example, character for character (em dash + curly apostrophe).
+  it('MEASURES the cost of ONE em dash — the PRD §2.6 empty-week copy as it stood', () => {
+    // Character for character as the pre-v2.6 copy read: an EM DASH, and straight apostrophes.
+    // An earlier draft of this test used a curly apostrophe the copy never had; the em dash alone
+    // is what converts the message, which is exactly the point — one character does it.
     const url = 'https://kidsfun.example/u/8fJ2q';
     const verbatim =
       `KIDS FUN: Nothing new matches your area this week — check back Friday, or update what ` +
-      `you’re into: ${url}\nReply STOP to end`;
+      `you're into: ${url}\nReply STOP to end`;
     const ours = renderEmptyWeekMessage(url).body;
 
     const a = estimateSegments(verbatim);
@@ -307,9 +309,26 @@ describe('SMS encoding and segment cost', () => {
 
     expect(a.encoding).toBe('UCS-2');
     expect(b.encoding).toBe('GSM-7');
-    // Same words, same length to within a character or two — and a materially different bill.
-    expect(Math.abs(a.characters - b.characters)).toBeLessThanOrEqual(2);
-    expect(b.segments).toBeLessThan(a.segments);
+    // IDENTICAL length. Same words, same character count, and a 3x difference in the bill.
+    expect(a.characters).toBe(b.characters);
+    expect(a.segments).toBe(3);
+    expect(b.segments).toBe(1);
+  });
+
+  it('the pause notice was ALREADY GSM-7-safe — the finding was one message, not all of them', () => {
+    // Correcting round 4's own table, which reported this line as 3 segments verbatim. That
+    // number came from reconstructing the copy with curly apostrophes rather than reading it: the
+    // real pause notice had straight apostrophes and no dash at all, so it was 2 segments before
+    // and is 2 segments now. Pinned so the record stays honest about the finding's actual scope.
+    const url = 'https://kidsfun.example/u/8fJ2q';
+    const verbatim =
+      `KIDS FUN: We haven't found matches near you for a few weeks, so we've paused your texts. ` +
+      `Update your area or interests anytime to restart: ${url}\nReply STOP to end`;
+    const before = estimateSegments(verbatim);
+    const after = estimateSegments(renderPauseNoticeMessage(url).body);
+    expect(before.encoding).toBe('GSM-7'); // already safe, with no substitution applied
+    expect(after).toEqual(before); // and the ASCII rendering costs exactly the same
+    expect(after.segments).toBe(2);
   });
 
   it('every template this product sends is GSM-7 safe', () => {

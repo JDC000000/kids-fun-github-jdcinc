@@ -683,10 +683,25 @@ contains an em dash and curly apostrophes.** Measured, not estimated:
 | message | rendered verbatim from §2.6 | GSM-7-safe ASCII |
 |---|---|---|
 | empty week | 143 chars, UCS-2, **3 segments** | 143 chars, GSM-7, **1 segment** |
-| pause notice | 183 chars, UCS-2, **3 segments** | 183 chars, GSM-7, **2 segments** |
+| ~~pause notice~~ | ~~183 chars, UCS-2, 3 segments~~ | see correction below |
 
 Identical character counts. Identical words. Three times the bill on the empty-week text — the
 message a struggling subscriber gets most often — every week, forever.
+
+> **CORRECTION (round 5, mine).** The pause-notice row above is wrong and is struck out. I
+> produced it by *reconstructing* the copy with curly apostrophes rather than reading the
+> document's bytes: the real pause notice had straight apostrophes and no dash at all, so it was
+> **already GSM-7 — 2 segments before and 2 segments after**, with nothing to save.
+>
+> The Operator separately caught the same class of error in `lib/sms/message.ts`'s comment, which
+> said the copy contained "an em dash **and curly apostrophes**". It contained only the em dash.
+>
+> **The finding itself stands and is confirmed** — one em dash in the empty-week message really
+> did force UCS-2 and really did cost 3 segments instead of 1, which is the whole point: a
+> *single* character outside the alphabet converts the entire message. What was overstated is its
+> SCOPE. It was one message, not two. Both the comment and the measurement test now say so, and
+> `tests/sms/weekly_send.test.ts` pins the pause notice at 2-segments-either-way so the corrected
+> record is enforced rather than merely written down.
 
 **So the templates are written in GSM-7-safe ASCII**: em dash → `" - "`, curly quotes → straight,
 ellipsis → `...`. Nothing else about §2.6's wording changes.
@@ -804,4 +819,134 @@ the MVP's three metrics include churn, and "the same three swims every Friday" i
 `tsc --noEmit` clean, `eslint` clean, **`npx next build` succeeds** with `/api/sms/weekly/run` in
 the route manifest. SMS suite: **149 tests across 11 files**. Full `unit` lane: **217 files /
 3615 tests passing**. The `db` and `invariants` lanes were not run — no database here, and no
+Postgres has parsed any of the four migrations.
+
+---
+---
+
+# Round 5 — the four inbound state transitions
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+
+`lib/sms/consent-transitions.ts` rewritten from generic no-op stubs into real logic behind two
+injected seams. `app/api/sms/inbound/route.ts` is **untouched** — its dispatch was already correct.
+
+| file | change |
+|---|---|
+| `lib/sms/consent-transitions.ts` | rewritten: pure decisions + injected lookup/applier |
+| `tests/sms/consent_transitions.test.ts` | new, 24 tests |
+| `lib/sms/message.ts` | comment corrected (see §k correction above) |
+| `tests/sms/weekly_send.test.ts` | measurement corrected + pause-notice row pinned |
+
+---
+
+## r. The shape: the WHERE clause as a pure function, the SET clause as data
+
+```
+decide*(row)      pure, total over ConsentRow | null — the documented WHERE clause, as a function
+ConsentChange     the SET clause as data
+findByPhone       STUB — one SELECT, injected
+applyChange       STUB — one UPDATE, injected
+```
+
+Same injection idiom `selectWeeklyPicks` uses for `sameParentOrg`. Every row state is reachable in
+a test today, and filling in the two seams is mechanical.
+
+**`ConsentChange.stoppedAt` is a three-way enum — `'set' | 'clear' | 'leave'` — and that is the
+whole reason the type exists.** "Leave it alone" is a *different instruction* from "set it to
+null", and a `Date | null` field cannot express the difference. That difference **is** the
+repeat-STOP bug: without it, a second STOP re-stamps `stopped_at` and pushes the 30-day purge
+deadline out every time.
+
+**`no_such_subscriber` falls out rather than being special-cased.** The lookup's WHERE clause is
+`phone_number = $1`, and the 30-day purge NULLs `phone_number` in place — so a purged row is
+invisible to it *by construction*. START-after-purge resolves to null with nothing testing for a
+purge. That is the cleanest possible expression of the correctness note the comment already made.
+
+---
+
+## s. A fourth START case the original comment did not name
+
+The documented START SQL is `WHERE phone_number = $1 AND status IN ('stopped','paused')`. There
+are **four** row states, not three, and the fourth is **`pending`**: someone submitted the form,
+never replied JOIN, and now texts START.
+
+The UPDATE matches zero rows — *correctly*, because **START is not the double opt-in.** Activating
+there would bypass the CASL confirmation entirely, which is the one thing this product's consent
+design exists to prevent.
+
+But it is not `no_such_subscriber` (the row is right there) and not `already_in_state` (pending is
+not what START targets), **and the webhook's reply differs in all three cases**: "sign up here" /
+nothing / "reply JOIN to confirm". Collapsing it into either existing outcome would make the
+webhook say the wrong thing to someone who is one text away from being a subscriber.
+
+So it gets its own outcome, **`awaiting_confirmation`** — nothing written, and the route can reply
+correctly. Flagged as an addition beyond the five outcomes the brief listed; all five of those
+remain reachable and tested.
+
+---
+
+## t. HELP — **recommendation: do not log it for MVP.** Implemented as a true no-op.
+
+The question was whether an inbound HELP belongs in `sms_send_log`, in a new inbound log, or
+nowhere. Four reasons it is nowhere:
+
+1. **`sms_send_log` is the wrong table, and 0035 says so.** Every column is send-side —
+   `send_type` has no inbound member, `outcome`'s values are send outcomes, and `picks_snapshot` /
+   `twilio_sid` / `consent_text_version` all describe a message *we* composed. Writing an inbound
+   event there means abusing a `send_type` or adding one, and it weakens the table's stated
+   meaning — which is exactly what the CASL argument in that migration's header rests on.
+2. **A separate inbound log is real surface for no consumer.** A migration, its RLS, its retention
+   rule and its purge job — for a signal PRD §6 lists no metric against. MVP measures growth, CTR
+   and churn; HELP volume is in none of them.
+3. **Twilio already keeps it.** Every inbound message is in the Twilio console with full history,
+   searchable, at zero storage cost to us — and it is the same place the Operator already goes to
+   check delivery.
+4. **Data minimisation.** §1.2's whole posture is holding the minimum that makes the product work.
+   Storing inbound message events we have no use for cuts directly against it.
+
+So HELP does no lookup, no write, and no state change, and returns `no_change` so the route can
+tell "handled, nothing to do" apart from "we did not recognise that".
+
+**What would change this:** a V1 metric needing HELP volume correlated with churn. *"How many
+people ask for help immediately before they STOP"* is a genuinely interesting question and the one
+plausible reason to build the inbound log. That is a product decision with a real cost, and it
+belongs in V1 scope rather than being pre-built here.
+
+---
+
+## u. Behaviours worth reviewing
+
+- **`dry_run` displaces only `applied`.** `no_such_subscriber` and `already_in_state` are facts
+  about the database that are true whether or not writing is enabled, and a dry run that hid them
+  would be useless for the thing a dry run is for. A dry run also reports the **change it would
+  have made**, not just that it made none.
+- **JOIN is a reactivation.** `stoppedAt: 'clear'`, `reconsent: true`, `confirm: true`, keyed on
+  the *found* row's id — so a stopped-inside-retention subscriber revives their existing row
+  rather than colliding with the UNIQUE index on `phone_number`.
+- **START does NOT set `reconsent`.** It is a carrier resume signal, not a fresh express-consent
+  event; re-stamping `consent_timestamp` / `consent_text_version` would record a consent act that
+  never happened, in the columns an audit reads.
+- **`applyChange` is keyed on `id`, not on the phone number.** The lookup already resolved it, and
+  re-matching on the number would be a second place that has to get the purge semantics right.
+- **The default seams are inert.** An unwired call reads nothing and finds nothing, so every
+  transition lands on `no_such_subscriber` rather than pretending to have acted. Tested.
+- **Decision functions cannot see personal data.** `ConsentRow` is `{ id, status, stoppedAt }` —
+  no number, no postal code, no birth years — so a decision cannot leak one into a result or a log
+  line. A test asserts the result object's key set exactly.
+
+---
+
+## v. Verification
+
+24 new tests, covering all four transitions and every outcome: `applied`, `dry_run`,
+`no_such_subscriber`, `already_in_state`, `awaiting_confirmation`, `no_change` and `error` (both
+the failed-lookup and failed-write paths). Specifically requested cases all present — JOIN
+reactivating a stopped-within-retention row without a second row; JOIN from an unknown number as
+`no_such_subscriber` rather than an error; repeat STOP writing **nothing at all**; START after the
+purge as `no_such_subscriber` rather than a resurrection; and the dry-run default holding on all
+four.
+
+`tsc --noEmit` clean, `eslint` clean. SMS suite **174 tests across 12 files**. Full `unit` lane:
+**218 files / 3640 tests passing**. `db` and `invariants` lanes not run — no database here, and no
 Postgres has parsed any of the four migrations.
