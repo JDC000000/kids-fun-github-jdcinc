@@ -54,6 +54,8 @@ import {
   type ProfileFields,
   type SmsSignupField,
 } from './signup-validate';
+import { activityPath, hubClickPath } from './click-through';
+import { encodeShortLink } from './short-link';
 
 /** The `sms_consent` columns this page reads. NO phone number — see point 6 in the header. */
 export interface PreferencesRow extends ConsentRow {
@@ -61,12 +63,46 @@ export interface PreferencesRow extends ConsentRow {
   birthYears: number[] | null;
   categoryInterests: string[] | null;
   consecutiveEmptyWeeks: number;
+  /**
+   * `sms_consent.short_ref` — the subscriber half of a click-through token (PRD §2.3).
+   *
+   * Read here ONLY so the hub's own pick links can be minted through `/s/{token}`, which is what
+   * makes a hub tap attributable at all. It is an internal counter, not personal data, and it
+   * never reaches `PreferencesView`: the view carries the finished href and nothing else.
+   * Nullable so a row read before 0037's backfill degrades to an unattributed link rather than
+   * throwing on the one page a parent uses to unsubscribe.
+   */
+  shortRef: number | null;
 }
 
-/** One line of last week's picks, for the hub list. */
+/**
+ * One line of last week's picks as READ — `picks_snapshot` plus the occurrence's `short_ref`.
+ *
+ * `occurrenceShortRef` is not in the snapshot itself (0035 stores `[{occurrence_id, rank}]`), so
+ * `findLastWeek` joins for it. Nullable per pick: an occurrence archived since the send has no
+ * live row to join to, and that must degrade one link rather than fail the panel.
+ */
 export interface PreferencesPick {
   occurrenceId: string;
   rank: number;
+  occurrenceShortRef: number | null;
+}
+
+/**
+ * One line of last week's picks as RENDERED. Carries the finished href and no internal reference
+ * of any kind — see `PreferencesView`'s own note about what it deliberately does not contain.
+ */
+export interface PreferencesViewPick {
+  occurrenceId: string;
+  rank: number;
+  /** `/s/{token}?via=hub`, or the bare activity path when no token could be minted. */
+  href: string;
+  /**
+   * False when this link fell back to the unattributed `/activity/{id}` path. Surfaced rather
+   * than hidden: an unattributed hub link is a click PRD §6 will never see, and a panel silently
+   * full of them is the exact failure this round exists to end.
+   */
+  attributed: boolean;
 }
 
 /** What the most recent weekly attempt produced — mirrors `sms_send_log.send_type`. */
@@ -75,6 +111,12 @@ export type LastWeekKind = 'weekly' | 'empty_week' | 'pause_notice' | 'none';
 export interface LastWeek {
   kind: LastWeekKind;
   picks: PreferencesPick[];
+  sentAt: Date | null;
+}
+
+export interface LastWeekView {
+  kind: LastWeekKind;
+  picks: PreferencesViewPick[];
   sentAt: Date | null;
 }
 
@@ -120,6 +162,20 @@ export const findByPreferencesToken: PreferencesLookup = async () => {
  *      AND send_type IN ('weekly','empty_week','pause_notice')
  *    ORDER BY created_at DESC
  *    LIMIT 1
+ *
+ * …then, for a 'weekly' row, ONE more read to turn the snapshot into linkable picks:
+ *
+ *   SELECT id, short_ref FROM activity_occurrence
+ *    WHERE id = ANY($1::uuid[]) AND archived_at IS NULL
+ *
+ * WHY THE SECOND READ EXISTS. `picks_snapshot` stores `[{occurrence_id, rank}]` and nothing else
+ * (0035), but a hub link has to be minted from the occurrence's `short_ref` (0037) — so it is
+ * joined for. `LEFT`-join semantics, effectively: a pick whose occurrence has since been archived
+ * comes back with `occurrenceShortRef: null` and degrades to an unattributed link rather than
+ * dropping out of the panel. The snapshot is the record of what we SENT, and it must still list a
+ * pick that has since been cancelled.
+ *
+ * `= ANY($1)` over a handful of ids on the primary key — one probe per pick, at most ten.
  *
  * ALL THREE SEND TYPES, not just 'weekly' — PRD §2.4 asks for the empty and paused states too, and
  * they are the states a subscriber most needs explained. A parent whose last text said "nothing
@@ -192,7 +248,7 @@ export interface PreferencesView {
   childAges: number[];
   categoryInterests: string[];
   consecutiveEmptyWeeks: number;
-  lastWeek: LastWeek;
+  lastWeek: LastWeekView;
   /** True once the 30-day purge has run: the row exists, the personal columns do not. */
   purged: boolean;
 }
@@ -201,6 +257,56 @@ export type PreferencesResolution =
   | { outcome: 'found'; subscriberId: string; view: PreferencesView }
   /** Never existed, deleted, or malformed. ONE outcome — see point 3 in the header. */
   | { outcome: 'not_found' };
+
+/**
+ * Turn last week's picks into hub links that a tap can actually be attributed to.
+ *
+ * ═══ WHY THIS EXISTS: THE HUB WAS LINKING PAST ITS OWN INSTRUMENTATION ═══
+ * The panel linked straight to `/activity/{id}`, bypassing the short-link route entirely. Two
+ * consequences, both real:
+ *   1. `sms_click_event.link_origin = 'hub'` could NEVER be written — PRD §6's MVP metric splits
+ *      click-through by exactly that column, and the hub bucket was empty by construction. The
+ *      question "does the hub page earn its keep" was unanswerable, permanently.
+ *   2. A raw link to a since-ARCHIVED occurrence hits the detail page's bare `notFound()`. Going
+ *      through `/s/{token}` means the same tap now lands on the round-9 "activity unavailable"
+ *      interstitial instead — on the one page whose entire purpose is being the safe place to
+ *      deal with your subscription.
+ *
+ * ═══ IT DEGRADES TO THE OLD LINK RATHER THAN TO NO LINK ═══
+ * Three things can stop a token being minted, and none of them may cost a parent the pick:
+ *   • the subscriber row has no `short_ref` (a row read before 0037's backfill);
+ *   • the occurrence has no live row to take a `short_ref` from — archived since the send;
+ *   • `SMS_SHORT_LINK_SECRET` is unset, which is `encodeShortLink`'s documented throw.
+ * Each falls back to `activityPath`, and `attributed: false` says so, so an unattributed panel is
+ * visible in a test rather than showing up as a permanently flat metric months later.
+ */
+export function hubPickLinks(
+  subscriberShortRef: number | null,
+  picks: readonly PreferencesPick[]
+): PreferencesViewPick[] {
+  return picks.map((pick) => {
+    const unattributed = {
+      occurrenceId: pick.occurrenceId,
+      rank: pick.rank,
+      href: activityPath(pick.occurrenceId),
+      attributed: false,
+    };
+    if (subscriberShortRef == null || pick.occurrenceShortRef == null) return unattributed;
+    try {
+      return {
+        occurrenceId: pick.occurrenceId,
+        rank: pick.rank,
+        href: hubClickPath(encodeShortLink(pick.occurrenceShortRef, subscriberShortRef)),
+        attributed: true,
+      };
+    } catch {
+      // A missing secret or an out-of-range ref. `encodeShortLink` throws rather than truncating,
+      // deliberately — a truncated ref would point at the WRONG activity — so the honest fallback
+      // is the unattributed link, not a guessed token.
+      return unattributed;
+    }
+  });
+}
 
 /** Ages to display, recomputed from the stored birth years at render time (PRD §1.2). */
 export function childAgesFrom(birthYears: number[] | null, now: Date): number[] {
@@ -263,7 +369,9 @@ export async function resolvePreferences(
       childAges: childAgesFrom(row.birthYears, now),
       categoryInterests: row.categoryInterests ?? [],
       consecutiveEmptyWeeks: row.consecutiveEmptyWeeks,
-      lastWeek,
+      // Minted HERE rather than in the page, so `PreferencesView` keeps its stated property of
+      // carrying no internal reference: `short_ref` goes in, a finished href comes out.
+      lastWeek: { ...lastWeek, picks: hubPickLinks(row.shortRef, lastWeek.picks) },
       purged: row.postalCode == null && row.birthYears == null,
     },
   };

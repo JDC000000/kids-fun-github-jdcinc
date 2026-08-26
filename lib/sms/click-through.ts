@@ -78,6 +78,89 @@ export function activityPath(occurrenceId: string): string {
   return `/activity/${occurrenceId}`;
 }
 
+/**
+ * Which surface a tap came from (`sms_click_event.link_origin`, migration 0036).
+ *
+ * 'direct' — the link was in the text message itself and pointed straight at the activity.
+ * 'hub'    — the link was on the preferences/hub page's "last week's picks" list (PRD §2.4).
+ *
+ * 0036's own comment says why it is recorded at click time: it "is not derivable after the fact
+ * from anything else on the row, and it is the only way to answer whether the hub page earns its
+ * keep." PRD §6 splits the MVP click-through metric on exactly this column.
+ */
+export type LinkOrigin = 'direct' | 'hub';
+
+/**
+ * How a hub-page link declares itself: `/s/{token}?via=hub`.
+ *
+ * ═══ WHY A QUERY PARAMETER AND NOT THE TOKEN ═══
+ * The token is (occurrence short_ref, subscriber short_ref) plus a 20-bit check — 76 bits with no
+ * room, and widening it would undo the shortening the whole design exists for. Worse, it would
+ * make the SAME (occurrence, subscriber) pair mint TWO different tokens depending on where the
+ * link was going, breaking the determinism that lets a link stay valid across sends.
+ *
+ * ═══ IT IS SPOOFABLE, AND THE BLAST RADIUS IS ONE COLUMN OF ONE ANALYTICS ROW ═══
+ * Anyone can append `?via=hub` to a link they were texted. What that changes:
+ *   • `sms_click_event.link_origin` on the row that tap writes. That is the entire effect.
+ * What it cannot change, because the token is a separate, independently verified path segment and
+ * the query string is not part of the signed payload:
+ *   • whether the token verifies, so a forgery is no more likely to be honoured;
+ *   • which occurrence or subscriber it resolves to, so attribution stays correct;
+ *   • the redirect destination;
+ *   • whether a click row is written at all — that still needs a live occurrence, a live
+ *     subscriber row and a recoverable send log, none of which this touches.
+ * It reaches no consent state, no PII, and not the preferences token, which is a different token
+ * on a different route. The only party who can do it at scale is somebody who already holds valid
+ * tokens — a subscriber, skewing a statistic about themselves, with nothing to gain.
+ *
+ * The honest residual: PRD §6's direct-vs-hub split informs a V1 build/don't-build decision about
+ * the hub page, so sustained deliberate spoofing could in principle nudge it. That requires effort
+ * by someone holding valid tokens to influence a decision they cannot see. Named, not defended
+ * against.
+ *
+ * ═══ THE PART THAT IS NOT MERELY COSMETIC: THE VALUE IS MAPPED, NEVER PASSED THROUGH ═══
+ * `parseLinkOrigin` maps an untrusted string onto the union and defaults everything else to
+ * 'direct'. If the raw parameter were handed to the INSERT instead, a junk value would violate
+ * 0036's `CHECK (link_origin IN ('direct','hub'))` and kill the click write — silently, since the
+ * recorder's failure is swallowed by design. Mapping makes that unreachable.
+ */
+export const LINK_ORIGIN_PARAM = 'via';
+
+/**
+ * The permitted values, as a SET rather than an object literal.
+ *
+ * ── THIS WAS WRITTEN AS AN OBJECT FIRST, AND THE OBJECT WAS WRONG ───────────────────────
+ * `const VALUES: Record<string, LinkOrigin> = { hub: 'hub', direct: 'direct' }` followed by
+ * `VALUES[raw]` reads correctly and is not: an object literal inherits from `Object.prototype`,
+ * so `VALUES['constructor']` is the `Object` FUNCTION and `VALUES['__proto__']` is the prototype.
+ * `?via=constructor` on this public, unauthenticated route therefore returned a function where the
+ * type says `LinkOrigin`, which would then have been bound into the `sms_click_event` insert
+ * against a NOT NULL CHECK-constrained column — defeating the exact "mapped, never passed through"
+ * guarantee documented above, in the one implementation of it that does not hold.
+ * Caught by tests/sms/click_through.test.tsx, which lists those keys in its junk set on purpose.
+ *
+ * A Set has no such inherited keys. Anything not literally in it is 'direct'.
+ */
+const LINK_ORIGINS: ReadonlySet<string> = new Set<LinkOrigin>(['direct', 'hub']);
+
+/** Map an untrusted query value onto the union. Anything unrecognised is 'direct'. */
+export function parseLinkOrigin(raw: string | null | undefined): LinkOrigin {
+  return raw && LINK_ORIGINS.has(raw) ? (raw as LinkOrigin) : 'direct';
+}
+
+/**
+ * The hub page's link to one pick: an app-relative `/s/{token}?via=hub`.
+ *
+ * RELATIVE, not absolute, for the same reason app/s/[shortId]/route.ts resolves its redirect
+ * against the request's own origin rather than NEXT_PUBLIC_SITE_URL: a parent may be on a preview
+ * or staging host, and an absolute link would bounce them to production mid-tap and lose the click.
+ * `shortLinkUrl()` stays the absolute minter for links that go INTO a text message, where there is
+ * no request origin to inherit.
+ */
+export function hubClickPath(token: string): string {
+  return `/s/${token}?${LINK_ORIGIN_PARAM}=hub`;
+}
+
 export type ClickOutcome =
   /** Token verified, occurrence live — go to the activity. */
   | 'redirect'
@@ -107,11 +190,13 @@ export interface SmsClickEvent {
   sendLogId: string;
   occurrenceId: string;
   /**
-   * ALWAYS 'direct' from this route. The hub page (`/u/[preferencesToken]`, PRD §2.4) is where
-   * `'hub'` clicks come from, and that route does not exist yet — so this is a constant here
-   * rather than a parameter, and the day the hub page lands it passes its own value.
+   * Which surface the tap came from. Was hardcoded to `'direct'` in round 6, with a comment
+   * saying the hub page "does not exist yet — so this is a constant here rather than a parameter,
+   * and the day the hub page lands it passes its own value." The hub page landed in round 8 and
+   * nothing came back for it, which meant PRD §6's direct-vs-hub split could never show a single
+   * hub click. It is now the parameter that comment promised.
    */
-  linkOrigin: 'direct';
+  linkOrigin: LinkOrigin;
 }
 
 /** `activity_occurrence.short_ref` → `id`, or null when no LIVE row carries it. */
@@ -128,6 +213,15 @@ export interface ClickThroughDeps {
   findSubscriberIdByShortRef?: SubscriberShortRefLookup;
   findSendLogIdForClick?: SendLogLookup;
   recordClick?: ClickRecorder;
+}
+
+export interface ClickThroughOptions extends ClickThroughDeps {
+  /**
+   * Which surface this tap came from. Defaults to 'direct', which is both the common case and the
+   * safe one: a hub link that lost its parameter is recorded as what it certainly is — a real tap
+   * — under the origin that under-counts the hub rather than inventing credit for it.
+   */
+  linkOrigin?: LinkOrigin;
 }
 
 // ── The stubbed reads ───────────────────────────────────────────────────────────────────
@@ -207,7 +301,12 @@ export const findSendLogIdForClick: SendLogLookup = async () => null;
  *
  * TODO:
  *   INSERT INTO sms_click_event (subscriber_id, send_log_id, occurrence_id, link_origin)
- *   VALUES ($1, $2, $3, 'direct')
+ *   VALUES ($1, $2, $3, $4)
+ *
+ * `$4` IS A BOUND PARAMETER, NOT AN INTERPOLATED STRING, and it arrives already mapped onto the
+ * `LinkOrigin` union — see `parseLinkOrigin`. 0036's CHECK constrains this column, so a raw
+ * query-string value reaching here would fail the insert, and this recorder's failures are
+ * swallowed by design: the click would vanish with no error anywhere.
  *
  * NO DEDUPLICATION, DELIBERATELY, and migration 0036 says so in its own comment: there is no
  * unique index on (send_log_id, occurrence_id) because a parent tapping the same pick twice is two
@@ -251,12 +350,13 @@ export const recordClick: ClickRecorder = async () => {};
  */
 export async function resolveClickThrough(
   token: string | null | undefined,
-  deps: ClickThroughDeps = {}
+  options: ClickThroughOptions = {}
 ): Promise<ClickResolution> {
-  const findOccurrence = deps.findOccurrenceIdByShortRef ?? findOccurrenceIdByShortRef;
-  const findSubscriber = deps.findSubscriberIdByShortRef ?? findSubscriberIdByShortRef;
-  const findSendLog = deps.findSendLogIdForClick ?? findSendLogIdForClick;
-  const record = deps.recordClick ?? recordClick;
+  const findOccurrence = options.findOccurrenceIdByShortRef ?? findOccurrenceIdByShortRef;
+  const findSubscriber = options.findSubscriberIdByShortRef ?? findSubscriberIdByShortRef;
+  const findSendLog = options.findSendLogIdForClick ?? findSendLogIdForClick;
+  const record = options.recordClick ?? recordClick;
+  const linkOrigin = options.linkOrigin ?? 'direct';
 
   // 1. Verify. Malformed and tampered are one outcome — see the header.
   let refs: ReturnType<typeof decodeShortLink>;
@@ -305,7 +405,7 @@ export async function resolveClickThrough(
     if (subscriberId) {
       const sendLogId = await findSendLog(subscriberId, occurrenceId);
       if (sendLogId) {
-        await record({ subscriberId, sendLogId, occurrenceId, linkOrigin: 'direct' });
+        await record({ subscriberId, sendLogId, occurrenceId, linkOrigin });
         clickLogged = true;
       }
     }

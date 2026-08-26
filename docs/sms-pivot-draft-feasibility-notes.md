@@ -2210,3 +2210,128 @@ dry-run gate suppressing a reply the read-only outcome would otherwise have prod
 
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **310 tests across 18
 files**. Full `unit` lane: **224 files / 3776 tests passing**.
+
+---
+
+# Round 15 — hub clicks (PRD §2.4 linking through §2.3's instrumentation)
+
+The hub's "last week's picks" list linked straight to `/activity/{id}`, bypassing the short-link
+route entirely. The code's own comment said the `'hub'` origin was what these links "produce once
+the click recorder is wired for this surface"; nothing came back to wire it.
+
+| File | What changed |
+|---|---|
+| `lib/sms/click-through.ts` | `LinkOrigin`, `parseLinkOrigin`, `hubClickPath`; `linkOrigin` is a parameter |
+| `app/s/[shortId]/route.ts` | reads `?via=hub` and threads it |
+| `lib/sms/preferences.ts` | `hubPickLinks`; `PreferencesRow.shortRef`; pick short_refs; `PreferencesViewPick` |
+| `app/u/[preferencesToken]/page.tsx` | links through `/s/{token}?via=hub` |
+| `tests/sms/click_through.test.tsx` | +9 (23 → 32) |
+| `tests/sms/preferences.test.ts` | +6 (26 → 32) |
+
+## bk. Two things were broken, not one
+
+**1. PRD §6's metric was unanswerable by construction.** `SmsClickEvent.linkOrigin` was the literal
+TYPE `'direct'` — not a default, a type — so no code path could ever write a hub click. §6's MVP
+metric is "click-through rate… split by `link_origin`", and 0036's own column comment says it "is
+the only way to answer whether the hub page earns its keep". That question could not have been
+answered at any volume of traffic, for any length of time.
+
+**2. A hub pick to an archived activity produced a bare 404.** `app/activity/[id]/page.tsx` calls
+`notFound()` when the activity does not resolve (line 28, read not recalled). Links outlive
+listings — that is the premise `occurrence_gone` exists for — so a pick cancelled since the send
+dead-ended, **from the one page whose entire purpose is being the safe, no-login place to deal with
+your subscription.** Round 9 built the interstitial precisely to eliminate that silent failure and
+this surface never reached it. Now it does, and it is pinned by its own test rather than left as a
+side effect.
+
+## bl. Point 2 — the origin tag rides in a query parameter, and the spoof radius is one column
+
+**Not in the token, and not only because the token is full.** 76 bits with a 20-bit check leaves no
+room, yes — but the worse problem is that origin-in-token makes the SAME (occurrence, subscriber)
+pair mint TWO different tokens, destroying the determinism that lets a link stay valid across sends
+and doubling what `decodeShortLink` has to accept.
+
+**What appending `?via=hub` to a texted link achieves:** `sms_click_event.link_origin` on the row
+that tap writes. That is the whole effect.
+
+**What it cannot touch**, because the token is a separate path segment and the query string is not
+part of the signed payload — asserted directly in the tests, not reasoned about:
+
+- whether the token verifies. A forgery with `?via=hub` is still `invalid_token`.
+- which occurrence or subscriber it resolves to. Attribution stays correct.
+- the redirect destination.
+- whether a row is written at all — that still needs a live occurrence, a live subscriber row and a
+  recoverable send log.
+- consent state, PII, or the preferences token, which is a different token on a different route.
+
+**Who can even do it:** only somebody holding valid tokens, i.e. a subscriber, skewing a statistic
+about themselves, with nothing to gain. **Confirmed as suspected: one mis-attributed row of one
+non-security column.**
+
+The honest residual, named rather than dismissed: §6's direct-vs-hub split informs a V1
+build/don't-build decision about the hub page, so sustained deliberate spoofing could in principle
+nudge it. That needs effort by someone with valid tokens to influence a decision they cannot see.
+
+**Alternatives considered:** `Referer` — unreliable, and this route already sets
+`referrer-policy: no-referrer`, so inferring origin from a header we deliberately suppress
+elsewhere would be incoherent. A second route `/h/{token}` — equally spoofable (anyone can
+construct it from a direct token), plus a second public route to keep in step.
+
+**The tag does not survive the redirect.** `resolution.destination` carries no query string, so
+`?via=hub` is consumed at the route and never reaches the `Location` header — which is written into
+browser history and handed to every proxy in between, and has no business carrying our analytics
+tagging. Tested.
+
+## bm. 🔴 A bug in this round's own code, caught by its own test
+
+`parseLinkOrigin` was written as an object-literal lookup:
+
+```ts
+const VALUES: Record<string, LinkOrigin> = { hub: 'hub', direct: 'direct' };
+return (raw && VALUES[raw]) || 'direct';
+```
+
+An object literal inherits from `Object.prototype`, so **`?via=constructor` returned the `Object`
+function** and `?via=__proto__` returned the prototype — a value typed `LinkOrigin` that is not a
+`LinkOrigin`, on a public unauthenticated route, headed for a `NOT NULL` CHECK-constrained column.
+It would have defeated the "mapped, never passed through" guarantee written two paragraphs above it,
+in the one implementation of that guarantee that does not hold.
+
+Caught because the junk list in the test names `constructor` and `__proto__` explicitly. Fixed with
+a `Set`, which has no inherited keys. **The paragraph and the bug were written in the same sitting**
+— documenting an invariant is not the same as having one.
+
+## bn. The data the hub did not have
+
+`picks_snapshot` stores `[{occurrence_id, rank}]` (0035) and nothing else, and `PreferencesRow`
+extended `ConsentRow` (`{id, status, stoppedAt}`). Neither carried a `short_ref`, so a token could
+not be minted from what the page held. Both now do: `findLastWeek`'s TODO gains one keyed read
+(`SELECT id, short_ref FROM activity_occurrence WHERE id = ANY($1) AND archived_at IS NULL`), and
+`PreferencesRow` gains `shortRef`.
+
+**`PreferencesView` still carries no internal reference.** Minting happens in the resolver, so
+`short_ref` goes in and a finished href comes out — asserted by serialising the whole view and
+checking neither the field name nor the value appears.
+
+**It degrades to the old link, never to no link.** Three ways a token cannot be minted — no
+subscriber `short_ref`, an occurrence archived since the send, or no `SMS_SHORT_LINK_SECRET` (which
+`encodeShortLink` throws on rather than truncating, because a truncated ref would point at the
+WRONG activity). Each falls back to `activityPath` with `attributed: false`, so an unattributed
+panel shows up in a test rather than as a permanently flat metric months later.
+
+**An archived pick stays IN the panel.** The snapshot is the record of what we SENT, and it must
+still list a pick that has since been cancelled.
+
+## bo. Verification
+
+15 new tests. Origin: a hub tap recorded as `'hub'`; `'direct'` as the default with nothing passed
+(regression); the untrusted value mapped with `constructor`/`__proto__`/case-variants/whitespace all
+falling to `'direct'`; the query parameter proven not to affect the token's integrity check in
+either direction; `hubClickPath` round-tripping through `parseLinkOrigin`; end-to-end through the
+real `GET`; and `via=` absent from the `Location` header. Hub: links matching `/s/{13}?via=hub`;
+minting the same token the weekly send would for that pair; no internal reference in the view; all
+three degradation paths; and an archived pick staying listed. Gone-from-hub: `occurrence_gone` →
+`/activity-unavailable`, uncounted, carrying no occurrence id.
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **328 tests across 18
+files**. Full `unit` lane: **224 files / 3794 tests passing**.

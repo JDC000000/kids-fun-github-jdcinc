@@ -5,6 +5,7 @@
 // token can only ever reach the one row it belongs to, and a store with one row cannot prove that.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  hubPickLinks,
   childAgesFrom,
   decideDelete,
   decideSave,
@@ -16,6 +17,8 @@ import {
   type PreferencesRow,
 } from '@/lib/sms/preferences';
 import type { ConsentStatus } from '@/lib/sms/consent-transitions';
+import { hubClickPath } from '@/lib/sms/click-through';
+import { encodeShortLink } from '@/lib/sms/short-link';
 import type { ProfileFields } from '@/lib/sms/signup-validate';
 
 const NOW = new Date('2026-08-28T23:00:00Z'); // Friday, local year 2026
@@ -33,6 +36,8 @@ function row(over: Partial<PreferencesRow> = {}): PreferencesRow {
     birthYears: [2021, 2018],
     categoryInterests: ['public_swim'],
     consecutiveEmptyWeeks: 0,
+    // The subscriber half of a click-through token, so the hub's pick links can be minted.
+    shortRef: 7,
     ...over,
   };
 }
@@ -193,7 +198,7 @@ describe('what the page renders', () => {
 
   it('shows last week, including the empty and paused states', async () => {
     for (const kind of ['weekly', 'empty_week', 'pause_notice', 'none'] as const) {
-      const { deps } = store(BOTH, { kind, picks: kind === 'weekly' ? [{ occurrenceId: 'o1', rank: 1 }] : [], sentAt: NOW });
+      const { deps } = store(BOTH, { kind, picks: kind === 'weekly' ? [{ occurrenceId: 'o1', rank: 1, occurrenceShortRef: 42 }] : [], sentAt: NOW });
       const result = await resolvePreferences(ALICE_TOKEN, NOW, deps);
       if (result.outcome !== 'found') throw new Error('expected found');
       expect(result.view.lastWeek.kind).toBe(kind);
@@ -405,5 +410,113 @@ describe('failures never leak and never half-apply', () => {
       const result = await performPreferencesAction({ token: ALICE_TOKEN, action, now: NOW });
       expect(result.outcome, action).toBe('not_found');
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The hub's pick links — PRD §2.4 linking through §2.3's instrumentation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("last week's pick links", () => {
+  const PICKS = [
+    { occurrenceId: 'occ-1', rank: 1, occurrenceShortRef: 5601 },
+    { occurrenceId: 'occ-2', rank: 2, occurrenceShortRef: 5602 },
+  ];
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function withSecret() {
+    vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-short-link-secret');
+  }
+
+  it('goes through /s/{token}?via=hub, NOT straight to /activity', async () => {
+    // The whole point. While these linked to /activity directly, a hub tap never reached the
+    // click-through route, so `sms_click_event.link_origin = 'hub'` could not be written and PRD
+    // §6's direct-vs-hub split had an empty bucket by construction.
+    withSecret();
+    const { deps } = store(BOTH, { kind: 'weekly', picks: PICKS, sentAt: NOW });
+    const result = await resolvePreferences(ALICE_TOKEN, NOW, deps);
+    if (result.outcome !== 'found') throw new Error('expected found');
+
+    for (const pick of result.view.lastWeek.picks) {
+      expect(pick.href).toMatch(/^\/s\/[0-9A-Za-z]{13}\?via=hub$/);
+      expect(pick.attributed).toBe(true);
+      expect(pick.href).not.toContain('/activity/');
+    }
+  });
+
+  it('mints the SAME token the weekly send would for that pair', async () => {
+    // Deterministic per (occurrence, subscriber) — so a tap from the hub and a tap from the text
+    // resolve to the same activity for the same person, and only `link_origin` differs.
+    withSecret();
+    const { deps } = store(BOTH, { kind: 'weekly', picks: [PICKS[0]], sentAt: NOW });
+    const result = await resolvePreferences(ALICE_TOKEN, NOW, deps);
+    if (result.outcome !== 'found') throw new Error('expected found');
+    expect(result.view.lastWeek.picks[0].href).toBe(hubClickPath(encodeShortLink(5601, 7)));
+  });
+
+  it('carries NO internal reference into the view — only the finished href', async () => {
+    // PreferencesView's stated property. `short_ref` goes in, an href comes out.
+    withSecret();
+    const { deps } = store(BOTH, { kind: 'weekly', picks: PICKS, sentAt: NOW });
+    const result = await resolvePreferences(ALICE_TOKEN, NOW, deps);
+    if (result.outcome !== 'found') throw new Error('expected found');
+    const serialized = JSON.stringify(result.view);
+    expect(serialized).not.toContain('shortRef');
+    expect(serialized).not.toContain('5601');
+    expect(Object.keys(result.view.lastWeek.picks[0]).sort()).toEqual([
+      'attributed',
+      'href',
+      'occurrenceId',
+      'rank',
+    ]);
+  });
+
+  it('degrades to the plain activity link rather than to NO link', async () => {
+    // Three ways a token cannot be minted, none of which may cost a parent the pick.
+    withSecret();
+    const cases: Array<[string, Parameters<typeof hubPickLinks>]> = [
+      ['subscriber has no short_ref', [null, PICKS]],
+      ['occurrence was archived since the send', [7, [{ ...PICKS[0], occurrenceShortRef: null }]]],
+    ];
+    for (const [name, args] of cases) {
+      const [link] = hubPickLinks(...args);
+      expect(link.href, name).toBe('/activity/occ-1');
+      expect(link.attributed, name).toBe(false);
+    }
+
+    // And the third: no signing secret. encodeShortLink THROWS rather than truncating (a
+    // truncated ref would point at the wrong activity), so the fallback is the honest link.
+    vi.unstubAllEnvs();
+    const [unsigned] = hubPickLinks(7, PICKS);
+    expect(unsigned.href).toBe('/activity/occ-1');
+    expect(unsigned.attributed).toBe(false);
+  });
+
+  it('reports the degradation instead of hiding it', () => {
+    // An unattributed hub link is a click PRD §6 will never see. A panel silently full of them
+    // reads as a flat metric months later, not as a bug.
+    withSecret();
+    expect(hubPickLinks(7, PICKS).every((p) => p.attributed)).toBe(true);
+    expect(hubPickLinks(null, PICKS).some((p) => p.attributed)).toBe(false);
+  });
+
+  it('keeps an archived pick IN the panel — the snapshot records what we SENT', async () => {
+    // picks_snapshot is the record of the message that went out. A pick cancelled since must
+    // still be listed; it just links unattributed, and (see click_through.test.tsx) a tap on an
+    // attributed link to a gone occurrence now reaches the "activity unavailable" interstitial
+    // instead of the detail page's bare notFound().
+    withSecret();
+    const { deps } = store(BOTH, {
+      kind: 'weekly',
+      picks: [PICKS[0], { occurrenceId: 'occ-gone', rank: 2, occurrenceShortRef: null }],
+      sentAt: NOW,
+    });
+    const result = await resolvePreferences(ALICE_TOKEN, NOW, deps);
+    if (result.outcome !== 'found') throw new Error('expected found');
+    expect(result.view.lastWeek.picks).toHaveLength(2);
+    expect(result.view.lastWeek.picks[1].attributed).toBe(false);
   });
 });

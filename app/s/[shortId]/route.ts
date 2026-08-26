@@ -22,7 +22,11 @@
 // every proxy in between.
 
 import { NextResponse } from 'next/server';
-import { resolveClickThrough } from '@/lib/sms/click-through';
+import {
+  LINK_ORIGIN_PARAM,
+  parseLinkOrigin,
+  resolveClickThrough,
+} from '@/lib/sms/click-through';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // node:crypto (HMAC verification) + the pg pool.
@@ -45,12 +49,28 @@ export async function GET(
   request: Request,
   { params }: { params: { shortId: string } }
 ): Promise<NextResponse> {
-  const resolution = await resolveClickThrough(params.shortId);
+  // WHICH SURFACE THIS TAP CAME FROM (`sms_click_event.link_origin`, migration 0036). The token
+  // deliberately does not carry it — see `LINK_ORIGIN_PARAM` for why widening it would be worse,
+  // and for the full blast radius of somebody appending `?via=hub` to a link they were texted
+  // (one column of one analytics row; the token's own integrity check is untouched, because the
+  // query string is not part of the signed payload).
+  //
+  // ANYTHING UNRECOGNISED IS 'direct', not an error: a junk parameter must not cost a parent
+  // their redirect, and the value is MAPPED onto the union rather than passed through to the
+  // insert, where 0036's CHECK would reject it and the click would vanish silently.
+  const linkOrigin = parseLinkOrigin(new URL(request.url).searchParams.get(LINK_ORIGIN_PARAM));
+
+  const resolution = await resolveClickThrough(params.shortId, { linkOrigin });
 
   // Resolve against the REQUEST's own origin rather than NEXT_PUBLIC_SITE_URL: this route is
   // reached from a text message and may be hit on a preview deployment or a staging host, and a
   // redirect that bounced a parent to the production domain mid-tap would be both surprising and
   // a way to lose the click.
+  //
+  // `resolution.destination` carries no query string, so `?via=hub` does NOT survive into the
+  // Location header — the origin tag is consumed here and goes no further. That matters for the
+  // same reason the referrer policy below does: a redirect target is written into browser history
+  // and handed to every proxy in between, and it has no business carrying our analytics tagging.
   const target = new URL(resolution.destination, request.url);
 
   const response = NextResponse.redirect(target, REDIRECT_STATUS);

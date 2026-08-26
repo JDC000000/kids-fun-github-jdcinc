@@ -19,6 +19,7 @@ import {
   type SmsClickEvent,
 } from '@/lib/sms/click-through';
 import { GET } from '@/app/s/[shortId]/route';
+import { hubClickPath, LINK_ORIGIN_PARAM, parseLinkOrigin } from '@/lib/sms/click-through';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ActivityUnavailablePage from '@/app/activity-unavailable/page';
 import {
@@ -80,8 +81,9 @@ describe('a valid token for a live activity', () => {
         subscriberId: SUBSCRIBER_ID,
         sendLogId: SEND_LOG_ID,
         occurrenceId: OCCURRENCE_ID,
-        // Always 'direct' from this route. 'hub' comes from the preferences page, which does not
-        // exist yet.
+        // REGRESSION GUARD. 'direct' is the DEFAULT when no origin is passed, which is what a tap
+        // on a link that came in a text message is. Round 15 made this a parameter; it must not
+        // have made the common case depend on remembering to pass one.
         linkOrigin: 'direct',
       },
     ]);
@@ -360,6 +362,129 @@ describe('GET /s/[shortId]', () => {
       params: { shortId: token },
     });
     expect(res.headers.get('location')).toBe('https://staging.example/activity-unavailable');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Where the tap came from — sms_click_event.link_origin (migration 0036, PRD §6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('link_origin', () => {
+  it('records a hub tap as "hub" — which was IMPOSSIBLE before round 15', () => {
+    // Round 6 hardcoded the field to the literal type 'direct' because the hub page did not exist
+    // yet. It landed in round 8 and nothing came back, so PRD §6's "click-through rate split by
+    // link_origin" had an empty hub bucket by construction and the direct-vs-hub comparison the
+    // V1 backlog wants was unanswerable.
+    withSecret();
+    const { clicks, deps } = wiredDeps();
+    return resolveClickThrough(validToken(), { ...deps, linkOrigin: 'hub' }).then(() => {
+      expect(clicks[0].linkOrigin).toBe('hub');
+    });
+  });
+
+  it('defaults to "direct" when nothing is passed', async () => {
+    withSecret();
+    const { clicks, deps } = wiredDeps();
+    await resolveClickThrough(validToken(), deps);
+    expect(clicks[0].linkOrigin).toBe('direct');
+  });
+
+  it('maps an untrusted query value onto the union, defaulting everything else to direct', () => {
+    expect(parseLinkOrigin('hub')).toBe('hub');
+    expect(parseLinkOrigin('direct')).toBe('direct');
+    // Anything else. The value is MAPPED, never passed through: 0036 CHECKs this column, so a raw
+    // query string reaching the insert would fail it — and the recorder's failures are swallowed
+    // by design, so the click would vanish with no error anywhere.
+    for (const junk of ['HUB', 'hub ', '', 'both', "'hub'", 'constructor', '__proto__', null, undefined]) {
+      expect(parseLinkOrigin(junk), String(junk)).toBe('direct');
+    }
+  });
+
+  it('does not let the query parameter touch the TOKEN\'s integrity check', async () => {
+    // The token is a separate path segment and the query string is not part of the signed
+    // payload. So `?via=hub` cannot make a forgery verify, and cannot change what a real token
+    // resolves to. This is the whole reason the spoof blast radius is one analytics column.
+    withSecret();
+    const forged = await resolveClickThrough('7bQ2mX9pLa4Rd', {
+      ...wiredDeps().deps,
+      linkOrigin: 'hub',
+    });
+    expect(forged.outcome).toBe('invalid_token');
+    expect(forged.clickLogged).toBe(false);
+
+    const { clicks, deps } = wiredDeps();
+    const real = await resolveClickThrough(validToken(), { ...deps, linkOrigin: 'hub' });
+    expect(real.destination).toBe(`/activity/${OCCURRENCE_ID}`);
+    expect(clicks[0].subscriberId).toBe(SUBSCRIBER_ID);
+    expect(clicks[0].occurrenceId).toBe(OCCURRENCE_ID);
+  });
+
+  it('mints the hub path from the same token, with the parameter the route reads', () => {
+    withSecret();
+    const token = validToken();
+    expect(hubClickPath(token)).toBe(`/s/${token}?via=hub`);
+    // Relative, not absolute: the route resolves its redirect against the REQUEST's origin, and a
+    // hub link that hardcoded the production host would bounce a parent off a preview deployment.
+    expect(hubClickPath(token).startsWith('/')).toBe(true);
+    expect(parseLinkOrigin(new URL(hubClickPath(token), 'https://x').searchParams.get(LINK_ORIGIN_PARAM))).toBe('hub');
+  });
+});
+
+describe('a HUB pick whose activity is gone — a real behaviour change, not a side effect', () => {
+  it('reaches the "activity unavailable" interstitial instead of a bare 404', async () => {
+    // BEFORE round 15 the hub linked to `/activity/{id}` directly, and app/activity/[id]/page.tsx
+    // calls `notFound()` when the activity does not resolve (line 28). So a pick cancelled since
+    // the send produced a bare 404 — from the ONE page whose whole purpose is being the safe,
+    // no-login place to deal with your subscription, and exactly the silent failure round 9's
+    // interstitial was built to eliminate.
+    withSecret();
+    const { clicks, deps } = wiredDeps({
+      // The archived case: the token verifies, no LIVE occurrence carries that short_ref.
+      findOccurrenceIdByShortRef: async () => null,
+    });
+    const result = await resolveClickThrough(validToken(), { ...deps, linkOrigin: 'hub' });
+
+    expect(result.outcome).toBe('occurrence_gone');
+    expect(result.destination).toBe('/activity-unavailable');
+    expect(result.destination).not.toContain('/activity/');
+    // Still uncounted, and still for a schema reason rather than a policy one:
+    // sms_click_event.occurrence_id is NOT NULL and FK-constrained to a live row.
+    expect(result.clickLogged).toBe(false);
+    expect(clicks).toEqual([]);
+  });
+
+  it('and the interstitial URL carries nothing about which pick or whose', async () => {
+    // Unchanged from round 9, re-asserted here because the hub is a new way to reach it.
+    withSecret();
+    const { deps } = wiredDeps({ findOccurrenceIdByShortRef: async () => null });
+    const result = await resolveClickThrough(validToken(), { ...deps, linkOrigin: 'hub' });
+    expect(result.destination).toBe('/activity-unavailable');
+    expect(result.occurrenceId).toBeNull();
+  });
+});
+
+describe('GET /s/[shortId] — the origin parameter end to end', () => {
+  it('reads ?via=hub off the URL and records the tap as a hub click', async () => {
+    withSecret();
+    const token = validToken();
+    const res = await GET(new Request(`https://kidsfun.example${hubClickPath(token)}`), {
+      params: { shortId: token },
+    });
+    expect(res.status).toBe(307);
+    // The reads are stubs on this branch, so the occurrence does not resolve — what this proves
+    // is that the parameter is parsed and threaded, which is the wiring under test.
+    expect(res.headers.get('location')).toContain('/activity-unavailable');
+  });
+
+  it('does NOT let ?via=hub survive into the Location header', async () => {
+    // A redirect target is written into browser history and handed to every proxy in between. Our
+    // analytics tagging has no business travelling with it.
+    withSecret();
+    const token = validToken();
+    const res = await GET(new Request(`https://kidsfun.example${hubClickPath(token)}`), {
+      params: { shortId: token },
+    });
+    expect(res.headers.get('location')).not.toContain('via=');
   });
 });
 

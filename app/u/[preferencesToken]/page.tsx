@@ -138,11 +138,16 @@ export default async function PreferencesPage({
           {view.lastWeek.kind === 'weekly' && view.lastWeek.picks.length > 0 && (
             <ol className="kf-prefs__picks">
               {view.lastWeek.picks.map((pick) => (
-                // The hub's own links to the picks. `link_origin: 'hub'` (migration 0036) is what
-                // these produce once the click recorder is wired for this surface — round 6 built
-                // only the 'direct' path and said so.
-                <li key={pick.occurrenceId}>
-                  <a href={`/activity/${pick.occurrenceId}`}>Pick {pick.rank}</a>
+                // The hub's own links to the picks, minted in lib/sms/preferences.ts so this
+                // component holds no reference of its own. Each goes through `/s/{token}?via=hub`,
+                // which is what makes `sms_click_event.link_origin = 'hub'` (migration 0036)
+                // writable at all — PRD §6's click-through metric splits on that column, and it
+                // could never have shown a hub click while this linked to /activity directly.
+                // It also means a pick whose activity has since been archived now reaches the
+                // "activity unavailable" interstitial instead of a bare 404.
+                // `attributed` is false only when no token could be minted; the link still works.
+                <li key={pick.occurrenceId} data-attributed={pick.attributed}>
+                  <a href={pick.href}>Pick {pick.rank}</a>
                 </li>
               ))}
             </ol>
