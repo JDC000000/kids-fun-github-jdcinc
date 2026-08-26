@@ -25,22 +25,53 @@
 import { decodeShortLink } from './short-link';
 
 /**
- * Where a tap goes when we cannot send it to the activity it named.
- *
- * `/search` for both failure modes, DELIBERATELY THE SAME DESTINATION for now, and flagged as
- * this round's open question:
- *
- *   THERE IS NO "THIS ACTIVITY IS NO LONGER LISTED" EXPERIENCE ON THIS SITE TODAY. I checked
- *   before choosing: `/activity/[id]` and `/preview/[id]` both call `notFound()` for a missing id,
- *   and there is no `app/not-found.tsx` anywhere in the tree — so a missing activity currently
- *   gets Next's bare default 404. There is no pattern here to reuse, and inventing a page is a
- *   product/copy decision rather than an implementation one, so it is raised rather than taken.
- *
- * The two reasons are kept as separate `ClickOutcome` values even though they resolve to the same
- * path, so giving the "gone" case its own destination later is a one-line change here and needs no
- * change in the route.
+ * Where a tap goes when the token itself does not verify — malformed, tampered, wrong length, bad
+ * checksum. Generic on purpose: we do not know what they were trying to reach, so /search is the
+ * honest "go find something to do" answer and it says nothing about the token.
  */
 export const FALLBACK_DESTINATION = '/search';
+
+/**
+ * Where a tap goes when the token VERIFIED but the activity has since been archived (PRD §8 Q3,
+ * Jon-approved 2026-08-26). Round 6 kept `occurrence_gone` as a distinct outcome precisely so this
+ * would be a one-line change when the copy existed; it now is.
+ *
+ * ═══ DOES SPLITTING THE DESTINATIONS REOPEN ROUND 6'S ENUMERATION CONCERN? ═══
+ * Partly yes, and it is worth being exact about which part, because the answer is not "no".
+ *
+ * WHAT ROUND 6 PROTECTED, AND STILL DOES. The concern was distinguishing MALFORMED from
+ * CHECKSUM-FAILED — telling a prober they were one character away and turning a 20-bit check into
+ * a guided search. That distinction is UNCHANGED: `decodeShortLink` returns null for both, both
+ * are `invalid_token`, both land on /search. There is still no "warmer/colder" signal inside the
+ * space of failing tokens.
+ *
+ * WHAT IS NEWLY VISIBLE. A prober can now tell "my token PASSED the HMAC but named no live
+ * activity" from "my token did not pass". That is a validity ORACLE that did not exist before, and
+ * it is a real change rather than a technicality.
+ *
+ * WHY IT IS ACCEPTABLE, stated so the tradeoff is on the record rather than assumed:
+ *   • IT DOES NOT COMPOUND. The check is an HMAC over each payload independently, so learning that
+ *     one forged token verified reveals nothing about the secret and does not make the next
+ *     forgery cheaper. The oracle answers one question, once, per attempt — it does not narrow
+ *     the search space the way a "you were close" signal would.
+ *   • THE ATTEMPT RATE IS THE REAL BOUND, and it is unchanged. ~1 in 2^20 random tokens verify,
+ *     and this only tells them which ones did — something they could already infer from a
+ *     successful redirect whenever the short_ref happened to be live.
+ *   • THE PRIZE IS SMALL. A verified forgery reaches public catalogue data (or this page) and can
+ *     write one bogus `sms_click_event`. It cannot read a subscriber, mutate anything, or reach
+ *     the preferences page, which is a different token entirely.
+ *
+ * WHAT THE ALTERNATIVES COST, since "keep them identical" was available:
+ *   • Send BOTH here. A parent whose link was mangled by their messaging app would be told an
+ *     activity was CANCELLED when nothing was — inventing a fact to protect a 20-bit check. This
+ *     project does not trade honesty for that.
+ *   • Send both to /search, i.e. round 6's status quo. That is what Jon's ruling changed.
+ * So: the oracle is accepted, deliberately, and named here so nobody has to rediscover it.
+ *
+ * THE REDIRECT CARRIES NOTHING — no occurrence id, no short_ref, no query string. This URL lands
+ * in browser history like any other, and it must not record WHICH activity was gone for WHOM.
+ */
+export const GONE_DESTINATION = '/activity-unavailable';
 
 /** The canonical activity detail path. */
 export function activityPath(occurrenceId: string): string {
@@ -250,14 +281,17 @@ export async function resolveClickThrough(
   try {
     occurrenceId = await findOccurrence(refs.occurrenceShortRef);
   } catch {
-    // A read failure is not the parent's problem, and it is not evidence the activity is gone —
-    // but we have nowhere to send them either, so it degrades to the same honest fallback.
+    // A read failure is not the parent's problem, and it is NOT evidence the activity is gone —
+    // but we have nowhere to send them either, so it takes the same branch. Worth knowing: this
+    // means a database outage tells a handful of parents an activity was cancelled when it was
+    // not. The alternative is a bare error page, which is worse for them and no more truthful
+    // about what happened. Flagged in the round-9 notes rather than hidden.
     occurrenceId = null;
   }
   if (!occurrenceId) {
     return {
       outcome: 'occurrence_gone',
-      destination: FALLBACK_DESTINATION,
+      destination: GONE_DESTINATION,
       occurrenceId: null,
       clickLogged: false,
     };

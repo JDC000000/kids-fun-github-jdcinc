@@ -1,0 +1,59 @@
+/* app/activity-unavailable/activity-unavailable.css — the "that activity is gone" interstitial.
+ *
+ * DRAFT (SMS pivot). Co-located with the page, tokens only, mobile-first: every visitor arrives
+ * from a redirect from a link in a text message, on a phone, having just tapped something they
+ * expected to work. The page should read as one calm sentence, not as an error.
+ */
+
+.kf-gone {
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--kf-space-5) var(--kf-space-4);
+  font-family: var(--kf-font-ui);
+  color: var(--kf-ink);
+}
+
+.kf-gone__panel {
+  max-width: 28rem;
+  background: var(--kf-surface);
+  border-radius: var(--kf-r-card);
+  padding: var(--kf-space-6) var(--kf-space-5);
+  box-shadow: var(--kf-e-100);
+  text-align: center;
+}
+
+.kf-gone__heading {
+  font-size: 1.375rem;
+  line-height: 1.3;
+  margin: 0 0 var(--kf-space-3);
+}
+
+/* The message itself carries the page. Not the danger palette: a cancelled session is a fact
+ * about the world, not a mistake the reader made. */
+.kf-gone__body {
+  margin: 0 0 var(--kf-space-5);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  color: var(--kf-ink-secondary);
+}
+
+.kf-gone__support,
+.kf-gone__onward {
+  margin: 0 0 var(--kf-space-3);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.kf-gone__support a,
+.kf-gone__onward a {
+  color: var(--kf-anchor);
+}
+
+.kf-gone__onward {
+  margin-bottom: 0;
+  padding-top: var(--kf-space-3);
+  border-top: 1px solid var(--kf-hairline);
+}

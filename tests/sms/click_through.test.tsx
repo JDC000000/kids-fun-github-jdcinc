@@ -12,12 +12,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeShortLink } from '@/lib/sms/short-link';
 import {
   FALLBACK_DESTINATION,
+  GONE_DESTINATION,
   activityPath,
   resolveClickThrough,
   type ClickThroughDeps,
   type SmsClickEvent,
 } from '@/lib/sms/click-through';
 import { GET } from '@/app/s/[shortId]/route';
+import { renderToStaticMarkup } from 'react-dom/server';
+import ActivityUnavailablePage from '@/app/activity-unavailable/page';
+import {
+  ACTIVITY_GONE_BODY,
+  SUPPORT_PHONE_DISPLAY,
+  SUPPORT_PHONE_E164,
+} from '@/lib/sms/consent-copy';
 
 const OCC_SHORT_REF = 5601;
 const SUB_SHORT_REF = 42;
@@ -158,7 +166,7 @@ describe('a token that does not verify', () => {
 });
 
 describe('a valid token whose activity is gone', () => {
-  it('goes to the fallback and logs NO click — the schema makes that mandatory', async () => {
+  it('goes to its OWN interstitial and logs NO click — the schema makes that mandatory', async () => {
     // sms_click_event.occurrence_id is NOT NULL and FK-constrained to a live activity_occurrence
     // row, so there is literally no row to write. This is a schema fact, not a policy choice.
     withSecret();
@@ -166,15 +174,21 @@ describe('a valid token whose activity is gone', () => {
     const result = await resolveClickThrough(validToken(), deps);
 
     expect(result.outcome).toBe('occurrence_gone');
-    expect(result.destination).toBe(FALLBACK_DESTINATION);
+    expect(result.destination).toBe(GONE_DESTINATION);
     expect(result.occurrenceId).toBeNull();
     expect(result.clickLogged).toBe(false);
     expect(clicks).toEqual([]);
   });
 
-  it('is a DIFFERENT outcome from an invalid token, even though the destination matches today', async () => {
-    // Kept distinct so giving "gone" its own destination later is a one-line change. See the
-    // FALLBACK_DESTINATION comment — no such page exists on this site yet.
+  it('goes somewhere DIFFERENT from an invalid token — and that is a deliberate tradeoff', async () => {
+    // Round 6 sent both here because no "gone" page existed. Jon's §8 Q3 copy now gives this
+    // outcome its own destination, which creates a validity ORACLE: a prober can tell "my forged
+    // token passed the HMAC but named no live activity" from "it did not pass".
+    //
+    // Accepted, and reasoned through in GONE_DESTINATION's comment rather than assumed. The short
+    // version: it does not COMPOUND (an HMAC over each payload independently — one verified
+    // forgery makes the next no cheaper), and the alternative was telling a parent whose link a
+    // messaging app mangled that an activity had been CANCELLED when nothing had.
     withSecret();
     const gone = await resolveClickThrough(
       validToken(),
@@ -182,10 +196,28 @@ describe('a valid token whose activity is gone', () => {
     );
     const invalid = await resolveClickThrough('bogus', wiredDeps().deps);
     expect(gone.outcome).not.toBe(invalid.outcome);
-    expect(gone.destination).toBe(invalid.destination);
+    expect(gone.destination).toBe(GONE_DESTINATION);
+    expect(invalid.destination).toBe(FALLBACK_DESTINATION);
+    expect(gone.destination).not.toBe(invalid.destination);
   });
 
-  it('treats a failed occurrence READ the same way — we still have nowhere to send them', async () => {
+  it('STILL does not distinguish malformed from checksum-failed — round 6\'s actual concern', async () => {
+    // The property that mattered is unchanged: inside the space of FAILING tokens there is no
+    // "warmer/colder" signal, so a prober still learns nothing about how close they were.
+    withSecret();
+    const token = validToken();
+    const malformed = await resolveClickThrough('!!!!!!!!!!!!!', wiredDeps().deps);
+    const tampered = await resolveClickThrough(
+      `${token.slice(0, -1)}${token.at(-1) === 'a' ? 'b' : 'a'}`,
+      wiredDeps().deps
+    );
+    expect(malformed).toEqual(tampered);
+  });
+
+  it('treats a failed occurrence READ the same way — with a known, flagged cost', async () => {
+    // A database outage therefore tells a handful of parents an activity was cancelled when it was
+    // not. The alternative is a bare error page, which is worse for them and no more truthful.
+    // Named in click-through.ts and in the round-9 notes rather than left to be discovered.
     withSecret();
     const { deps } = wiredDeps({
       findOccurrenceIdByShortRef: async () => {
@@ -194,6 +226,7 @@ describe('a valid token whose activity is gone', () => {
     });
     const result = await resolveClickThrough(validToken(), deps);
     expect(result.outcome).toBe('occurrence_gone');
+    expect(result.destination).toBe(GONE_DESTINATION);
   });
 });
 
@@ -270,14 +303,15 @@ function get(shortId: string): Promise<Response> {
 }
 
 describe('GET /s/[shortId]', () => {
-  it('307s to the fallback with the unwired stubs — never 500s, never leaks', async () => {
-    // The default seams read nothing, so even a well-formed token resolves to the fallback. What
-    // matters at this layer is that a public, unauthenticated endpoint cannot do anything worse.
+  it('307s with the unwired stubs — never 500s, never leaks', async () => {
+    // The default seams read nothing, so a well-formed token resolves to occurrence_gone and lands
+    // on the interstitial. What matters at this layer is that a public, unauthenticated endpoint
+    // cannot do anything worse.
     withSecret();
     const res = await get(validToken());
 
     expect(res.status).toBe(307);
-    expect(res.headers.get('location')).toBe('https://kidsfun.example/search');
+    expect(res.headers.get('location')).toBe('https://kidsfun.example/activity-unavailable');
     expect(await res.text()).toBe(''); // no body, no stack trace, no echo of the input
   });
 
@@ -325,6 +359,33 @@ describe('GET /s/[shortId]', () => {
     const res = await GET(new Request(`https://staging.example/s/${token}`), {
       params: { shortId: token },
     });
-    expect(res.headers.get('location')).toBe('https://staging.example/search');
+    expect(res.headers.get('location')).toBe('https://staging.example/activity-unavailable');
+  });
+});
+
+describe('the interstitial the "gone" outcome redirects to', () => {
+  const html = renderToStaticMarkup(<ActivityUnavailablePage />);
+
+  it("renders Jon's copy verbatim", () => {
+    // react-dom/server escapes the apostrophe in "that's".
+    expect(html).toContain(ACTIVITY_GONE_BODY.replace(/'/g, '&#x27;'));
+  });
+
+  it('gives "let me know if you have any other questions" somewhere to be let known', () => {
+    expect(html).toContain(`tel:${SUPPORT_PHONE_E164}`);
+    expect(html).toContain(SUPPORT_PHONE_DISPLAY);
+  });
+
+  it('carries NO identifier — not the occurrence, not the subscriber, not the token', () => {
+    // The redirect deliberately passes nothing, and this page must not invent anything either:
+    // its URL lands in browser history and must not record WHICH activity was gone for WHOM.
+    expect(html).not.toContain(OCCURRENCE_ID);
+    expect(html).not.toContain(SUBSCRIBER_ID);
+    expect(html).not.toMatch(/short_?ref/i);
+    expect(html).not.toContain('?');
+  });
+
+  it('offers the one useful next step', () => {
+    expect(html).toContain('href="/search"');
   });
 });
