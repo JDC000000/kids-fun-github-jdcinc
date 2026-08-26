@@ -23,6 +23,9 @@
 //                              orphan years of CASL records by changing every stored hash.
 //   SMS_WEBHOOK_PUBLIC_URL   — the exact public URL Twilio was configured to call, used for
 //                              signature verification. See the comment on webhookPublicUrl().
+//   SMS_CRON_SECRET          — shared secret guarding POST /api/sms/weekly/run.
+//   NEXT_PUBLIC_SITE_URL     — public app base URL, for the links inside a text. Shared,
+//                              app-level var; see siteUrl() for why this is a second reader.
 
 function env(name: string): string | undefined {
   const v = process.env[name];
@@ -59,6 +62,57 @@ export function smsSendingEnabled(): boolean {
  */
 export function smsSignupEnabled(): boolean {
   return env('SMS_SIGNUP_ENABLED') === 'true';
+}
+
+/**
+ * The shared secret guarding POST /api/sms/weekly/run, or null if unconfigured.
+ *
+ * Unconfigured means the route 503s — fail closed, never open. Mirrors
+ * lib/email/config.ts's cronSecret() exactly, and is a SEPARATE secret from the email job's:
+ * rotating one must not silently disarm the other, and a scheduler credential that triggers
+ * real text messages is not the same blast radius as one that triggers emails.
+ */
+export function smsCronSecret(): string | null {
+  return env('SMS_CRON_SECRET') ?? null;
+}
+
+/**
+ * The public site base URL, without a trailing slash.
+ *
+ * A SECOND READER OF A SHARED VAR, NOT A SECOND SOURCE OF TRUTH — stated because the repo
+ * otherwise argues hard against duplication. lib/email/config.ts reads the same
+ * NEXT_PUBLIC_SITE_URL, and that is fine: this is an app-level environment value with a
+ * three-line reader, not a RULE that two copies could drift apart on (a postal regex, a
+ * threshold, a region allowlist — those are the things that must have one home). The
+ * alternative was importing `appUrl` from the EMAIL lane into the SMS pipeline, which would
+ * make this module's dependency graph read as though the two features were coupled.
+ *   If you would rather it were shared, the right shape is a lib/config/app-url.ts both lanes
+ *   import — a small refactor that touches the email lane, which this branch deliberately does
+ *   not.
+ */
+export function siteUrl(): string {
+  return (env('NEXT_PUBLIC_SITE_URL') ?? 'http://localhost:3000').replace(/\/+$/, '');
+}
+
+/**
+ * The per-item short link for a weekly pick: `{site}/s/{token}` (PRD §2.3).
+ *
+ * The token comes from lib/sms/short-link.ts and is per (occurrence, subscriber), which is what
+ * makes a click attributable to one person rather than to an activity in aggregate.
+ */
+export function shortLinkUrl(token: string): string {
+  return `${siteUrl()}/s/${token}`;
+}
+
+/**
+ * The subscriber's own no-login preferences/hub page: `{site}/u/{preferencesToken}` (PRD §2.4).
+ *
+ * This link is in EVERY message, and it is not decoration — it is the CASL unsubscribe path and
+ * the PIPEDA access/correction mechanism at the same time. A message that renders without it is
+ * a message that must not be sent.
+ */
+export function preferencesUrl(preferencesToken: string): string {
+  return `${siteUrl()}/u/${preferencesToken}`;
 }
 
 /** Twilio account SID, or null if unconfigured. */
