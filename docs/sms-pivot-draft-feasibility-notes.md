@@ -1118,3 +1118,166 @@ log id or short_ref in it; and at the route layer — 307, `no-store`, `no-refer
 manifest. SMS suite **192 tests across 13 files**. Full `unit` lane: **219 files / 3658 tests
 passing**. `db` and `invariants` lanes not run — no database here, and no Postgres has parsed any
 of the four migrations.
+
+---
+---
+
+# Round 7 — the novelty filter, and Jon's registration ruling
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+**No file outside `lib/sms/**`, `app/api/sms/**`, `tests/sms/**` and the docs was modified.**
+
+| file | change |
+|---|---|
+| `lib/sms/registration.ts` | **NEW** — the multi-session vs one-off distinction |
+| `lib/sms/weekly-picks.ts` | `excludeOccurrenceIds` input, novelty filter, registration gate |
+| `lib/sms/weekly-send.ts` | threads `excludeOccurrenceIds` |
+| `lib/sms/weekly-send-io.ts` | `loadRecentlySentPickIds` stub + `NOVELTY_LOOKBACK_SENDS` |
+| `app/api/sms/weekly/run/route.ts` | `novelExcluded` added to the PII allowlist |
+| `tests/sms/registration.test.ts` | **NEW**, 11 tests |
+| `tests/sms/weekly_picks.test.ts` | +7 (novelty) +1 (registration behaviour change) |
+| `tests/sms/weekly_send.test.ts` | +3 (novelty through the builder) |
+
+---
+
+## ad. The novelty filter
+
+`excludeOccurrenceIds?: ReadonlySet<string>` on `WeeklyPicksInput`, applied **after dedup, before
+the age-coverage swap**, exactly as §2.2 step 4 specifies. Neither part of that ordering is
+arbitrary:
+
+- **After dedup** — a repeat and its duplicate collapse first, so the exclusion removes *one*
+  candidate rather than two, and `novelExcluded` reports one. Pinned by a test.
+- **Before the coverage swap** — the swap both *selects from* and *reaches into* the candidate
+  list, so filtering afterwards would let an already-sent occurrence back in through the
+  forced-pick path. Pinned by a test that shows the same listing being forced in without the
+  exclusion and the band going unrepresented with it.
+
+**Not relaxed by either degradation step, structurally.** The exclusion lives on the input and
+`selectFrom` applies it unconditionally — there is no branch a retry could take that skips it.
+Tested against both: step (a) widening radius/window, and step (b) dropping interests. In the
+step-(b) test, `degradation` is asserted to be `widened_and_interests_dropped` — i.e. (b) genuinely
+fired — and the week is *still* empty, because novelty survived it.
+
+`novelExcluded` is reported all the way to the run route, because it is the number that
+distinguishes *"this municipality is thin"* from *"we have already sent them everything it has"* —
+two very different problems producing the same empty week.
+
+### The window: **`NOVELTY_LOOKBACK_SENDS = 1`**, and why not more
+
+**Sends, not weeks.** A subscriber who had an empty week has no weekly send from last calendar
+week at all, so a time-based window would look back at nothing and re-serve the picks from a
+fortnight ago. Counting *sends* looks back at the last thing they actually received, whenever that
+was.
+
+**Why the PRD's floor rather than something larger.** A longer window is the obvious instinct and
+it interacts badly with the thing §2.1 already worries about: in a sparse municipality the whole
+eligible set is a handful of activities, so excluding four weeks of picks can push a subscriber
+under the floor of 3 *every* week — and three empty weeks in a row **auto-pauses them** (§2.2 step
+7). Novelty is a nice-to-have; being auto-paused is losing the subscriber. Starting at 1 cannot
+cause that.
+
+> **Tuning question, flagged not guessed:** raising this is one constant, and it is worth raising
+> for the dense municipalities once there is real per-municipality data. It should probably not be
+> a single global number — the right window in Vancouver and the right window in Burnaby are
+> unlikely to be the same.
+
+---
+
+## ae. Jon's registration ruling — **built SMS-scoped, no shared-infra change.** Follow-up flagged.
+
+### The insight: the shared classifier's vocabulary already contains both ideas, mixed
+
+`lib/search/filters/registration.ts`'s `REGISTRATION_TITLE` is one alternation, but its terms
+answer **two different questions**:
+
+| | terms | Jon's ruling |
+|---|---|---|
+| **How long is it?** | camp, lesson, course, class, workshop, clinic, academy, series, "intro to", "learn to", "Level/Stage/Star N", "Session N", "Week N", certificate, + `PROGRAM_LEVEL` | **exclude** |
+| **How do you get in?** | "Reserve In Advance:", registration, register, registered | **keep** |
+
+Jon's line falls exactly along that seam. The distinction needs **no new data** — only a way to ask
+which half fired.
+
+### How it asks, without copying the vocabulary
+
+Restating the commitment half in the SMS lane would be a second copy of a fifteen-term alternation
+audited against 9,988 live rows, free to drift. So `isMultiSessionCommitment` **re-runs the shared
+classifier on the title with the booking-mechanism wording removed**:
+
+- still registration-shaped without them → a **commitment** fired → exclude
+- no longer registration-shaped → only the **booking mechanism** fired → keep
+
+Two properties a copied list would not have:
+
+1. Only **four** patterns live in `lib/sms/` — the booking-mechanism ones — instead of fifteen.
+2. A term added to `REGISTRATION_TITLE` later is **automatically treated as a commitment**, i.e. it
+   keeps being excluded. That is the safe direction: a new multi-session word slipping into a text
+   is noise; a drop-in wrongly excluded is a thinner week.
+
+`buildPicksRequest` now sets `includeRegistration: true` and the gate runs in `selectFrom`. That
+switch is documented as an inclusion widener that "can only ever ADD results", so this is strictly
+a **narrowing** of what arrives — net effect: the engine's exclusion *minus* the one-offs. A test
+asserts the SMS exclusion set is a strict subset of the site's, so the text can never hide
+drop-in content the website shows.
+
+### The behaviour change, in real titles
+
+| title (from the shared filter's own fixtures) | before | after |
+|---|---|---|
+| `Reserve In Advance: Table Tennis All Ages` | excluded | **included** |
+| `Reserve In Advance: Badminton (8-17yrs)` | excluded | **included** |
+| `Reserve In Advance: Squash Court #1` | excluded | **included** |
+| a registration-**flagged** one-off library event | excluded | **included** |
+| `Reserve in Advance: Figure Skating (Level Star 2 +)` | excluded | excluded |
+| `Frozen Ballet Dance Camp 3-5yrs` | excluded | excluded |
+| `My First Dance Class: 2-4yrs` | excluded | excluded |
+
+**The flagged-one-off row is the biggest change.** `registrationRequired === true` is the strongest
+signal the shared classifier has and it outranks even the drop-in veto — correctly, because it
+answers *"must you book?"*. That is not the question Jon asked. A BiblioCommons event whose
+`registrationInfo` says you must log in to register is very often a single Saturday session. So the
+re-run neutralises the flag along with the words, and duration is judged on what the title says.
+
+### >>> THE FOLLOW-UP THIS DOES NOT PRE-EMPT — needs a decision, not taken here <<<
+
+**This is a TITLE-LEVEL APPROXIMATION of a DATA question and should be read as one.** The real
+signal is `activity_series.recurrence_rule` (migration 0004: *"RRULE-style string; null for
+one-off/open-hours series"*) — a structural "is this a single occurrence" fact no vocabulary can
+match for reliability.
+
+**I did not wire it, and I am not asking to without a ruling.** The specific change it would need:
+
+| | |
+|---|---|
+| **File 1** | `lib/search/types.ts` — add to `ListingRecord`, e.g. `recurring: boolean` (or `recurrenceRule: string \| null`) |
+| **File 2** | `lib/search/postgres-repository.ts` — select `ser.recurrence_rule` (the query already joins `activity_series ser` for `ser.canonical_title`, so this is a column added to an existing join, not a new one), add it to the `GROUP BY`, and map it in `rowToListing` |
+| **File 3** | `lib/search/__fixtures__/factory.ts` — a default, so every existing fixture still compiles |
+| **Blast radius** | `ListingRecord` is the read-model contract for the whole search stack. Adding a field is additive and low-risk, but it is **shared search infrastructure this branch has deliberately never touched**, and it would want its own review rather than riding in on an SMS change. |
+
+**My recommendation:** ship the vocabulary approximation now (it implements Jon's ruling correctly
+on every title in the shared filter's own audited fixture set), and treat the `recurrence_rule`
+wiring as a separate, small, independently-reviewable change — ideally alongside §3 item 12's
+series-dedup work, which the PRD itself notes is where this signal naturally belongs.
+
+**Known limits of the approximation, stated plainly:**
+
+- A multi-week course whose title says nothing — the PRD's own examples, *"Sportball Multisport
+  (3-5 yrs)"*, *"Indoor T-Ball (3-5 yrs)"* — is invisible to both the shared classifier and this.
+  It was already getting through before this change; this does not make it worse.
+- `workshop` and `clinic` are treated as commitments, and both are *often* one-off. That is the
+  conservative call — it preserves today's exclusion rather than widening it — but they are the two
+  terms most likely to be worth moving once `recurrence_rule` exists.
+
+---
+
+## af. Verification
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **214 tests across 14
+files**. Full `unit` lane: **220 files / 3679 tests passing**. `db` and `invariants` lanes not run
+— no database here, and no Postgres has parsed any of the four migrations.
+
+One existing test changed meaning rather than behaviour and says so in its own comment: round 3's
+"multi-week courses stay out" passed because the engine's `includeRegistration` defaulted to false;
+it now passes because `lib/sms/registration.ts` decides. Same assertion, different — and now
+correct — reason.
