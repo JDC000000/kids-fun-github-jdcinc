@@ -646,3 +646,162 @@ it should not gate this review — but it should exist before the form takes rea
 manifest. Full `unit` lane: **214 files / 3577 tests passing** (up from 210/3515). SMS suite is
 now **111 tests** across 8 files. `db` and `invariants` lanes not run — no database here, and no
 Postgres has parsed any of the four migrations.
+
+---
+---
+
+# Round 4 — the weekly send orchestration
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+
+The I/O layer around `lib/sms/weekly-picks.ts`, mirroring `lib/email/weekly.ts`'s split.
+
+| file | what it is |
+|---|---|
+| `lib/sms/message.ts` | pure message rendering + GSM-7/segment math |
+| `lib/sms/empty-week.ts` | the counter and pause rule — one pure function, its own file |
+| `lib/sms/weekly-send.ts` | **pure** per-subscriber builder: geocode → ages → select → render |
+| `lib/sms/weekly-send-io.ts` | the orchestrator: deps, per-subscriber unit, bulk driver, stubs |
+| `app/api/sms/weekly/run/route.ts` | the scheduled entrypoint |
+| `tests/sms/{weekly_send,empty_week,weekly_run_route}.test.ts` | 38 tests |
+
+`lib/sms/config.ts` gains `smsCronSecret()`, `siteUrl()`, `shortLinkUrl()`, `preferencesUrl()`;
+`.env.example` gains `SMS_CRON_SECRET`.
+
+---
+
+## k. **The finding: PRD §2.6's punctuation costs 3× per message.** Needs sign-off.
+
+An SMS is GSM-7 (**160** characters per segment, 153 concatenated) only if *every* character is
+in the GSM 03.38 alphabet. One character outside it switches the whole message to UCS-2 at **70**
+per segment. There is no partial penalty.
+
+The characters that do this are exactly the ones a careful writer reaches for — em dash `—`, en
+dash `–`, curly apostrophe `’`, curly quotes `“ ”`, ellipsis `…`. **PRD §2.6's example copy
+contains an em dash and curly apostrophes.** Measured, not estimated:
+
+| message | rendered verbatim from §2.6 | GSM-7-safe ASCII |
+|---|---|---|
+| empty week | 143 chars, UCS-2, **3 segments** | 143 chars, GSM-7, **1 segment** |
+| pause notice | 183 chars, UCS-2, **3 segments** | 183 chars, GSM-7, **2 segments** |
+
+Identical character counts. Identical words. Three times the bill on the empty-week text — the
+message a struggling subscriber gets most often — every week, forever.
+
+**So the templates are written in GSM-7-safe ASCII**: em dash → `" - "`, curly quotes → straight,
+ellipsis → `...`. Nothing else about §2.6's wording changes.
+
+> **This is a deviation from approved consumer-facing copy, made by the implementer.** It is
+> typographic rather than editorial, but it is still a change to copy Jon signed off, and it
+> should be a decision rather than something that happened.
+
+Three things keep it true afterwards: `estimateSegments()` is exported, every rendered message
+carries its own segment count, and the bulk run returns `totalSegments` — so a copy edit that
+reintroduces a curly apostrophe triples that number on the same run and is visible in the
+response. A test (`assertGsm7Safe`) is the wall.
+
+---
+
+## l. `geocode_failed` is its own outcome — the design, and why
+
+A postal code that resolves to no covered municipality returns **`geocode_failed`**, which maps
+to the counter's **`not_attempted`** branch: **no message, no counter change, nothing written.**
+
+Folding it into "below floor with 0 matches" would have been wrong twice over. It would have
+texted a parent *"nothing new matches your area this week"* about a search that never ran — a
+claim we never checked. And it would have incremented the empty-week counter, so three of them
+would have **paused a subscriber for a defect on our side**.
+
+The signup form now rejects out-of-area postals (round 3), so a subscriber in this state is
+either a row that predates that check or an FSA table that has moved. Either way it is an
+operational problem someone should see, which is why it surfaces as
+`skipped_geocode_failed` with an explicit reason rather than blending into the empty count.
+
+---
+
+## m. `short_ref` as an input worked well — one consequence worth knowing
+
+`occurrenceShortRefs: ReadonlyMap<string, number>` is a direct mirror of
+`WeeklyDeps.createdAtMs` in `lib/email/weekly.ts`: that one carries occurrence timestamps for the
+"new since last send" watermark, this one carries short-refs for link minting. Loaded once per
+bulk run (`SELECT id, short_ref FROM activity_occurrence WHERE archived_at IS NULL`), reused for
+every subscriber, and it keeps the pure builder free of any DB import. **No awkwardness — if
+anything it made the mirror tighter.**
+
+The one consequence: **a pick whose occurrence is missing from the map loses its direct link and
+folds into "+N more" — it is not dropped from the week.** The selector decides the *intent*
+(which picks deserve a direct link); the renderer decides what is *possible*. Dropping the pick
+instead would silently shrink a week below the floor for a reason unrelated to the catalogue.
+`unlinkableOccurrenceIds` is reported so a stale map is visible rather than merely survived.
+
+*(bigint note: node-postgres returns `short_ref` as a string to avoid precision loss;
+`Number()` is exact far past anything this sequence will reach, and `encodeShortLink` rejects an
+over-range value rather than truncating it.)*
+
+---
+
+## n. Two seams I tightened rather than shipped as they were
+
+**1. `consent_text_version` was an optional argument defaulting to `'unknown'`.** That would have
+written a plausible-looking placeholder into the one column a CASL audit reads. It is now a
+required field on the subscriber row (`sms_consent.consent_text_version` is `NOT NULL` in
+migration 0035 anyway), so there is no default to leak.
+
+**2. The phone number.** It is deliberately **not** on `SmsSubscriber` — the pure builder
+geocodes, selects and renders, and none of that needs a number, so the type system keeps it out
+rather than a convention someone has to remember. `loadActiveSubscribers` returns
+`{ subscriber, phoneNumber }` pairs; the number goes only to `dispatchSms` and never reaches a
+result object, a log line or an error string. The first draft passed `''` from the bulk driver,
+which was the awkward bit the brief asked me to flag — this is the fix rather than the flag.
+
+---
+
+## o. Open question: "Nothing **NEW** matches your area this week"
+
+The email digest sends only what is **new since the last send** (a watermark over
+`activity_occurrence.created_at`). **PRD §2.2's selection algorithm has no equivalent step** — it
+asks "what is on this weekend", and a weekly public swim is on every weekend. So a subscriber can
+receive substantially the same picks several Fridays running, while §2.6's own empty-week copy
+says *"Nothing **new** matches your area this week"*, implying a novelty notion the algorithm
+does not have.
+
+**Not silently fixed** — inventing a novelty filter would change what the PRD specifies. The
+schema already supports it: `sms_send_log.picks_snapshot` exists precisely so a future run can
+read last week's occurrence ids. If that becomes the decision, `loadActiveSubscribers` is where
+the previous snapshot joins in and `selectWeeklyPicks` grows one `excludeOccurrenceIds` argument.
+
+**This is a retention question more than a correctness one**, which is why it is worth a ruling:
+the MVP's three metrics include churn, and "the same three swims every Friday" is a churn shape.
+
+---
+
+## p. Smaller decisions, each recorded where it lives
+
+- **A failed dispatch changes nothing.** No counter advance, no status change — otherwise a
+  Twilio outage would pause subscribers three weeks later.
+- **A dry run reaches no writes at all.** `weekly_email_send` has a `dry_run` column and records
+  both; `sms_send_log` deliberately has none (0035 defines it as a record of messages that were
+  *sent*), so the orchestrator simply does not call the writer on a dry run.
+- **21610 (opted out at the carrier)** marks the subscriber stopped immediately and skips the
+  empty-week state — they are not paused, they are stopped. `COALESCE(stopped_at, now())` in the
+  stub's SQL, so a retry cannot push the 30-day purge deadline out.
+- **`applyEmptyWeekState`'s `WHERE ... AND status = 'active'`** guards the race where an inbound
+  STOP lands mid-run; the inbound path wins and this write simply does not apply.
+- **`loadActiveSubscribers` filters on `phone_number IS NOT NULL`**, not just `status = 'active'`
+  — a purged row (0034 NULLs personal columns in place) is not a subscriber.
+- **The run route's `sanitize` is an allowlist, not a redaction.** A field added to
+  `SubscriberSendResult` later would pass through a denylist silently, and on this lane the thing
+  that would pass through is a phone number. A test feeds it a result carrying a phone number, a
+  message body and a preferences token, and asserts none reach the response.
+- **`SMS_CRON_SECRET` is separate from `WEEKLY_EMAIL_CRON_SECRET`** — rotating one must not
+  silently disarm the other, and a credential that triggers real text messages has a different
+  blast radius from one that triggers emails. Unconfigured → 503, fail closed.
+
+---
+
+## q. Verification
+
+`tsc --noEmit` clean, `eslint` clean, **`npx next build` succeeds** with `/api/sms/weekly/run` in
+the route manifest. SMS suite: **149 tests across 11 files**. Full `unit` lane: **217 files /
+3615 tests passing**. The `db` and `invariants` lanes were not run — no database here, and no
+Postgres has parsed any of the four migrations.
