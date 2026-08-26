@@ -436,3 +436,213 @@ once and not compounding; both PRD dedup calibration pairs merging; same-title-d
 Whole SMS suite: **49 tests**. Full `unit` lane after these changes: **210 files / 3515 tests
 passing**, `tsc --noEmit` and `eslint` clean. The `db` and `invariants` lanes were not run — no
 database in this environment, and no Postgres has parsed any of the four migrations.
+
+---
+---
+
+# Round 3 — the interest-drop retry, and the public signup form
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+
+---
+
+## i. Retry step (b) — drop the category filter before declaring an empty week
+
+PRD v2.4 §2.2 step 5(b), implemented in `lib/sms/weekly-picks.ts`. The ladder is now:
+
+```
+primary                          the weekend, their radius, their interests
+  ↓ below floor
+(a) widened                      one radius step out, window relaxed to Sat–Tue
+  ↓ below floor AND they stated an interest
+(b) interests dropped            the same widened search, minus the category post-filter
+  ↓ below floor
+empty week
+```
+
+Three properties, each pinned by a test:
+
+1. **Step (b) reuses step (a)'s response — it does not search again.** Interests are a
+   post-filter on ranked results, not a query parameter, so (b) asks the engine an identical
+   question. Issuing it twice would be wasted work *and* a place for two answers to the same
+   question to differ. `buildPicksRequest` returns the same request for both attempts, and the
+   pipeline is split into search / `selectFrom(applyInterests)` so "drop the filter" is a
+   one-argument change rather than a second pipeline. A test spies the engine and asserts exactly
+   two calls.
+2. **It is skipped when there is nothing to drop.** A subscriber who stated no interests has no
+   filter to relax, and firing it would record a degradation they never suffered — into
+   `sms_send_log`. `degradation` stays `'widened'`.
+3. **It widens what qualifies, never what we stand behind.** `isShowableOnFrontDoor`, the dedup
+   pass and the coverage-swap cap all still run. Pinned by a test where everything on offer is
+   postponed: (b) fires and the week is still, correctly, empty.
+
+The result now carries `degradation: 'none' | 'widened' | 'widened_and_interests_dropped'` and
+`interestsDropped`, reported rather than inferred so the message copy and the send log cannot
+reach a different conclusion than the selection did.
+
+Also aligned `MAX_FORCED_PICKS`' comment with v2.4 §2.2 step 4, which resolved round 2's
+ambiguity in the direction already built: **2 forced picks total across all bands**, not 2 per
+band. No code change — the implementation already matched.
+
+`tests/sms/weekly_picks.test.ts` is now 35 tests.
+
+---
+
+## j. The public signup form
+
+Reachable at **`/sms/signup`**, posting to **`POST /api/sms/signup`**.
+
+| file | what it is |
+|---|---|
+| `lib/sms/consent-copy.ts` | every word the form says about consent, in one **versioned** place |
+| `lib/sms/interests.ts` | the optional interest checkboxes, keyed on the seeded category taxonomy |
+| `lib/sms/signup-validate.ts` | the whole accept/reject surface — pure, no `pg`, no `next` |
+| `lib/sms/sparse-areas.ts` | the "just getting started in your area" decision |
+| `lib/sms/signup-store.ts` | **stubs**: the `sms_consent` upsert and the confirmation send |
+| `app/api/sms/signup/route.ts` | flag, caps, validation, error mapping |
+| `app/sms/signup/page.tsx` | server component; measures the sparse municipalities |
+| `app/sms/signup/_components/SmsSignupForm.tsx` | the form |
+| `app/sms/signup/signup.css` | co-located, `--kf-*` tokens only |
+| `tests/sms/signup_{validate,copy,form,route}.test.*` | 57 tests |
+
+`npx next build` succeeds with `/sms/signup` (5.43 kB) and `ƒ /api/sms/signup` in the route
+manifest — so this is genuinely deployable to staging, not just type-correct.
+
+### j.1 How it is flagged off
+
+`SMS_SIGNUP_ENABLED`, default **false**, mirroring `lib/email/config.ts`'s `sendingEnabled()`.
+The page calls `notFound()` and the route returns **404** (not 403 — while the sign-off gate is
+unrecorded this endpoint does not exist as far as the outside world is concerned, and a 403 would
+advertise a disabled consent-collection endpoint on a public host). The route is gated *before*
+it reads the body, so a flagged-off endpoint will not buffer an unauthenticated caller's payload
+at all; a test asserts that.
+
+> **Reviewing this locally or on staging? Set `SMS_SIGNUP_ENABLED=true` or you get a 404.**
+
+**It is a separate flag from `SMS_SENDING_ENABLED`, and that is the point.** Staging wants
+`SIGNUP=true` + `SENDING` unset: the form renders and validates for real, a screenshot can be
+taken for the Toll-Free Verification submission, and not one text is dispatched and not one
+consent row is written. One combined flag could not express that, and the alternative — turning
+on real sending in order to take a screenshot — is not a thing anyone should have to do. The
+success response returns `{ ok: true, dispatched: false }` in that mode, so a screenshot session
+cannot mistake a dry run for a live signup.
+
+### j.2 Validation
+
+One pure validator, `parseSmsSignupBody`, **used by both sides** — the client renders its inline
+errors from the same function the route enforces with, so the two cannot disagree. The server
+still re-validates from scratch and trusts nothing from the client.
+
+- **Phone → E.164.** Checks the only two things knowable from digits alone: length, and the NANP
+  rule that area code and exchange both begin 2–9. That catches the whole typo class a parent can
+  see and fix (dropped digit, transposed pair, `064`); anything subtler is the confirmation
+  text's job, which is why the confirmation text exists. A test asserts the output matches
+  **migration 0034's `sms_consent_phone_e164` CHECK regex verbatim** — if those two ever drift,
+  every signup fails at the database with an error the form cannot explain.
+  *Canada vs the US is not distinguishable from a +1 number and this does not pretend otherwise;
+  the geographic gate is the postal code.*
+- **Postal.** Imports `normalizePostal` from `lib/user/profile-validate.ts` — imported, never
+  modified, and a pure string normaliser with no account semantics. A second Canadian postal
+  regex would be a second thing to keep in step. Nothing else crosses that boundary, and
+  `user_profile.saved_child_ages` is untouched (confirmed by diff).
+- **Ages.** One whole number per child, 0–18, converted to a birth year at entry so an age never
+  reaches the database. **18, not 19**: the audience filter excludes adult-only content from 19,
+  so a 19 entered as a "child" would have every match excluded downstream.
+- **Consent.** Checked *first* — nothing else about a submission matters if it is absent, and
+  reporting a phone typo to someone who never ticked the box asks them to fix the wrong thing.
+- Errors never echo the submitted value back (a public endpoint that repeats its input is a
+  reflector), and each carries the `field` it belongs to so the form renders it in place.
+
+### j.3 Open questions — the three I would most like an answer on
+
+**1. An out-of-area postal code is REJECTED, not warned about. The PRD does not specify this.**
+A postal outside the five covered municipalities resolves to no FSA, so `fsaGeocoder` returns
+null, so the weekly send job has no origin and can never select anything — not "few picks",
+*none, ever*. Accepting the signup would mean taking a phone number and a child's age from
+someone we can demonstrably never serve, holding that data under CASL, and texting them an empty
+week every Friday until they opt out. So the form rejects and names the five areas we do cover.
+*This is distinct from the sparse-area case, which is a warning: West Van has thin coverage but
+real coverage, and it can improve.* **If you would rather capture them as a waiting list,
+`region_notify_signup` (migration 0033) is the table that already does exactly that, and this
+rejection is where the hand-off would go.**
+
+**2. The PRD says "static lookup" for the sparse municipalities. The codebase already argues
+against one — in writing.** `lib/search/coverage.ts`'s header says: *"It is deliberately NOT a
+per-region allowlist of West Van and Burnaby. Naming the two municipalities that happen to be
+thin today would go stale silently in both directions."* That argument is **stronger** at signup
+than on /search: stale in the first direction, a hardcoded list talks a parent out of a product
+that would have worked; stale in the second, it takes their consent without the warning that was
+the whole reason for the notice. So the page **measures** — one search over all five area chips
+with no query constraint, reading the engine's own `regionCoverage` verdict — and falls back to
+the static `['wvan','bby']` only when the catalogue is unreachable. The fallback warns rather
+than going quiet, because over-warning a good area is cheaper than silence in a thin one.
+**Flagging in case "static lookup" was a deliberate simplification rather than shorthand.**
+
+**3. `class_program` is deliberately NOT offered as an interest, and that is downstream of the
+still-open PRD §8.** The selection module inherits `includeRegistration: false`, so class /
+lesson / camp / course / workshop titles are dropped *before* the interest filter runs. Offering
+"Classes & programs" would offer a near-unmatchable box: a parent ticks it, the filter narrows to
+a category the pipeline has already excluded, and the most likely outcome is step (b) firing for
+them every single week. **If Jon answers §8 by including registration content, add the key back —
+it is one line, and the comment in `lib/sms/interests.ts` says so.**
+
+### j.4 Two things about the compliance artefact specifically
+
+**The form renders a visible draft banner, and it should not be screenshotted until that banner
+can come down.** CASL §1.4 requires a legal sender name, a mailing address and a reachable
+support contact. All three are real-world facts I must not invent, so the page renders
+`MISSING_SENDER_IDENTITY` — a visible note saying they are missing — rather than placeholder
+text that would read as real in a screenshot. Same reasoning as `/terms`' visible draft notice: a
+code comment reaches developers; the person who could be misled by an incomplete consent form is
+the parent, or the verification reviewer, reading the live page. **This is a direct blocker on
+the screenshot's usefulness, not a nitpick.**
+
+**I added carrier-facing disclosures the PRD does not list, and I am flagging that rather than
+folding them in silently.** PRD §1.3/§1.4 specify the PIPEDA and CASL disclosures — those are
+about the subscriber and the regulator. Message frequency, "message and data rates may apply",
+STOP and HELP are about the *carrier*, and are the elements an opt-in screenshot is commonly
+rejected for missing. Since this form's stated purpose includes being that screenshot, omitting
+them would produce a form that satisfies the PRD and fails the job it was built for. They render
+as a separate block, outside the consent checkbox, so what is being consented to stays distinct
+from standing facts about the service. **These should be checked against the current Twilio
+Toll-Free Verification form before submission rather than trusted from here — the expectations
+are Twilio's and they change. My claim is only that these are commonly-required elements, not
+that this list is authoritative.**
+
+**A smaller gap in the same area:** §1.3 requires naming where to view/edit/delete "the
+preferences page, **linked**". The consent copy *names* it but does not link it, because that
+page is token-linked per subscriber (§2.4) and therefore has no address until someone is a
+subscriber — a link here would 404 for every reader of this form. Naming the destination
+satisfies the disclosure; inventing a URL would not. It becomes a real link when §2.4 ships.
+
+### j.5 Consent copy is versioned, and the version is enforced by tests
+
+`sms_consent.consent_text_version` is NOT NULL so that "which wording did this subscriber agree
+to?" has an answer. That is only worth something if the wording and the version move together, so
+all of it lives in `lib/sms/consent-copy.ts` next to the constant, with a file-header instruction
+to bump on any edit — and `tests/sms/signup_copy.test.ts` asserts each of §1.3's four required
+disclosures is actually present, so a future edit that was only trying to shorten a sentence
+cannot quietly drop one. The version string is also **rendered on the page**, so a screenshot
+taken today is self-identifying.
+
+The form splits the consent sentence to emphasise "preferences page" in place; a test asserts the
+split-and-reassemble is lossless, because a component that reordered or dropped a clause would
+make `consent_text_version` point at wording no parent ever saw.
+
+### j.6 Should there be an E2E?
+
+**Yes, later — and worth one.** `renderToStaticMarkup` covers the initial render, which is the
+state the compliance claims are about (unchecked consent, the full sentence present, one child
+row, no pre-ticked interests, no leaked identifiers). What it structurally cannot reach is every
+interactive path: add/remove child, the sparse notice appearing as the postal code is typed,
+submitting with consent unticked, the submitted state. Playwright is already in this repo
+(`npm run e2e`), so it is a file, not a project. I did not write one for a draft-only pass, and
+it should not gate this review — but it should exist before the form takes real traffic, because
+"the checkbox cannot be bypassed" is exactly the kind of claim that deserves a browser.
+
+### j.7 Verification
+
+`tsc --noEmit` clean, `eslint` clean, **`npx next build` succeeds** with both new routes in the
+manifest. Full `unit` lane: **214 files / 3577 tests passing** (up from 210/3515). SMS suite is
+now **111 tests** across 8 files. `db` and `invariants` lanes not run — no database here, and no
+Postgres has parsed any of the four migrations.
