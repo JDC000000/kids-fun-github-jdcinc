@@ -43,6 +43,28 @@
 -- this column a lookup key for someone who already holds a number, rather than a reversible
 -- index of every number we ever texted. The salt is NOT stored in this table.
 --
+-- ═══ AND WHICH SALT: phone_hash_version (approved 2026-08-26, PRD v2.3 §5) ═══
+--
+-- A salted hash is only findable if you know WHICH salt made it. The audit query is "hash the
+-- complainant's number, look it up here" — and that works only while there has been exactly one
+-- salt, forever. The moment SMS_PHONE_HASH_SALT is rotated, every row written before the
+-- rotation stops matching a freshly-hashed number. Nothing errors. Nothing is missing. The rows
+-- are all still there and still queryable; they have simply become unfindable by the only key
+-- anyone will ever search them by, and the first time anybody notices is during the complaint
+-- the trail existed to answer.
+--
+-- The alternative to this column is a promise: "never rotate this secret." That is not a control
+-- — it is a fact about a credential that lives outside this repository, that no code enforces
+-- and that nothing checks. One smallint converts a silent, permanent, undetectable failure into
+-- an explicit branch a lookup can handle: try the current salt for rows at the current version,
+-- try the retired salt for older ones, and let a version this build does not recognise be a real
+-- error instead of a quiet miss.
+--
+-- DEFAULT 1 and NOT NULL: version 1 is the initial salt, so the writer does not have to think
+-- about it until there is a second one. It is a version number, NOT a salt and NOT a hint about
+-- the salt — a reader learns only that two rows were hashed differently, which is exactly what
+-- they need to know and nothing more.
+--
 -- APPEND-ONLY. Nothing in the app ever UPDATEs or DELETEs a row here, with one deliberate
 -- exception: `delivery_status` is written twice — once at send time from the Twilio API
 -- response, then again when Twilio's status-callback webhook reports the carrier's final
@@ -65,6 +87,9 @@ CREATE TABLE sms_send_log (
   -- have a live subscriber_id — populating it only after a purge would leave the pre-purge
   -- history unsearchable by number, which is the only way anyone will ever search it.
   phone_hash           text NOT NULL,
+
+  -- WHICH salt produced phone_hash. See the header block above for why this is not optional.
+  phone_hash_version   smallint NOT NULL DEFAULT 1,
 
   send_type            text NOT NULL
                          CHECK (send_type IN ('confirm_request','welcome','weekly',
@@ -111,6 +136,14 @@ COMMENT ON COLUMN sms_send_log.phone_hash IS
   'audit trail — deliberately outliving sms_consent.phone_number, which is purged 30 days after '
   'a subscriber stops. Salted with a server-side secret (not stored in this table) because an '
   'unsalted digest over the ~10^10 North American number space is trivially reversible.';
+
+COMMENT ON COLUMN sms_send_log.phone_hash_version IS
+  'Which salt generation produced phone_hash. Without it, rotating SMS_PHONE_HASH_SALT would '
+  'silently make every historical hash unmatchable against a future complainant''s number — no '
+  'error, no missing rows, just a CASL audit trail that has quietly stopped being findable by '
+  'the only key anyone searches it by. This turns that into a visible, handleable case: look up '
+  'with the salt for the row''s version, and treat an unrecognised version as a real error '
+  'rather than a miss. Not a salt and not a hint about one — only a generation number.';
 
 COMMENT ON COLUMN sms_send_log.consent_text_version IS
   'The consent wording in force when THIS message was sent, copied onto the row rather than '
