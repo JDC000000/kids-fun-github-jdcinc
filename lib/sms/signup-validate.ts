@@ -150,51 +150,34 @@ export interface ParseOptions {
   now: Date;
 }
 
+/** The three fields a subscriber may set at signup AND edit later on the preferences page. */
+export interface ProfileFields {
+  postalCode: string;
+  regionId: CoveredRegionId;
+  birthYears: number[];
+  categoryInterests: string[];
+}
+
+export type ProfileFieldsParseResult =
+  | { ok: true; value: ProfileFields }
+  | { ok: false; error: string; field?: SmsSignupField };
+
 /**
- * Parse and validate an untrusted signup body. Never throws.
+ * Validate the postal code, child ages and interests — the fields that are IDENTICAL at signup and
+ * on the preferences page (PRD §2.1 and §2.4 list the same three).
  *
- * Error strings describe the SHAPE of the problem and never echo the submitted value back, which
- * is what keeps an error response from turning a public endpoint into a reflector for arbitrary
- * text. Each carries the `field` it belongs to so the form can render it in the right place
- * instead of dumping one message at the top.
+ * EXTRACTED SO THERE IS EXACTLY ONE COPY. The preferences page edits the same columns under the
+ * same rules, and a second implementation is how "V5L 1A1 was fine when I signed up but is
+ * rejected when I edit it" happens. `parseSmsSignupBody` calls this and adds phone + consent on
+ * top; `parsePreferencesPatch` (lib/sms/preferences.ts) calls it and adds nothing.
  *
- * ── AN OUT-OF-AREA POSTAL CODE IS REJECTED, NOT WARNED ABOUT. THIS IS A JUDGEMENT CALL. ──
- * A postal code outside the five covered municipalities resolves to no FSA in
- * lib/geo/postal-fsa.ts, which means `fsaGeocoder` returns null, which means the weekly send job
- * has no origin and can never select anything for that subscriber — not "few picks", none, ever.
- * Accepting the signup would mean taking a phone number and a child's age from someone we can
- * demonstrably never serve, holding that data under CASL, and texting them an empty week every
- * Friday until they opt out. Rejecting at the form, naming the areas we do cover, is the honest
- * version of the same information.
- *   THIS IS DISTINCT FROM THE SPARSE-AREA CASE, which is a warning and not a rejection: West
- *   Vancouver has thin coverage but real coverage, and it can improve. "Few picks some weeks" and
- *   "nothing, structurally" are different facts and get different treatment.
- *   FLAGGED FOR THE OPERATOR: the PRD does not specify a behaviour for an out-of-area postal
- *   code. If the preference is to capture them as a waiting list instead, `region_notify_signup`
- *   (migration 0033) is the table that already does exactly that, and this rejection is where
- *   that hand-off would go.
+ * Every rule and every message below is unchanged from the signup implementation — this is a
+ * move, not a rewrite.
  */
-export function parseSmsSignupBody(raw: unknown, options: ParseOptions): SmsSignupParseResult {
-  if (!isPlainObject(raw)) return { ok: false, error: 'body must be a JSON object' };
-
-  // ── Consent first. Nothing else about this submission matters if it is not there. ──
-  if (raw.consent !== true) {
-    return { ok: false, error: 'consent is required', field: 'consent' };
-  }
-
-  // ── Phone ──
-  if (typeof raw.phone !== 'string') {
-    return { ok: false, error: 'a mobile number is required', field: 'phone' };
-  }
-  const phoneNumber = normalizePhoneE164(raw.phone);
-  if (!phoneNumber) {
-    return {
-      ok: false,
-      error: 'that does not look like a 10-digit Canadian mobile number',
-      field: 'phone',
-    };
-  }
-
+export function parseProfileFields(
+  raw: Record<string, unknown>,
+  options: ParseOptions
+): ProfileFieldsParseResult {
   // ── Postal ──
   if (typeof raw.postal !== 'string') {
     return { ok: false, error: 'a postal code is required', field: 'postal' };
@@ -246,6 +229,59 @@ export function parseSmsSignupBody(raw: unknown, options: ParseOptions): SmsSign
     }
     categoryInterests = [...seen];
   }
+
+  return { ok: true, value: { postalCode, regionId, birthYears, categoryInterests } };
+}
+
+/**
+ * Parse and validate an untrusted signup body. Never throws.
+ *
+ * Error strings describe the SHAPE of the problem and never echo the submitted value back, which
+ * is what keeps an error response from turning a public endpoint into a reflector for arbitrary
+ * text. Each carries the `field` it belongs to so the form can render it in the right place
+ * instead of dumping one message at the top.
+ *
+ * ── AN OUT-OF-AREA POSTAL CODE IS REJECTED, NOT WARNED ABOUT. THIS IS A JUDGEMENT CALL. ──
+ * A postal code outside the five covered municipalities resolves to no FSA in
+ * lib/geo/postal-fsa.ts, which means `fsaGeocoder` returns null, which means the weekly send job
+ * has no origin and can never select anything for that subscriber — not "few picks", none, ever.
+ * Accepting the signup would mean taking a phone number and a child's age from someone we can
+ * demonstrably never serve, holding that data under CASL, and texting them an empty week every
+ * Friday until they opt out. Rejecting at the form, naming the areas we do cover, is the honest
+ * version of the same information.
+ *   THIS IS DISTINCT FROM THE SPARSE-AREA CASE, which is a warning and not a rejection: West
+ *   Vancouver has thin coverage but real coverage, and it can improve. "Few picks some weeks" and
+ *   "nothing, structurally" are different facts and get different treatment.
+ *   FLAGGED FOR THE OPERATOR: the PRD does not specify a behaviour for an out-of-area postal
+ *   code. If the preference is to capture them as a waiting list instead, `region_notify_signup`
+ *   (migration 0033) is the table that already does exactly that, and this rejection is where
+ *   that hand-off would go.
+ */
+export function parseSmsSignupBody(raw: unknown, options: ParseOptions): SmsSignupParseResult {
+  if (!isPlainObject(raw)) return { ok: false, error: 'body must be a JSON object' };
+
+  // ── Consent first. Nothing else about this submission matters if it is not there. ──
+  if (raw.consent !== true) {
+    return { ok: false, error: 'consent is required', field: 'consent' };
+  }
+
+  // ── Phone ──
+  if (typeof raw.phone !== 'string') {
+    return { ok: false, error: 'a mobile number is required', field: 'phone' };
+  }
+  const phoneNumber = normalizePhoneE164(raw.phone);
+  if (!phoneNumber) {
+    return {
+      ok: false,
+      error: 'that does not look like a 10-digit Canadian mobile number',
+      field: 'phone',
+    };
+  }
+
+  // ── The profile fields, shared verbatim with the preferences page. ──
+  const profile = parseProfileFields(raw, options);
+  if (!profile.ok) return profile;
+  const { postalCode, regionId, birthYears, categoryInterests } = profile.value;
 
   // ── Consent method (optional; the three doors all funnel to this one form) ──
   let consentMethod: ConsentMethod = 'web_form';
