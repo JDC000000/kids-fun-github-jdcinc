@@ -950,3 +950,171 @@ four.
 `tsc --noEmit` clean, `eslint` clean. SMS suite **174 tests across 12 files**. Full `unit` lane:
 **218 files / 3640 tests passing**. `db` and `invariants` lanes not run — no database here, and no
 Postgres has parsed any of the four migrations.
+
+---
+---
+
+# Round 6 — the click-through redirect (`/s/[shortId]`)
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+
+Closes the loop `shortLinkUrl()` has been minting URLs into since round 4: the link-*minting* half
+of PRD §2.3 existed, the *redirect-and-log* half did not.
+
+| file | what it is |
+|---|---|
+| `lib/sms/click-through.ts` | the decision table + three stubbed reads + the click recorder |
+| `app/s/[shortId]/route.ts` | thin transport: resolve, set headers, redirect |
+| `tests/sms/click_through.test.ts` | new, 18 tests (resolver + route) |
+
+`npx next build` succeeds with `ƒ /s/[shortId]` in the manifest.
+
+---
+
+## w. Redirect target: **`/activity/[id]`**, and the source settles it
+
+Not a judgement call — the codebase already decided. `app/activity/[id]/page.tsx`'s own header:
+
+> *"CANONICAL activity detail / source page … the product's stable, shareable, SEO-canonical URL
+> for a single occurrence"*
+
+and `app/preview/[id]/page.tsx` confirms it from the other side: *"its metadata canonical points AT
+`/activity/[id]` so the two never compete for the same content in search."* Both render the same
+body from the same loader; only the canonical URL, the share metadata and the back-nav differ.
+
+Sending a text-message link at `/preview/[id]` would put the interim demo shell's URL into
+people's browser history and into whatever they forward it to.
+
+---
+
+## x. **The finding: the token cannot satisfy `sms_click_event` on its own.**
+
+`sms_click_event.send_log_id` is `uuid NOT NULL` (migration 0036). The token carries
+`(occurrence short_ref, subscriber short_ref)` and **nothing that identifies which send the tap
+came from** — so the send row has to be *recovered*:
+
+```sql
+SELECT id FROM sms_send_log
+ WHERE subscriber_id = $1
+   AND send_type = 'weekly'
+   AND picks_snapshot @> $2::jsonb        -- [{"occurrence_id": "<uuid>"}]
+ ORDER BY created_at DESC
+ LIMIT 1
+```
+
+**Two alternatives, both rejected:**
+
+- *Widen the token to carry a send-log reference.* It is already 76 bits / 13 characters; a 24-bit
+  third field pushes it to ~100 bits ≈ **17 characters** — undoing the shortening the whole design
+  exists for, on every link in every message, to serve a lookup that only happens on the small
+  fraction of links actually tapped.
+- *Make `send_log_id` nullable.* That column is what ties a click to the message that caused it.
+  Nullable, it stops being able to answer "which send produced this click" — the only question CTR
+  asks.
+
+**No new index is needed, and I checked rather than assumed.** This looks like it wants a GIN index
+on `picks_snapshot`; it does not, because the query is **subscriber-scoped**.
+`idx_sms_send_log_subscriber (subscriber_id, created_at DESC)` already exists (0035), one
+subscriber accumulates ~52 weekly rows a year, and the containment test runs over a few dozen rows
+rather than the table. `ORDER BY created_at DESC` because a recurring activity legitimately appears
+in several sends — the most recent is the one in their phone.
+
+---
+
+## y. Open question: **there is no "this activity is no longer listed" experience.**
+
+I checked before choosing, as asked. **There is nothing to reuse:** `/activity/[id]` and
+`/preview/[id]` both call `notFound()` for a missing id, and there is **no `app/not-found.tsx`
+anywhere in the tree** — so a missing activity currently gets Next's bare default 404.
+
+So both failure modes go to **`/search`** for now. That is defensible (it is the honest "here is
+what *is* on" destination) but it is not *good*: a parent who taps "Sat: Story Time (VPL Renfrew)"
+for a since-cancelled session lands on a generic search page with no explanation, and concludes the
+product is broken. That is precisely the silent-substitution pattern /search's own coverage notice
+exists to end.
+
+**I did not invent a page**, because the copy is a product decision and PRD §2.7 is explicitly
+wary of new page types. But the two reasons are kept as **separate `ClickOutcome` values** even
+though they resolve to the same path today, so giving `occurrence_gone` its own destination is a
+one-line change in `click-through.ts` and needs no change in the route.
+
+**Recommendation:** a small honest interstitial before real messages go out. It only bites once
+links are in the wild, so it is not urgent — but it is the first thing a real subscriber will hit
+when a session is cancelled, and that will happen in week one.
+
+---
+
+## z. Decisions, each with its reason
+
+- **307, and explicitly never 301/308.** A *permanent* redirect is cached by the browser and every
+  intermediary, so the **second** tap on a link would never reach this route — it would go straight
+  to the cached target and vanish from `sms_click_event`. Repeat taps are exactly the engagement
+  signal that table exists to measure. A permanent redirect would also be a lie: the mapping is
+  per-subscriber and the target can be archived tomorrow. 307 over 302 only because it is
+  unambiguous about being temporary; the route is GET-only so method preservation is moot.
+- **`cache-control: no-store` set explicitly.** Even a 307 can be cached when a downstream cache
+  decides to. This is the one header protecting the click data, so it is stated rather than assumed.
+- **`referrer-policy: no-referrer`.** A parent tapping through to a rec centre's booking page
+  should not hand that site a Referer identifying which KIDS FUN link they came from.
+- **Redirect on the REQUEST's origin, not `NEXT_PUBLIC_SITE_URL`.** This route is reached from a
+  text message and may be hit on a preview or staging host; bouncing a parent to the production
+  domain mid-tap would be surprising and would lose the click.
+- **Malformed and tampered tokens are indistinguishable.** `decodeShortLink` already refuses to
+  tell them apart; an endpoint that answered differently would confirm to a prober when they were
+  one character away, turning a 20-bit check into a guided search. Asserted by a test comparing the
+  two resolutions for deep equality.
+- **No feature flag**, unlike signup and inbound. The token *is* the authorization, and a token
+  that has never been minted cannot be guessed. What it needs instead is to be unable to do
+  anything worse than redirect to `/search` — which is what `resolveClickThrough` never throwing
+  guarantees.
+- **The redirect never depends on the logging.** Four ways a genuine tap goes uncounted, all
+  normal: the activity was archived (schema-mandatory — see below), the subscriber row was deleted
+  by the 90-day purge, no matching send log (a dry-run send writes none), or the insert failed.
+  All four still redirect; `clickLogged: false` reports it honestly.
+- **`findSubscriberIdByShortRef` has no `phone_number IS NOT NULL` clause**, unlike the weekly
+  job's loader — deliberately. `short_ref` and `id` survive the 30-day purge, so a purged
+  subscriber's old links still attribute correctly. The click is a fact about a message we sent,
+  and it stays countable after their data goes.
+
+---
+
+## aa. A CTR consequence worth knowing before the metric is read
+
+**A tap on a since-archived activity can never be logged** — `sms_click_event.occurrence_id` is
+`NOT NULL` and FK-constrained to a live `activity_occurrence` row, so there is literally no row to
+write. That is a schema fact, not a policy choice.
+
+It is arguably correct (a tap that reached no content is not a click-*through*), but it means CTR
+is measured against links that still resolve, **so a week with heavy archiving will read low**.
+Recorded here so the number is not misread later.
+
+---
+
+## ab. One risk I could not close: link prefetching
+
+Some messaging clients and carrier gateways **prefetch** URLs to render previews. Any such fetch
+hits this route and would be counted as a tap, inflating CTR — and unlike a web link there is no
+`Referer` or session to distinguish it by. User-agent sniffing is unreliable enough that building
+it would give false confidence rather than protection.
+
+Not mitigated, and flagged rather than papered over. It is measurable once real sends start: a
+click logged within a second or two of the send timestamp, for many subscribers at once, is a
+prefetch signature rather than a human. `sms_click_event.created_at` and `sms_send_log.created_at`
+are both there, so the check needs no new schema.
+
+---
+
+## ac. Verification
+
+18 new tests: the canonical redirect and exact click-event shape; repeat taps logged as two;
+subscriber attribution taken from the token; ten unverifiable-token cases (tampered, wrong length,
+outside base62, empty, null, path traversal, SQL-ish) all failing closed with no lookup attempted;
+malformed and tampered asserted deep-equal; `occurrence_gone` distinct from `invalid_token`; all
+four uncountable paths still redirecting; the resolver's exact key set with no subscriber id, send
+log id or short_ref in it; and at the route layer — 307, `no-store`, `no-referrer`, never
+301/308, hostile path segments neither erroring nor echoed, and the request-origin redirect.
+
+`tsc --noEmit` clean, `eslint` clean, **`npx next build` succeeds** with `ƒ /s/[shortId]` in the
+manifest. SMS suite **192 tests across 13 files**. Full `unit` lane: **219 files / 3658 tests
+passing**. `db` and `invariants` lanes not run — no database here, and no Postgres has parsed any
+of the four migrations.
