@@ -97,6 +97,14 @@ export interface BuildWeeklySmsInput {
    * `directLinkablePicks` for what happens then, which is not "drop the pick".
    */
   occurrenceShortRefs: ReadonlyMap<string, number>;
+  /**
+   * Occurrences this subscriber has already been sent (PRD v2.8 §2.2 step 4).
+   *
+   * PASSED IN, like everything else this module needs — the builder stays pure and the caller owns
+   * the window. Empty or absent means no novelty filtering, which is correct for a subscriber's
+   * very first send.
+   */
+  excludeOccurrenceIds?: ReadonlySet<string>;
   /** Override the number of picks that get their own link. Defaults to the PRD's top 2-3. */
   directLinkCount?: number;
 }
@@ -242,6 +250,7 @@ export function buildWeeklySms(input: BuildWeeklySmsInput): WeeklySmsPlan {
       categoryInterests: subscriber.categoryInterests,
       consecutiveEmptyWeeks: subscriber.consecutiveEmptyWeeks,
     },
+    excludeOccurrenceIds: input.excludeOccurrenceIds,
   });
 
   if (picks.outcome === 'empty') {

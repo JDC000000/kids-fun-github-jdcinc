@@ -101,12 +101,18 @@ function withConfig() {
   vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.example');
 }
 
-function build(listings: ListingRecord[], over: Partial<SmsSubscriber> = {}, omitRefs: string[] = []) {
+function build(
+  listings: ListingRecord[],
+  over: Partial<SmsSubscriber> = {},
+  omitRefs: string[] = [],
+  excludeOccurrenceIds?: ReadonlySet<string>
+) {
   return buildWeeklySms({
     engine: engineOver(listings),
     now: FRIDAY_4PM,
     subscriber: subscriber(over),
     occurrenceShortRefs: shortRefsFor(listings, omitRefs),
+    excludeOccurrenceIds,
   });
 }
 
@@ -346,5 +352,45 @@ describe('SMS encoding and segment cost', () => {
     expect(plan.message!.encoding).toBe('GSM-7');
     expect(plan.message!.segments).toBeGreaterThanOrEqual(1);
     expect(plan.message!.characters).toBe(plan.message!.body.length);
+  });
+});
+
+describe('the novelty filter, threaded through the builder', () => {
+  it('drops an already-sent occurrence from the message the subscriber receives', () => {
+    withConfig();
+    const listings = catalogue(6);
+
+    const fresh = build(listings);
+    expect(fresh.message!.body).toContain('6 picks this weekend');
+
+    const repeat = build(listings, {}, [], new Set(['occ-0', 'occ-1']));
+    expect(repeat.outcome).toBe('picks');
+    expect(repeat.picks!.picks).toHaveLength(4);
+    expect(repeat.picks!.novelExcluded).toBe(2);
+    // The opener counts what is actually being offered, not what was found.
+    expect(repeat.message!.body).toContain('4 picks this weekend');
+    // And neither excluded activity carries a link in the text.
+    expect(repeat.directOccurrenceIds).not.toContain('occ-0');
+    expect(repeat.directOccurrenceIds).not.toContain('occ-1');
+  });
+
+  it('produces an HONEST empty week when everything on offer has already been sent', () => {
+    // The whole point of §2.2 step 4: "Nothing new matches your area this week" becomes a true
+    // statement rather than an implied capability the algorithm never had.
+    withConfig();
+    const listings = catalogue(6);
+    const plan = build(listings, {}, [], new Set(listings.map((l) => l.id)));
+
+    expect(plan.outcome).toBe('empty');
+    expect(plan.message!.body).toContain('Nothing new matches your area this week');
+    expect(picksSnapshot(plan)).toBeNull();
+  });
+
+  it('excludes from picks_snapshot too, so next week does not inherit this week\'s repeats', () => {
+    withConfig();
+    const listings = catalogue(6);
+    const snapshot = picksSnapshot(build(listings, {}, [], new Set(['occ-0'])));
+    expect(snapshot!.map((p) => p.occurrence_id)).not.toContain('occ-0');
+    expect(snapshot!.map((p) => p.rank)).toEqual([1, 2, 3, 4, 5]);
   });
 });

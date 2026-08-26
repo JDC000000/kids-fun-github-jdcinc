@@ -65,6 +65,7 @@ function sanitize(r: SubscriberSendResult) {
     segments: r.segments,
     ...(r.degradation ? { degradation: r.degradation } : {}),
     ...(r.unlinkableCount ? { unlinkableCount: r.unlinkableCount } : {}),
+    ...(r.novelExcluded ? { novelExcluded: r.novelExcluded } : {}),
     ...(r.error ? { error: r.error } : {}),
   };
 }

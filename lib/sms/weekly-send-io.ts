@@ -141,6 +141,57 @@ export async function loadActiveSubscribers(_limit?: number): Promise<ActiveSubs
   return [];
 }
 
+/**
+ * How many of a subscriber's previous weekly sends the novelty filter looks back over
+ * (PRD v2.8 §2.2 step 4 leaves the window to the builder, with "at minimum the immediately
+ * prior week" as the floor).
+ *
+ * ONE SEND, NOT ONE WEEK, and the difference is real: a subscriber who had an empty week has no
+ * weekly send from last calendar week at all, so a time-based window would silently look back at
+ * nothing and re-serve the picks from a fortnight ago. Counting SENDS looks back at the last thing
+ * they actually received, whenever that was.
+ *
+ * WHY NOT MORE. A longer window makes the text feel fresher and is the obvious instinct — but it
+ * interacts badly with the thing PRD §2.1 already worries about. In a sparse municipality the
+ * whole eligible set can be a handful of activities, so excluding four weeks of picks can push a
+ * subscriber under the floor of 3 every week, and three empty weeks in a row AUTO-PAUSES them
+ * (§2.2 step 7). Novelty is a nice-to-have; being auto-paused is losing the subscriber. So this
+ * starts at the PRD's floor, where it cannot cause that, and is one constant to raise once real
+ * per-municipality data exists. Flagged in the round-7 notes as a tuning question, not a guess.
+ */
+export const NOVELTY_LOOKBACK_SENDS = 1;
+
+/**
+ * Occurrence ids this subscriber has already been sent, for the novelty filter. STUB.
+ *
+ * TODO:
+ *   SELECT picks_snapshot
+ *     FROM sms_send_log
+ *    WHERE subscriber_id = $1
+ *      AND send_type = 'weekly'
+ *      AND picks_snapshot IS NOT NULL
+ *    ORDER BY created_at DESC
+ *    LIMIT $2                                  -- NOVELTY_LOOKBACK_SENDS
+ *   …then flatten every row's [{ occurrence_id, rank }] into one Set.
+ *
+ * `send_type = 'weekly'` and `picks_snapshot IS NOT NULL` are the same condition twice, on
+ * purpose: migration 0035's CHECK already guarantees only weekly rows carry a snapshot, so either
+ * clause alone would do — but stating both means the query still reads correctly if that CHECK is
+ * ever relaxed, and it lets the planner use the send-type predicate.
+ *
+ * DRY RUNS WRITE NO ROW AT ALL (see `recordSmsSend`), so a verification run can never poison a
+ * real subscriber's novelty window with picks they were never sent.
+ *
+ * Uses `idx_sms_send_log_subscriber (subscriber_id, created_at DESC)` from 0035 — the same index
+ * the click-through's send-log recovery uses. No new index needed.
+ */
+export type RecentPickIdsLoader = (subscriberId: string) => Promise<Set<string>>;
+
+export const loadRecentlySentPickIds: RecentPickIdsLoader = async () => {
+  // Draft scaffold: sms_send_log is unapplied SQL and this branch holds no read credentials.
+  return new Set<string>();
+};
+
 export type DispatchOutcome = 'sent' | 'dry_run' | 'stopped_via_carrier' | 'failed';
 
 export interface DispatchResult {
@@ -303,6 +354,14 @@ export interface SubscriberSendResult {
   degradation?: string;
   /** Occurrences the selector wanted to link directly but could not — a stale short-ref map. */
   unlinkableCount?: number;
+  /**
+   * How many candidates the novelty filter removed as already-sent.
+   *
+   * Surfaced all the way to the run route because it is the number that distinguishes "this
+   * municipality is thin" from "we have already sent them everything it has" — two very different
+   * problems that produce the same empty week.
+   */
+  novelExcluded?: number;
   /** Never contains a number or a body. */
   error?: string;
 }
@@ -312,6 +371,8 @@ export interface SendSubscriberOptions {
   dryRun?: boolean;
   now?: Date;
   deps?: WeeklySmsDeps;
+  /** Injected for tests; defaults to the stubbed loader above. */
+  loadRecentPickIds?: RecentPickIdsLoader;
 }
 
 /** Last four digits only. The one shape in which a number may appear in an operational message. */
@@ -352,6 +413,18 @@ export async function sendWeeklySmsForSubscriber(
 
   try {
     const deps = options.deps ?? (await loadWeeklySmsDeps());
+    const loadRecent = options.loadRecentPickIds ?? loadRecentlySentPickIds;
+
+    // 0. What have they already been sent? PER SUBSCRIBER, so unlike the read model this cannot be
+    //    hoisted into `WeeklySmsDeps` — but it IS one indexed read against rows they own, and a
+    //    failure here must not cost them their week: an empty set means no novelty filtering,
+    //    which degrades to the pre-v2.8 behaviour rather than to no send.
+    let excludeOccurrenceIds: Set<string>;
+    try {
+      excludeOccurrenceIds = await loadRecent(subscriber.id);
+    } catch {
+      excludeOccurrenceIds = new Set();
+    }
 
     // 1. Build. Pure — geocode, ages, selection, message. May throw only on a missing link secret.
     const plan: WeeklySmsPlan = buildWeeklySms({
@@ -359,6 +432,7 @@ export async function sendWeeklySmsForSubscriber(
       now,
       subscriber,
       occurrenceShortRefs: deps.occurrenceShortRefs,
+      excludeOccurrenceIds,
     });
 
     // 2. Decide what this week does to the counter and the status.
@@ -394,6 +468,7 @@ export async function sendWeeklySmsForSubscriber(
       ...(plan.unlinkableOccurrenceIds.length > 0
         ? { unlinkableCount: plan.unlinkableOccurrenceIds.length }
         : {}),
+      ...(plan.picks?.novelExcluded ? { novelExcluded: plan.picks.novelExcluded } : {}),
     };
 
     // 5. Dispatch.
@@ -468,6 +543,8 @@ export interface BulkOptions {
   dryRun?: boolean;
   /** Cap the number of candidate subscribers (safety for a first live run). */
   limit?: number;
+  /** Injected for tests; defaults to the stubbed loader. */
+  loadRecentPickIds?: RecentPickIdsLoader;
 }
 
 export interface BulkSummary {
@@ -512,7 +589,12 @@ export async function sendWeeklySmsBulk(options: BulkOptions = {}): Promise<Bulk
   let totalSegments = 0;
 
   for (const { subscriber, phoneNumber } of subscribers) {
-    const result = await sendWeeklySmsForSubscriber(subscriber, phoneNumber, { now, dryRun, deps });
+    const result = await sendWeeklySmsForSubscriber(subscriber, phoneNumber, {
+      now,
+      dryRun,
+      deps,
+      loadRecentPickIds: options.loadRecentPickIds,
+    });
     counts[result.status] += 1;
     totalSegments += result.segments;
     results.push(result);

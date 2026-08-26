@@ -630,20 +630,152 @@ describe('the empty-week outcome (PRD §2.2 step 6)', () => {
   });
 });
 
-describe('registration-shaped courses (inherited engine default)', () => {
-  it('leaves multi-week courses out, because includeRegistration defaults to false', () => {
-    // Not a decision this module makes — it is the engine's default and /search's default, and
-    // it is the right one for "what can we do this weekend". Pinned because it materially shapes
-    // what a weekly text can contain: a rec centre's Saturday programming is largely registered
-    // courses, and none of it is eligible for a pick.
+describe('registration content (PRD v2.8 §2.2 step 2 — Jon\'s ruling)', () => {
+  // NOTE, because this test's reason CHANGED in round 7. It used to pass because the engine's
+  // `includeRegistration` defaults to false and dropped these before the selector saw them. The
+  // request now sets `includeRegistration: true` deliberately and lib/sms/registration.ts decides
+  // instead — so the same assertion now proves OUR rule rather than the engine's default. The
+  // vocabulary-level cases live in tests/sms/registration.test.ts; these two prove the wiring.
+  it('leaves multi-session courses out', () => {
     const courses = distinctActivities(6).map((l, i) => ({
       ...l,
       activityName: `${l.activityName} Class`,
       id: `course-${i}`,
     }));
     expect(selectWeeklyPicks(input(courses)).outcome).toBe('empty');
-    // The same listings without the course wording send normally.
     expect(selectWeeklyPicks(input(distinctActivities(6))).outcome).toBe('picks');
+  });
+
+  it('now LETS IN a one-off that only needs booking — the round-7 behaviour change', () => {
+    // Before Jon's ruling these were dropped by the engine's blanket exclusion. A rec centre's
+    // bookable weekend badminton slot is exactly the content the weekly text was missing.
+    const bookable = distinctActivities(6).map((l, i) => ({
+      ...l,
+      activityName: `Reserve In Advance: ${l.activityName}`,
+      id: `bookable-${i}`,
+    }));
+    const result = selectWeeklyPicks(input(bookable));
+    expect(result.outcome).toBe('picks');
+    expect(result.picks).toHaveLength(6);
+  });
+});
+
+describe('the novelty filter (PRD v2.8 §2.2 step 4)', () => {
+  it('excludes an occurrence the subscriber has already been sent', () => {
+    const listings = distinctActivities(6);
+    const alreadySent = new Set(['act-0', 'act-1']);
+
+    const before = selectWeeklyPicks(input(listings));
+    expect(before.picks).toHaveLength(6);
+    expect(before.novelExcluded).toBe(0);
+
+    const after = selectWeeklyPicks(input(listings, { excludeOccurrenceIds: alreadySent }));
+    expect(after.picks).toHaveLength(4);
+    expect(after.novelExcluded).toBe(2);
+    expect(after.picks.map((p) => p.item.listing.id)).not.toContain('act-0');
+    expect(after.picks.map((p) => p.item.listing.id)).not.toContain('act-1');
+  });
+
+  it('treats an absent or empty exclusion set as no filtering — a first send is not a repeat', () => {
+    for (const exclude of [undefined, new Set<string>()]) {
+      const result = selectWeeklyPicks(input(distinctActivities(6), { excludeOccurrenceIds: exclude }));
+      expect(result.picks).toHaveLength(6);
+      expect(result.novelExcluded).toBe(0);
+    }
+  });
+
+  it('is NOT relaxed by retry step (a) — an empty week stays empty', () => {
+    // THE PROPERTY THE PRD IS EXPLICIT ABOUT. Three things exist, all already sent. The widened
+    // radius/window retry finds nothing new, and the week must end empty rather than re-serving a
+    // repeat to reach the floor.
+    const listings = distinctActivities(3);
+    const allSent = new Set(listings.map((l) => l.id));
+
+    const result = selectWeeklyPicks(input(listings, { excludeOccurrenceIds: allSent }));
+    expect(result.outcome).toBe('empty');
+    expect(result.retried).toBe(true);
+    expect(result.degradation).toBe('widened');
+    expect(result.picks).toEqual([]);
+  });
+
+  it('is NOT relaxed by retry step (b) either — dropping interests does not drop novelty', () => {
+    // Step (b) exists to widen WHICH activities qualify. It must not widen to activities they have
+    // already had: those two relaxations are not interchangeable.
+    const listings = distinctActivities(8, { primaryCategoryKey: 'swimming' });
+    const allSent = new Set(listings.map((l) => l.id));
+
+    const result = selectWeeklyPicks(
+      input(listings, {
+        excludeOccurrenceIds: allSent,
+        subscriber: {
+          origin: { geo: HOME, label: 'East Van' },
+          radiusKm: 10,
+          birthYears: [2020],
+          categoryInterests: ['pottery'],
+          consecutiveEmptyWeeks: 0,
+        },
+      })
+    );
+    expect(result.outcome).toBe('empty');
+    // Step (b) DID fire — the interest filter was dropped — and it still found nothing, because
+    // novelty survived it.
+    expect(result.degradation).toBe('widened_and_interests_dropped');
+    expect(result.interestsDropped).toBe(true);
+  });
+
+  it('runs BEFORE the coverage swap, so a forced pick cannot reintroduce a repeat', () => {
+    // The ordering the PRD specifies, and the reason for it: the swap both selects from and
+    // REACHES INTO the candidate list, so filtering after it would let an already-sent occurrence
+    // back in through the forced-pick path.
+    const toddler = distinctActivities(10, {
+      ageBandMatches: ['under2'],
+      ageMinMonths: 0,
+      ageMaxMonths: 24,
+    });
+    const older = kidActivity({
+      id: 'old-5-9',
+      activityName: ACTIVITY_NAMES[12],
+      venueName: 'Big Kid Hall',
+      geo: { lat: FAR.lat, lng: FAR.lng },
+      ageBandMatches: ['5-9'],
+      ageMinMonths: 60,
+      ageMaxMonths: 96,
+    });
+
+    const subscriber = {
+      origin: { geo: HOME, label: 'East Van' },
+      radiusKm: 20,
+      birthYears: [2025, 2019], // under2 + 5-9
+      consecutiveEmptyWeeks: 0,
+    };
+
+    // Without the exclusion, the 5-9 listing is forced in to represent its band.
+    const forced = selectWeeklyPicks(input([...toddler, older], { subscriber }));
+    expect(forced.forcedPicks.map((f) => f.occurrenceId)).toContain('old-5-9');
+
+    // With it excluded as already-sent, the band simply goes unrepresented.
+    const withExclusion = selectWeeklyPicks(
+      input([...toddler, older], { subscriber, excludeOccurrenceIds: new Set(['old-5-9']) })
+    );
+    expect(withExclusion.forcedPicks).toEqual([]);
+    expect(withExclusion.picks.map((p) => p.item.listing.id)).not.toContain('old-5-9');
+  });
+
+  it('counts what it removed AFTER dedup, so a repeat and its duplicate count once', () => {
+    // Ordering again: dedup collapses the pair first, so the exclusion removes one candidate
+    // rather than two, and novelExcluded reports one.
+    const listings = [
+      kidActivity({ id: 'dup-a', activityName: 'Parent & Tot Swim', venueName: 'Templeton Pool' }),
+      kidActivity({ id: 'dup-b', activityName: 'Parent and Tot Swim', venueName: 'Templeton Pool' }),
+      ...distinctActivities(4, {}, 2),
+    ];
+    const result = selectWeeklyPicks(
+      input(listings, { floorPicks: 1, excludeOccurrenceIds: new Set(['dup-a']) })
+    );
+    expect(result.deduped).toBe(1); // the pair collapsed
+    expect(result.novelExcluded).toBe(1); // then one survivor was excluded
+    expect(result.picks.map((p) => p.item.listing.id)).not.toContain('dup-a');
+    expect(result.picks.map((p) => p.item.listing.id)).not.toContain('dup-b');
   });
 });
 

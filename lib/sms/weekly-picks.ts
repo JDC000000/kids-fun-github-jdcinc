@@ -58,6 +58,9 @@ import { addDaysIso, localIsoDate } from '@/lib/search/time/vancouver';
 // The front-door gate and the comparison fold, reused rather than mirrored. This module does not
 // modify lib/recommend/three-things.ts and does not restate either rule.
 import { foldTitleForComparison, isShowableOnFrontDoor } from '@/lib/recommend/three-things';
+// Jon's §8 Q1 ruling: multi-session commitments out, one-off bookings in. SMS-scoped — see that
+// file for why it re-runs the shared classifier rather than copying its vocabulary.
+import { isWeeklyPickEligible } from './registration';
 
 // ── Tunables. Every one of these is a PRD number, named so it is greppable and adjustable. ──
 
@@ -142,6 +145,22 @@ export interface WeeklyPicksInput {
    * becomes a one-line wiring rather than a rewrite of the dedup pass.
    */
   sameParentOrg?: (a: ListingRecord, b: ListingRecord) => boolean;
+  /**
+   * Occurrences this subscriber has already been sent (PRD v2.8 §2.2 step 4, the novelty filter).
+   *
+   * Excluded from the candidate set AFTER the dedup pass and BEFORE the age-coverage swap, so a
+   * repeat is treated exactly like something that was never a candidate — it cannot be ranked, it
+   * cannot be reached by a forced pick, and it cannot fill a slot toward the floor.
+   *
+   * NOT RELAXED BY EITHER DEGRADATION STEP, and that is explicit in the PRD: "an empty week stays
+   * empty rather than re-serving a repeat pick to fill it." That property is structural here — the
+   * exclusion lives on the input and `selectFrom` applies it unconditionally, so there is no
+   * branch a retry could take that skips it.
+   *
+   * The CALLER decides the window (see `loadRecentlySentPickIds` in lib/sms/weekly-send-io.ts);
+   * this module only honours the set it is handed.
+   */
+  excludeOccurrenceIds?: ReadonlySet<string>;
   /** Override the pick ceiling (tests, and a future per-subscriber preference). */
   maxPicks?: number;
   /** Override the send floor. */
@@ -216,6 +235,14 @@ export interface WeeklyPicks {
   forcedPicks: ForcedPick[];
   /** How many candidates the dedup pass collapsed away, across the attempt that produced picks. */
   deduped: number;
+  /**
+   * How many otherwise-eligible candidates the novelty filter removed as already-sent.
+   *
+   * Reported because it is the number that explains a thin week to an operator: a subscriber in a
+   * sparse municipality can be pushed below the floor purely by this, and "we found six and had
+   * already sent five of them" is a completely different diagnosis from "we found one".
+   */
+  novelExcluded: number;
   /**
    * ADVISORY. True when this empty week would be the subscriber's third in a row, i.e. the
    * caller should send the pause notice and set `status = 'paused'` (PRD §2.2 step 6).
@@ -319,12 +346,22 @@ export function buildPicksRequest(input: WeeklyPicksInput, attempt: Attempt): Se
     q: '',
     now,
     origin: { mode: 'near_me', coords: subscriber.origin.geo },
+    // ASK THE ENGINE FOR REGISTRATION CONTENT, THEN JUDGE IT OURSELVES (PRD v2.8 §2.2 step 2).
+    //
+    // The engine's default (`includeRegistration: false`) excludes ALL registration-shaped
+    // listings, which is right for /search and is now too broad for this surface: Jon's ruling
+    // keeps a one-off that merely needs booking. `includeRegistration` is documented as an
+    // inclusion widener that "can only ever ADD results", so turning it on and applying
+    // `isWeeklyPickEligible` in `selectFrom` is strictly a NARROWING of what arrives, not a
+    // second opinion about it — the net effect is the engine's exclusion minus the one-offs.
+    includeRegistration: true,
     ...(ageBands.length > 0 ? { ageBands } : {}),
   };
 
   if (attempt === 'primary') {
     return { ...base, when: 'weekend', radiusKm: baseRadius, minResults: 0 };
   }
+
 
   // Both retry steps ask the SAME question — see the `Attempt` type. Step (b) differs only in
   // which of the answers it is willing to keep.
@@ -593,6 +630,7 @@ interface AttemptResult {
   selection: SearchResultItem[];
   forced: ForcedPick[];
   collapsed: number;
+  novelExcluded: number;
 }
 
 /**
@@ -616,13 +654,31 @@ function selectFrom(
   // qualify, never what we are willing to stand behind.
   const showable = response.results
     .filter((item) => isShowableOnFrontDoor(item.listing))
+    // PRD v2.8 §2.2 step 2 — multi-session commitments out, one-off bookings in. Applied here
+    // rather than by the engine because the engine's own switch is all-or-nothing; see
+    // `buildPicksRequest` for why the request asks for the wider set.
+    .filter((item) => isWeeklyPickEligible(item.listing))
     .filter((item) =>
       applyInterests ? matchesInterests(item.listing, input.subscriber.categoryInterests) : true
     );
 
   const { kept, collapsed } = dedupeCandidates(showable, sameParentOrg);
-  const { selection, forced } = applyCoverageSwap(kept.slice(0, maxPicks), kept, bands, maxPicks);
-  return { selection, forced, collapsed };
+
+  // ── NOVELTY (PRD v2.8 §2.2 step 4) ──────────────────────────────────────────────────
+  // AFTER dedup and BEFORE the coverage swap, exactly as specified — and the ordering is not
+  // arbitrary. After dedup, because a repeat and its duplicate should collapse first so the
+  // exclusion removes one thing rather than two. Before the swap, because `fresh` is what the
+  // swap both selects from AND reaches into: passing the pre-filter list would let a forced pick
+  // reintroduce an already-sent occurrence through the back door.
+  const alreadySent = input.excludeOccurrenceIds;
+  const fresh =
+    alreadySent && alreadySent.size > 0
+      ? kept.filter((item) => !alreadySent.has(item.listing.id))
+      : kept;
+  const novelExcluded = kept.length - fresh.length;
+
+  const { selection, forced } = applyCoverageSwap(fresh.slice(0, maxPicks), fresh, bands, maxPicks);
+  return { selection, forced, collapsed, novelExcluded };
 }
 
 /**
@@ -678,6 +734,10 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
     // reintroduce candidates the retry's own dedup pass had already collapsed.
     attempt = selectFrom(retryResponse, input, bands, true);
 
+    // NOTE: the novelty exclusion is NOT relaxed by either step. `selectFrom` reads it from the
+    // input unconditionally, so there is no branch a retry could take that skips it — PRD v2.8
+    // §2.2 step 6: "an empty week stays empty rather than re-serving a repeat pick to fill it."
+
     // ── Step (b): drop the category-interest filter before declaring an empty week.
     //
     // Interests are an OPTIONAL field stored as a HARD post-filter (the engine has no
@@ -710,6 +770,7 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
       reached,
       forcedPicks: attempt.forced,
       deduped: attempt.collapsed,
+      novelExcluded: attempt.novelExcluded,
       shouldPause: input.subscriber.consecutiveEmptyWeeks + 1 >= 3,
     };
   }
@@ -739,6 +800,7 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
     reached,
     forcedPicks: attempt.forced,
     deduped: attempt.collapsed,
+    novelExcluded: attempt.novelExcluded,
     shouldPause: false,
   };
 }
