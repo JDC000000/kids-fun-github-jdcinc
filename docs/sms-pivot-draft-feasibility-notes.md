@@ -2065,10 +2065,41 @@ START again both work)"*. **Texting START again is the thing that works, and thi
 work.** A new "please reply JOIN" sentence would have been a second, unapproved way of saying a
 message we already have signed off.
 
-The web-page strings that look reusable are not: `PREFS_STATUS_PENDING` ("Almost there. Reply JOIN
-to our confirmation text…") and `SUBMITTED_BODY` both contain curly apostrophes, because they are
-HTML. Either one would have silently turned a 1-segment reply into a 2-segment UCS-2 one. Checked,
-not assumed.
+The web-page strings that look reusable are not — but **the reason below was written wrong the
+first time and is corrected here.**
+
+> ~~`PREFS_STATUS_PENDING` ("Almost there. Reply JOIN to our confirmation text…") and
+> `SUBMITTED_BODY` both contain curly apostrophes, because they are HTML. Either one would have
+> silently turned a 1-segment reply into a 2-segment UCS-2 one.~~
+
+**What is actually true, measured against `lib/sms/consent-copy.ts` rather than recalled:**
+
+| string | curly apostrophe | encoding |
+|---|---|---|
+| `SUBMITTED_BODY` | **yes** — "We’ve" | UCS-2. The claim holds. |
+| `PREFS_STATUS_PENDING` | **no** — it contains no apostrophe at all | GSM-7 safe. The claim was wrong. |
+
+So the encoding argument only ever applied to one of the two. **The decision not to reuse
+`PREFS_STATUS_PENDING` is unchanged, and its real reasons are better ones:**
+
+1. **No brand tag.** PRD §1.4 requires sender identification on every outbound message; every SMS
+   template opens `KIDS FUN:` and this string does not.
+2. **No opt-out instruction.** It is a page label, and a page does not need one.
+3. **It points at a different message than itself.** "Reply JOIN to our confirmation text" reads
+   correctly on a web page, where the confirmation text is somewhere else. Sent AS the text, it
+   tells a parent to reply to something other than the thing in their hand.
+
+That is a stronger case than the one originally given, and it does not depend on a fact about the
+string that was not true. **Now pinned by tests** in `tests/sms/signup_copy.test.ts` rather than
+left to a future re-reading — including the assertion that `PREFS_STATUS_PENDING` IS GSM-7 safe, so
+the wrong reason cannot be re-cited from this document.
+
+**The recurrence is the point worth recording.** This is the third time on this branch that copy
+was described from memory instead of read: round 4's segment table (corrected in round 5), round
+5's "an em dash and curly apostrophes" (corrected by the parent), and now this one. Each time the
+underlying finding survived and only the supporting detail was wrong — which is exactly what makes
+it easy to repeat. Every claim about a specific character in a specific string on this branch is now
+either measured in a test or should be treated as unverified.
 
 **`no_such_subscriber` → NEW copy, ⚠ a suggestion:**
 

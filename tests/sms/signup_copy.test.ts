@@ -9,6 +9,8 @@
 // This form is also intended as the opt-in screenshot for the Twilio Toll-Free Verification
 // submission, which makes the carrier-facing lines load-bearing too.
 import { describe, expect, it } from 'vitest';
+import { isGsm7, nonGsm7Characters } from '@/lib/sms/message';
+import { PREFS_STATUS_PENDING, SUBMITTED_BODY } from '@/lib/sms/consent-copy';
 import {
   CARRIER_DISCLOSURES,
   CONSENT_CHECKBOX_TEXT,
@@ -212,5 +214,40 @@ describe('the interest checkboxes', () => {
   it('has unique keys and a label for each', () => {
     expect(new Set(SMS_INTEREST_KEYS).size).toBe(SMS_INTEREST_KEYS.length);
     for (const option of SMS_INTEREST_OPTIONS) expect(option.label.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the web-page strings that look reusable as SMS copy', () => {
+  // WHY THIS BLOCK EXISTS. Round 14 rejected both of these as replies for the START
+  // `awaiting_confirmation` case and recorded the reason as "both contain curly apostrophes".
+  // Only ONE of them does. The decision was right and the stated reason was half wrong, which is
+  // the third time on this branch that copy was described from memory rather than read. These
+  // assertions replace the recollection.
+
+  it('SUBMITTED_BODY really would cost double — it has a curly apostrophe', () => {
+    expect(SUBMITTED_BODY).toContain('We\u2019ve');
+    expect(isGsm7(SUBMITTED_BODY)).toBe(false);
+    expect(nonGsm7Characters(SUBMITTED_BODY)).toEqual(['\u2019']);
+  });
+
+  it('PREFS_STATUS_PENDING is GSM-7 SAFE — the encoding objection never applied to it', () => {
+    // Pinned in the positive so the wrong reason cannot be re-cited from the round-14 notes.
+    expect(PREFS_STATUS_PENDING).not.toContain('\u2019');
+    expect(isGsm7(PREFS_STATUS_PENDING)).toBe(true);
+  });
+
+  it('neither is sendable anyway, for reasons that hold for both', () => {
+    // The real objection, and a better one: PRD §1.4 requires sender identification on every
+    // outbound message, and a commercial message needs a free opt-out. These are page copy.
+    for (const [name, copy] of [
+      ['PREFS_STATUS_PENDING', PREFS_STATUS_PENDING],
+      ['SUBMITTED_BODY', SUBMITTED_BODY],
+    ] as const) {
+      expect(copy.startsWith('KIDS FUN:'), name).toBe(false);
+      expect(copy, name).not.toMatch(/reply stop/i);
+    }
+    // And this one points at a different message than itself: correct on a web page, where the
+    // confirmation text is elsewhere; wrong sent AS that text.
+    expect(PREFS_STATUS_PENDING).toContain('our confirmation text');
   });
 });
