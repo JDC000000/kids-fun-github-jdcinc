@@ -7,6 +7,9 @@
 // Env vars (mirror these into .env.example — NAMES ONLY, never values):
 //   SMS_SENDING_ENABLED      — "true" to permit REAL sends and REAL inbound state changes;
 //                              anything else forces dry-run. Default FALSE, deliberately.
+//   SMS_SIGNUP_ENABLED       — "true" to expose the public signup form and its API route at all.
+//                              Default FALSE. Separate from SMS_SENDING_ENABLED on purpose —
+//                              see smsSignupEnabled().
 //   TWILIO_ACCOUNT_SID       — Twilio account SID (not secret, but paired with the token).
 //   TWILIO_AUTH_TOKEN        — Twilio auth token. SECRET. Used ONLY to verify the
 //                              X-Twilio-Signature on inbound webhooks and to authenticate
@@ -36,6 +39,26 @@ function env(name: string): string | undefined {
  */
 export function smsSendingEnabled(): boolean {
   return env('SMS_SENDING_ENABLED') === 'true';
+}
+
+/**
+ * Whether the public signup form and POST /api/sms/signup exist at all.
+ *
+ * Defaults to FALSE. PRD §2.1: "Form stays behind a feature flag until the sign-off gate is
+ * recorded" — that gate being Jon confirming the privacy-policy changelog entry and the CASL
+ * sender-identification footer (§1.3, §1.4). Until then this form must not be reachable by real
+ * traffic, because a live form collecting a child's age under unreviewed consent copy is exactly
+ * the failure the gate exists to prevent. The route 404s and the page renders a notice.
+ *
+ * A SEPARATE FLAG FROM smsSendingEnabled(), deliberately, because they answer different
+ * questions and the useful states are not the same. Staging wants SIGNUP on and SENDING off:
+ * the form renders and validates for real, a screenshot can be taken for the Toll-Free
+ * Verification submission, and not one text is dispatched and not one consent row is written.
+ * One combined flag could not express that, and the alternative — turning on real sending to
+ * take a screenshot — is not a thing anyone should have to do.
+ */
+export function smsSignupEnabled(): boolean {
+  return env('SMS_SIGNUP_ENABLED') === 'true';
 }
 
 /** Twilio account SID, or null if unconfigured. */

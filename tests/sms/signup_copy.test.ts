@@ -1,0 +1,175 @@
+// tests/sms/signup_copy.test.ts — the consent wording, and the sparse-area decision.
+//
+// WHY COPY GETS A TEST AT ALL. `sms_consent.consent_text_version` (migration 0034) is NOT NULL
+// and exists so that "which wording did this subscriber agree to?" has an answer a year from now.
+// That is only worth something if the required disclosures are actually IN the wording — so the
+// four PIPEDA elements PRD §1.3 enumerates are asserted here rather than trusted to survive a
+// future edit that was only trying to shorten a sentence.
+//
+// This form is also intended as the opt-in screenshot for the Twilio Toll-Free Verification
+// submission, which makes the carrier-facing lines load-bearing too.
+import { describe, expect, it } from 'vitest';
+import {
+  CARRIER_DISCLOSURES,
+  CONSENT_CHECKBOX_TEXT,
+  CONSENT_TEXT_VERSION,
+  MISSING_SENDER_IDENTITY,
+  OUT_OF_AREA_NOTICE,
+  PREFERENCES_LINK_LABEL,
+  SPARSE_AREA_NOTICE,
+  WHAT_HAPPENS_NEXT,
+} from '@/lib/sms/consent-copy';
+import {
+  SPARSE_FALLBACK_REGION_IDS,
+  sparseAreaNoticeFor,
+  sparseRegionIdsFrom,
+} from '@/lib/sms/sparse-areas';
+import { SMS_INTEREST_KEYS, SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
+
+describe('the consent checkbox wording (PRD §1.3)', () => {
+  it('names WHAT is collected — all three items', () => {
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/phone number/i);
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/postal code/i);
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/children’s approximate ages/i);
+  });
+
+  it('names WHY, and scopes the use to that one purpose', () => {
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/weekly/i);
+    // "use them only to" is the purpose-specificity PRD §1.3 relies on to justify ONE checkbox
+    // rather than separately bundled consents. Losing the word "only" loses that argument.
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/only to/i);
+  });
+
+  it('states it is never sold or shared with advertisers or third parties', () => {
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/never sold or shared/i);
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/advertiser/i);
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/third party/i);
+  });
+
+  it('names WHERE to see, change or delete it', () => {
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/see, change or delete/i);
+    expect(CONSENT_CHECKBOX_TEXT).toContain(PREFERENCES_LINK_LABEL);
+  });
+
+  it('survives the form’s split-and-reassemble render losslessly', () => {
+    // SmsSignupForm splits this string on PREFERENCES_LINK_LABEL to emphasise that phrase in
+    // place. If the phrase ever appeared twice, or the component reordered the halves, the
+    // rendered sentence would stop being the sentence `consent_text_version` stands for.
+    const parts = CONSENT_CHECKBOX_TEXT.split(PREFERENCES_LINK_LABEL);
+    expect(parts).toHaveLength(2);
+    expect(parts[0] + PREFERENCES_LINK_LABEL + parts[1]).toBe(CONSENT_CHECKBOX_TEXT);
+  });
+
+  it('has a version stamp that looks like one', () => {
+    expect(CONSENT_TEXT_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}\.v\d+$/);
+  });
+});
+
+describe('the CASL / double-opt-in copy (PRD §1.4)', () => {
+  it('tells the parent to reply JOIN — never YES', () => {
+    // YES is a Twilio Advanced Opt-Out keyword and can be intercepted at the carrier layer before
+    // our webhook sees it, leaving a subscriber who did everything right stuck at `pending`.
+    expect(WHAT_HAPPENS_NEXT).toContain('JOIN');
+    expect(WHAT_HAPPENS_NEXT).not.toMatch(/reply yes/i);
+  });
+
+  it('renders a visible marker for the sender identity we do not have yet', () => {
+    expect(MISSING_SENDER_IDENTITY).toMatch(/mailing address/i);
+    expect(MISSING_SENDER_IDENTITY).toMatch(/support contact/i);
+  });
+});
+
+describe('the carrier-facing disclosures', () => {
+  const joined = CARRIER_DISCLOSURES.join(' ');
+
+  it('states message frequency, rates, and how to stop and get help', () => {
+    expect(joined).toMatch(/1 message per week/i);
+    expect(joined).toMatch(/message and data rates may apply/i);
+    expect(joined).toMatch(/reply stop/i);
+    expect(joined).toMatch(/reply help/i);
+  });
+
+  it('mentions the one-time confirmation message, so "1 per week" is not misread as a cap', () => {
+    expect(joined).toMatch(/confirmation/i);
+  });
+});
+
+describe('the area notices', () => {
+  it('warns about a sparse area without claiming it will improve', () => {
+    expect(SPARSE_AREA_NOTICE).toMatch(/fewer picks/i);
+    // Nothing on this notice may promise coverage is coming — we do not know that.
+    expect(SPARSE_AREA_NOTICE).not.toMatch(/soon|shortly|coming/i);
+  });
+
+  it('names every covered municipality when rejecting an out-of-area postal', () => {
+    for (const name of ['Vancouver', 'North Vancouver', 'West Vancouver', 'Burnaby', 'Richmond']) {
+      expect(OUT_OF_AREA_NOTICE).toContain(name);
+    }
+  });
+});
+
+describe('sparseAreaNoticeFor', () => {
+  it('warns only for a postal in a measured-sparse municipality', () => {
+    expect(sparseAreaNoticeFor('V7V 1A1', ['wvan'])?.regionName).toBe('West Vancouver');
+    expect(sparseAreaNoticeFor('V5L 1A1', ['wvan'])).toBeNull(); // Vancouver, well covered
+    expect(sparseAreaNoticeFor('V7V 1A1', [])).toBeNull(); // measured, nothing thin
+  });
+
+  it('says nothing for an out-of-area postal — that is a rejection, not a warning', () => {
+    // "some weeks may have fewer picks" would enormously understate "we can never serve you".
+    expect(sparseAreaNoticeFor('V3S 1A1', ['wvan', 'bby'])).toBeNull();
+    expect(sparseAreaNoticeFor('', ['wvan'])).toBeNull();
+    expect(sparseAreaNoticeFor(null, ['wvan'])).toBeNull();
+  });
+});
+
+describe('sparseRegionIdsFrom', () => {
+  it('distinguishes "measured, nothing thin" from "could not measure"', () => {
+    // [] and null must not collapse: treating an unavailable measurement as "nothing is thin"
+    // silently withdraws the warning from the exact municipalities it exists for.
+    expect(sparseRegionIdsFrom([])).toEqual([]);
+    expect(sparseRegionIdsFrom(null)).toBeNull();
+    expect(sparseRegionIdsFrom(undefined)).toBeNull();
+  });
+
+  it('takes the engine’s own sparse verdict rather than re-deriving a threshold', () => {
+    const coverage = [
+      { chipId: 'van', regionName: 'Vancouver', activityCount: 900, sparse: false },
+      { chipId: 'wvan', regionName: 'West Vancouver', activityCount: 0, sparse: true },
+      { chipId: 'bby', regionName: 'Burnaby', activityCount: 2, sparse: true },
+    ];
+    expect(sparseRegionIdsFrom(coverage)).toEqual(['wvan', 'bby']);
+  });
+
+  it('has a static fallback that errs toward warning', () => {
+    // Used only when the catalogue is unreachable. Warning a well-covered area is a mild
+    // over-warning; going quiet on a thin one costs a signup and then a churn.
+    expect([...SPARSE_FALLBACK_REGION_IDS].sort()).toEqual(['bby', 'wvan']);
+  });
+});
+
+describe('the interest checkboxes', () => {
+  it('offers only keys the catalogue actually uses', () => {
+    // Every key is a `category.key` from supabase/seeds/categories_tags.sql, which is what
+    // ListingRecord.primaryCategoryKey/categoryTags hold — so matchesInterests compares like
+    // with like.
+    const seeded = new Set([
+      'open_gym', 'public_swim', 'skate', 'storytime', 'indoor_play', 'museum_venue',
+      'attraction', 'festival_event', 'outdoor_park', 'class_program',
+    ]);
+    for (const key of SMS_INTEREST_KEYS) expect(seeded.has(key)).toBe(true);
+  });
+
+  it('deliberately does NOT offer class_program while registration content is excluded', () => {
+    // The selection module inherits includeRegistration:false, so class/lesson/camp titles are
+    // dropped before the interest filter runs. Offering this box would offer a near-unmatchable
+    // interest. Downstream of PRD §8, which is still open — if Jon includes registration content
+    // in the SMS, add it back and delete this test.
+    expect(SMS_INTEREST_KEYS).not.toContain('class_program');
+  });
+
+  it('has unique keys and a label for each', () => {
+    expect(new Set(SMS_INTEREST_KEYS).size).toBe(SMS_INTEREST_KEYS.length);
+    for (const option of SMS_INTEREST_OPTIONS) expect(option.label.length).toBeGreaterThan(0);
+  });
+});
