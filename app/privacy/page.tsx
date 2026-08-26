@@ -7,6 +7,19 @@ import './privacy.css';
 // paraphrase, summarise, reorganise, or "improve" it here. Any factual correction
 // belongs upstream in that document (and its approval), not in this page.
 //
+// 2026-08-26: SMS/weekly-text disclosures added (doc revision v0.3) ahead of the
+// Twilio Toll-Free Verification filing — fixes a self-contradiction (this page
+// said "we do not collect children's ages" with no carve-out for the SMS product,
+// which deliberately does), adds the new "Weekly text messages (SMS)" section,
+// adds Twilio to the service-provider list, adds SMS-specific retention periods,
+// and extends the rights section to cover SMS subscribers (who have no account).
+// Applies Jon's ruling on the source proposal's one open decision, verbatim:
+// "re privacy - (B) Leave the checkbox as-is" — the consent checkbox in
+// lib/sms/consent-copy.ts is unchanged; this page's wording deliberately lists
+// all four collected items (including optional category interests) per the
+// source document's own reasoning. See the source document's amendment log for
+// the full history of this revision.
+//
 // Server component: static, zero client JS, same convention as /preview and the
 // home front door. Styling uses the canonical global --kf-* design tokens so the
 // page is dark-mode aware and meets the same WCAG-AA bar as the rest of the site.
@@ -24,7 +37,7 @@ export const metadata = {
 // omitted entirely rather than rendering a visible unresolved-placeholder artifact.
 // The orchestrator sets this to the real publish date (e.g. '2026-07-20') at
 // merge/deploy — a one-line change.
-const EFFECTIVE_DATE: string | null = '2026-07-21';
+const EFFECTIVE_DATE: string | null = '2026-08-26';
 
 export default function PrivacyPage() {
   return (
@@ -122,9 +135,11 @@ export default function PrivacyPage() {
           </table>
 
           <p>
-            <strong>We do not</strong> collect children&apos;s ages, your name, precise location/GPS
-            coordinates, payment information, or children&apos;s names. We do not use advertising or
-            third-party tracking pixels.
+            <strong>We do not</strong> collect your name, precise location/GPS coordinates, payment
+            information, or children&apos;s names. We do not use advertising or third-party tracking
+            pixels. If you sign up for our <strong>weekly text messages</strong>, we collect your
+            children&apos;s <strong>approximate ages</strong> — see &quot;Weekly text messages&quot;
+            below. We do not collect children&apos;s ages anywhere else.
           </p>
 
           <h2>Anonymous usage data</h2>
@@ -139,12 +154,59 @@ export default function PrivacyPage() {
             export. They are <strong>automatically deleted after about 13 months.</strong>
           </p>
 
+          <h2>Weekly text messages (SMS)</h2>
+          <p>
+            The weekly text is a <strong>separate, optional product</strong> from the website. You can
+            use KIDS FUN without it, and signing up for it is the only way we ever have your phone
+            number.
+          </p>
+          <p>If you sign up, we collect and store:</p>
+          <ul>
+            <li>
+              <strong>Your mobile number</strong> — to send the weekly text, and as the only way we
+              identify you. There is no account and no password.
+            </li>
+            <li>
+              <strong>Your postal code</strong> — to find activities near you. We store the postal code
+              itself, never a precise location.
+            </li>
+            <li>
+              <strong>Your children&apos;s approximate ages</strong> — entered as a plain &quot;how old
+              are they now&quot; number per child. We store the <strong>year</strong> they were born, not
+              a birthday, so the ages stay right as they grow up. We never ask for a birthday, a month,
+              or a child&apos;s name.
+            </li>
+            <li>
+              <strong>The kinds of activity you&apos;re interested in</strong> (optional) — the
+              checkboxes you tick at signup or on your preferences page.
+            </li>
+          </ul>
+          <p>
+            We use this information <strong>only to choose the activities in that weekly text</strong>.
+            We do not use it for anything else.
+          </p>
+          <p>
+            <strong>
+              Your mobile information — your phone number and everything above — is never sold, and
+              never shared with advertisers or any other third party.
+            </strong>{' '}
+            The only companies that ever see it are the service providers listed below who deliver the
+            message on our behalf.
+          </p>
+          <p>
+            Every message we send links to your own <strong>preferences page</strong>, where you can see
+            everything we store about you, change your area, your children&apos;s ages or your
+            interests, unsubscribe, or delete everything — with no login and no account. You can also
+            reply <strong>STOP</strong> to any message to unsubscribe, or <strong>HELP</strong> to reach
+            us.
+          </p>
+
           <h2>How we use your information</h2>
           <p>
             We use your information only to run and improve KIDS FUN: to sign you in, remember your area
-            and saved searches, send the weekly email if you asked for it, keep listings accurate, and
-            understand overall usage. <strong>We do not sell your personal information, and we do not
-            share it for advertising.</strong>
+            and saved searches, send the weekly email or weekly text if you asked for it, keep listings
+            accurate, and understand overall usage. <strong>We do not sell your personal information,
+            and we do not share it for advertising.</strong>
           </p>
 
           <h2>Who we share it with (our service providers)</h2>
@@ -162,6 +224,11 @@ export default function PrivacyPage() {
             <li>
               <strong>Resend</strong> — sends the weekly email, <strong>only if you opted in</strong>{' '}
               (receives your email address and the email content).
+            </li>
+            <li>
+              <strong>Twilio</strong> — sends and receives the weekly text messages,{' '}
+              <strong>only if you signed up for them</strong> (receives your mobile number and the
+              message content).
             </li>
             <li>
               <strong>Sentry</strong> — error monitoring, configured to <strong>strip out</strong>{' '}
@@ -189,7 +256,23 @@ export default function PrivacyPage() {
               <strong>Problem reports</strong> you submit about listings: retained for up to{' '}
               <strong>6 months</strong>, after which they are automatically deleted.
             </li>
+            <li>
+              <strong>Your text-message details</strong> (mobile number, postal code, children&apos;s
+              ages, interests): kept while you are subscribed, and{' '}
+              <strong>deleted 30 days after you unsubscribe.</strong> If you use the &quot;delete my
+              data&quot; control on your preferences page, they are deleted straight away.
+            </li>
+            <li>
+              <strong>A sign-up that is never confirmed:</strong> if you sign up but never reply JOIN to
+              our confirmation text, everything we collected is <strong>deleted after 90 days.</strong>
+            </li>
           </ul>
+          <p>
+            After your text-message details are deleted we keep a <strong>scrambled, one-way code</strong>{' '}
+            derived from your mobile number — not the number itself, and not reversible — as the record
+            that we were allowed to text you. Canadian anti-spam law requires us to be able to answer a
+            complaint about a message we sent.
+          </p>
 
           <h2>How we protect it</h2>
           <p>
@@ -222,6 +305,12 @@ export default function PrivacyPage() {
             <li>
               <strong>Withdraw consent</strong> — turn off the weekly email at any time (from the
               email&apos;s unsubscribe link or your Account page).
+            </li>
+            <li>
+              <strong>If you subscribe to the weekly text</strong>, all four of these live on your{' '}
+              <strong>preferences page</strong> instead — the link in every message. No login. You can
+              see everything we store, change your area, children&apos;s ages and interests,
+              unsubscribe, or delete everything.
             </li>
           </ul>
 
