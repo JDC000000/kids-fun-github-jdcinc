@@ -177,6 +177,17 @@ const BRAND = 'KIDS FUN:';
 /** Free-of-charge opt-out instruction, required on every commercial message (PRD §1.4). */
 const STOP_LINE = 'Reply STOP to end';
 
+/**
+ * The one clause that points somebody with no subscription at the form.
+ *
+ * Shared by the unknown-keyword reply and the START invite rather than written twice: they are
+ * the two messages that can reach a number with no `sms_consent` row, and "where do I sign up"
+ * must not have two different answers depending on which word the person happened to text.
+ */
+function signupClause(signupUrl: string): string {
+  return `Not signed up? ${signupUrl}`;
+}
+
 const SHORT_WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 /**
@@ -369,10 +380,36 @@ export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessag
  * keyword half of the sentence stands on its own for an existing subscriber.
  */
 export function renderUnknownKeywordMessage(signupUrl: string | null): RenderedMessage {
-  const signup = signupUrl ? ` Not signed up? ${signupUrl}` : '';
+  const signup = signupUrl ? ` ${signupClause(signupUrl)}` : '';
   return render(
     `${BRAND} Sorry, we didn't catch that. Reply JOIN to confirm your signup, ` +
       `HELP for info, or STOP to end.${signup}`
+  );
+}
+
+/**
+ * The reply to START from a number we have no signup for (PRD §2.1 door 2).
+ *
+ * ── ⚠ SUGGESTED COPY, NOT APPROVED WORDING ──────────────────────────────────────────────
+ * §2.1 specifies the BEHAVIOUR — *"Text START to [number]" — our webhook replies with a link to
+ * the form* — and the v2.7 changelog specifies WHICH outcome gets it ("here's the signup link"),
+ * but no document gives the sentence. Originated here, needs Jon like the round-13 unknown-keyword
+ * reply and the round-9 sender identification did.
+ *
+ * IT SAYS WHAT THE PRODUCT IS BEFORE IT ASKS FOR ANYTHING. This is the one message on the branch
+ * that can reach somebody with NO record of us at all: a QR code on a noticeboard, a number
+ * copied off a poster. "Not signed up? {link}" alone would assume they know what they nearly
+ * signed up for. One clause of context is the difference between a link and a link worth tapping.
+ *
+ * IT CARRIES THE STOP LINE even though it is answering their own text. This number has no
+ * `sms_consent` row, so it has no recorded consent of any kind — and after the confirmation
+ * request it is the highest-exposure message this product sends. The brand tag and a free opt-out
+ * are exactly what CASL's identification rules want on it.
+ */
+export function renderStartSignupInviteMessage(signupUrl: string): RenderedMessage {
+  return render(
+    `${BRAND} We text weekly kid activity picks for Metro Vancouver. ` +
+      `${signupClause(signupUrl)}\n${STOP_LINE}`
   );
 }
 

@@ -41,9 +41,14 @@ import {
   mirrorCarrierStart,
   mirrorCarrierStop,
   recordHelpRequest,
+  type TransitionOutcome,
   type TransitionResult,
 } from '@/lib/sms/consent-transitions';
-import { renderUnknownKeywordMessage } from '@/lib/sms/message';
+import {
+  renderConfirmRequestMessage,
+  renderStartSignupInviteMessage,
+  renderUnknownKeywordMessage,
+} from '@/lib/sms/message';
 import { sendWelcomeText } from '@/lib/sms/welcome';
 import { withObservedRoute } from '@/lib/observability/route-handler';
 
@@ -207,8 +212,12 @@ async function dispatch(
       return { result: await confirmAndWelcome(from, dryRun), reply: null };
     case 'stop':
       return { result: await mirrorCarrierStop(from, { dryRun }), reply: null };
-    case 'start':
-      return { result: await mirrorCarrierStart(from, { dryRun }), reply: null };
+    case 'start': {
+      const result = await mirrorCarrierStart(from, { dryRun });
+      // Built on every path so a broken template fails in a dry run, dropped when sending is off.
+      const reply = startReplyFor(result.outcome);
+      return { result, reply: dryRun ? null : reply };
+    }
     case 'help':
       return { result: await recordHelpRequest(from, { dryRun }), reply: null };
     case 'unknown':
@@ -221,6 +230,69 @@ async function dispatch(
       const message = renderUnknownKeywordMessage(signupUrl());
       return { result: null, reply: dryRun ? null : message.body };
     }
+  }
+}
+
+/**
+ * START: what to say back, by what the transition actually found (PRD §2.1 door 2).
+ *
+ * ═══ THREE OUTCOMES, THREE DIFFERENT FACTS, THREE DIFFERENT ANSWERS ═══
+ * Round 5 added `awaiting_confirmation` to the outcome union specifically so this function could
+ * exist: "the row is mid-signup" is not "no such subscriber" and not "already active", and its
+ * own doc said collapsing it into either "would make the webhook reply with the wrong thing —
+ * 'sign up here' or nothing, when the right answer is 'reply JOIN to confirm'." That outcome has
+ * been carrying a reply nobody sent for eight rounds.
+ *
+ *   no_such_subscriber     Nothing holds this number — never signed up, or purged. This is
+ *                          §2.1's door 2: a QR code or a poster, and a text into the void. The
+ *                          signup link is the entire point of the door.
+ *   awaiting_confirmation  They used the form and never replied JOIN. Re-send the confirmation
+ *                          request — which is not a new message, it is §2.1's own recovery path:
+ *                          "no automated nudge in MVP (resubmitting the form or texting START
+ *                          again both work)". Texting START again is the thing that works, and
+ *                          this is what makes it work.
+ *
+ * ═══ WHY EVERY OTHER OUTCOME IS SILENT ═══
+ * A POSITIVE TEST on the two that reply, so a future outcome is silent by default rather than
+ * accidentally texting somebody — the same shape as `confirmAndWelcome`'s `applied` guard.
+ *   already_in_state  They are active. Nothing happened and nothing needs saying.
+ *   applied           They were stopped or paused and are now active again. Twilio's Advanced
+ *                     Opt-Out has ALREADY sent its own resubscribe confirmation for the stopped
+ *                     case, before this webhook ran, so ours would be a duplicate on the one
+ *                     exchange a carrier scrutinises most. SEE THE NOTE BELOW — this outcome
+ *                     bundles two situations that are not actually alike.
+ *   dry_run           Nothing was written, so nothing should be announced. (Belt and braces: the
+ *                     caller drops every reply on a dry run anyway, because the two read-only
+ *                     outcomes above are reported as themselves even then.)
+ *   error / no_change The transition failed, or there was nothing to do.
+ *
+ * ═══ 🔴 `applied` BUNDLES A PAUSE AND AN OPT-OUT, AND THEY ARE DIFFERENT ═══
+ * `decideStart` returns `applied` for BOTH `stopped → active` and `paused → active`. For a
+ * stopped subscriber, Twilio already replied. For a PAUSED one it did not — a pause is our own
+ * empty-week auto-pause (PRD §2.2 step 7), never a carrier opt-out, so that number was never on
+ * Twilio's suppression list and nothing has been said to them at all. Silence is right for one
+ * and arguable for the other.
+ * NOT RESOLVED HERE, because it cannot be: `TransitionResult` carries the TARGET status
+ * (`change.status = 'active'`), never the prior one, so this function cannot tell the two apart.
+ * Distinguishing them means widening the transition result and writing a fifth piece of copy —
+ * a decision, not a cleanup. Flagged in the round-14 notes.
+ *
+ * Exported for test: the transition stubs on this branch always resolve to `no_such_subscriber`,
+ * so the other outcomes are unreachable end-to-end and would otherwise be untested.
+ */
+export function startReplyFor(outcome: TransitionOutcome): string | null {
+  switch (outcome) {
+    case 'no_such_subscriber':
+      return renderStartSignupInviteMessage(signupUrl()).body;
+    case 'awaiting_confirmation':
+      // REUSED, not rewritten. §2.6's approved confirmation-request copy is exactly this message,
+      // and `renderConfirmRequestMessage` already degrades its area clause by design. Null rather
+      // than a lookup on purpose: this reply rides on the webhook response, which must return
+      // fast and must not grow a database read and a new failure mode for one nicety. The area is
+      // decoration here; "reply JOIN" is the content.
+      return renderConfirmRequestMessage(null).body;
+    default:
+      return null;
   }
 }
 

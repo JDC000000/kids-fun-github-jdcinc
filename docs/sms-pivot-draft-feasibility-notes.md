@@ -2037,3 +2037,145 @@ Requests are signed with **Twilio's own SDK**, not with our implementation, for 
 
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **300 tests across 18
 files**. Full `unit` lane: **224 files / 3766 tests passing**.
+
+---
+
+# Round 14 — the START replies (PRD §2.1 door 2)
+
+The gap flagged at the end of round 13, one door over from the unknown-keyword reply. §2.1's door 2
+is *"Text START to [number]" — our webhook replies with a link to the form*, and round 5's own
+changelog specified that the reply differs by outcome. The webhook replied to none of them.
+
+| File | What changed |
+|---|---|
+| `lib/sms/message.ts` | `renderStartSignupInviteMessage`; shared `signupClause` |
+| `app/api/sms/inbound/route.ts` | `startReplyFor` — the three-way mapping; `start` branch wired |
+| `tests/sms/inbound_route.test.ts` | +10 tests (17 → 27) |
+| `tests/sms/weekly_send.test.ts` | the invite added to the all-templates GSM-7 wall |
+
+## be. Only ONE of the two replies needed new copy
+
+Asked directly, so stated directly.
+
+**`awaiting_confirmation` → REUSED, nothing written.** The reply is
+`renderConfirmRequestMessage(null)` — §2.6's already-approved confirmation request, with its area
+clause degrading exactly as that renderer was built to. This is not a convenient substitute; it is
+what PRD §2.1 literally specifies: *"no automated nudge in MVP (resubmitting the form or texting
+START again both work)"*. **Texting START again is the thing that works, and this is what makes it
+work.** A new "please reply JOIN" sentence would have been a second, unapproved way of saying a
+message we already have signed off.
+
+The web-page strings that look reusable are not: `PREFS_STATUS_PENDING` ("Almost there. Reply JOIN
+to our confirmation text…") and `SUBMITTED_BODY` both contain curly apostrophes, because they are
+HTML. Either one would have silently turned a 1-segment reply into a 2-segment UCS-2 one. Checked,
+not assumed.
+
+**`no_such_subscriber` → NEW copy, ⚠ a suggestion:**
+
+> KIDS FUN: We text weekly kid activity picks for Metro Vancouver. Not signed up?
+> https://kidsfun.ca/sms/signup
+> Reply STOP to end
+
+127 septets — one segment. §2.1 specifies the behaviour and the v2.7 changelog specifies which
+outcome gets it, but no document gives the sentence, so this needs Jon like the round-13 nudge did.
+
+Two things about it that are not taste:
+
+- **It says what the product is before it asks for anything.** This is the one message on the
+  branch that can reach somebody with NO record of us at all — a QR code on a noticeboard, a number
+  off a poster. A bare link assumes they know what they nearly signed up for.
+- **It carries the STOP line** even though it is answering their own text. That number has no
+  `sms_consent` row, so there is no recorded consent of any kind behind it; after the confirmation
+  request this is the highest-exposure message the product sends, and a brand tag plus a free
+  opt-out is exactly what CASL's identification rules want on it.
+
+**The signup sentence is now shared, not written a third time.** `signupClause()` is used by both
+the unknown-keyword reply and this invite: they are the two messages that can reach a number with
+no `sms_consent` row, and "where do I sign up" must not have two different answers depending on
+which word the person happened to text.
+
+## bf. The mapping, and why everything else is silent
+
+`startReplyFor` is a **positive test on the two outcomes that reply**, the same shape as
+`confirmAndWelcome`'s `applied` guard, so a future outcome is silent by default rather than
+accidentally texting somebody.
+
+| outcome | reply | why |
+|---|---|---|
+| `no_such_subscriber` | signup invite | door 2: nothing holds this number |
+| `awaiting_confirmation` | confirmation request again | §2.1's own recovery path |
+| `already_in_state` | — | they are active; nothing happened |
+| `applied` | — | Twilio already answered — **but see §bg** |
+| `dry_run` / `no_change` / `error` | — | nothing was written |
+
+**Round 5's `awaiting_confirmation` outcome existed for precisely this.** Its own doc said
+collapsing it into a neighbour "would make the webhook reply with the wrong thing — 'sign up here'
+or nothing, when the right answer is 'reply JOIN to confirm'." That outcome has been carrying a
+reply nobody sent for eight rounds. It now sends it.
+
+**Dry-run gated like every other outbound message**, and it matters more here than on the unknown
+branch: `no_such_subscriber` and `awaiting_confirmation` are read-only outcomes that
+`runTransition` reports **as themselves even in a dry run** (only `applied` is displaced by
+`dry_run`). Without the gate, a deployment with sending disabled would have replied. Tested.
+
+## bg. 🔴 `applied` bundles a pause and an opt-out, and they are not alike
+
+`decideStart` returns `applied` for **both** `stopped → active` and `paused → active`.
+
+- **stopped → active** is a carrier opt-out reversal. Twilio's Advanced Opt-Out already removed the
+  number from its suppression list and sent its own resubscribe confirmation **before this webhook
+  ran**. Ours would be a duplicate message on the one exchange a carrier scrutinises most. Silence
+  is clearly right.
+- **paused → active** is our own empty-week auto-pause (§2.2 step 7). That number was **never** on
+  Twilio's suppression list, so Twilio said nothing, and the parent has now had their texts
+  silently switched back on with no acknowledgement at all.
+
+So "nothing" is right for one and arguable for the other — and **the route cannot tell them apart**:
+`TransitionResult` carries the TARGET status (`change.status = 'active'`), never the prior one, and
+`ConsentRow` is consumed inside `decideStart`.
+
+Not resolved here. Distinguishing them means widening the transition result and writing a fifth
+piece of copy ("You're back in - picks resume Friday"), which is a decision, not a cleanup. Worth
+noting the pause notice itself points at the preferences page rather than at START, so this path is
+uncommon — but it is reachable, and it is the one START outcome where nobody says anything at all.
+
+## bh. ⚠ The whole branch is contingent on an Operator config step
+
+PRD §1.4, unchanged since round 1: *"START must be explicitly configured and verified, not assumed.
+Twilio's default behavior toward a previously-unknown or previously-stopped number may be a canned
+carrier-level auto-reply rather than a route into our app. Before launch: configure START as a
+custom inbound keyword on the Messaging Service routed to our webhook, and verify this against a
+real Canadian toll-free number."*
+
+Two consequences worth stating plainly rather than discovering at launch:
+
+1. **If START is not routed to our webhook, none of this code ever runs** — door 2 stays broken and
+   nothing in our test suite can tell us, because the failure is in Twilio's console, not here.
+2. **If Twilio's canned START auto-reply fires as well**, a parent gets two messages. That is the
+   duplicate-reply concern behind `applied` being silent, applied to every outcome. Which of the
+   two lands, and in what order, is exactly what §1.4's "verify against a real toll-free number"
+   step is for.
+
+This does not change what to build — the mapping is right either way — but the config step is now
+load-bearing for a feature rather than for tidiness.
+
+## bi. Round 13's `escapeXml` stopped being hypothetical
+
+It was added for a trap nobody had hit: §2.6's confirmation copy contains a bare `&`
+("Msg&data rates may apply"). This round routes **that exact template** through the TwiML response
+for the `awaiting_confirmation` reply. Without the escaper this would have emitted a malformed XML
+document and a Twilio webhook error, one round after it was written for the hypothetical. Pinned by
+a test that asserts the escaped form of the actual reply.
+
+## bj. Verification
+
+10 new tests: the three-way mapping, each outcome asserted individually; every other outcome silent
+(as an explicit list, so a new outcome is caught); both replies GSM-7-safe and one segment each
+with the 127-septet invite pinned; the invite naming the product and carrying the STOP line; the
+shared `signupClause` proven identical in both messages; end-to-end START through the real route
+producing the invite; the carrier aliases (UNSTOP, "yes", " Start ") landing in the same place; the
+dry-run gate suppressing a reply the read-only outcome would otherwise have produced; and the
+`Msg&data` escaping.
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **310 tests across 18
+files**. Full `unit` lane: **224 files / 3776 tests passing**.

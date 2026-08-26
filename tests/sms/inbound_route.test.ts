@@ -13,8 +13,17 @@
 // status, content type, and exactly what is in the TwiML body.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getExpectedTwilioSignature } from 'twilio/lib/webhooks/webhooks';
-import { POST, MAX_INBOUND_PAYLOAD_BYTES, escapeXml } from '@/app/api/sms/inbound/route';
-import { renderConfirmRequestMessage } from '@/lib/sms/message';
+import {
+  POST,
+  MAX_INBOUND_PAYLOAD_BYTES,
+  escapeXml,
+  startReplyFor,
+} from '@/app/api/sms/inbound/route';
+import {
+  renderConfirmRequestMessage,
+  renderStartSignupInviteMessage,
+} from '@/lib/sms/message';
+import type { TransitionOutcome } from '@/lib/sms/consent-transitions';
 import { renderUnknownKeywordMessage, assertGsm7Safe, estimateSegments } from '@/lib/sms/message';
 
 const URL = 'https://kidsfun.example/api/sms/inbound';
@@ -137,11 +146,12 @@ describe('POST /api/sms/inbound — the unknown branch', () => {
     expect(await xml(await POST(inbound('')))).toContain('<Message>');
   });
 
-  it('says NOTHING for join, stop, start or help — Twilio already answered those', async () => {
+  it('says NOTHING for join, stop or help — Twilio already answered those', async () => {
     // A second reply from us on a STOP would be a duplicate message on the one exchange a
     // carrier scrutinises most. JOIN answers with the welcome text, via the REST API.
+    // START is the exception and has its own section below: PRD §2.1 door 2 requires a reply.
     configure({ sending: true });
-    for (const keyword of ['JOIN', 'STOP', 'START', 'HELP', 'unsubscribe', 'info']) {
+    for (const keyword of ['JOIN', 'STOP', 'HELP', 'unsubscribe', 'info']) {
       const res = await POST(inbound(keyword));
       expect(res.status, keyword).toBe(200);
       expect(await xml(res), keyword).toBe('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
@@ -186,6 +196,110 @@ describe('escapeXml', () => {
     expect(confirm).toContain('Msg&data');
     expect(escapeXml(confirm)).toContain('Msg&amp;data');
     expect(escapeXml(confirm)).not.toMatch(/&(?!amp;|lt;|gt;)/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// START — one door, three answers (PRD §2.1 door 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const INVITE = renderStartSignupInviteMessage('https://kidsfun.example/sms/signup').body;
+const CONFIRM_AGAIN = renderConfirmRequestMessage(null).body;
+
+describe('startReplyFor — the three-way mapping', () => {
+  it('no_such_subscriber gets the signup link — this IS door 2', () => {
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.example');
+    expect(startReplyFor('no_such_subscriber')).toBe(INVITE);
+    expect(startReplyFor('no_such_subscriber')).toContain('https://kidsfun.example/sms/signup');
+  });
+
+  it('awaiting_confirmation gets the confirmation request AGAIN, not new copy', () => {
+    // PRD §2.1: "no automated nudge in MVP (resubmitting the form or texting START again both
+    // work)". Texting START again is the thing that works, and this is what makes it work.
+    expect(startReplyFor('awaiting_confirmation')).toBe(CONFIRM_AGAIN);
+    expect(startReplyFor('awaiting_confirmation')).toContain('Reply JOIN to confirm');
+    // Degraded by design: no area clause, because this reply does no database read.
+    expect(startReplyFor('awaiting_confirmation')).not.toContain(' for ');
+  });
+
+  it('every other outcome is SILENT, and the guard is a positive test', () => {
+    // So a future outcome is silent by default rather than accidentally texting somebody — the
+    // same shape as confirmAndWelcome's `applied` guard.
+    const silent: TransitionOutcome[] = [
+      'already_in_state', // they are active; nothing happened and nothing needs saying
+      'applied', // Twilio's Advanced Opt-Out already sent its own resubscribe confirmation
+      'dry_run',
+      'no_change',
+      'error',
+    ];
+    for (const outcome of silent) expect(startReplyFor(outcome), outcome).toBeNull();
+  });
+
+  it('the two replies it does send are GSM-7 safe and one segment each', () => {
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.ca');
+    const invite = renderStartSignupInviteMessage('https://kidsfun.ca/sms/signup');
+    assertGsm7Safe(invite.body);
+    expect(invite.characters).toBe(127);
+    expect(invite.segments).toBe(1);
+    const again = renderConfirmRequestMessage(null);
+    assertGsm7Safe(again.body);
+    expect(again.segments).toBe(1);
+  });
+
+  it('the invite says what the product IS before it asks for anything', () => {
+    // The one message on this branch that can reach somebody with no record of us at all — a QR
+    // code on a noticeboard. A bare link would assume they know what they nearly signed up for.
+    expect(INVITE).toContain('weekly kid activity picks');
+    expect(INVITE.startsWith('KIDS FUN:')).toBe(true);
+    // No sms_consent row means no recorded consent of any kind: brand tag + free opt-out.
+    expect(INVITE).toContain('Reply STOP to end');
+  });
+
+  it('shares ONE signup clause with the unknown-keyword reply', () => {
+    // "Where do I sign up" must not have two different answers depending on which word the
+    // person happened to text. Both messages are built from the same clause.
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.example');
+    const clause = 'Not signed up? https://kidsfun.example/sms/signup';
+    expect(INVITE).toContain(clause);
+    expect(EXPECTED_REPLY).toContain(clause);
+  });
+});
+
+describe('POST /api/sms/inbound — START end to end', () => {
+  it('replies with the signup invite, because the lookup stub finds nothing', async () => {
+    // findSubscriberByPhone is a draft stub returning null, so a signed START resolves to
+    // `no_such_subscriber` — which is genuinely door 2's case, not a test artifact.
+    configure({ sending: true });
+    const res = await POST(inbound('START'));
+    expect(res.status).toBe(200);
+    expect(await xml(res)).toBe(
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${INVITE}</Message></Response>`
+    );
+  });
+
+  it('answers the carrier ALIASES too, not just the literal word', async () => {
+    // UNSTOP and YES classify as `start` (lib/sms/keywords.ts). A parent who texted YES because
+    // some other service taught them to must land in the same place.
+    configure({ sending: true });
+    for (const alias of ['UNSTOP', 'yes', ' Start ']) {
+      expect(await xml(await POST(inbound(alias))), alias).toContain('<Message>');
+    }
+  });
+
+  it('says nothing on a dry run, even though the outcome is a read-only one', async () => {
+    // `no_such_subscriber` is reported as itself even in a dry run (only `applied` is displaced),
+    // so without the gate this branch WOULD have replied with sending disabled.
+    configure(); // SMS_SENDING_ENABLED deliberately unset
+    const res = await POST(inbound('START'));
+    expect(await xml(res)).toBe('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+  });
+
+  it('escapes the confirmation copy\'s bare "&" when that reply is the one sent', () => {
+    // round 13 added escapeXml for a trap nobody had hit yet. This round hits it: the
+    // `awaiting_confirmation` reply IS §2.6's confirmation request, which contains "Msg&data".
+    expect(CONFIRM_AGAIN).toContain('Msg&data');
+    expect(escapeXml(CONFIRM_AGAIN)).toContain('Msg&amp;data');
+    expect(escapeXml(CONFIRM_AGAIN)).not.toMatch(/&(?!amp;|lt;|gt;)/);
   });
 });
 

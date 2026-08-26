@@ -16,6 +16,7 @@ import type { AgeBandKey, ListingRecord } from '@/lib/search/types';
 import {
   assertGsm7Safe,
   renderConfirmRequestMessage,
+  renderStartSignupInviteMessage,
   renderUnknownKeywordMessage,
   estimateSegments,
   isGsm7,
@@ -362,6 +363,9 @@ describe('SMS encoding and segment cost', () => {
     // The unknown-keyword reply — the only message this product sends from the inbound webhook.
     assertGsm7Safe(renderUnknownKeywordMessage('https://kidsfun.example/sms/signup').body);
     assertGsm7Safe(renderUnknownKeywordMessage(null).body);
+    // The START invite — PRD §2.1's door 2, the other message that can reach a number with no
+    // sms_consent row. (Its sibling reply is renderConfirmRequestMessage, already on the wall.)
+    assertGsm7Safe(renderStartSignupInviteMessage('https://kidsfun.example/sms/signup').body);
   });
 
   it('reports the segment count on every rendered message', () => {
