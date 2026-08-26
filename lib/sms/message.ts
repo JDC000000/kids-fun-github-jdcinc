@@ -254,6 +254,43 @@ export function renderWeeklyMessage(input: WeeklyMessageInput): RenderedMessage 
   return render(lines.join('\n'));
 }
 
+/**
+ * The confirmation request (PRD §1.4, §2.1, §2.6) — the FIRST message this product ever sends,
+ * fired on form submit, to a number that has not yet proved it wants to hear from us.
+ *
+ *     KIDS FUN: Reply JOIN to confirm weekly kid activity picks for Vancouver. Msg&data rates may apply. Reply STOP to opt out anytime.
+ *
+ * JOIN, NOT YES. Twilio's Advanced Opt-Out treats YES (with START and UNSTOP) as a carrier-level
+ * resubscribe keyword and can intercept the reply before our webhook ever sees it, which would
+ * leave a parent who did everything right sitting at `pending` forever. See lib/sms/keywords.ts.
+ *
+ * ── IT DOES NOT USE `STOP_LINE`, AND THAT IS DELIBERATE ─────────────────────────────────
+ * Every other template ends with "Reply STOP to end" on its own line. §2.6 gives this one its own
+ * opt-out sentence instead — "Reply STOP to opt out anytime." — inline, alongside the rates
+ * disclosure. Not normalised to match the others, for two reasons: it is the approved copy of
+ * record, and the wording is better suited to its moment. "Reply STOP to end" addresses a
+ * subscriber who has something to end; this message reaches someone who has not confirmed
+ * anything yet, and "opt out anytime" is the accurate thing to tell them.
+ *
+ * ── AND IT IS ONE LINE, WHERE THE OTHERS ARE SEVERAL ────────────────────────────────────
+ * The weekly, welcome, empty-week and pause templates all break before a URL, because a link
+ * sitting mid-sentence is a link that gets mis-tapped. This message contains no URL and no list,
+ * so it is rendered exactly as §2.6 writes it: one line, no invented breaks.
+ *
+ * THE AREA CLAUSE DEGRADES rather than printing a placeholder, matching the welcome text. In
+ * practice it cannot fire on the signup path — `parseProfileFields` rejects any postal code that
+ * does not resolve to a covered municipality, so a validated `SmsSignup` always has an area — but
+ * the renderer is pure and must not depend on its one caller's guarantees to avoid emitting
+ * "picks for null".
+ */
+export function renderConfirmRequestMessage(areaLabel: string | null): RenderedMessage {
+  const area = areaLabel ? ` for ${areaLabel}` : '';
+  return render(
+    `${BRAND} Reply JOIN to confirm weekly kid activity picks${area}. ` +
+      `Msg&data rates may apply. Reply STOP to opt out anytime.`
+  );
+}
+
 export interface WelcomeMessageInput {
   /** The subscriber's area, e.g. "East Van". Omitted from the copy when it cannot be resolved. */
   areaLabel: string | null;

@@ -1729,3 +1729,135 @@ the number; and the JOIN guard sends for `applied` and for **no** other outcome.
 
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **264 tests across 16
 files**. Full `unit` lane: **222 files / 3730 tests passing**.
+
+---
+
+# Round 12 — the confirmation request (PRD §1.4 / §2.1 / §2.6)
+
+The **first message this product ever sends**, on form submit, to a number that has not yet
+consented to anything. It was the last template on the branch that had never been built.
+
+| File | What changed |
+|---|---|
+| `lib/sms/message.ts` | `renderConfirmRequestMessage` — §2.6's body, real code |
+| `lib/sms/signup-store.ts` | `sendConfirmationRequest` builds + dispatches + logs; a TODO correction (§au) |
+| `app/api/sms/signup/route.ts` | passes `subscriberId` through for the audit row; header corrected |
+| `tests/sms/confirm_request.test.ts` | **NEW**, 19 tests |
+| `tests/sms/weekly_send.test.ts` | the confirmation request added to the all-templates GSM-7 wall |
+
+## at. What "never built" actually meant here
+
+`sendConfirmationRequest`'s non-dry-run branch was a single hardcoded line:
+
+```ts
+return { outcome: 'error', twilioSid: null, error: 'not implemented (draft scaffold)' };
+```
+
+The §2.6 body existed **only inside that function's doc comment**. Three consequences, none of
+them cosmetic:
+
+1. **It had never been through the GSM-7 wall.** Every other template is asserted in
+   `tests/sms/weekly_send.test.ts`'s "every template this product sends is GSM-7 safe". A body
+   living in a comment is invisible to that test by construction. Round 11 found a real bug in
+   that guard by implementing a message against it — "never actually built" is not a formality.
+2. **The dry-run branch returned before building anything**, which is NOT what the other send
+   paths do. `sendWeeklySmsForSubscriber` and `sendWelcomeText` both build the message on every
+   path and let `dispatchSms` decline to send it, so a verification run in an unconfigured
+   environment renders and costs exactly the message a live run would send. This one produced no
+   message and no segment count at all. Fixed: build first, dispatch with `dryRun`.
+3. **`send_type = 'confirm_request'` had no writer.** Migration 0035's CHECK has listed it since
+   round 1 and nothing ever inserted one — so the message with the *highest* CASL exposure was
+   also the one with no audit row.
+
+**Measured, now pinned:** 1 segment for every covered municipality. Worst case is
+"North Vancouver" at **135 septets of 160**, so the whole covered set fits with 25 to spare.
+
+## au. A TODO that would have produced two audit rows for one message
+
+`createPendingSubscriber`'s doc said it should "write one `sms_send_log` row for the confirmation
+request". `sendConfirmationRequest` is the function that performs that send. Implementing both
+from their own comments would have inserted **two rows for one message** — and the row written by
+the store could only ever have claimed `'sent'`, because at that point nothing has been sent.
+
+Corrected in place: the store mints the token, the send step writes the row, with the outcome that
+actually occurred (including `'failed'`). "We tried and Twilio refused" and "no record" are
+different answers and only one of them is true.
+
+## av. 🔴 Three things surfaced by building it — all need a decision, none silently resolved
+
+### 1. A 21610 on THIS path is a dead end the form cannot see
+
+On the weekly path, Twilio error 21610 means an active subscriber opted out at the carrier, and we
+mark them stopped. On the confirmation path it means something different: **the number signing up
+has already blocked our sender.** The confirmation text is undeliverable and stays that way until
+*they* text START or UNSTOP to us — which nothing on the form tells them, and which we cannot do
+on their behalf.
+
+The route then answers `{ ok: true }` and the form says "check your phone". No message will ever
+arrive. This is a real, reachable path: anyone who ever texted STOP and later signs up again on the
+web lands in it, and STOP-then-return is exactly the sparse-area churn pattern §2.2 step 7 creates.
+
+Not invented a fix. `sendConfirmationRequest` now returns `errorCode` so the case is at least
+**visible** rather than flattened into a generic failure. The product answer — most likely a
+specific form message along the lines of *"text START to +1 877-835-7776 to turn our texts back
+on"* — is copy that does not exist and is Jon's to write.
+
+### 2. The confirmation message states STOP but never HELP
+
+CTIA's Messaging Principles expect an opt-in confirmation to carry program identity, message
+frequency, "Msg&data rates may apply", **and both STOP and HELP instructions.** §2.6's approved
+copy has the brand tag, "weekly", the rates disclosure and STOP. It has no HELP.
+
+`CARRIER_DISCLOSURES` (round 3) does state "Reply HELP", but that is on the signup *form* — a web
+page the carrier's own review of the *message* does not see, and which the recipient of a
+wrong-number confirmation never visited.
+
+There is room: 25 septets of headroom on the worst-case area, and `" Reply HELP for info."` is 21.
+It fits, exactly, with nothing to spare. **Not added** — this is approved consumer-facing copy and
+this branch does not edit it unilaterally (the round-4 ASCII substitution is still flagged for the
+same reason). Flagged for Jon, with the measurement, because it is likely to come up during Toll-
+Free Verification and the fix is cheaper before submission than after a rejection.
+
+### 3. `signup-store.ts` now pulls the search engine into the signup route's module graph
+
+`dispatchSms` / `recordSmsSend` live in `lib/sms/weekly-send-io.ts`, which top-level imports
+`SearchEngine`, `loadPostgresListings`, the alias resolver, the region hierarchy and `lib/db/client`.
+Anything importing it inherits all of that. `lib/sms/welcome.ts` already did this in round 11 (via
+`app/api/sms/inbound/route.ts`), and the signup route now does too.
+
+Harmless at runtime — nothing is *called* until `loadWeeklySmsDeps` runs — and `next build`
+succeeds, with `/sms/signup` unchanged at 2.1 kB. But the two Twilio/log seams have nothing to do
+with the weekly job, and their natural home is a small `lib/sms/outbound.ts` that `weekly-send-io`
+re-exports. **Deliberately not done here**: it touches a heavily-tested file for a reason nobody
+asked about, and unrequested churn on this branch is exactly what round 7's instruction was about.
+Named so the next person does it on purpose.
+
+## aw. Two smaller deliberate choices
+
+**It is ONE line, where every other template is several.** The weekly, welcome, empty-week and
+pause templates all break before a URL, because a link mid-sentence gets mis-tapped. This message
+has no URL and no list, so it renders exactly as §2.6 writes it — one line, no invented breaks.
+(The round-11 welcome *did* add breaks to §2.6's single-line blockquote; that was the URL forcing
+one, not a house style.)
+
+**It does not use `STOP_LINE`.** Every other template ends with "Reply STOP to end". §2.6 gives
+this one "Reply STOP to opt out anytime." inline. Not normalised — it is the approved copy, and the
+wording is better suited to its moment: "Reply STOP to end" addresses someone with something to
+end, and this message reaches someone who has not confirmed anything yet. Pinned by a test so a
+future "consistency" edit is a decision rather than a reflex.
+
+## ax. Verification
+
+19 new tests: §2.6 verbatim; JOIN and never YES; brand tag + rates + free opt-out; its own STOP
+sentence and no line breaks; the GSM-7 guard, plus the all-templates wall; one segment for every
+covered municipality with the 135-septet worst case pinned; the area clause degrading without a
+placeholder; exactly one dispatch to the number on the signup; one `confirm_request` audit row with
+`picks_snapshot` null and the consent version copied; the area resolver agreeing with the
+`regionId` the validator already stored; dry-run-by-default building and costing but not
+dispatching or logging; a real send when `SMS_SENDING_ENABLED=true`; a Twilio failure and a 21610
+each mapping to the right code and log outcome; a send with no subscriber id still delivering; a
+lost audit row not turning a delivered message into a failure; and nothing throwing or leaking the
+number or the body.
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **283 tests across 17
+files**. Full `unit` lane: **223 files / 3749 tests passing**.

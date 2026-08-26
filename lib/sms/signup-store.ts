@@ -12,8 +12,11 @@
 // archaeological. Read the SQL in each TODO before implementing — the non-obvious parts are
 // written out.
 
+import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { smsSendingEnabled } from './config';
+import { renderConfirmRequestMessage } from './message';
 import type { SmsSignup } from './signup-validate';
+import { dispatchSms, recordSmsSend, type DispatchResult } from './weekly-send-io';
 
 export type SignupWriteOutcome =
   | 'created'
@@ -72,10 +75,14 @@ export interface SignupWriteOptions {
  * that (lib/sms/consent-transitions.ts), because the whole value of the double opt-in is that
  * nobody can subscribe a phone number they do not hold.
  *
- * ALSO TODO: mint `preferences_token` (HMAC over the new row's id with SMS_PREFERENCES_SECRET —
- * see lib/sms/config.ts) and write one `sms_send_log` row for the confirmation request, with
- * send_type = 'confirm_request', phone_hash + phone_hash_version, and the consent_text_version
- * this signup agreed to.
+ * ALSO TODO: mint `preferences_token` — an HMAC over the new row's id with SMS_PREFERENCES_SECRET
+ * (see lib/sms/config.ts).
+ *
+ * THE `sms_send_log` ROW FOR THE CONFIRMATION REQUEST IS NOT WRITTEN HERE. An earlier draft of
+ * this comment listed it as part of this function's job, which would have produced TWO audit rows
+ * for one message once both halves were implemented: `sendConfirmationRequest` below now writes
+ * it, on the send it actually performed and with that send's real outcome. A row written here
+ * could only ever have claimed 'sent' before anything was sent.
  */
 export async function createPendingSubscriber(
   signup: SmsSignup,
@@ -91,21 +98,56 @@ export type ConfirmationSendOutcome = 'sent' | 'dry_run' | 'error';
 export interface ConfirmationSendResult {
   outcome: ConfirmationSendOutcome;
   twilioSid: string | null;
+  /** Segment count of the message that was built, for cost visibility. Populated on a dry run. */
+  segments: number;
+  /**
+   * Twilio's numeric code when it gave one.
+   *
+   * Surfaced rather than folded into `error` because ONE of these codes means something the
+   * generic failure path does not: 21610 is the carrier telling us this number has opted out.
+   * See the note on `sendConfirmationRequest`.
+   */
+  errorCode: number | null;
+  /** Never contains the number or the body. */
   error?: string;
+}
+
+export interface ConfirmationSendOptions extends SignupWriteOptions {
+  /**
+   * The id `createPendingSubscriber` just returned, for the audit row.
+   *
+   * NULLABLE, and legitimately so in exactly two cases: a dry run (which writes no row and needs
+   * no id) and this draft scaffold (whose store stub returns null). Once the store is implemented
+   * a real `created`/`reactivated` write always carries one, and a failed write never reaches
+   * here — the route 503s first.
+   */
+  subscriberId?: string | null;
+  /** Injected for tests; defaults to the shared Twilio seam in weekly-send-io. */
+  dispatch?: typeof dispatchSms;
+  /** Injected for tests; defaults to the shared send-log writer in weekly-send-io. */
+  record?: typeof recordSmsSend;
 }
 
 /**
  * Send the one confirmation text (PRD §1.4, §2.1, §2.6).
  *
- * TODO: POST to the Twilio Messages API using TWILIO_MESSAGING_SERVICE_SID, with the §2.6 body:
+ * ── WHAT IS REAL HERE, AND WHAT IS STILL A STUB ─────────────────────────────────────────
+ * THE MESSAGE IS REAL. `renderConfirmRequestMessage` produces §2.6's approved copy, goes through
+ * the same GSM-7 wall as every other template (tests/sms/weekly_send.test.ts), and is built on
+ * EVERY path including a dry run — so a verification run in an unconfigured environment renders
+ * and costs the exact message a live run would send, and dispatches none of it. Until now this
+ * body existed only as the comment below, which is precisely how a message escapes the encoding
+ * guard: round 11 found a real bug in that guard by implementing a template against it.
  *
- *   KIDS FUN: Reply JOIN to confirm weekly kid activity picks for {area}.
- *   Msg&data rates may apply. Reply STOP to opt out anytime.
+ * STILL STUBS: `dispatchSms` and `recordSmsSend`, shared with the weekly path
+ * (lib/sms/weekly-send-io.ts). Same posture as everything else outbound on this branch — Twilio
+ * has no credential here and `sms_send_log` is unapplied SQL in migration 0035.
  *
- * JOIN, NOT YES — this is the one detail here that is not obvious and not negotiable. Twilio's
- * Advanced Opt-Out treats YES (with START and UNSTOP) as a carrier-level resubscribe keyword and
- * can intercept the reply before our webhook ever sees it, which would leave a subscriber who
- * did everything right sitting at `pending` forever. See lib/sms/keywords.ts.
+ * ── THE ONE DETAIL THAT IS NOT BOILERPLATE ──────────────────────────────────────────────
+ * JOIN, NOT YES. Twilio's Advanced Opt-Out treats YES (with START and UNSTOP) as a carrier-level
+ * resubscribe keyword and can intercept the reply before our webhook ever sees it, which would
+ * leave a subscriber who did everything right sitting at `pending` forever. See
+ * lib/sms/keywords.ts, and `renderConfirmRequestMessage` for the copy itself.
  *
  * EXACTLY ONE MESSAGE. This is a wrong-number and express-consent check, not a drip: a second
  * "did you get our text?" text to a number that has not consented is itself the CASL problem the
@@ -114,12 +156,96 @@ export interface ConfirmationSendResult {
  * FAILURE IS NOT A FAILED SIGNUP. The row is already written and already pending; a Twilio error
  * here means the confirmation did not arrive, which the parent can resolve by resubmitting the
  * form or texting START. The route must not tell them the signup failed — see its own comment.
+ *
+ * ── A 21610 HERE MEANS SOMETHING THE ROUTE CANNOT FIX, AND SHOULD BE READ ───────────────
+ * On the weekly path, Twilio error 21610 means an active subscriber opted out at the carrier and
+ * we mark them stopped. On THIS path it means something else: the number signing up has ALREADY
+ * blocked our sender, so the confirmation text is undeliverable and always will be until they
+ * text START or UNSTOP to us themselves — which nothing on the form tells them to do, and which
+ * we cannot do on their behalf. The form will say "check your phone" and no message will ever
+ * arrive. This function reports the code (`errorCode`) rather than flattening it into a generic
+ * failure so that case is at least visible; the product answer to it is flagged, not invented.
+ *
+ * NEVER THROWS, and nothing it returns carries the number or the body.
  */
 export async function sendConfirmationRequest(
   signup: SmsSignup,
-  options: SignupWriteOptions = {}
+  options: ConfirmationSendOptions = {}
 ): Promise<ConfirmationSendResult> {
   const dryRun = options.dryRun ?? !smsSendingEnabled();
-  if (dryRun) return { outcome: 'dry_run', twilioSid: null };
-  return { outcome: 'error', twilioSid: null, error: 'not implemented (draft scaffold)' };
+  const send = options.dispatch ?? dispatchSms;
+  const log = options.record ?? recordSmsSend;
+
+  // The area is resolved through `areaLabelForPostal` — the SAME resolver the welcome text uses
+  // (lib/sms/welcome.ts) and the same FSA table the weekly send geocodes against. One postal code
+  // must not be able to produce two different area names in two consecutive messages, which is
+  // exactly what a second lookup here would eventually do. Note that `signup.regionId` already
+  // holds the resolved municipality; going back through the postal code keeps this call identical
+  // to the welcome text's, and tests/sms/confirm_request.test.ts pins that the two agree.
+  const message = renderConfirmRequestMessage(areaLabelForPostal(signup.postalCode));
+
+  let dispatched: DispatchResult;
+  try {
+    dispatched = await send(signup.phoneNumber, message, { dryRun });
+  } catch (err) {
+    return {
+      outcome: 'error',
+      twilioSid: null,
+      segments: message.segments,
+      errorCode: null,
+      error: `dispatch threw: ${(err as Error)?.message ?? 'unknown error'}`,
+    };
+  }
+
+  // A dry run stops here — nothing dispatched, nothing recorded. `sms_send_log` is a record of
+  // messages that were SENT (migration 0035 has no `dry_run` column, by design), so a staging
+  // run must not leave a CASL audit row claiming a parent was texted.
+  if (dispatched.outcome === 'dry_run') {
+    return { outcome: 'dry_run', twilioSid: null, segments: message.segments, errorCode: null };
+  }
+
+  const failed = dispatched.outcome !== 'sent';
+
+  // The audit row for the FIRST message, which is the one a CASL complaint is most likely to be
+  // about: it went to a number that had not yet confirmed. Written with the outcome that actually
+  // happened, including a failed attempt — "we tried and Twilio refused" is a materially different
+  // answer from "no record", and only one of them is true.
+  if (options.subscriberId) {
+    try {
+      await log({
+        subscriberId: options.subscriberId,
+        sendType: 'confirm_request',
+        outcome:
+          dispatched.outcome === 'stopped_via_carrier'
+            ? 'stopped_via_carrier'
+            : failed
+              ? 'failed'
+              : 'sent',
+        // Weekly sends only — migration 0035's CHECK rejects a snapshot on any other send_type.
+        picksSnapshot: null,
+        twilioSid: dispatched.twilioSid,
+        // The wording THEY agreed to, carried on the validated signup. Copied, never joined.
+        consentTextVersion: signup.consentTextVersion,
+      });
+    } catch {
+      // The message may already have gone. Losing the audit row is bad; turning it into a failed
+      // signup, after the consent row was written and the text was sent, would be worse.
+    }
+  }
+
+  if (failed) {
+    return {
+      outcome: 'error',
+      twilioSid: dispatched.twilioSid,
+      segments: message.segments,
+      errorCode: dispatched.errorCode,
+      error: dispatched.error ?? `dispatch outcome: ${dispatched.outcome}`,
+    };
+  }
+  return {
+    outcome: 'sent',
+    twilioSid: dispatched.twilioSid,
+    segments: message.segments,
+    errorCode: null,
+  };
 }

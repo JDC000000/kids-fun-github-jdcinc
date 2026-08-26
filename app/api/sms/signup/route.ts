@@ -9,10 +9,11 @@
 // typed body. It differs in three deliberate places, each marked below.
 //
 // WHAT IS REAL AND WHAT IS NOT. The flag, the caps, the validation, the response shape and the
-// error mapping all run today. The two things that would touch the outside world —
-// `createPendingSubscriber` and `sendConfirmationRequest` — are clearly-marked stubs in
+// error mapping all run today. `createPendingSubscriber` is a clearly-marked stub in
 // lib/sms/signup-store.ts, because `sms_consent` exists only as unapplied SQL and nobody on this
 // branch holds write credentials. Same posture as lib/sms/consent-transitions.ts.
+// `sendConfirmationRequest` is now half real: it BUILDS §2.6's approved confirmation text on
+// every path, dry run included, and only its Twilio dispatch and `sms_send_log` write are stubs.
 import { NextResponse } from 'next/server';
 import { smsSendingEnabled, smsSignupEnabled } from '@/lib/sms/config';
 import {
@@ -98,7 +99,12 @@ async function smsSignupPost(request: Request): Promise<NextResponse> {
     return fail(503, 'could not save that just now');
   }
 
-  // 6. Ask them to confirm. STUB — see lib/sms/signup-store.ts.
+  // 6. Ask them to confirm. The MESSAGE is real (PRD §2.6, GSM-7-guarded); the Twilio dispatch
+  //    and the `sms_send_log` write are the same stubbed seams the weekly path uses.
+  //
+  //    `subscriberId` is passed so the confirmation's audit row can be written against the row
+  //    step 5 just created. It is null on a dry run and in the draft scaffold, and the send step
+  //    skips the audit row rather than inventing an id — see its own comment.
   //
   //    A FAILED SEND IS **NOT** A FAILED SIGNUP — the one place this route deliberately does the
   //    opposite of step 5. The consent row is already written and already pending; a Twilio
@@ -106,7 +112,9 @@ async function smsSignupPost(request: Request): Promise<NextResponse> {
   //    START both resolve. Reporting it as a failed signup would be false, and worse, it would
   //    invite the parent to resubmit in a way that looks to them like the first attempt vanished.
   //    It is captured so we find out; it is not shown to them as an error.
-  const confirm = await sendConfirmationRequest(parsed.value);
+  const confirm = await sendConfirmationRequest(parsed.value, {
+    subscriberId: write.subscriberId,
+  });
   if (confirm.outcome === 'error') {
     await captureAndFlush(new Error('sms_signup_confirmation_send_failed'), undefined, {
       route: 'api/sms/signup',

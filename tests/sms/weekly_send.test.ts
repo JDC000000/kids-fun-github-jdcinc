@@ -15,6 +15,7 @@ import { makeListing } from '@/lib/search/__fixtures__/factory';
 import type { AgeBandKey, ListingRecord } from '@/lib/search/types';
 import {
   assertGsm7Safe,
+  renderConfirmRequestMessage,
   estimateSegments,
   isGsm7,
   renderEmptyWeekMessage,
@@ -352,6 +353,11 @@ describe('SMS encoding and segment cost', () => {
     );
     // And its degraded shapes, which a future edit could break independently of the full one.
     assertGsm7Safe(renderWelcomeMessage({ areaLabel: null, childAges: [], preferencesUrl: url }).body);
+    // The confirmation request — the FIRST message this product sends, and the last template to
+    // reach this wall. It had never been built at all until round 12: the §2.6 body existed only
+    // as a comment in lib/sms/signup-store.ts, where no guard can see it.
+    assertGsm7Safe(renderConfirmRequestMessage('North Vancouver').body);
+    assertGsm7Safe(renderConfirmRequestMessage(null).body);
   });
 
   it('reports the segment count on every rendered message', () => {
