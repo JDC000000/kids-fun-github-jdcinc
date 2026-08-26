@@ -43,17 +43,42 @@
 import { toVancouverParts } from '@/lib/search/time/vancouver';
 
 /**
- * The GSM 03.38 basic character set — every character an SMS can carry at 160 per segment.
+ * The GSM 03.38 basic character set — one septet each.
  *
- * Transcribed from the standard rather than approximated. The characters in the EXTENSION table
- * (^ { } \ [ ~ ] | €) are deliberately NOT here: they are encodable, but each one costs TWO
- * characters of the budget, which makes them a trap rather than a saving. Nothing in this
- * product's copy needs them.
+ * Transcribed from the standard rather than approximated.
  */
 const GSM7_BASIC =
   '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?' +
   '¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';
 const GSM7_SET: ReadonlySet<string> = new Set(GSM7_BASIC.split(''));
+
+/**
+ * The GSM 03.38 EXTENSION table — still GSM-7, but TWO septets each (an ESC prefix).
+ *
+ * ── A CORRECTION TO THIS FILE'S OWN EARLIER IMPLEMENTATION ──────────────────────────────
+ * Round 4 deliberately left these out of the set entirely, with a comment saying they "are
+ * encodable, but each one costs TWO characters of the budget, which makes them a trap rather than
+ * a saving." The reasoning about cost was right; leaving them out of the SET was not, because it
+ * made `isGsm7` conflate two different things — "not in the basic table" and "forces UCS-2". A
+ * message containing `~` is GSM-7 with one double-width character, NOT a UCS-2 message, and the
+ * old code reported it as UCS-2 at 70 characters per segment and would have had `assertGsm7Safe`
+ * reject perfectly sendable copy.
+ *
+ * That surfaced the moment PRD §2.6's approved welcome text — "land Friday ~4pm" — was
+ * implemented: the guard rejected Jon's own wording for a reason that was not true.
+ *
+ * The round-4 FINDING is unaffected: an em dash is in NEITHER table, so UCS-2 was and is the
+ * correct verdict for it, and the 3-segments-vs-1 measurement stands. Only these nine characters
+ * were misclassified.
+ */
+const GSM7_EXTENDED_SET: ReadonlySet<string> = new Set(['^', '{', '}', '\\', '[', '~', ']', '|', '€']);
+
+/** Septets this character costs, or 0 if it is not GSM-7 encodable at all. */
+function septetCost(ch: string): number {
+  if (GSM7_SET.has(ch)) return 1;
+  if (GSM7_EXTENDED_SET.has(ch)) return 2;
+  return 0;
+}
 
 /** Characters per segment, single message and concatenated, for each encoding. */
 const GSM7_SINGLE = 160;
@@ -63,17 +88,37 @@ const UCS2_CONCAT = 67;
 
 export type SmsEncoding = 'GSM-7' | 'UCS-2';
 
-/** Every character in this string encodable in GSM-7 at one character each? */
+/**
+ * Is every character in this string GSM-7 encodable at all — basic table OR extension table?
+ *
+ * TRUE does not mean "one septet each": see `septetLength`. It means the message does not have to
+ * fall back to UCS-2, which is the expensive cliff.
+ */
 export function isGsm7(text: string): boolean {
-  for (const ch of text) if (!GSM7_SET.has(ch)) return false;
+  for (const ch of text) if (septetCost(ch) === 0) return false;
   return true;
 }
 
 /** The characters in this string that would force the whole message to UCS-2. Diagnostic. */
 export function nonGsm7Characters(text: string): string[] {
   const bad = new Set<string>();
-  for (const ch of text) if (!GSM7_SET.has(ch)) bad.add(ch);
+  for (const ch of text) if (septetCost(ch) === 0) bad.add(ch);
   return [...bad];
+}
+
+/**
+ * The GSM-7 length in SEPTETS, which is what the segment budget is actually measured in — an
+ * extension-table character occupies two of them. Returns the plain character count for text that
+ * is not GSM-7 at all, where septets are not the unit anyway.
+ */
+export function septetLength(text: string): number {
+  let total = 0;
+  for (const ch of text) {
+    const cost = septetCost(ch);
+    if (cost === 0) return [...text].length;
+    total += cost;
+  }
+  return total;
 }
 
 export interface SegmentEstimate {
@@ -92,7 +137,9 @@ export interface SegmentEstimate {
  */
 export function estimateSegments(body: string): SegmentEstimate {
   const gsm7 = isGsm7(body);
-  const characters = gsm7 ? body.length : [...body].length;
+  // SEPTETS, not characters, for GSM-7 — an extension-table character such as `~` occupies two of
+  // them, so a message can exceed the segment budget while looking short.
+  const characters = gsm7 ? septetLength(body) : [...body].length;
   const single = gsm7 ? GSM7_SINGLE : UCS2_SINGLE;
   const concat = gsm7 ? GSM7_CONCAT : UCS2_CONCAT;
   const segments = characters <= single ? 1 : Math.ceil(characters / concat);
@@ -205,6 +252,46 @@ export function renderWeeklyMessage(input: WeeklyMessageInput): RenderedMessage 
   lines.push(STOP_LINE);
 
   return render(lines.join('\n'));
+}
+
+export interface WelcomeMessageInput {
+  /** The subscriber's area, e.g. "East Van". Omitted from the copy when it cannot be resolved. */
+  areaLabel: string | null;
+  /** Their children's ages, recomputed from the stored birth years at this moment. */
+  childAges: readonly number[];
+  /** Their own no-login preferences/hub URL. */
+  preferencesUrl: string;
+}
+
+/**
+ * The welcome text (PRD §2.1, §2.6) — sent once, immediately after a JOIN confirms a subscription.
+ *
+ *     KIDS FUN: You're in! Your first picks for East Van, ages 5, 8, land Friday ~4pm.
+ *     Manage anytime: https://kidsfun.ca/u/8fJ2q
+ *     Reply STOP to end
+ *
+ * STATIC BY DESIGN. §2.1 is explicit: "one static welcome text (no live matching logic — just
+ * confirms signup and sets expectations for Friday)." It runs no search and touches no engine.
+ * That is not an optimisation, it is the product decision: a live preview at this moment would
+ * either promise picks that may not exist by Friday, or spend a search on a subscriber who has
+ * not yet had a weekly send. §2.7 lists the "live/dynamic welcome preview" as explicitly OUT of
+ * MVP, gated on real confirm-to-first-click data.
+ *
+ * IT ECHOES BACK WHAT THEY GAVE US — their area and their children's ages — because that is the
+ * cheapest possible confirmation that we recorded it correctly, at the one moment they are paying
+ * attention. A wrong postal code or a mistyped age is trivially fixable now and invisible later.
+ *
+ * BOTH DETAILS DEGRADE INDEPENDENTLY. An unresolvable postal code drops the area clause and an
+ * empty age list drops the ages clause, rather than either printing a placeholder. A welcome text
+ * reading "for null, ages" would be a worse first impression than a shorter sentence.
+ */
+export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessage {
+  const area = input.areaLabel ? ` for ${input.areaLabel}` : '';
+  const ages = input.childAges.length > 0 ? `, ages ${input.childAges.join(', ')},` : '';
+  return render(
+    `${BRAND} You're in! Your first picks${area}${ages} land Friday ~4pm.\n` +
+      `Manage anytime: ${input.preferencesUrl}\n${STOP_LINE}`
+  );
 }
 
 /**
