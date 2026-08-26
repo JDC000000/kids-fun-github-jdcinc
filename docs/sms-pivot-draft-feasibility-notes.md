@@ -1466,3 +1466,143 @@ resolved row, so there is nothing to influence).
 manifest. SMS suite **240 tests across 15 files**. Full `unit` lane: **221 files / 3705 tests
 passing**. `db` and `invariants` lanes not run — no database here, and no Postgres has parsed any
 of the four migrations.
+
+---
+---
+
+# Round 9 — the real CASL footer, and the "activity gone" interstitial
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+
+| file | change |
+|---|---|
+| `lib/sms/consent-copy.ts` | `MISSING_SENDER_IDENTITY` → real `SENDER_IDENTITY`; support number; gone copy; **version bumped to `2026-08-26.v2`** |
+| `app/sms/signup/page.tsx` | draft banner → real CASL footer |
+| `app/u/[preferencesToken]/page.tsx` | same |
+| `app/sms/signup/signup.css`, `.../preferences.css` | identity block styles; dead draft-banner CSS removed |
+| `app/activity-unavailable/page.tsx` + `.css` | **NEW** — the interstitial |
+| `lib/sms/click-through.ts` | `GONE_DESTINATION`; `occurrence_gone` now routes there |
+| `tests/sms/signup_copy.test.ts` | +3 (identity, support number, verbatim gone copy) |
+| `tests/sms/click_through.test.tsx` | updated for the split; +4 interstitial render tests |
+
+The support number is written down **exactly once** (`SUPPORT_PHONE_E164`); the display form, the
+`tel:` href, the identity block and the interstitial all derive from it. A test asserts the display
+form's digits equal the E.164 form, so the two can never drift.
+
+---
+
+## am. The Twilio TFV check — **I DID have web access, and I did the check.** Findings below.
+
+**Answer to the direct question: yes, this environment has live web access.** I verified it rather
+than assuming — the fetches returned real content. What I could and could not reach:
+
+| source | reachable? |
+|---|---|
+| `twilio.com/docs/messaging/compliance/toll-free/api-onboarding` | ✅ full field list |
+| `twilio.com/docs/api/errors/30475` | ✅ full rejection reason |
+| `twilio.com/docs/messaging/compliance/toll-free/console-onboarding` | ✅ but defers to the Help Center |
+| `support.twilio.com/.../Required-Information-for-Toll-Free-Verification` | ❌ **HTTP 403** |
+| `help.twilio.com/articles/...Toll-Free-Message-Verification` | ❌ JS-rendered, empty body |
+| CTIA Messaging Principles (via search) | ✅ summarised |
+
+**So the single authoritative "required information" article is NOT reachable from here.** Anything
+below that comes from the API docs or the error docs is Twilio's own text; the consumer-facing
+disclosure requirements are from CTIA, which is the standard the carriers enforce, not from
+Twilio's own enumeration. That distinction matters and I am not going to blur it.
+
+### ✅ My round-3 addition is CONFIRMED, not just plausible
+
+I flagged in my own comment that the carrier disclosures I added should be checked rather than
+trusted. CTIA's Messaging Principles require the opt-in call-to-action to display: **program name,
+message frequency, "message and data rates may apply", STOP opt-out information, and terms (or a
+link to them)**. Our form carries all five. That claim is now sourced rather than asserted.
+
+### 🔴 Five things the Operator needs, that I did not know before checking
+
+1. **`BusinessRegistrationNumber` is "required for all business types EXCEPT `SOLE_PROPRIETOR`."**
+   Jon is a sole proprietor, so the CRA BN is **optional** on the submission. Including it does no
+   harm and I have put it in the CASL footer anyway — but nobody should hold up a filing over it.
+2. **`NotificationEmail` is a REQUIRED submission field**, and **`BusinessWebsite` is too.** This
+   does *not* conflict with "support contact is SMS-only" — they are different things (one is where
+   Twilio sends the verification RESULT, the other is what consumers see) — but **the Operator
+   needs an email address to file at all.** Worth knowing before opening the form.
+3. **Error 30475 — "Cannot combine messaging consent with service requirement"** is a real, named
+   rejection. Its listed causes include *"phone number collection combined with consent in a single
+   action"* and *"pre-selected checkboxes"*. **We are structurally fine** — the website is fully
+   usable without subscribing, and our checkbox is unchecked-by-default and separately bordered
+   (tested). But a reviewer applies this mechanically to a screenshot, so **the `UseCaseSummary`
+   should explicitly state that kidsfun.ca is fully usable without opting in to texts.** That is a
+   sentence in the submission, not a code change.
+4. **CTIA requires the privacy policy to state that "mobile information is not shared or sold to
+   third parties."** Our consent checkbox says it; **`/privacy` does not have an SMS section at
+   all.** PRD §1.3 already calls for a privacy-policy changelog entry — this is the specific
+   sentence it needs. `/privacy` is a signed-off document outside this branch's footprint, so this
+   is **flagged, not edited**.
+5. **CTIA requires HELP to return support contact information.** Ours is handled by Twilio's
+   Advanced Opt-Out with a console-configured help text — so **that configured text must now be set
+   to include +1 877-835-7776**, which was impossible before this round because the contact did not
+   exist. A console setting, not code.
+
+### One thing I checked and it is fine
+
+The confirmation SMS (§2.6) must, per CTIA, repeat program name / frequency / opt-out / customer
+care. Ours carries *"KIDS FUN"*, *"weekly"*, and *"Reply STOP"*. Customer care is the number they
+are already texting, which is the one case where it is self-evident — and HELP covers it formally
+(see 5 above).
+
+---
+
+## an. `occurrence_gone` vs `invalid_token` — **yes, this creates an oracle. Reasoned, not assumed.**
+
+You asked me to think this through rather than wave it off, and the honest answer is not "no".
+
+**What round 6 actually protected, and still does.** The concern was distinguishing **malformed**
+from **checksum-failed** — telling a prober they were one character away and turning a 20-bit check
+into a guided search. **That is unchanged.** `decodeShortLink` returns null for both, both are
+`invalid_token`, both land on `/search`. There is still no warmer/colder signal *inside the space of
+failing tokens*, and a test asserts the two resolutions are deep-equal.
+
+**What is newly visible.** A prober can now tell *"my token PASSED the HMAC but named no live
+activity"* from *"it did not pass"*. That is a **validity oracle that did not exist before**, and
+it is a real change rather than a technicality.
+
+**Why it is acceptable — three reasons, on the record:**
+
+1. **It does not compound.** The check is an HMAC over each payload independently, so learning that
+   one forged token verified reveals nothing about the secret and makes the next forgery no
+   cheaper. The oracle answers one question, once, per attempt — it does not narrow the search
+   space the way a "you were close" signal would.
+2. **The attempt rate is the real bound, and it is unchanged.** ~1 in 2²⁰ random tokens verify, and
+   this only tells them which ones did — something they could already infer from a successful
+   redirect whenever the decoded `short_ref` happened to be live.
+3. **The prize is small.** A verified forgery reaches public catalogue data (or this page) and can
+   write one bogus `sms_click_event`. It cannot read a subscriber, mutate anything, or reach the
+   preferences page — that is a different token entirely, with 256 bits and no shared secret.
+
+**What the alternatives cost**, since "keep them identical" was on the table:
+
+- *Send both to the interstitial.* A parent whose link was mangled by their messaging app would be
+  told an activity had been **cancelled when nothing had** — inventing a fact to protect a 20-bit
+  check. This project does not make that trade.
+- *Send both to `/search`* — round 6's status quo, which is exactly what Jon's ruling changed.
+
+So the oracle is **accepted deliberately** and named in `GONE_DESTINATION`'s own comment so nobody
+has to rediscover it.
+
+**One related cost I want on the record:** a failed occurrence *read* (database outage) also takes
+the `occurrence_gone` branch, so an outage tells a handful of parents an activity was cancelled when
+it was not. The alternative is a bare error page — worse for them, and no more truthful about what
+happened. Named in the code and here rather than left to be discovered.
+
+---
+
+## ao. Verification
+
+`tsc --noEmit` clean, `eslint` clean, **`npx next build` succeeds** with `○ /activity-unavailable`
+in the manifest (statically rendered — it has no state and no identifiers). SMS suite **247 tests
+across 15 files**. Full `unit` lane: **221 files / 3713 tests passing**. `db` and `invariants` lanes
+not run — no database here, and no Postgres has parsed any of the four migrations.
+
+The version-bump discipline worked as designed: changing this copy broke the copy test, which is
+what that test is for. `CONSENT_TEXT_VERSION` is now `2026-08-26.v2` and the assertions were updated
+to the new facts rather than relaxed.
