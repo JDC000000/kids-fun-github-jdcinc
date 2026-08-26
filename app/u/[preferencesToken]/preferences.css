@@ -1,0 +1,214 @@
+/* app/u/[preferencesToken]/preferences.css — the no-login preferences / hub page.
+ *
+ * DRAFT (SMS pivot). Co-located with the page, like app/terms/terms.css and the signup form's own
+ * stylesheet. Every colour, radius and space is a --kf-* token, so the page is dark-mode aware and
+ * AA-contrasting for free.
+ *
+ * Mobile-first and single-column: every parent reaching this page arrives from a link in a text
+ * message. There is no desktop-primary path to it at all.
+ */
+
+.kf-prefs {
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  padding: var(--kf-space-5) var(--kf-space-4) var(--kf-space-8);
+  font-family: var(--kf-font-ui);
+  color: var(--kf-ink);
+}
+
+.kf-prefs__panel {
+  max-width: 34rem;
+  margin: 0 auto;
+  background: var(--kf-surface);
+  border-radius: var(--kf-r-card);
+  padding: var(--kf-space-5);
+  box-shadow: var(--kf-e-100);
+}
+
+/* Same visible draft banner as the signup form, and the same reason: a code comment reaches
+ * developers, and the person who could be misled by a missing CASL sender identity is the parent
+ * reading the live page. */
+.kf-prefs__draft {
+  background: var(--kf-expected-bg);
+  color: var(--kf-expected-text);
+  border-radius: var(--kf-r-control);
+  padding: var(--kf-space-3);
+  margin: 0 0 var(--kf-space-5);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.kf-prefs__heading {
+  font-size: 1.5rem;
+  line-height: 1.25;
+  margin: 0 0 var(--kf-space-2);
+}
+
+.kf-prefs__subheading {
+  font-size: 1.0625rem;
+  margin: 0 0 var(--kf-space-2);
+}
+
+/* The status line carries the page's whole meaning, so it is a panel rather than a sentence.
+ * Colour is driven off the data attribute so `paused` reads as a state to fix rather than an
+ * error, and `stopped` reads as settled rather than alarming. */
+.kf-prefs__status {
+  margin: 0 0 var(--kf-space-5);
+  padding: var(--kf-space-3);
+  border-radius: var(--kf-r-control);
+  line-height: 1.6;
+  background: var(--kf-confirmed-bg);
+  color: var(--kf-confirmed-text);
+}
+.kf-prefs__status[data-status='paused'],
+.kf-prefs__status[data-status='pending'] {
+  background: var(--kf-expected-bg);
+  color: var(--kf-expected-text);
+}
+.kf-prefs__status[data-status='stopped'] {
+  background: var(--kf-surface-subtle);
+  color: var(--kf-ink-secondary);
+}
+
+.kf-prefs__section {
+  border-top: 1px solid var(--kf-hairline);
+  padding-top: var(--kf-space-5);
+  margin-top: var(--kf-space-5);
+}
+
+/* Unsubscribe and delete sit apart from the editing controls on purpose: they are the two things
+ * on this page that end something, and they should not read as one more field to fill in. */
+.kf-prefs__section--danger {
+  background: var(--kf-surface-subtle);
+  border-radius: var(--kf-r-control);
+  padding: var(--kf-space-4);
+  border-top: 1px solid var(--kf-hairline);
+}
+
+.kf-prefs__intro,
+.kf-prefs__help {
+  margin: 0 0 var(--kf-space-3);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--kf-ink-secondary);
+}
+
+.kf-prefs__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-4);
+}
+
+.kf-prefs__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+}
+
+.kf-prefs__fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.kf-prefs__label {
+  font-weight: 600;
+  padding: 0;
+}
+
+.kf-prefs__picks {
+  margin: 0;
+  padding-left: var(--kf-space-5);
+  line-height: 1.8;
+}
+.kf-prefs__picks a {
+  color: var(--kf-anchor);
+}
+
+.kf-prefs__child {
+  display: flex;
+  align-items: center;
+  gap: var(--kf-space-3);
+}
+
+.kf-prefs__child-label {
+  flex: 0 0 4.5rem;
+  font-size: 0.875rem;
+  color: var(--kf-ink-secondary);
+}
+
+/* Narrow: two digits at most. A full-width box invites a birth year, which is exactly what §1.2
+ * says we do not collect. */
+.kf-prefs__child-input {
+  flex: 0 0 5.5rem;
+}
+
+.kf-prefs__interests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-2) var(--kf-space-4);
+}
+
+.kf-prefs__interest {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--kf-space-2);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+/* 20px targets — WCAG 2.5.8, and these are thumb targets on a phone. */
+.kf-prefs__interest input {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  flex: 0 0 20px;
+  accent-color: var(--kf-leaf);
+}
+
+/* The delete confirmation puts its two buttons side by side, with Cancel last so the destructive
+ * one is not the one under a thumb resting at the end of a row. */
+.kf-prefs__confirm {
+  display: flex;
+  gap: var(--kf-space-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.kf-prefs__err {
+  margin: 0;
+  color: var(--kf-danger);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.kf-prefs__ok,
+.kf-prefs__done {
+  margin: var(--kf-space-3) 0 0;
+  background: var(--kf-confirmed-bg);
+  color: var(--kf-confirmed-text);
+  border-radius: var(--kf-r-control);
+  padding: var(--kf-space-4);
+  line-height: 1.6;
+}
+
+.kf-prefs__disclosures {
+  margin: var(--kf-space-5) 0 0;
+  padding: var(--kf-space-4) 0 0;
+  list-style: none;
+  border-top: 1px solid var(--kf-hairline);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--kf-ink-muted);
+}
+
+.kf-prefs__legal {
+  margin: var(--kf-space-3) 0 0;
+  font-size: 0.8125rem;
+  color: var(--kf-ink-muted);
+}
+.kf-prefs__legal a {
+  color: var(--kf-anchor);
+}

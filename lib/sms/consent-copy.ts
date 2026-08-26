@@ -149,3 +149,91 @@ export const SUBMITTED_HEADING = 'Check your phone';
 export const SUBMITTED_BODY =
   'We’ve sent you one text. Reply JOIN to confirm, and your first picks arrive Friday around ' +
   '4pm. If it does not arrive in a few minutes, check the number and try again.';
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE PREFERENCES / HUB PAGE (PRD §2.4)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// LIVES HERE RATHER THAN IN THE PAGE, for the same reason the signup copy does: this page carries
+// the CASL footer and the unsubscribe wording, and both are things a regulator reads. It also
+// SHARES `MISSING_SENDER_IDENTITY` and `CARRIER_DISCLOSURES` with the signup form rather than
+// restating them — the legal sender name, mailing address and support contact are the same three
+// missing facts on both surfaces, and two hand-written copies would be two things to remember to
+// fill in.
+
+export const PREFS_HEADING = 'Your KIDS FUN texts';
+
+/** Shown when the subscription is live. */
+export const PREFS_STATUS_ACTIVE =
+  'You are getting weekly picks every Friday afternoon.';
+
+/**
+ * Shown when the subscriber has been auto-paused after three empty weeks.
+ *
+ * Deliberately echoes the pause-notice SMS (lib/sms/message.ts `renderPauseNoticeMessage`) rather
+ * than inventing a second explanation: a parent arriving here has just read that text, and being
+ * told a different story by the link inside it is how a product stops sounding like one thing.
+ */
+export const PREFS_STATUS_PAUSED =
+  'Your texts are paused. We could not find matches near you for a few weeks. ' +
+  'Update your area or interests below and save, and they will start again.';
+
+/** Shown when they are still waiting to reply JOIN. */
+export const PREFS_STATUS_PENDING =
+  'Almost there. Reply JOIN to our confirmation text and your weekly picks will start.';
+
+/** Shown once they have unsubscribed. */
+export const PREFS_STATUS_STOPPED =
+  'You have unsubscribed. We are not sending you anything.';
+
+/** Shown when the 30-day purge has already run and there is nothing left to show or edit. */
+export const PREFS_PURGED =
+  'Everything we stored about you has been deleted. There is nothing left here to change.';
+
+export const PREFS_LAST_WEEK_HEADING = 'Last Friday';
+export const PREFS_LAST_WEEK_NONE = 'We have not sent you a weekly text yet.';
+export const PREFS_LAST_WEEK_EMPTY =
+  'Nothing near you matched last week, so we said so rather than padding the list.';
+
+export const PREFS_EDIT_HEADING = 'What we use to pick';
+export const PREFS_SAVE = 'Save changes';
+export const PREFS_SAVING = 'Saving...';
+export const PREFS_SAVED = 'Saved. Your next Friday text will use these.';
+
+export const PREFS_UNSUBSCRIBE_HEADING = 'Stop the texts';
+export const PREFS_UNSUBSCRIBE_BODY =
+  'You will stop getting weekly picks straight away. Everything we store about you is deleted ' +
+  '30 days later.';
+export const PREFS_UNSUBSCRIBE = 'Unsubscribe';
+export const PREFS_UNSUBSCRIBED = 'Done. You will not get any more texts from us.';
+
+export const PREFS_DELETE_HEADING = 'Delete my data';
+
+/**
+ * The delete control's copy states what actually happens, and it is deliberately DIFFERENT from
+ * the unsubscribe copy above: unsubscribe stops the texts and lets the ordinary 30-day retention
+ * clock run; this erases now.
+ *
+ * See `decideDelete` in lib/sms/preferences.ts for why immediate rather than 30 days, and for the
+ * fact that it is a reading of §1.3's intent that needs confirming.
+ */
+export const PREFS_DELETE_BODY =
+  'This unsubscribes you and erases your phone number, postal code, children\'s ages and ' +
+  'interests immediately. It cannot be undone - you would have to sign up again from scratch.';
+export const PREFS_DELETE = 'Delete everything';
+export const PREFS_DELETE_CONFIRM = 'Yes, delete it all';
+export const PREFS_DELETE_CANCEL = 'Cancel';
+export const PREFS_DELETED = 'Deleted. Nothing about you is stored any more.';
+
+/**
+ * What an unrecognised token gets.
+ *
+ * ONE MESSAGE FOR EVERY REASON — never existed, already deleted, mistyped, truncated by a
+ * messaging app. Distinguishing them would tell a prober which of their guesses was close, and
+ * would tell anyone holding an old link whether that person is still a subscriber. Neither is
+ * information we owe, and the second is information about somebody else.
+ */
+export const PREFS_UNKNOWN_TOKEN_HEADING = 'This link is not working';
+export const PREFS_UNKNOWN_TOKEN_BODY =
+  'It may be incomplete, or it may belong to a subscription that has since been deleted. ' +
+  'You can sign up again any time.';
