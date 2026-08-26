@@ -1281,3 +1281,188 @@ One existing test changed meaning rather than behaviour and says so in its own c
 "multi-week courses stay out" passed because the engine's `includeRegistration` defaulted to false;
 it now passes because `lib/sms/registration.ts` decides. Same assertion, different — and now
 correct — reason.
+
+---
+---
+
+# Round 8 — the preferences / hub page (`/u/[preferencesToken]`)
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+
+| file | what it is |
+|---|---|
+| `lib/sms/preferences.ts` | **NEW** — decisions + three stubbed seams |
+| `lib/sms/signup-validate.ts` | `parseProfileFields` **extracted** so both surfaces share one copy |
+| `lib/sms/consent-copy.ts` | preferences copy, sharing the signup form's gap markers |
+| `app/u/[preferencesToken]/page.tsx` | **NEW** server component |
+| `app/u/[preferencesToken]/_components/PreferencesForm.tsx` | **NEW** |
+| `app/u/[preferencesToken]/preferences.css` | **NEW** |
+| `app/api/sms/preferences/route.ts` | **NEW** — POST-only mutations |
+| `tests/sms/preferences.test.ts` | **NEW**, 26 tests |
+
+`npx next build` succeeds with `ƒ /u/[preferencesToken]` and `ƒ /api/sms/preferences` in the
+manifest.
+
+---
+
+## ag. Point 7 — what "renders PII **and** mutates state" actually changes
+
+`/s/[shortId]` reads a token, resolves a public catalogue row, redirects. It reveals nothing and
+changes nothing. This page does **both** of the things that one does not, and six decisions follow:
+
+1. **The token is in the URL — the weakest place to keep a credential.** It goes into browser
+   history, `Referer` headers, server and proxy logs, screenshots, and whatever gets forwarded.
+   Most of that is *inherent* to a no-login link in a text and CASL positively wants the
+   unsubscribe that frictionless. What can be stopped is us making it worse:
+   - **`noindex, nofollow` — the most important header on this page.** If a token URL ever reaches
+     a crawler, an indexed copy would put a child's ages and a household postal code into a search
+     engine. There is no undoing that. This is the difference between a *leaked* link and a
+     *published* one.
+   - **`no-referrer`** — every outbound link (an activity's booking page) would otherwise hand
+     that third party the full URL, **token included**. This one header is what stops a rec
+     centre's analytics from receiving a working credential for somebody's subscription.
+   - **`no-store`** — the rendered HTML holds those values; the back button on a family computer
+     should not resurrect them.
+2. **The lookup is exact-match on a unique column**, so a wrong-but-well-formed token resolves to
+   *nothing*, never to a neighbouring row. A property of the query, not of care.
+3. **One failure outcome for every reason** — never existed, purged, malformed. No "that looked
+   close", and the shape gate runs before the database so there is no distinguishable branch.
+4. **Mutations are POST-only, in their own route.** This URL is exactly what a messaging client
+   *prefetches* to render a preview — round 6's CTR risk. Any state change hanging off the GET
+   would mean preview fetches unsubscribing people.
+5. **Transitions are guarded by current state, not just by holding the token** — see §aj.
+6. **The phone number is never read, rendered or returned.** It is the one field a leaked link
+   would turn into a contactable identity, and the page has no use for it. A test asserts the
+   view's exact key set.
+
+**CSRF, honestly:** classic CSRF does not apply — there is no cookie or session to ride. The
+credential *is* the token, and anyone who has it already has everything. The threat is **leakage**,
+not forgery, which is why the effort goes into the three headers rather than into a CSRF token. The
+token travels in the POST **body**, not the URL, because a POST path lands in access logs exactly
+like a GET path and this is the one request that need not put it there.
+
+### >>> What I am NOT confident about <<<
+
+**There is no rate limiting, and this branch has no infrastructure to add any.** With a
+256-bit token, brute force is not a real threat — but the honest statement is that nothing stops
+an attacker making unlimited attempts, and I have not measured whether the platform provides
+anything upstream. **This should be checked before real links are in the wild**, and it is the one
+item in this round I would not want signed off silently.
+
+Two smaller ones: I have assumed `preferences_token` is minted at **full** HMAC-SHA256 width (the
+signup-store TODO says so) — it must **not** be truncated the way the short-link token deliberately
+is; a short link's 20-bit check protects public catalogue data, this token protects a child's age.
+And rotating a leaked token is supported by the schema (it is a stored, regenerable column) but no
+UI offers it.
+
+---
+
+## ah. Point 4 — is the web unsubscribe the same transition as a STOP text?
+
+**Same destination, different journey. So: shared decision, separate entry point.**
+
+It **reuses `decideStop`** — the identical pure decision the carrier mirror uses — because the
+target state is identical in every column: `status = 'stopped'`, `stopped_at` stamped once and
+never re-stamped, the 30-day purge clock started. Forking that would mean two places that both have
+to remember not to re-stamp `stopped_at`, and one would eventually forget.
+
+But it is a **separate entry point** rather than a call to `mirrorCarrierStop`, because that
+function's own contract is not true here. Its documentation says, correctly: *"Twilio has ALREADY
+suppressed the number by the time this runs… This write is not what stops the messages."* On a web
+unsubscribe **nothing has suppressed anything, and our write is the entire mechanism** — the Friday
+job's `WHERE status = 'active'` is what stops the texts. Reading that comment on this path would be
+actively misleading.
+
+**Two consequences worth knowing:**
+
+- **Twilio will not know.** A carrier STOP puts the number on Twilio's suppression list — a second,
+  independent barrier that survives a buggy send job. A web unsubscribe has no such backstop: our
+  `status` column is the only thing between that person and next Friday. Propagating the opt-out to
+  Twilio's list would restore the belt-and-braces, and it is a real API call this branch cannot
+  make. **Worth doing before launch.**
+- **The database cannot say which path was used.** `sms_consent` records how someone *joined*
+  (`consent_method`) but not how they *left*. After the fact a web unsubscribe and a STOP text are
+  indistinguishable. Fine for operating the product; a genuine hole for a complaint investigation
+  (*"they say they never texted STOP"* — correct, they clicked). Adding a column is a migration and
+  not mine to decide.
+
+---
+
+## ai. "Delete my data" — a reading of §1.3's intent over its letter. **Needs confirming.**
+
+§1.3 puts profile purging at *"30 days later"* on `stopped`, *"via STOP **or explicit delete
+request**"*, justifying the grace window as protection *"in case of accidental unsubscribe"*. Read
+literally, pressing "Delete my data" would stop the texts and then keep the data for a month.
+
+**That reasoning does not transfer.** The grace window guards against an **accident**, and an
+explicit, confirmed delete request is the one case that is definitionally not accidental. Holding a
+child's age for thirty days after their parent deliberately asked us to erase it — for our own
+complaint-resolution convenience — is the weaker position under PIPEDA and the harder one to
+explain.
+
+**So the accident risk moves to where it belongs:** a two-step confirmation in the UI, and the
+deletion is immediate. That is a *stronger* guard than a timer, because it stops the mistake
+instead of giving you a month to notice it.
+
+**Nothing is lost.** The row survives with its id, `short_ref`, consent timestamps and
+`consent_text_version`; `sms_send_log` keeps `phone_hash` + `phone_hash_version` and was designed in
+round 1 precisely so the CASL audit trail outlives the subscriber's personal data. The
+complaint-resolution capability the grace window protected is already protected by that.
+
+> Reverting to the literal 30-day behaviour is **one line**: emit an `unsubscribe` change instead of
+> a `delete` one and let the purge job do it. The two-step confirmation in the UI is load-bearing
+> for this argument — deleting it would quietly invalidate the reasoning.
+
+---
+
+## aj. Saving un-pauses — but must never resurrect
+
+§2.4: *"Saving resets the empty-week counter and un-pauses if paused."* That is the only way a
+paused subscriber resumes without signing up again, so it has to work. But "un-pause on save" must
+not generalise into "any save reactivates":
+
+| current status | on save |
+|---|---|
+| `active` | fields updated, counter → 0 |
+| `paused` | fields updated, counter → 0, **status → active** |
+| `pending` | fields updated, counter → 0, **status untouched** — activating here would bypass the double opt-in, exactly as START-on-a-pending-row would (round 5's `awaiting_confirmation` finding) |
+| `stopped` | **`not_permitted`, nothing written** — they withdrew consent, and silently resurrecting them because they opened an old link and hit Save is the CASL violation this design exists to avoid |
+
+The counter reset is unconditional for any row that may be saved: someone who just told us where
+they live and how old their kids are has given us new reason to look, and holding three old strikes
+against them would pause them on a stale judgement.
+
+`not_permitted` and `not_found` both return **404** from the route — telling an unrecognised caller
+*"that token is real, it just belongs to someone who unsubscribed"* is a fact about another person.
+
+---
+
+## ak. Two smaller things
+
+**One validator, three callers.** `parseProfileFields` was extracted from `parseSmsSignupBody` —
+the postal code, ages and interests are the same three fields under the same rules at signup
+(§2.1) and on edit (§2.4). A rule enforced at signup and not on edit is a rule that does not
+exist; *"V5L 1A1 was fine when I signed up but is rejected when I change it"* is exactly what a
+second implementation produces. The signup form, this page's client and the API route all run the
+same function. A move, not a rewrite — the signup suite passed unchanged.
+
+**The unknown-token page is a rendered notice, not `notFound()`** — the one place this branch
+deviates from the click-through route's posture, deliberately. That route redirects an unresolvable
+tap to `/search`, which is a fine answer for *"go find something to do"*. This link's whole purpose
+is to reach the unsubscribe and delete controls, so a bare 404 would leave someone trying to opt out
+with nowhere to go. **This is not a fix for the missing not-found experience round 6 flagged** —
+that gap is now §8 Q3 and Jon's/the Operator's, and this does not pre-empt it.
+
+---
+
+## al. Verification
+
+26 new tests. The isolation suite is the one to read: two subscribers in the store, five
+near-miss token shapes each resolving to nobody, all three actions on a wrong token writing
+nothing, and a body claiming another subscriber's id proven inert (the change is built from the
+resolved row, so there is nothing to influence).
+
+`tsc --noEmit` clean, `eslint` clean, **`npx next build` succeeds** with both new routes in the
+manifest. SMS suite **240 tests across 15 files**. Full `unit` lane: **221 files / 3705 tests
+passing**. `db` and `invariants` lanes not run — no database here, and no Postgres has parsed any
+of the four migrations.
