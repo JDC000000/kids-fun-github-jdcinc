@@ -672,12 +672,112 @@ describe('category interests', () => {
     expect(swimOnly.picks.every((p) => p.item.listing.primaryCategoryKey === 'swimming')).toBe(true);
   });
 
-  it('can filter a subscriber below the floor — the retry widens dates and radius, not interests', () => {
-    // Recorded as a test rather than a comment: this is a real, specified consequence of the PRD
-    // treating interests as a FILTER, and V1 should revisit it with data.
-    const listings = distinctActivities(8, { primaryCategoryKey: 'swimming' });
+});
+
+describe('the interest-drop retry, step (b) (PRD v2.4 §2.2 step 5b)', () => {
+  /** Everything on offer is swimming; the subscriber ticked pottery. */
+  function narrowInterest(over: Partial<WeeklyPicksInput> = {}) {
+    return input(distinctActivities(8, { primaryCategoryKey: 'swimming' }), {
+      ...over,
+      subscriber: {
+        origin: { geo: HOME, label: 'East Van' },
+        radiusKm: 10,
+        birthYears: [2020],
+        categoryInterests: ['pottery'],
+        consecutiveEmptyWeeks: 0,
+      },
+    });
+  }
+
+  it('turns an undeserved empty week into a normal send by dropping the interest filter', () => {
+    // THE CASE THIS STEP EXISTS FOR. Eight real, showable matches for this child sat right there
+    // all weekend; before v2.4 an optional checkbox nobody was required to tick sent an
+    // "there's nothing this weekend" text over the top of them.
+    const result = selectWeeklyPicks(narrowInterest());
+    expect(result.outcome).toBe('picks');
+    expect(result.picks).toHaveLength(8);
+    expect(result.degradation).toBe('widened_and_interests_dropped');
+    expect(result.interestsDropped).toBe(true);
+    expect(result.retried).toBe(true);
+    // The picks really are outside the stated interest — that is the whole point of the step.
+    expect(result.picks.every((p) => p.item.listing.primaryCategoryKey === 'swimming')).toBe(true);
+  });
+
+  it('does NOT fire when step (a) alone already cleared the floor', () => {
+    // Non-compounding, same discipline as step (a): a step that fires when it was not needed is
+    // a subscriber silently getting picks outside the interests they chose.
+    const listings = [
+      kidActivity({ id: 'f1', activityName: 'Splash Time', venueName: 'Far Pool', geo: FAR, primaryCategoryKey: 'public_swim' }),
+      kidActivity({
+        id: 'f2',
+        activityName: 'Story Circle',
+        venueName: 'Far Library',
+        geo: { lat: FAR.lat + 0.01, lng: FAR.lng },
+        primaryCategoryKey: 'public_swim',
+        startDatetimeUtc: at(SUN, 11),
+        endDatetimeUtc: at(SUN, 12),
+      }),
+      kidActivity({
+        id: 'f3',
+        activityName: 'Lego Build',
+        venueName: 'Far Annex',
+        geo: { lat: FAR.lat + 0.02, lng: FAR.lng },
+        primaryCategoryKey: 'public_swim',
+        startDatetimeUtc: at(MON, 10),
+        endDatetimeUtc: at(MON, 11),
+      }),
+    ];
     const result = selectWeeklyPicks(
       input(listings, {
+        subscriber: {
+          origin: { geo: HOME, label: 'East Van' },
+          radiusKm: 10,
+          birthYears: [2020],
+          categoryInterests: ['public_swim'], // matches — step (a) is enough
+          consecutiveEmptyWeeks: 0,
+        },
+      })
+    );
+    expect(result.outcome).toBe('picks');
+    expect(result.degradation).toBe('widened');
+    expect(result.interestsDropped).toBe(false);
+  });
+
+  it('does NOT fire on the primary attempt — a full weekend never degrades', () => {
+    const result = selectWeeklyPicks(
+      input(distinctActivities(8, { primaryCategoryKey: 'public_swim' }), {
+        subscriber: {
+          origin: { geo: HOME, label: 'East Van' },
+          radiusKm: 10,
+          birthYears: [2020],
+          categoryInterests: ['public_swim'],
+          consecutiveEmptyWeeks: 0,
+        },
+      })
+    );
+    expect(result.degradation).toBe('none');
+    expect(result.retried).toBe(false);
+    expect(result.interestsDropped).toBe(false);
+  });
+
+  it('is SKIPPED when the subscriber stated no interests — nothing to drop', () => {
+    // Degradation must describe what the subscriber actually suffered. Reporting
+    // 'interests_dropped' for someone who never set any would be a lie in the send log.
+    const result = selectWeeklyPicks(input([kidActivity({ id: 'lonely', activityName: 'Splash Time', venueName: 'Only Pool' })]));
+    expect(result.outcome).toBe('empty');
+    expect(result.degradation).toBe('widened');
+    expect(result.interestsDropped).toBe(false);
+  });
+
+  it('still applies every showability gate — dropping interests never drops quality', () => {
+    // Everything on offer is postponed. Step (b) must widen WHICH activities qualify, never what
+    // the product is willing to stand behind.
+    const postponed = distinctActivities(8, {
+      primaryCategoryKey: 'swimming',
+      statusState: 'postponed' as const,
+    });
+    const result = selectWeeklyPicks(
+      input(postponed, {
         subscriber: {
           origin: { geo: HOME, label: 'East Van' },
           radiusKm: 10,
@@ -688,7 +788,34 @@ describe('category interests', () => {
       })
     );
     expect(result.outcome).toBe('empty');
-    expect(result.retried).toBe(true);
+    expect(result.degradation).toBe('widened_and_interests_dropped');
     expect(result.emptyReason).toBe('none_showable');
+  });
+
+  it('does not search a third time — step (b) reuses step (a) response', () => {
+    // Interests are a post-filter, not a query param, so step (b) asks an identical question.
+    // Two engine calls total: primary + one widened retry.
+    const engine = engineOver(distinctActivities(8, { primaryCategoryKey: 'swimming' }));
+    const calls: unknown[] = [];
+    const spied = {
+      search: (req: Parameters<SearchEngine['search']>[0]) => {
+        calls.push(req);
+        return engine.search(req);
+      },
+    } as unknown as SearchEngine;
+
+    const result = selectWeeklyPicks({
+      engine: spied,
+      now: FRIDAY_4PM,
+      subscriber: {
+        origin: { geo: HOME, label: 'East Van' },
+        radiusKm: 10,
+        birthYears: [2020],
+        categoryInterests: ['pottery'],
+        consecutiveEmptyWeeks: 0,
+      },
+    });
+    expect(result.interestsDropped).toBe(true);
+    expect(calls).toHaveLength(2);
   });
 });

@@ -1,5 +1,5 @@
 // lib/sms/weekly-picks.ts — choose the 5–10 weekend activities one subscriber's Friday text
-// carries (PRD §2.2, v2.3).
+// carries (PRD §2.2, v2.4).
 //
 // PURE OVER A WIRED ENGINE, exactly like lib/recommend/three-things.ts and lib/email/digest.ts:
 // given a SearchEngine, a clock, a resolved origin, the subscriber's stored birth years,
@@ -81,7 +81,10 @@ export const DEDUP_TITLE_SIMILARITY = 0.78;
 export const DEDUP_VENUE_RADIUS_KM = 0.5;
 /** How far down the ranked list the age-coverage swap may reach (PRD §2.2: "top-20"). */
 export const COVERAGE_SWAP_REACH = 20;
-/** Total forced picks the coverage swap may make (PRD §2.2: "max 2 total displacements"). */
+/**
+ * Total forced picks the coverage swap may make — 2 ACROSS ALL BANDS, not 2 per band (PRD v2.4
+ * §2.2 step 4 made this explicit after the first draft asked the question).
+ */
 export const MAX_FORCED_PICKS = 2;
 /**
  * Fallback radius step when the subscriber is already at or beyond the widest standard option.
@@ -166,6 +169,9 @@ export interface ForcedPick {
   displacedOccurrenceId: string | null;
 }
 
+/** How far the selection had to degrade. See `WeeklyPicks.degradation`. */
+export type Degradation = 'none' | 'widened' | 'widened_and_interests_dropped';
+
 /** Why a week produced nothing. Both are honest states, not failures. */
 export type EmptyReason =
   /** The engine reached nothing at all for this subscriber's question, even after the retry. */
@@ -188,8 +194,20 @@ export interface WeeklyPicks {
   ageBands: AgeBandKey[];
   /** False when no birth year resolved: the search ran with NO age filter, honestly. */
   ageAware: boolean;
-  /** True when the degradation retry ran. Exactly one retry is possible — see `selectWeeklyPicks`. */
+  /**
+   * How far the selection had to degrade to get here (PRD v2.4 §2.2 step 5).
+   *   'none'                          — the primary attempt cleared the floor.
+   *   'widened'                       — step (a): one radius step out, window relaxed to Sat–Tue.
+   *   'widened_and_interests_dropped' — step (b): step (a) plus the category filter dropped.
+   * A caller may want to say so in the message ("we looked a bit further afield this week"); it
+   * is reported rather than inferred so the copy layer cannot reach a different conclusion than
+   * the selection did.
+   */
+  degradation: Degradation;
+  /** True when either degradation step ran. Kept as the simple predicate most callers want. */
   retried: boolean;
+  /** True when step (b) fired — these picks are outside the subscriber's stated interests. */
+  interestsDropped: boolean;
   /** The radius actually used for the attempt these picks came from. */
   radiusKmUsed: number;
   /** `SearchResponse.total` per attempt — "did the engine reach anything at all". */
@@ -252,8 +270,16 @@ export function ageBandsFromBirthYears(
 
 // ── (b) The request ──────────────────────────────────────────────────────────
 
-/** Which of the two attempts a request is for. */
-export type Attempt = 'primary' | 'retry';
+/**
+ * Which attempt a request is for.
+ *
+ * There are three ATTEMPTS but only TWO distinct requests. Step (b) of the PRD's degradation
+ * retry drops the subscriber's category interests — and interests are a post-filter on ranked
+ * results, not a query parameter (see `matchesInterests`), so step (b) asks the engine exactly
+ * the same question step (a) did. `'retry_without_interests'` therefore builds the identical
+ * request, and `selectWeeklyPicks` reuses step (a)'s response rather than issuing it twice.
+ */
+export type Attempt = 'primary' | 'retry' | 'retry_without_interests';
 
 /** One step wider on the product's own radius ladder; see RADIUS_WIDEN_FALLBACK_KM. */
 export function widenRadiusKm(radiusKm: number): number {
@@ -299,6 +325,9 @@ export function buildPicksRequest(input: WeeklyPicksInput, attempt: Attempt): Se
   if (attempt === 'primary') {
     return { ...base, when: 'weekend', radiusKm: baseRadius, minResults: 0 };
   }
+
+  // Both retry steps ask the SAME question — see the `Attempt` type. Step (b) differs only in
+  // which of the answers it is willing to keep.
 
   const weekend = relativeDate('weekend', now);
   const saturday = weekend.isoDate ?? localIsoDate(now);
@@ -498,8 +527,8 @@ export interface CoverageSwapResult {
  * THE CAP IS THE DESIGN, NOT A GUARD. Every forced pick is a relevance concession, so:
  *   • it may only reach into the top `COVERAGE_SWAP_REACH` (20) of the ranked, deduped list —
  *     past that a "representative" is just a low-relevance listing wearing a band label;
- *   • at most ONE forced pick per band;
- *   • at most `MAX_FORCED_PICKS` (2) in total, across all bands.
+ *   • at most ONE forced pick per band (a band already represented is skipped);
+ *   • at most `MAX_FORCED_PICKS` (2) IN TOTAL ACROSS ALL BANDS — not 2 per band.
  * If nothing qualifies inside that cap the band goes unrepresented THIS WEEK. That is the PRD's
  * explicit instruction and it is the right failure: a bad pick costs more than a missing one.
  *
@@ -563,80 +592,122 @@ export function applyCoverageSwap(
 interface AttemptResult {
   selection: SearchResultItem[];
   forced: ForcedPick[];
-  reached: number;
   collapsed: number;
-  radiusKmUsed: number;
 }
 
-/** One full attempt: search → gates → dedup → truncate → coverage swap. */
-function runAttempt(input: WeeklyPicksInput, attempt: Attempt, bands: AgeBandKey[]): AttemptResult {
-  const request = buildPicksRequest(input, attempt);
-  const response = input.engine.search(request);
+/**
+ * Everything after the search: gates → dedup → truncate → coverage swap.
+ *
+ * Split from the search itself because the PRD's step (b) re-runs exactly this over the SAME
+ * response with `applyInterests` flipped off — see `Attempt`. Keeping the seam explicit is what
+ * makes "drop the interest filter" a one-argument change rather than a second pipeline.
+ */
+function selectFrom(
+  response: ReturnType<SearchEngine['search']>,
+  input: WeeklyPicksInput,
+  bands: AgeBandKey[],
+  applyInterests: boolean
+): AttemptResult {
   const sameParentOrg = input.sameParentOrg ?? (() => false);
   const maxPicks = input.maxPicks ?? MAX_PICKS;
 
   // `results` ONLY — never `ageUnconfirmed`, never `expected`. See this file's header.
+  // Every other gate stays on in both retry steps: dropping interests widens WHICH activities
+  // qualify, never what we are willing to stand behind.
   const showable = response.results
     .filter((item) => isShowableOnFrontDoor(item.listing))
-    .filter((item) => matchesInterests(item.listing, input.subscriber.categoryInterests));
+    .filter((item) =>
+      applyInterests ? matchesInterests(item.listing, input.subscriber.categoryInterests) : true
+    );
 
   const { kept, collapsed } = dedupeCandidates(showable, sameParentOrg);
-  const { selection, forced } = applyCoverageSwap(
-    kept.slice(0, maxPicks),
-    kept,
-    bands,
-    maxPicks
-  );
-
-  return {
-    selection,
-    forced,
-    reached: response.total,
-    collapsed,
-    radiusKmUsed: request.radiusKm ?? DEFAULT_RADIUS_KM,
-  };
+  const { selection, forced } = applyCoverageSwap(kept.slice(0, maxPicks), kept, bands, maxPicks);
+  return { selection, forced, collapsed };
 }
 
 /**
  * This subscriber's picks for this weekend. Pure: the only I/O is whatever the engine was wired
  * with by the caller.
  *
- * EXACTLY ONE RETRY IS POSSIBLE, structurally — there is no loop here, just an `if`. The PRD's
- * "non-compounding" is enforced by `buildPicksRequest` reading only the original input (see its
- * header), so the retry cannot stack a second widening on the first even if this function were
- * later called in a loop by mistake.
+ * THE DEGRADATION LADDER (PRD v2.4 §2.2 step 5), and why it is a straight line of `if`s rather
+ * than a loop:
+ *
+ *   primary                          — the weekend, the subscriber's radius, their interests.
+ *   ↓ still below the floor
+ *   (a) widened                      — one radius step out, window relaxed to Sat–Tue.
+ *   ↓ still below the floor, AND they actually stated an interest
+ *   (b) interests dropped            — the same widened search, minus the category post-filter.
+ *   ↓ still below the floor
+ *   empty week.
+ *
+ * "Non-compounding" is enforced STRUCTURALLY, not by discipline: `buildPicksRequest` reads only
+ * the original input (see its header), so there is no accumulated state for a second widening to
+ * build on, and there is no loop here that could run a third time.
+ *
+ * STEP (b) REUSES STEP (a)'S RESPONSE rather than searching again. Interests are a post-filter on
+ * ranked results, not a query parameter, so step (b) asks the engine an identical question — and
+ * issuing it twice would be both wasted work and a place for the two answers to differ.
+ *
+ * STEP (b) IS SKIPPED WHEN THERE IS NOTHING TO DROP. A subscriber who stated no interests has no
+ * filter to relax, so firing it would be a no-op that nonetheless reported itself as a
+ * degradation the subscriber never suffered. `degradation` stays `'widened'` in that case.
  */
 export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
   const floor = input.floorPicks ?? FLOOR_PICKS;
   const bands = ageBandsFromBirthYears(input.subscriber.birthYears, input.now);
+  const hasInterests = (input.subscriber.categoryInterests?.length ?? 0) > 0;
 
-  let attempt = runAttempt(input, 'primary', bands);
-  const primaryReached = attempt.reached;
+  const primaryRequest = buildPicksRequest(input, 'primary');
+  const primaryResponse = input.engine.search(primaryRequest);
+  let attempt = selectFrom(primaryResponse, input, bands, true);
+
+  let degradation: Degradation = 'none';
+  let radiusKmUsed = primaryRequest.radiusKm ?? DEFAULT_RADIUS_KM;
+  const primaryReached = primaryResponse.total;
   let retryReached: number | null = null;
-  let retried = false;
 
   if (attempt.selection.length < floor) {
-    retried = true;
-    const retry = runAttempt(input, 'retry', bands);
-    retryReached = retry.reached;
+    // ── Step (a): widen radius one fixed step, relax the window to weekend + Mon/Tue.
+    const retryRequest = buildPicksRequest(input, 'retry');
+    const retryResponse = input.engine.search(retryRequest);
+    retryReached = retryResponse.total;
+    radiusKmUsed = retryRequest.radiusKm ?? radiusKmUsed;
+    degradation = 'widened';
     // The retried set REPLACES the primary one rather than merging with it: it is a superset by
     // construction (wider radius, wider window, same filters), so merging could only ever
     // reintroduce candidates the retry's own dedup pass had already collapsed.
-    attempt = retry;
+    attempt = selectFrom(retryResponse, input, bands, true);
+
+    // ── Step (b): drop the category-interest filter before declaring an empty week.
+    //
+    // Interests are an OPTIONAL field stored as a HARD post-filter (the engine has no
+    // soft-preference concept — see `matchesInterests`), so without this a parent who ticked one
+    // narrow box could be told "nothing this weekend" on a weekend that genuinely had matches for
+    // their kids just outside it. An empty text is the most expensive thing this product can
+    // send; a pick slightly off-interest is not close to as costly.
+    if (attempt.selection.length < floor && hasInterests) {
+      degradation = 'widened_and_interests_dropped';
+      attempt = selectFrom(retryResponse, input, bands, false);
+    }
   }
 
-  const emptyReached = retried ? (retryReached ?? 0) : primaryReached;
+  const reached = { primary: primaryReached, retry: retryReached };
+  const retried = degradation !== 'none';
+  const interestsDropped = degradation === 'widened_and_interests_dropped';
 
   if (attempt.selection.length < floor) {
+    const lastReached = retryReached ?? primaryReached;
     return {
       outcome: 'empty',
       picks: [],
-      emptyReason: emptyReached === 0 ? 'nothing_reached' : 'none_showable',
+      emptyReason: lastReached === 0 ? 'nothing_reached' : 'none_showable',
       ageBands: bands,
       ageAware: bands.length > 0,
+      degradation,
       retried,
-      radiusKmUsed: attempt.radiusKmUsed,
-      reached: { primary: primaryReached, retry: retryReached },
+      interestsDropped,
+      radiusKmUsed,
+      reached,
       forcedPicks: attempt.forced,
       deduped: attempt.collapsed,
       shouldPause: input.subscriber.consecutiveEmptyWeeks + 1 >= 3,
@@ -661,9 +732,11 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
     emptyReason: null,
     ageBands: bands,
     ageAware: bands.length > 0,
+    degradation,
     retried,
-    radiusKmUsed: attempt.radiusKmUsed,
-    reached: { primary: primaryReached, retry: retryReached },
+    interestsDropped,
+    radiusKmUsed,
+    reached,
     forcedPicks: attempt.forced,
     deduped: attempt.collapsed,
     shouldPause: false,
