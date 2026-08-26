@@ -265,3 +265,174 @@ breaks by dropping it.
 Full suite green after these changes: **209 files / 3485 tests passing** in the `unit` lane
 (`npx vitest run --project unit --fileParallelism`), plus `tsc --noEmit` and `eslint` clean on
 the new files. The `db` and `invariants` lanes were not run — no database in this environment.
+
+---
+---
+
+# Round 2 — npm audit classification, `phone_hash_version`, and the real selection algorithm
+
+**Still DRAFT on `feat/kf-sms-pivot-draft`. Nothing applied, nothing pushed, no migration run.**
+
+Round 1's two findings (the ~0.78 dedup threshold and `phone_hash_version`) were verified and are
+now in the PRD as v2.3 §2.2 and §5. This round implements them and adds the selection algorithm.
+
+---
+
+## f. npm audit: **all 16 are pre-existing. Twilio introduced zero.**
+
+Method — a real A/B, not a guess. `origin/main`'s `package.json` + `package-lock.json` were
+checked out to a scratch directory and audited in isolation; the branch was audited as-is; the
+two advisory sets were then diffed by (package, severity).
+
+| | base (`30e232a`, no twilio) | branch (with twilio) |
+|---|---|---|
+| critical | 1 | 1 |
+| high | 13 | 13 |
+| moderate | 2 | 2 |
+| **total** | **16** | **16** |
+
+The two sets are **identical, package for package**. No advisory path in the branch audit passes
+through `twilio` at all.
+
+**The one critical is pre-existing and is `vitest` itself** (`<=3.2.5`, a *direct devDependency*
+at 2.0.5): RCE when the Vitest API server is listening and a malicious site is visited, plus
+arbitrary file read/execute via the Vitest UI server, inherited through `vite` / `vite-node`. It
+is a test-runner vulnerability with no production reachability — it cannot be hit by a deployed
+Next.js app, only by a developer running `vitest --api`/`--ui` while browsing. The 13 highs are
+the same shape: `next`, `postcss`, `minimatch`, `brace-expansion`, `glob`, `js-yaml`, `nanoid`,
+`fast-uri`, `vite`, and the eslint/typescript-eslint chain.
+
+Still **not** auto-fixed, deliberately. `npm audit fix --force` on this tree would want to move
+`vitest` across a major version and touch `next`, which is a real upgrade with its own testing —
+a decision for a dedicated change, not a side effect of adding an SMS dependency.
+
+---
+
+## g. `phone_hash_version` — added to `0035_sms_send_log.sql`
+
+`phone_hash_version smallint NOT NULL DEFAULT 1`, in the **same migration file** (it has not been
+applied anywhere, so there is nothing to migrate *from*). It carries a header block and a
+`COMMENT ON COLUMN` stating the reasoning the PRD now records: it says which salt generation
+produced the row's `phone_hash`, so a future rotation of `SMS_PHONE_HASH_SALT` becomes an
+explicit branch a lookup can handle instead of a silent, permanent, undetectable break in the
+CASL audit trail. `DEFAULT 1` so the writer needs no awareness of it until there is a second
+salt. It is a generation number, not a salt and not a hint about one.
+
+---
+
+## h. The selection algorithm — `lib/sms/weekly-picks.ts`
+
+Pure over a wired engine, same posture as `lib/recommend/three-things.ts` and
+`lib/email/digest.ts`: it takes a `SearchEngine`, a clock, a resolved origin, birth years,
+interests and the empty-week counter, and returns a decided set of picks. No DB, no network, no
+Twilio, no `new Date()`. **`lib/recommend/three-things.ts` was not modified** — two of its
+exports (`isShowableOnFrontDoor`, `foldTitleForComparison`) are imported rather than copied.
+
+All six PRD steps are implemented: age bands from birth years at call time → engine search →
+dedup → capped coverage swap → one non-compounding retry → outcome branches. 30 unit tests
+against a fixture-backed real `SearchEngine`.
+
+### h.1 **"Same parent org" cannot be implemented from the current schema. I did not fake it.**
+
+This is the flagged item from the brief, and the answer is a clean no.
+
+* The `organisation` table exists (migration 0003) and is **orphaned**. Nothing in the schema
+  references `organisation(id)` — there is no `organisation_id` on `venue`, on `activity_series`
+  or on `activity_occurrence`. Migration **0010's own header already says so**: *"the current
+  schema has no organisation link on activities (no organisation_id on series/occurrence). We use
+  venue.name + source.name for [weight C] … wiring a direct organisation_id is a candidate."*
+* Consequently `lib/search/postgres-repository.ts` fills `ListingRecord.organisation` with the
+  **ingestion source's name** (`source.name`), not a parent organisation.
+
+Using that field as a proxy would be **actively harmful, not merely imprecise**. One source
+covers an entire municipality's recreation feed, so "same organisation" would be true for every
+pair of listings in that municipality. Because the PRD's venue test is an **OR** (`within ~500m`
+**or** `same parent org`), that arm would swallow the 500m guard entirely — and the guard is the
+only thing standing between this pass and the exact failure the PRD names: "Public Swim" at two
+unrelated rec centres scoring 1.000 on title alone.
+
+**What I built instead:** the arm is an injected predicate, `sameParentOrg`, defaulting to
+"never". Venue distance (plus exact venue-name identity, which needs no coordinates and matters
+because un-geocoded venues are normal here) carries the condition for the draft. The day an
+`organisation_id` exists this is a one-line wiring, not a rewrite. A test covers both settings.
+
+**Open question for the Operator:** is wiring `organisation_id` in scope for the SMS launch, or
+does venue-distance carry it for MVP? MVP-with-distance-only is defensible — it under-merges
+rather than over-merges, which is the safe direction.
+
+### h.2 Other findings from building it
+
+**1. The `saved_home` origin mode is unusable for SMS subscribers.** The engine has an origin
+mode that takes a postal code — exactly what a subscriber has — and `resolveOrigin` throws
+`auth_required` on it unless `signedIn` is true (`lib/geo/origin.ts:66`). An SMS subscriber is
+never signed in; that is the product's premise. So postal→point happens in the *caller* (which
+holds the geocoder) and the module takes a resolved `GeoPoint`, using `near_me` purely as the
+transport for a raw coordinate. Not a blocker, but it means the send job needs the geocoder
+wired, and a postal code that fails to geocode is a case the job must handle.
+
+**2. Category interests have no structured engine parameter, so they are a post-filter — and
+being a *filter* has a cost the PRD should see.** `SearchRequest` has no category field; the only
+way to express one is free text in `q`, which turns a browse into a scored text search that
+reorders everything and drops whatever the matcher scores below threshold. So interests are
+applied to the engine's ranked output instead. The PRD calls this a *filter* (§2.2 step 2) and it
+is implemented as one — which means **a subscriber who ticks one narrow interest can be filtered
+below the floor and get an empty week on a weekend that was full of things for their kids.** The
+PRD's retry widens radius and dates but explicitly **not** interests, so I implemented exactly
+that and pinned the consequence in a test rather than quietly softening it. Worth a V1 decision:
+should the retry drop interests before it declares an empty week?
+
+**3. Registration-shaped courses are excluded, inherited from the engine's default.**
+`includeRegistration` defaults to false, so `isRegistrationShaped` drops any title matching
+`\bclass(es)?\b`, `\blessons?\b`, `\bcamps?\b`, `\bworkshops?\b`, `\bcourses?\b` and friends. That
+is the right default for "what can we do this weekend" and it matches /search — but it materially
+shapes what a weekly text *can* contain: a rec centre's Saturday programme is largely registered
+courses, and none of it is eligible for a pick. This found me rather than the other way around —
+two fixture rows named "Cooking Class" and "Skate Lesson" vanished before the selector ever saw
+them and made a cap test look like a cap bug. Pinned in a test now.
+
+**4. "Weekend + Mon/Tue" is not expressible as a `when` quick-pick.** The vocabulary is
+`any | today | tomorrow | weekend`. The retry therefore sends a structured `dateRange` of
+Saturday→Tuesday and drops `when` (the two are mutually exclusive). The Saturday itself comes
+from `relativeDate('weekend', now)` — the same resolver /search uses — so "this weekend" means
+the same pair of days in a text as it does on the site.
+
+**5. The 0.78 threshold matches titles that differ only by a trailing number.** Measured:
+`"Toddler Session 0"` ~ `"Toddler Session 1"` = **0.800**, above the cutoff (`"Camp Week 1"` ~
+`"Camp Week 2"` = 0.714, below). Combined with the required same-time and same-place conditions
+this is usually *right* — two numbered sittings of one thing at one venue are one outing. But it
+would also merge, say, "Drop-In Gym 1" and "Drop-In Gym 2" running simultaneously in two rooms of
+one facility. Not a defect at 0.78 specifically; a property of trigram similarity on short
+titles, recorded so it is a known behaviour rather than a surprise.
+
+**6. Coverage-swap interpretation, stated because the PRD phrase is slightly ambiguous.** "One
+forced pick per band, max 2 total displacements" is implemented as: **at most 2 forced picks
+total**, at most one per band, reaching only into the top 20 of the ranked deduped list. When the
+selection is already full a forced pick displaces the lowest-ranked **non-forced** pick (so two
+forced picks can never evict each other); when the selection is not yet full it simply appends,
+and that still counts against the cap of 2 — because the cap is about how much forcing the
+surface does, not about how many slots happened to be occupied. If you meant "2 displacements but
+unlimited appends", that is a one-line change.
+
+**7. The retry *replaces* the primary result set rather than merging with it.** The retried
+search is a superset by construction (wider radius, wider window, same filters), so merging could
+only reintroduce candidates the retry's own dedup pass had already collapsed. Non-compounding is
+enforced *structurally*: `buildPicksRequest` reads only the original input, so there is no state
+to widen twice from — pinned by a test that builds the retry ten times and asserts the radius is
+still 20km.
+
+**8. The floor is 3; "5–10" is not a gate.** A 4-pick week sends as a 4-pick week and does **not**
+trigger the retry, because the PRD makes only the floor a gate. Implemented as specified and
+flagged: whether a below-5 week should also degrade is a V1 tuning question.
+
+### h.3 Verification
+
+`tests/sms/weekly_picks.test.ts` — 30 tests over a real `SearchEngine`, covering normal fill and
+the direct/hub split; the coverage-swap cap actually capping at 2 (three unrepresented bands, two
+forced, one left unrepresented); the top-20 reach boundary; append-vs-displace; the retry firing
+once and not compounding; both PRD dedup calibration pairs merging; same-title-different-venue
+**not** merging; the 500m arm; edge-inclusive time overlap; open-hours handling; the injected
+`sameParentOrg` arm; both empty-week reasons; and the pause flag.
+
+Whole SMS suite: **49 tests**. Full `unit` lane after these changes: **210 files / 3515 tests
+passing**, `tsc --noEmit` and `eslint` clean. The `db` and `invariants` lanes were not run — no
+database in this environment, and no Postgres has parsed any of the four migrations.
