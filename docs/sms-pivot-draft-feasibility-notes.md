@@ -1861,3 +1861,179 @@ number or the body.
 
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **283 tests across 17
 files**. Full `unit` lane: **223 files / 3749 tests passing**.
+
+---
+
+# Round 13 — the unknown-keyword reply (inbound webhook)
+
+Since round 1 the `unknown`/`default` branch of `dispatch()` has been a TODO. Anyone texting our
+number anything that is not JOIN/STOP/START/HELP got a truly empty `<Response></Response>` — total
+silence, which on SMS reads as "this number doesn't work".
+
+| File | What changed |
+|---|---|
+| `lib/sms/message.ts` | `renderUnknownKeywordMessage` |
+| `lib/sms/config.ts` | `signupUrl()` — one home for `/sms/signup` |
+| `app/api/sms/inbound/route.ts` | `escapeXml` + `messageResponse`; `dispatch` returns a reply |
+| `tests/sms/inbound_route.test.ts` | **NEW**, 17 tests — this route had no test file at all |
+| `tests/sms/weekly_send.test.ts` | added to the all-templates GSM-7 wall |
+
+## ay. The copy — **a SUGGESTION, not approved wording**
+
+> KIDS FUN: Sorry, we didn't catch that. Reply JOIN to confirm your signup, HELP for info, or
+> STOP to end. Not signed up? https://kidsfun.ca/sms/signup
+
+**149 septets of 160 — one segment, with 11 to spare.** PRD §2.6 specifies five messages and this
+is not one of them; §1.4 and §2.1 both assume "a human-readable nudge" without saying what it says.
+So this was originated here and needs Jon's review like the round-9 sender identification did.
+
+What is **not** a matter of taste is which keywords it names:
+
+- **JOIN** is the point. `classifyInboundKeyword` refuses to fuzzy-match, deliberately, because
+  promoting "JOIM" into an express-consent record is how consent gets fabricated. That decision is
+  only safe if the near-miss is told what the real word is. **This message is the other half of a
+  round-1 design decision that has been half-built for twelve rounds.**
+- **STOP** is the free opt-out and belongs on anything we send.
+- **HELP** routes to Twilio's own canned response, which is where CTIA expects support contact to
+  come from. (Dependency: that canned text is still an un-done Operator console task.)
+- **START is deliberately absent.** PRD §1.4 records that Twilio's behaviour toward a
+  previously-unknown or previously-stopped number "may be a canned carrier-level auto-reply rather
+  than a route into our app", and that START must be configured and verified against a real
+  Canadian toll-free number before launch. We do not print a keyword we cannot promise works.
+
+**The signup link is load-bearing, not decoration.** Somebody who texts us cold — §2.1's door 2 —
+has no `sms_consent` row, so if they follow "reply JOIN" the transition answers
+`no_such_subscriber` and the webhook says **nothing at all**. A nudge whose own advice leads to a
+second silence is worse than no nudge.
+
+⚠ **The 11 septets of headroom are the real constraint.** `https://kidsfun.ca/sms/signup` fits; a
+preview-deployment host (`…git-feat-x.vercel.app`) would tip it into a second segment. Measured and
+pinned, not assumed.
+
+## az. TwiML `<Message>`, not the REST API — and why that is not a third pattern
+
+Checked first, as asked: **no branch of this route replies with content today.** JOIN's welcome
+goes out through the REST API (`sendWelcomeText` → `dispatchSms`); STOP/START/HELP mutate state and
+say nothing, because Twilio's Advanced Opt-Out already answered them before our webhook ran.
+
+So this is the first use of the `body` argument `twiml()` has always taken — the route header has
+said "even though it MOSTLY does nothing" since round 1.
+
+The welcome uses the REST API for two reasons and **neither applies here**:
+
+1. It needs a per-subscriber read (area, ages, preferences token) keyed on the id the transition
+   resolved. This reply is a static string and does no lookup — which is also what keeps a branch
+   that fires on arbitrary inbound text cheap.
+2. It writes an `sms_send_log` row. **This one cannot.** Whoever texted us may have no
+   `sms_consent` row at all, and `sms_send_log.consent_text_version` is `NOT NULL` — a stranger has
+   no consent, so there is no version to record — while `send_type`'s CHECK (migration 0035) has no
+   value for an inbound reply. Logging it would mean minting a consent record for someone who never
+   gave one, which is the exact thing this product's audit trail exists to make impossible.
+
+Twilio records the message on its own side, and its suppression list still applies: a reply to a
+number that has opted out is dropped by Twilio (21610), not sent by us.
+
+**Gated by `SMS_SENDING_ENABLED` like every other outbound message.** "This deployment sends no
+messages" has to mean all of them or it is not auditable, and it matters concretely right now:
+until Toll-Free Verification is granted, outbound traffic from an unverified number is precisely
+what should not be flowing. The message is still **built** on every path, so a broken template
+fails in a dry run rather than only in production.
+
+## ba. `escapeXml` — a trap that is already in our own copy
+
+TwiML is XML and `&` breaks it. **§2.6's approved confirmation copy contains one** ("Msg&data rates
+may apply"). Nothing routes that template through this response today, but the first thing that
+does would emit a malformed document and a Twilio webhook error for a reason invisible in the copy.
+Escaped at the boundary, tested directly against that exact string.
+
+Narrowed to `& < >` after an earlier draft also escaped `'` and `"`: valid XML, but quotes are an
+ATTRIBUTE-value concern, and escaping them turned every apostrophe in our copy into `&apos;` on the
+wire — needless noise in the one artifact a person debugging a webhook actually reads.
+
+**The reply never echoes the inbound body**, which is tested: an inbound webhook that reflected the
+sender's text would be both an XML-injection vector and a way to make our number emit arbitrary
+content.
+
+## bb. Rate limiting — **a real concern, but a different and lower class than round 8's**
+
+Asked for explicitly, so here is the reasoning rather than a verdict.
+
+**It is not the same vector as `POST /api/sms/preferences`.** That route is unauthenticated HTTP:
+anyone can hit it from a script at zero marginal cost, which is what makes "nothing stops unlimited
+attempts" worth writing down. **This route is signature-gated** — only Twilio can trigger it — and
+the only way to make it emit a reply is to actually deliver an SMS to our toll-free number. That
+costs the sender real money or a real SIM, to cost us roughly one inbound plus one outbound
+segment. **The amplification is 1:1 and the attacker pays more than we do.** Twilio and the
+carriers also apply their own inbound abuse controls upstream of us. As an abuse vector: real,
+bounded by economics, low severity.
+
+**The case actually worth bounding is not an attacker — it is a LOOP.** Another automated system
+texts our number (a wrong-number notifier, an appointment bot, a "no longer in service"
+autoresponder), our nudge goes back, their system replies, and it runs until someone notices. That
+is the classic SMS auto-reply failure mode, it is not adversarial, and it is not rare. It argues
+for a **per-number cooldown**, not a global rate limit.
+
+**Why no bound was built here.** A per-number cooldown needs per-number state, and there is none
+for a stranger:
+
+- `sms_consent` only has a row for someone who used the form. Creating one on inbound garbage
+  would mint a consent-adjacent record for someone who never consented — the thing 0034 and the
+  double opt-in exist to prevent.
+- `sms_send_log` cannot hold it either, for the `consent_text_version NOT NULL` reason in §az.
+
+So a cooldown means new schema (an `sms_inbound_reply` table keyed on `phone_hash`, default-deny
+RLS, its own retention rule) or an external store. **And the PRD already declined that table once**:
+round 5's finding records that a dedicated inbound-event log was deliberately left out of MVP
+because §6 measures growth/CTR/churn only and Twilio's console already retains full inbound history
+at zero cost. A reply cooldown is that same table arriving through a different door, and it should
+be a deliberate reversal of that decision rather than a side effect of this round.
+
+**Cheaper mitigations, in the order I would reach for them:**
+
+1. **Twilio-side rate limits** on the Messaging Service, plus its built-in inbound abuse controls.
+   Configuration the Operator already holds; no code, no schema.
+2. **A stateless loop-breaker**: do not reply to a body that contains our own brand tag, which is
+   what a naive echo loop carries. One line, no state — but it would also swallow a human texting
+   "KIDS FUN what is this", so it is a decision, not a cleanup.
+3. **Do not reply to an empty/emoji-only body**, which is the shape most likely to be machine-
+   generated. This round chose to reply to those (see §bc); it is the lever to pull first if loops
+   actually appear.
+
+**Recommendation: record it in §7 Risks next to round 8's item, explicitly labelled as the lower
+class, with the loop — not abuse — named as the thing to watch.** Do not build a cooldown table
+before a loop has been observed.
+
+## bc. 🔴 Two smaller things
+
+**An emoji-only or empty body gets the reply too, and that is arguable.** `normalizeInboundBody`
+strips `\p{S}`, so a thumbs-up normalises to `''` and classifies as `unknown`. A satisfied
+subscriber who thumbs-up their weekly text gets "Sorry, we didn't catch that" — mildly clumsy.
+Chosen anyway because the alternative is the silence this round exists to end, and because nothing
+can distinguish a friendly emoji from a genuine question that happened to be all punctuation. Named
+as the first lever to pull if it reads badly, or if a loop appears (§bb).
+
+**The `start` branch has the same gap, one door over.** PRD §2.1's door 2 is *"Text START to
+[number]" — our webhook replies with a link to the form*, and the v2.7 changelog says the reply for
+a START from an unknown number should be "here's the signup link". `mirrorCarrierStart` runs and
+the route says nothing. **Not built** — it needs the transition's outcome to choose between three
+different replies (`no_such_subscriber` → signup link, `awaiting_confirmation` → "reply JOIN",
+`applied` → nothing), and all three are copy decisions. But the TwiML seam this round added is the
+thing that was missing, so it is now a small piece of work rather than an architectural one.
+
+## bd. Verification
+
+17 new tests, and **this route had no test file at all before them** — so they also pin round 1's
+existing behaviour: 403 on a missing signature and on a wrong one, fail-closed with
+`TWILIO_AUTH_TOKEN` unset, 413 before the signature check, and silence on a signed request with no
+`From` (the path this reply most plausibly could have leaked into, since the body classifies as
+`unknown` long before the `From` check runs). Plus: the real `<Message>` body; near-misses of JOIN
+("JOIM", "join please", "yes please"); emoji and empty bodies; silence for all four handled
+keywords and their aliases; the `SMS_SENDING_ENABLED` gate; no echo of the inbound body; the GSM-7
+guard and the 149/160 measurement; the degraded no-link shape; and `escapeXml` against §2.6's own
+`Msg&data`.
+
+Requests are signed with **Twilio's own SDK**, not with our implementation, for the same reason
+`twilio_signature.test.ts` is differential.
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **300 tests across 18
+files**. Full `unit` lane: **224 files / 3766 tests passing**.

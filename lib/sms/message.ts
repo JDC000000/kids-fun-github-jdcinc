@@ -332,6 +332,51 @@ export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessag
 }
 
 /**
+ * The reply to an inbound text we do not recognise (webhook `unknown` branch).
+ *
+ *     KIDS FUN: Sorry, we didn't catch that. Reply JOIN to confirm your signup, HELP for info,
+ *     or STOP to end. Not signed up? https://kidsfun.ca/sms/signup
+ *
+ * ── ⚠ THIS COPY IS A SUGGESTION, NOT APPROVED WORDING ───────────────────────────────────
+ * PRD §2.6 specifies five messages and this is not one of them; §1.4 and §2.1 both assume an
+ * unrecognised reply gets "a human-readable nudge" without saying what it says. So the wording
+ * below was originated here and needs Jon's review like any other consumer-facing copy — the same
+ * posture the round-4 ASCII substitution and the round-9 sender identification took. What is NOT
+ * a matter of taste is which keywords it names; see below.
+ *
+ * ── WHY IT NAMES JOIN, HELP AND STOP — AND DELIBERATELY NOT START ───────────────────────
+ * JOIN is ours end to end and is the single most valuable thing to say: `classifyInboundKeyword`
+ * refuses to fuzzy-match, on purpose, because promoting "JOIM" into an express-consent record is
+ * how you fabricate consent. That decision is only safe if the near-miss gets told what the
+ * actual word is — this message is the other half of that design, and until now it did not exist.
+ * STOP is the free opt-out and belongs on anything we send. HELP routes to Twilio's own canned
+ * response, which is where CTIA expects support contact to come from.
+ *
+ * START is left out even though the webhook handles it. PRD §1.4 records that Twilio's behaviour
+ * toward a previously-unknown or previously-stopped number "may be a canned carrier-level
+ * auto-reply rather than a route into our app", and that START must be explicitly configured and
+ * verified against a real Canadian toll-free number before launch. Printing a keyword whose
+ * behaviour is not yet verified would be telling a parent to do something we cannot promise works.
+ *
+ * ── WHY IT CARRIES THE SIGNUP LINK ──────────────────────────────────────────────────────
+ * Not decoration, and not up-sell. Somebody who texts our number cold — PRD §2.1's door 2 — has
+ * no `sms_consent` row, so if they follow "reply JOIN" the transition answers `no_such_subscriber`
+ * and the webhook says nothing. A nudge whose advice leads to a SECOND silence is worse than no
+ * nudge. The link is the only thing in this message that works for someone who has never signed
+ * up, and it is the door §2.1 already wants that reply to open.
+ *
+ * The clause degrades rather than printing a placeholder, matching the welcome text: the
+ * keyword half of the sentence stands on its own for an existing subscriber.
+ */
+export function renderUnknownKeywordMessage(signupUrl: string | null): RenderedMessage {
+  const signup = signupUrl ? ` Not signed up? ${signupUrl}` : '';
+  return render(
+    `${BRAND} Sorry, we didn't catch that. Reply JOIN to confirm your signup, ` +
+      `HELP for info, or STOP to end.${signup}`
+  );
+}
+
+/**
  * The empty week (PRD §2.6) — below the floor even after both degradation retries.
  *
  * It says so plainly rather than padding the list, which is the same posture /search's honest

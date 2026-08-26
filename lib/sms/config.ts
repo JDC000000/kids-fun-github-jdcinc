@@ -105,6 +105,18 @@ export function shortLinkUrl(token: string): string {
 }
 
 /**
+ * The public signup form: `{site}/sms/signup` (PRD §2.1).
+ *
+ * Written down once here rather than at each call site, for the same reason `SUPPORT_PHONE_E164`
+ * is: a path typed in two places is a path that will eventually be two different paths. Used by
+ * the inbound webhook's unknown-keyword reply, which is the one message that has to give somebody
+ * with no subscription somewhere to go.
+ */
+export function signupUrl(): string {
+  return `${siteUrl()}/sms/signup`;
+}
+
+/**
  * The subscriber's own no-login preferences/hub page: `{site}/u/{preferencesToken}` (PRD §2.4).
  *
  * This link is in EVERY message, and it is not decoration — it is the CASL unsubscribe path and

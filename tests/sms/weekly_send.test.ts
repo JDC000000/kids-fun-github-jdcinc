@@ -16,6 +16,7 @@ import type { AgeBandKey, ListingRecord } from '@/lib/search/types';
 import {
   assertGsm7Safe,
   renderConfirmRequestMessage,
+  renderUnknownKeywordMessage,
   estimateSegments,
   isGsm7,
   renderEmptyWeekMessage,
@@ -358,6 +359,9 @@ describe('SMS encoding and segment cost', () => {
     // as a comment in lib/sms/signup-store.ts, where no guard can see it.
     assertGsm7Safe(renderConfirmRequestMessage('North Vancouver').body);
     assertGsm7Safe(renderConfirmRequestMessage(null).body);
+    // The unknown-keyword reply — the only message this product sends from the inbound webhook.
+    assertGsm7Safe(renderUnknownKeywordMessage('https://kidsfun.example/sms/signup').body);
+    assertGsm7Safe(renderUnknownKeywordMessage(null).body);
   });
 
   it('reports the segment count on every rendered message', () => {

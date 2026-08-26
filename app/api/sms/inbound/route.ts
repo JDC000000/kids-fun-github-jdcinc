@@ -23,12 +23,17 @@
 // error on every single inbound message and surfaces as a red account health metric that has
 // nothing to do with our actual behaviour.
 //
+// EXACTLY ONE BRANCH SAYS ANYTHING: `unknown`. See `dispatch` for why that reply rides on this
+// response as TwiML `<Message>` rather than going out through the REST API the way the JOIN
+// welcome does — the short version is that a stranger's reply has no subscriber row to log
+// against, and `sms_send_log` cannot represent a message like that.
+//
 // STOP / START / HELP ARE ALREADY HANDLED BY TWILIO'S ADVANCED OPT-OUT before this route runs;
 // it suppresses the number and sends the standard reply itself. This route MIRRORS the result
 // into sms_consent.status so our database does not drift from Twilio's suppression list —
 // see lib/sms/keywords.ts for why that mirror is load-bearing rather than bookkeeping.
 import { NextResponse } from 'next/server';
-import { smsSendingEnabled, twilioAuthToken, webhookPublicUrl } from '@/lib/sms/config';
+import { signupUrl, smsSendingEnabled, twilioAuthToken, webhookPublicUrl } from '@/lib/sms/config';
 import { classifyInboundKeyword, type InboundKeyword } from '@/lib/sms/keywords';
 import { verifyTwilioSignature } from '@/lib/sms/twilio-signature';
 import {
@@ -38,6 +43,7 @@ import {
   recordHelpRequest,
   type TransitionResult,
 } from '@/lib/sms/consent-transitions';
+import { renderUnknownKeywordMessage } from '@/lib/sms/message';
 import { sendWelcomeText } from '@/lib/sms/welcome';
 import { withObservedRoute } from '@/lib/observability/route-handler';
 
@@ -50,6 +56,30 @@ export const runtime = 'nodejs'; // node:crypto + pg pool need the Node runtime,
  * us buffer before the signature check has had a chance to reject them.
  */
 export const MAX_INBOUND_PAYLOAD_BYTES = 16 * 1024;
+
+/**
+ * Escape text for XML ELEMENT CONTENT. Exported for test.
+ *
+ * NOT optional even though every body this route sends today is a static ASCII template. A TwiML
+ * document is XML, and `&` is the character that breaks it — our own §2.6 confirmation copy
+ * contains one ("Msg&data rates may apply"), so the first person to route an existing template
+ * through this response would produce a malformed document and a Twilio webhook error, for a
+ * reason that would not be obvious from the copy. Escaping at the boundary costs nothing.
+ *
+ * `'` AND `"` ARE DELIBERATELY NOT ESCAPED. Quotes only need escaping inside an ATTRIBUTE value;
+ * in element content they are ordinary characters. An earlier draft escaped them too, which is
+ * valid XML but turned every apostrophe in our copy into `&apos;` on the wire — harmless, and
+ * needless noise in the one artifact a person debugging a webhook actually reads. If this helper
+ * is ever reused for an attribute, it needs the quote cases back.
+ */
+export function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** TwiML that asks Twilio to send one reply to whoever just texted us. */
+function messageResponse(body: string): string {
+  return `<Response><Message>${escapeXml(body)}</Message></Response>`;
+}
 
 /** Empty TwiML: "received, reply nothing". Twilio expects this content type. */
 function twiml(body = '<Response></Response>', status = 200): NextResponse {
@@ -117,37 +147,80 @@ async function smsInboundPost(request: Request): Promise<NextResponse> {
   //    route does not send a wrong email, it rewrites someone's consent record.
   const dryRun = !smsSendingEnabled();
 
-  await dispatch(keyword, from, dryRun);
+  const { reply } = await dispatch(keyword, from, dryRun);
 
   // 6. Always TwiML, always 200 once verified. A transition failure is OUR problem to alert on
   //    (withObservedRoute + the structured result), not something to report to Twilio as a
   //    webhook error — a non-2xx here makes Twilio retry, which would replay the transition.
-  return twiml();
+  //    `reply` is non-null for exactly one branch today; every other keyword answers in silence.
+  return reply ? twiml(messageResponse(reply)) : twiml();
 }
 
-/** Route a classified keyword to its transition, and fire the one send a transition triggers. */
+/** What one inbound message produced: a state transition, a reply, or neither. */
+interface InboundDispatch {
+  /** The transition that ran, if any. Structured for observability; not returned to Twilio. */
+  result: TransitionResult | null;
+  /** Body to reply with as TwiML `<Message>`, or null for "received, say nothing". */
+  reply: string | null;
+}
+
+/**
+ * Route a classified keyword to its transition, fire the one send a transition triggers, and
+ * decide whether anything is said back.
+ *
+ * ═══ ONLY `unknown` REPLIES, AND THE OTHER FOUR ARE SILENT ON PURPOSE ═══
+ * STOP, START and HELP are handled by Twilio's Advanced Opt-Out BEFORE this route runs: Twilio
+ * suppresses or restores the number and sends the standard reply itself. A second reply from us
+ * would be a duplicate message on the one exchange a carrier scrutinises most. JOIN answers with
+ * the welcome text, which goes out through the REST API because it needs a database read
+ * (`sendWelcomeText`). So `unknown` is the only exchange where nobody has said anything yet.
+ *
+ * ═══ WHY THIS ONE RIDES ON THE WEBHOOK RESPONSE AND THE WELCOME DOES NOT ═══
+ * Not a third pattern — it is the first use of the `body` argument `twiml()` has always taken.
+ * The welcome uses the REST API for two reasons, and NEITHER applies here:
+ *   1. It needs a per-subscriber read (area, ages, preferences token) keyed on the id the
+ *      transition resolved. This reply is a static string and does no lookup at all — which is
+ *      also what keeps a `dispatch` branch that runs for arbitrary inbound text cheap.
+ *   2. It writes an `sms_send_log` row. This one CANNOT: whoever texted us may have no
+ *      `sms_consent` row at all, and that table requires `consent_text_version NOT NULL` — a
+ *      stranger has no consent, so there is no version to record, and `send_type`'s CHECK
+ *      (migration 0035) has no value for an inbound reply either. Logging it would mean
+ *      inventing a consent record for someone who never gave one, which is the exact thing this
+ *      product's audit trail exists to make impossible.
+ * Twilio records the message on its own side, and its suppression list still applies: a reply to
+ * a number that has opted out is dropped by Twilio (21610), not sent by us.
+ *
+ * ═══ IT IS GATED BY THE SAME DRY-RUN FLAG AS EVERYTHING ELSE ═══
+ * `SMS_SENDING_ENABLED !== 'true'` means "this deployment sends no messages", and carving out an
+ * exception for one short reply would make that invariant unauditable. It also matters right now
+ * for a concrete reason: until Toll-Free Verification is granted, outbound traffic from an
+ * unverified number is exactly what should not be flowing. The message is still BUILT on every
+ * path, so a broken template fails in a dry run rather than only in production.
+ */
 async function dispatch(
   keyword: InboundKeyword,
   from: string,
   dryRun: boolean
-): Promise<TransitionResult | null> {
+): Promise<InboundDispatch> {
   switch (keyword) {
     case 'join':
-      return confirmAndWelcome(from, dryRun);
+      return { result: await confirmAndWelcome(from, dryRun), reply: null };
     case 'stop':
-      return mirrorCarrierStop(from, { dryRun });
+      return { result: await mirrorCarrierStop(from, { dryRun }), reply: null };
     case 'start':
-      return mirrorCarrierStart(from, { dryRun });
+      return { result: await mirrorCarrierStart(from, { dryRun }), reply: null };
     case 'help':
-      return recordHelpRequest(from, { dryRun });
+      return { result: await recordHelpRequest(from, { dryRun }), reply: null };
     case 'unknown':
-    default:
-      // TODO (scaffold): reply with a short human-readable nudge naming the keywords we
-      // understand. Deliberately NOT a fuzzy re-match against JOIN — see lib/sms/keywords.ts
-      // for why a near-miss must not be promoted into a consent confirmation.
+    default: {
+      // Deliberately NOT a fuzzy re-match against JOIN — see lib/sms/keywords.ts for why a
+      // near-miss must not be promoted into a consent confirmation. This reply is the other half
+      // of that decision: the near-miss gets told what the actual word is.
       // `redactPhone(from)` is what any log line about this branch must use.
       void redactPhone(from);
-      return null;
+      const message = renderUnknownKeywordMessage(signupUrl());
+      return { result: null, reply: dryRun ? null : message.body };
+    }
   }
 }
 
