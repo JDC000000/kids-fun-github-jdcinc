@@ -94,6 +94,14 @@
 -- titles REPEAT across municipalities, which is safe because dedup also requires the two
 -- venues to be within 0.5km of each other.
 --
+-- ── IT FAILS LOUDLY, BY DESIGN ─────────────────────────────────────────────────────────────
+-- Section 8 is a hard guard that RAISEs — and therefore rolls the whole `-1` transaction back —
+-- if the reference lookups resolved to nothing: a NULL primary_category_id, an empty
+-- age_band_matches array, or zero tag rows. Those are the failure modes that would otherwise
+-- SUCCEED silently and leave a catalogue that loads, ranks, and is then dropped in full at the
+-- read model's age gate. A green apply with an empty weekly text and no error to explain it is the
+-- worst outcome available here, so it is made impossible rather than documented.
+--
 -- ── TEARDOWN ───────────────────────────────────────────────────────────────────────────────
 -- Everything hangs off one source row, so removal is exact. Copy-paste, in this order:
 --
@@ -483,7 +491,77 @@ JOIN tag t ON t.key = ANY(v.tag_keys)
 ON CONFLICT (occurrence_id, tag_id) WHERE tag_id IS NOT NULL DO NOTHING;
 
 
--- ── 8. WHAT JUST HAPPENED ──────────────────────────────────────────────────────────────────
+-- ── 8. HARD GUARD — fail loudly rather than leave an inert catalogue ───────────────────────
+-- WHY THIS EXISTS. Sections 4-7 resolve categories, age bands and tags by LOOKUP:
+--     (SELECT c.id FROM category c WHERE c.key = v.category_key)
+--     ARRAY(SELECT b.id FROM age_band b WHERE ...)
+--     JOIN tag t ON t.key = ANY(v.tag_keys)
+-- A lookup that matches nothing is NOT an error. It returns NULL, or an empty array, or no rows —
+-- and the INSERT succeeds. The apply reports success, section 9's roll-up counts the right number
+-- of occurrences, and every listing is then silently dropped at the read model's front-door age
+-- gate. A green apply, an empty weekly text, and no error anywhere to explain it.
+--
+-- THE REALISTIC WAY TO GET THERE is applying as a non-owner role. Migration 0018 puts default-deny
+-- RLS on the public tables; the owner (postgres) bypasses it because none of them is FORCE RLS, but
+-- a non-owner's reference lookups would return empty instead of raising. Hence: apply as postgres.
+-- This block turns that silent outcome into a loud one — RAISE aborts the -1 transaction and the
+-- whole seed rolls back, which is the correct failure for a fixture that is worthless if partial.
+--
+-- ASSERTS INVARIANTS, NOT MAGIC NUMBERS. Row-count literals would go stale the moment anyone adds
+-- an occurrence; these hold for any edit of the data above.
+DO $$
+DECLARE
+  v_occ int; v_null_cat int; v_age_rows int; v_empty_bands int; v_tags int;
+BEGIN
+  SELECT count(*) INTO v_occ
+    FROM activity_occurrence o JOIN activity_series s ON s.id = o.series_id
+   WHERE s.source_id = '5e000000-0000-4000-8000-000000000001';
+
+  SELECT count(*) INTO v_null_cat
+    FROM activity_occurrence o JOIN activity_series s ON s.id = o.series_id
+   WHERE s.source_id = '5e000000-0000-4000-8000-000000000001'
+     AND o.primary_category_id IS NULL;
+
+  SELECT count(*), count(*) FILTER (WHERE cardinality(a.age_band_matches) = 0)
+    INTO v_age_rows, v_empty_bands
+    FROM occurrence_age a
+    JOIN activity_occurrence o ON o.id = a.occurrence_id
+    JOIN activity_series s ON s.id = o.series_id
+   WHERE s.source_id = '5e000000-0000-4000-8000-000000000001';
+
+  SELECT count(*) INTO v_tags
+    FROM occurrence_category_tag t
+    JOIN activity_occurrence o ON o.id = t.occurrence_id
+    JOIN activity_series s ON s.id = o.series_id
+   WHERE s.source_id = '5e000000-0000-4000-8000-000000000001';
+
+  IF v_occ = 0 THEN
+    RAISE EXCEPTION 'kf-sms-v2 seed: no occurrences were written at all.';
+  END IF;
+  IF v_null_cat > 0 THEN
+    RAISE EXCEPTION 'kf-sms-v2 seed: % of % occurrences have a NULL primary_category_id — the '
+      'category lookup matched nothing. Is `category` seeded, and are you applying as the table '
+      'owner (postgres)? Rolling back rather than leaving an inert catalogue.', v_null_cat, v_occ;
+  END IF;
+  IF v_age_rows <> v_occ THEN
+    RAISE EXCEPTION 'kf-sms-v2 seed: % occurrences but % occurrence_age rows — every occurrence '
+      'needs one, or isShowableOnFrontDoor drops it from every text.', v_occ, v_age_rows;
+  END IF;
+  IF v_empty_bands > 0 THEN
+    RAISE EXCEPTION 'kf-sms-v2 seed: % occurrence_age rows have an EMPTY age_band_matches array — '
+      'the age_band lookup matched nothing. Is `age_band` seeded?', v_empty_bands;
+  END IF;
+  IF v_tags = 0 THEN
+    RAISE EXCEPTION 'kf-sms-v2 seed: no occurrence_category_tag rows were written — the tag lookup '
+      'matched nothing. Is `tag` seeded?';
+  END IF;
+
+  RAISE NOTICE 'kf-sms-v2 seed guard OK: % occurrences, % age rows, % tag rows, 0 null categories, '
+    '0 empty age-band arrays.', v_occ, v_age_rows, v_tags;
+END $$;
+
+
+-- ── 9. WHAT JUST HAPPENED ──────────────────────────────────────────────────────────────────
 -- Printed so the apply is self-verifying: the numbers below are the ones to check, not the
 -- absence of an error. Expect 6 pickable per municipality and the four controls accounted for.
 SELECT
