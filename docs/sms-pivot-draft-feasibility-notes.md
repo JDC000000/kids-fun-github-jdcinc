@@ -2992,3 +2992,54 @@ closes the gap that a shipped string had never been through sign-off.
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **422 tests across 24
 files** (was 416/24). Full `unit` lane: **230 files / 3888 tests passing**. Measured after the
 commit, per §cg.
+
+## cr. Stage D — the four click-through seams are real
+
+`findOccurrenceIdByShortRef`, `findSubscriberIdByShortRef`, `findSendLogIdForClick` and
+`recordClick` are no longer stubs. They keep their injectable seam types, so the decision table in
+`resolveClickThrough` is still testable without a database — the unit lane's 32 tests are
+unchanged and still pass. `tests/sms/click_through-db.test.ts` (23 tests, counted with `vitest list`) covers the seams
+themselves against a real Postgres.
+
+## cs. ⚠ One predicate the schema does NOT enforce, and what it is defending against
+
+`findSendLogIdForClick` gained `AND outcome = 'sent'`, which the TODO block did not have. It is
+worth separating two kinds of "safe" here, because they look identical in a query and are not:
+
+  `send_type = 'weekly'` IS SCHEMA-GUARANTEED. 0035's CHECK `sms_send_log_picks_only_weekly` is
+  `picks_snapshot IS NULL OR send_type = 'weekly'`, and any row satisfying the containment test has
+  a non-null snapshot. The predicate is genuinely redundant and kept only for legibility.
+
+  `outcome = 'sent'` IS NOT. 0035 constrains `send_type` against `picks_snapshot`, not `outcome` —
+  so the schema happily permits a weekly row with a picks snapshot and `outcome = 'failed'`. What
+  prevents one today is a WRITER-SIDE invariant in a different module: `weekly-send-io.ts` passes
+  `picksSnapshot: null` on both its `failed` and `stopped_via_carrier` branches (lines ~552 and
+  ~569). That invariant is reasonable and completely unenforced.
+
+THE FAILURE IF IT EVER CHANGED IS NOT "a stray row matches". It is that `ORDER BY created_at DESC`
+would make the UNDELIVERED row WIN over the real, earlier send carrying the same activity. That is
+CTR corruption in both directions at once — a phantom click on a message nobody received, and a
+missing click on the message the parent actually tapped — and nothing would error. Snapshotting
+what we WOULD have sent is a plausible future want, so this is not a hypothetical.
+
+`tests/sms/click_through-db.test.ts` pins it with a row `recordSmsSend` cannot produce (written
+with raw SQL on purpose), and asserts `toBe(delivered)` rather than `toBeNull()` so the test fails
+if the ordering ever starts preferring the failed row.
+
+## ct. Verification, and its honest limits
+
+  • `tsc --noEmit` and the unit lane: clean. Both narrow TYPOS. The unit lane never opens a
+    connection — every `resolveClickThrough` call in it injects its seams.
+  • EXPLAIN against the live schema, all 9 statements (4 seams + 5 the test file issues): every one
+    plans. It caught nothing this round, because the column-name error it WOULD have caught was
+    found first by reading 0034 — the test's purge helper said `child_birth_years` and the column
+    is `birth_years`.
+  • `SET enable_seqscan = off` + EXPLAIN, to prove the `$1::bigint` casts do not defeat the
+    indexes: both give `Index Cond: (short_ref = '1'::bigint)`, on
+    `idx_activity_occurrence_short_ref` and `sms_consent_short_ref_key`, with `archived_at IS NULL`
+    as a recheck Filter — exactly what the code comment claims. Worth doing because a cast on the
+    COLUMN side would have silently defeated both, and the plain EXPLAIN showed Seq Scans (correct
+    — the tables hold 1 row and 0 rows — and therefore no evidence either way).
+  • NONE OF THAT IS EVIDENCE THE BEHAVIOUR IS RIGHT. EXPLAIN plans statements without running them
+    and shares this file's assumptions about what the rows mean; the unit lane mocks the seam being
+    tested. The db lane, run by the Operator, is the only load-bearing check.

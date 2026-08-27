@@ -5,9 +5,9 @@
 // counted. Route-free and framework-free so the whole decision table is testable without a
 // request; app/s/[shortId]/route.ts is the thin transport over it.
 //
-// Three database reads, all stubbed here (`sms_consent`, `sms_send_log` and `activity_occurrence`
-// are unapplied SQL on this branch), each carrying the exact query it will issue — same posture as
-// every I/O boundary on this branch.
+// Three database reads and one write, all REAL as of Stage D (migrations 0034-0037 applied by the
+// Operator). Each remains an injectable seam, so the whole decision table below is still testable
+// without a database; tests/sms/click_through-db.test.ts exercises the seams themselves.
 //
 // ── THE REDIRECT NEVER DEPENDS ON THE LOGGING ───────────────────────────────────────────
 // A parent tapped a link because they want to see an activity. Whether our analytics write
@@ -22,6 +22,7 @@
 // this occurrence. See `findSendLogIdForClick` for the query and for why the existing index makes
 // it cheap. Two alternatives were rejected — see that function.
 
+import { query } from '@/lib/db/client';
 import { decodeShortLink } from './short-link';
 
 /**
@@ -224,48 +225,57 @@ export interface ClickThroughOptions extends ClickThroughDeps {
   linkOrigin?: LinkOrigin;
 }
 
-// ── The stubbed reads ───────────────────────────────────────────────────────────────────
+// ── The reads and the write ─────────────────────────────────────────────────────────────
 
 /**
- * `activity_occurrence.short_ref` → `id`. STUB.
- *
- * TODO:
- *   SELECT id FROM activity_occurrence WHERE short_ref = $1 AND archived_at IS NULL
+ * `activity_occurrence.short_ref` → `id`.
  *
  * `archived_at IS NULL` is the load-bearing clause. Catalogue rows are soft-deleted, and a link
  * minted three weeks ago can easily point at something since archived — a cancelled session, a
  * source that stopped publishing. Without it we would redirect a parent to a detail page for an
  * activity that is not happening, which is worse than telling them it is gone.
  *
- * A MISS IS AN EXPECTED OUTCOME, NOT AN ERROR. It is what `occurrence_gone` exists for. The
- * unique index from migration 0037 makes this a single index probe.
+ * A MISS IS AN EXPECTED OUTCOME, NOT AN ERROR. It is what `occurrence_gone` exists for.
+ *
+ * PLAN: `idx_activity_occurrence_short_ref` (0037) is UNIQUE and non-partial, so this is one index
+ * probe followed by a recheck of `archived_at` on the single candidate row.
  */
-export const findOccurrenceIdByShortRef: OccurrenceShortRefLookup = async () => null;
+export const findOccurrenceIdByShortRef: OccurrenceShortRefLookup = async (shortRef) => {
+  const rows = await query<{ id: string }>(
+    `SELECT id FROM activity_occurrence WHERE short_ref = $1::bigint AND archived_at IS NULL`,
+    [shortRef]
+  );
+  return rows[0]?.id ?? null;
+};
 
 /**
- * `sms_consent.short_ref` → `id`. STUB.
- *
- * TODO:
- *   SELECT id FROM sms_consent WHERE short_ref = $1
+ * `sms_consent.short_ref` → `id`.
  *
  * NO `phone_number IS NOT NULL` HERE, unlike the weekly job's loader — and the difference
  * matters. `short_ref` and `id` survive the 30-day purge (it NULLs only the personal columns), so
  * a purged subscriber's old links still attribute correctly, which is exactly what we want: the
  * click is a fact about a message we sent, and it stays countable after their data goes.
  * A miss here means the row was DELETED — the 90-day never-confirmed purge.
+ *
+ * NO STATUS PREDICATE EITHER, for the same reason. Somebody who has since paused or texted STOP
+ * can still tap a link in a message we sent them while they were active, and that tap is a real
+ * click on a real send. Filtering by status would silently under-count engagement at exactly the
+ * moment we most want to see it.
+ *
+ * THE SELECT LIST IS ONE COLUMN, deliberately. This row holds a phone number, a postal code and
+ * children's birth years; the caller needs an id to write an analytics row and nothing else, so
+ * nothing else is read. Same posture as `findSubscriberByPhone` in consent-transitions.ts.
  */
-export const findSubscriberIdByShortRef: SubscriberShortRefLookup = async () => null;
+export const findSubscriberIdByShortRef: SubscriberShortRefLookup = async (shortRef) => {
+  const rows = await query<{ id: string }>(
+    `SELECT id FROM sms_consent WHERE short_ref = $1::bigint`,
+    [shortRef]
+  );
+  return rows[0]?.id ?? null;
+};
 
 /**
- * Which send did this tap come from? STUB.
- *
- * TODO:
- *   SELECT id FROM sms_send_log
- *    WHERE subscriber_id = $1
- *      AND send_type = 'weekly'
- *      AND picks_snapshot @> $2::jsonb        -- [{"occurrence_id": "<uuid>"}]
- *    ORDER BY created_at DESC
- *    LIMIT 1
+ * Which send did this tap come from?
  *
  * ═══ WHY THIS QUERY EXISTS AT ALL — A REAL GAP BETWEEN THE TOKEN AND THE SCHEMA ═══
  * `sms_click_event.send_log_id` is `uuid NOT NULL` (migration 0036), but the token carries only
@@ -282,6 +292,25 @@ export const findSubscriberIdByShortRef: SubscriberShortRefLookup = async () => 
  *     question CTR asks.
  * Recovering it is the cheap option and it costs nothing on the send side.
  *
+ * ═══ TWO REDUNDANT-LOOKING PREDICATES, AND ONLY ONE OF THEM IS REALLY REDUNDANT ═══
+ * Worth separating, because "the schema guarantees it" and "the current writer happens to do it"
+ * are very different kinds of safe:
+ *
+ *   `send_type = 'weekly'` IS SCHEMA-GUARANTEED. 0035's CHECK `sms_send_log_picks_only_weekly`
+ *   says `picks_snapshot IS NULL OR send_type = 'weekly'`, and a row that satisfies the
+ *   containment test below necessarily has a non-null snapshot. Kept for legibility only.
+ *
+ *   `outcome = 'sent'` IS NOT. The schema permits a weekly row with a picks snapshot and ANY
+ *   outcome; what actually prevents one today is a WRITER-SIDE invariant in another module —
+ *   weekly-send-io.ts passes `picksSnapshot: null` on both its 'failed' and 'stopped_via_carrier'
+ *   branches. That invariant is entirely reasonable and entirely unenforced, and if it ever
+ *   changed (snapshotting what we WOULD have sent is a plausible future want) this query would
+ *   start attributing clicks to messages that were never delivered — and `ORDER BY created_at
+ *   DESC` means the undelivered row would WIN over the successful earlier send carrying the same
+ *   activity. That is silent CTR corruption in both directions: a phantom click on a failed send,
+ *   a missing one on a real send. One predicate closes it. It is not redundancy, it is refusing
+ *   to depend on a distant module's discipline for a correctness property.
+ *
  * PERFORMANCE — CHECKED, AND NO NEW INDEX IS NEEDED. This looks like it wants a GIN index on
  * `picks_snapshot`, and it does not: the query is SUBSCRIBER-SCOPED, and
  * `idx_sms_send_log_subscriber (subscriber_id, created_at DESC)` already exists (0035). One
@@ -294,18 +323,30 @@ export const findSubscriberIdByShortRef: SubscriberShortRefLookup = async () => 
  * A MISS IS POSSIBLE AND IS NOT AN ERROR: dry-run sends write no log row at all, and a
  * pre-`picks_snapshot` row would not match. The tap still redirects; it just goes uncounted.
  */
-export const findSendLogIdForClick: SendLogLookup = async () => null;
+export const findSendLogIdForClick: SendLogLookup = async (subscriberId, occurrenceId) => {
+  const rows = await query<{ id: string }>(
+    `SELECT id
+       FROM sms_send_log
+      WHERE subscriber_id = $1
+        AND send_type = 'weekly'
+        AND outcome = 'sent'
+        AND picks_snapshot @> $2::jsonb
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    // `[{"occurrence_id": "<uuid>"}]` — jsonb array containment, which asks "does some element of
+    // picks_snapshot contain this object". It matches the writer's `[{occurrence_id, rank}]`
+    // elements without naming `rank`, so it does not care what rank the pick held.
+    [subscriberId, JSON.stringify([{ occurrence_id: occurrenceId }])]
+  );
+  return rows[0]?.id ?? null;
+};
 
 /**
- * Append one `sms_click_event`. STUB.
+ * Append one `sms_click_event`.
  *
- * TODO:
- *   INSERT INTO sms_click_event (subscriber_id, send_log_id, occurrence_id, link_origin)
- *   VALUES ($1, $2, $3, $4)
- *
- * `$4` IS A BOUND PARAMETER, NOT AN INTERPOLATED STRING, and it arrives already mapped onto the
- * `LinkOrigin` union — see `parseLinkOrigin`. 0036's CHECK constrains this column, so a raw
- * query-string value reaching here would fail the insert, and this recorder's failures are
+ * `link_origin` IS A BOUND PARAMETER, NOT AN INTERPOLATED STRING, and it arrives already mapped
+ * onto the `LinkOrigin` union — see `parseLinkOrigin`. 0036's CHECK constrains this column, so a
+ * raw query-string value reaching here would fail the insert, and this recorder's failures are
  * swallowed by design: the click would vanish with no error anywhere.
  *
  * NO DEDUPLICATION, DELIBERATELY, and migration 0036 says so in its own comment: there is no
@@ -313,10 +354,22 @@ export const findSendLogIdForClick: SendLogLookup = async () => null;
  * taps. Collapsing them would turn a click LOG into a click FLAG. Any dedup a report wants is a
  * COUNT(DISTINCT ...) at read time, where the choice is visible.
  *
+ * NOTHING IS REDACTED FROM ERRORS HERE, unlike signup-store.ts — and that is a decision, not an
+ * omission. Every parameter on this path is a uuid or a two-value enum; the phone number, postal
+ * code and birth years never come near it, which is why `findSubscriberIdByShortRef` reads one
+ * column. There is nothing for a driver error to leak. (In practice nothing sees these errors at
+ * all — `resolveClickThrough` swallows them so the redirect still happens.)
+ *
  * Written by the service pool — `sms_click_event` is default-deny RLS (0036), and the tapping
  * subscriber is not signed in and never touches the table directly.
  */
-export const recordClick: ClickRecorder = async () => {};
+export const recordClick: ClickRecorder = async (event) => {
+  await query(
+    `INSERT INTO sms_click_event (subscriber_id, send_log_id, occurrence_id, link_origin)
+     VALUES ($1, $2, $3, $4)`,
+    [event.subscriberId, event.sendLogId, event.occurrenceId, event.linkOrigin]
+  );
+};
 
 // ── The resolution ──────────────────────────────────────────────────────────────────────
 

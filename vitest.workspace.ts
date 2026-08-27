@@ -139,6 +139,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/sms/signup_persistence-db.test.ts',
   'tests/sms/send_log-db.test.ts',
   'tests/sms/preferences_weekly-db.test.ts',
+  'tests/sms/click_through-db.test.ts',
   'tests/search/postgres-repository.test.ts',
   'tests/snapshot/catalogue-shape.test.ts',
   'tests/snapshot/policy-schema-guard.test.ts',
