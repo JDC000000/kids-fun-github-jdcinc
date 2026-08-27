@@ -180,6 +180,12 @@ different inputs:**
 * **A MISSING SECRET produces `https://…/u/` — a bare path with no segment.** `app/u/` contains
   only `[preferencesToken]/`, there is no catch-all and `trailingSlash` is unset, so a dynamic
   segment cannot match an empty one. **It is a hard 404**, not the designed notice.
+  **OBSERVED, not merely reasoned from the route tree:** `curl` against a running instance returns
+  `308 → /u`, and `/u` matches nothing. The page component never executes, so its careful
+  unknown-token notice logic is never reached. Worth stating as runtime evidence because two
+  separate readings of this file's source concluded — reasonably, and wrongly — that the empty
+  string reaches `findByPreferencesToken` and gets the notice. It does not: the route never
+  matches, so the query never runs.
 * **A WRONG-BUT-PRESENT token** (a mangled link, a purged row) reaches the page, matches no row,
   and gets the deliberate *"this link is not working"* notice — the behaviour `app/u/` was built
   for. That path is fine and is not what this entry is about.
