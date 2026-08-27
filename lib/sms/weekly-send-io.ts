@@ -39,8 +39,9 @@ import { loadPostgresListings } from '@/lib/search/postgres-repository';
 import { getPostgresAliasResolver } from '@/lib/search/postgres-alias-resolver';
 import { getPostgresRegionHierarchy } from '@/lib/search/postgres-region-hierarchy';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
-import { phoneHashSalt, smsSendingEnabled } from './config';
+import { phoneHashSalt, preferencesSecret, smsSendingEnabled } from './config';
 import { MissingPhoneHashSaltError } from './phone-hash';
+import { MissingPreferencesSecretError } from './preferences-token';
 import { nextEmptyWeekState, type EmptyWeekState } from './empty-week';
 import {
   buildWeeklySms,
@@ -503,25 +504,47 @@ async function bestEffortAudit(
 }
 
 /**
- * Refuse to start a real send that cannot be audited.
+ * Refuse to start a real send that cannot be audited, or whose unsubscribe link would not work.
  *
  * ═══ WHY THIS EXISTS, AND WHY IT IS NOT A PER-MESSAGE CHECK ═══
- * `recordSmsSend` already throws `MissingPhoneHashSaltError` when SMS_PHONE_HASH_SALT is absent —
- * but it throws AFTER the dispatch, inside `bestEffortAudit`. Without this guard, a missing salt
- * means every text goes out and every audit row is lost, one subscriber at a time, and the run
- * still reports success. Checking once, before anything is dispatched, converts that into a
- * refusal to start. Same convention as `recordSmsSend`'s own error rather than a new policy.
+ * Both failures below are ALREADY detected somewhere — and both are detected too late to matter.
+ * `recordSmsSend` throws `MissingPhoneHashSaltError`, but only AFTER the dispatch, inside
+ * `bestEffortAudit`. `mintPreferencesToken` returns null, but at SIGNUP, silently and correctly.
+ * Neither can stop a message going out. Checking once, before anything is dispatched, is what
+ * converts "every text ships broken and the run reports success" into a refusal to start.
+ *
+ * ═══ TWO SECRETS, AND EXACTLY TWO ═══
+ * SMS_PHONE_HASH_SALT      — without it, `sms_send_log` cannot be written and the CASL audit trail
+ *                            silently does not exist for any message in the run.
+ * SMS_PREFERENCES_SECRET   — without it, `preferences_token` is never minted, `preferencesUrl('')`
+ *                            renders a bare `/u/`, and every message carries an unsubscribe link
+ *                            that 404s. lib/sms/config.ts's own comment: "a message that renders
+ *                            without it is a message that must not be sent."
+ *
+ * SMS_SHORT_LINK_SECRET IS DELIBERATELY NOT HERE. `encodeShortLink` already throws hard when it is
+ * unset (short-link.ts:130-132), inside `buildWeeklySms`, which runs BEFORE any dispatch — so it
+ * is already fail-closed by an existing convention and nothing is sent. Adding it would duplicate
+ * a guarantee that already holds, and a redundant check invites the reader to assume the other two
+ * were redundant as well.
+ *
+ * ═══ IT ASKS `preferencesSecret()`, NOT `process.env` ═══
+ * Deliberately the SAME call `mintPreferencesToken` makes, so the guard tracks the mint function
+ * rather than a raw variable name. If that truthiness check ever changes — a minimum length, a
+ * format check, a rename — this moves with it instead of drifting into a guard that passes while
+ * the thing it guards fails. A check that can silently stop matching what it protects is worse
+ * than no check, because it reads as protection.
  *
  * ═══ A DRY RUN IS EXEMPT, AND THAT IS LOAD-BEARING, NOT A LOOPHOLE ═══
  * `dispatchSms` returns `{ outcome: 'dry_run' }` as its FIRST branch (twilio-client.ts:161),
- * before the client check, so a dry run can never reach a log write and genuinely does not need
- * the salt. Gating dry runs on it would break every verification run on every unconfigured
- * machine — including this branch's own, where the salt has never been set and never needed to be.
- * The guard fires on exactly the case that matters: a run that will really text somebody.
+ * before the client check, so a dry run reaches neither a log write nor a real subscriber's phone.
+ * Gating dry runs would break every verification run on every unconfigured machine — including
+ * this branch's own, where neither secret has ever been set and neither needed to be. The guard
+ * fires on exactly the case that matters: a run that will really text somebody.
  */
-export function assertAuditableSend(dryRun: boolean): void {
+export function assertSendPreconditions(dryRun: boolean): void {
   if (dryRun) return;
   if (!phoneHashSalt()) throw new MissingPhoneHashSaltError();
+  if (!preferencesSecret()) throw new MissingPreferencesSecretError();
 }
 
 /**
@@ -803,8 +826,8 @@ export async function sendWeeklySmsBulk(options: BulkOptions = {}): Promise<Bulk
   // had already gone out, by a throw that `bestEffortAudit` catches — every message delivered and
   // every CASL audit row silently lost, with the run still reporting success. Failing the whole
   // job once, loudly, before the first text, is the only point at which this is still recoverable.
-  // Exempt on a dry run — see `assertAuditableSend`.
-  assertAuditableSend(dryRun);
+  // Exempt on a dry run — see `assertSendPreconditions`.
+  assertSendPreconditions(dryRun);
 
   // THE READ MODEL IS LOADED ONCE FOR THE WHOLE BATCH, never once per subscriber — the design
   // decision this function exists to enforce (round 4, mirroring lib/email/weekly.ts). `deps` is

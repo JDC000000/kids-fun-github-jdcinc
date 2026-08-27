@@ -21,7 +21,12 @@
 // rule (lib/sms/weekly-send-io.ts), and `sanitize` below is the second, independent barrier:
 // this route must not become the place a future field on that type leaks out of.
 import { NextResponse } from 'next/server';
-import { phoneHashSalt, smsCronSecret, smsSendingEnabled } from '@/lib/sms/config';
+import {
+  phoneHashSalt,
+  preferencesSecret,
+  smsCronSecret,
+  smsSendingEnabled,
+} from '@/lib/sms/config';
 import { safeEqual } from '@/lib/sms/safe-compare';
 import {
   loadWeeklySmsDeps,
@@ -108,9 +113,20 @@ export async function POST(request: Request): Promise<NextResponse> {
   // A dry run is exempt for the same reason it is exempt in the job: `dispatchSms` returns
   // `dry_run` before anything is dispatched or logged, so no salt is needed and gating it would
   // break verification runs on every unconfigured machine.
-  if (!dryRun && !phoneHashSalt()) {
+  //
+  // TWO SECRETS, mirroring `assertSendPreconditions` exactly — the salt (no CASL audit trail
+  // without it) and the preferences secret (every unsubscribe link 404s without it). NOT
+  // SMS_SHORT_LINK_SECRET: `encodeShortLink` already throws before any dispatch, so it is fail-
+  // closed already. `preferencesSecret()` is called rather than reading the env var, so this
+  // tracks what `mintPreferencesToken` actually checks.
+  const missingSecret = !phoneHashSalt()
+    ? 'SMS_PHONE_HASH_SALT'
+    : !preferencesSecret()
+      ? 'SMS_PREFERENCES_SECRET'
+      : null;
+  if (!dryRun && missingSecret) {
     return NextResponse.json(
-      { ok: false, error: 'weekly sms send not configured: SMS_PHONE_HASH_SALT is absent' },
+      { ok: false, error: `weekly sms send not configured: ${missingSecret} is absent` },
       { status: 503 }
     );
   }

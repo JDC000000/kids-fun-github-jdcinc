@@ -137,13 +137,14 @@ it before a send — no startup check, no cron guard. The only detection is the 
 **Unreachable today** only because `SMS_SENDING_ENABLED` has never been set. It becomes reachable
 on exactly the day the Operator flips it — the day nobody is re-reading this page.
 
-**A CODE FIX WAS PROPOSED AND IS NOT APPROVED.** Making the weekly send refuse to dispatch when the
-salt is absent is ~5 lines, and it is a deliberate behaviour change rather than a bug fix: the
-argument cuts both ways. `bestEffort` exists so that bookkeeping cannot break a subscriber's week,
-which is correct for a transient database blip. A missing secret is not transient — it fails
-identically on every send forever, and "no audit trail" is arguably the one bookkeeping failure
-worth stopping a send for. **That is a judgement about what happens to a real subscriber, so it
-belongs to the Operator or Jon, and the code has deliberately been left alone.**
+**✅ THE CODE FIX IS BUILT — Operator-approved, and it covers TWO secrets, not one.** The weekly
+send now refuses to start when either `SMS_PHONE_HASH_SALT` or `SMS_PREFERENCES_SECRET` is absent
+(`assertSendPreconditions`), in the bulk job AND in the route — the route separately, because
+single-subscriber mode calls the never-throws per-subscriber function directly and cannot be
+guarded from inside. A second layer, `bestEffortAudit`, makes a lost audit row loud rather than
+silent without changing `bestEffort` for the idempotent state writes. Dry runs stay exempt.
+**THE ENVIRONMENT VALUE IS STILL OUTSTANDING** — the guard means a misconfigured run now fails
+loudly instead of shipping silently, which is a much better failure, but it is still a failure.
 
 ## B6. The other two SMS secrets have no owner either — and they fail DIFFERENTLY
 **Blocked:** nothing. `SMS_PREFERENCES_SECRET` and `SMS_SHORT_LINK_SECRET` are both in
@@ -205,10 +206,15 @@ three secrets behave alike.
 every message, silently. The short-link secret stops the send instead, loudly. Only the first is
 urgent.
 
-**Related, and deliberately not decided here:** B5 proposes a fail-loud pre-flight for
-`SMS_PHONE_HASH_SALT`. If that is built, ONE pre-flight covering all three secrets is very likely a
-better answer than three separate reactive throws — but that is a scope question for whoever takes
-B5(b), recorded here rather than assumed.
+**✅ RESOLVED IN CODE, for the preferences secret.** The scope question raised here — one pre-flight
+or three throws — was ruled on: `assertSendPreconditions` now checks BOTH `SMS_PHONE_HASH_SALT` and
+`SMS_PREFERENCES_SECRET` before a real run starts, and deliberately does NOT check
+`SMS_SHORT_LINK_SECRET`, because that one is already fail-closed by `encodeShortLink`'s own throw
+and a redundant check would imply the other two were redundant too. The guard calls
+`preferencesSecret()` rather than reading the env var, so it tracks what `mintPreferencesToken`
+actually checks instead of drifting away from it.
+**BOTH VALUES ARE STILL OUTSTANDING.** The guard converts a silent compliance failure into a
+refusal to run; it does not provision anything.
 
 ---
 

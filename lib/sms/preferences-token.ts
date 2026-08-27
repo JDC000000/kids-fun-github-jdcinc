@@ -66,3 +66,31 @@ export function mintPreferencesToken(subscriberId: string): string | null {
 export function looksLikePreferencesToken(token: string | null | undefined): boolean {
   return typeof token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(token);
 }
+
+/**
+ * Thrown by the weekly send's pre-flight when the secret is missing. Greppable on purpose, and
+ * parallel to `MissingPhoneHashSaltError`.
+ *
+ * ═══ WHY THIS EXISTS WHEN `mintPreferencesToken` DELIBERATELY RETURNS NULL ═══
+ * The two are not in tension — they answer different questions at different moments.
+ *
+ * AT SIGNUP, null is right, for the reason documented above: the consent row is the valuable
+ * thing, the token can be backfilled by recomputing it, and failing the signup would be the worse
+ * trade. Nothing is sent, so nothing is broken.
+ *
+ * AT SEND TIME it is the opposite. A subscriber with no token gets `preferencesUrl('')` — a bare
+ * `/u/`, which resolves to a 404, not to the unknown-token notice. The message goes out looking
+ * compliant and carrying an unsubscribe link that does not work, which is the one thing
+ * lib/sms/config.ts's own comment says must never happen. So the send refuses to start.
+ *
+ * Same secret, opposite correct answers, because the cost of continuing is different.
+ */
+export class MissingPreferencesSecretError extends Error {
+  constructor() {
+    super(
+      'SMS_PREFERENCES_SECRET is not configured — refusing to send a message whose unsubscribe ' +
+        'link would not work'
+    );
+    this.name = 'MissingPreferencesSecretError';
+  }
+}

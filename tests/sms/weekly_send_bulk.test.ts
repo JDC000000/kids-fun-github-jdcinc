@@ -19,11 +19,12 @@ import {
   sendWeeklySmsBulk,
   type ActiveSubscriber,
   type WeeklySmsDeps,
-  assertAuditableSend,
+  assertSendPreconditions,
 } from '@/lib/sms/weekly-send-io';
 import type { SmsSubscriber } from '@/lib/sms/weekly-send';
 import type { RecordSendInput } from '@/lib/sms/send-log';
 import { MissingPhoneHashSaltError } from '@/lib/sms/phone-hash';
+import { MissingPreferencesSecretError } from '@/lib/sms/preferences-token';
 import type { DispatchResult } from '@/lib/sms/twilio-client';
 import { SearchEngine } from '@/lib/search/engine';
 import { InMemoryListingRepository } from '@/lib/search/repository';
@@ -106,10 +107,11 @@ function harness(subscribers: ActiveSubscriber[], over: Parameters<typeof sendWe
 function withSecret() {
   vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-short-link-secret');
   // A REAL RUN (dryRun: false, which this harness uses) NOW REQUIRES THE SALT. `sendWeeklySmsBulk`
-  // refuses to start a send it could not audit — see `assertAuditableSend`. Every test in this
+  // refuses to start a send it could not audit — see `assertSendPreconditions`. Every test in this
   // file simulates a real send, so every one of them needs it; the guard's own behaviour is
   // asserted separately below, WITHOUT this stub.
   vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
+  vi.stubEnv('SMS_PREFERENCES_SECRET', 'test-preferences-secret');
 }
 
 afterEach(() => {
@@ -372,7 +374,7 @@ describe('dry run applies to the whole batch, not per subscriber', () => {
 // The pre-flight: a real run that could not be audited must not start
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('assertAuditableSend — the pre-flight guard', () => {
+describe('assertSendPreconditions — the pre-flight guard', () => {
   /**
    * WHY THIS GUARD EXISTS. `recordSmsSend` already throws when SMS_PHONE_HASH_SALT is absent — but
    * it throws AFTER the dispatch, inside `bestEffortAudit`. Without a pre-flight, a missing salt
@@ -426,11 +428,50 @@ describe('assertAuditableSend — the pre-flight guard', () => {
     expect(dispatched).toHaveLength(1);
   });
 
-  it('called directly, it throws only for a real run with no salt', () => {
-    expect(() => assertAuditableSend(true)).not.toThrow();
-    expect(() => assertAuditableSend(false)).toThrow(MissingPhoneHashSaltError);
+  it('called directly: a dry run never throws, a real run needs BOTH secrets', () => {
+    // Walked one secret at a time, so the test proves each is independently required rather than
+    // passing because the first one happened to be missing.
+    expect(() => assertSendPreconditions(true)).not.toThrow();
+    expect(() => assertSendPreconditions(false)).toThrow(MissingPhoneHashSaltError);
+
     vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
-    expect(() => assertAuditableSend(false)).not.toThrow();
+    expect(() => assertSendPreconditions(false)).toThrow(MissingPreferencesSecretError);
+
+    vi.stubEnv('SMS_PREFERENCES_SECRET', 'test-preferences-secret');
+    expect(() => assertSendPreconditions(false)).not.toThrow();
+  });
+
+  /**
+   * THE SECOND SECRET, ADDED BY OPERATOR RULING. Without it `mintPreferencesToken` returns null at
+   * signup, `preferences_token` stays NULL, `preferencesUrl('')` renders a bare `/u/`, and every
+   * message ships an unsubscribe link that 404s — silently, which is the whole problem.
+   */
+  it('THROWS when the preferences secret is missing, even with a valid salt', async () => {
+    vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-short-link-secret');
+    vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
+    // Deliberately NO SMS_PREFERENCES_SECRET.
+    const { options, dispatched, logged } = harness([subscriber('s1'), subscriber('s2')]);
+
+    await expect(sendWeeklySmsBulk(options)).rejects.toThrow(MissingPreferencesSecretError);
+
+    expect(dispatched).toEqual([]);
+    expect(logged).toEqual([]);
+  });
+
+  it('a dry run is still exempt from the preferences secret too', async () => {
+    vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-short-link-secret');
+    const { options } = harness([subscriber('s1')], { dryRun: true });
+    const summary = await sendWeeklySmsBulk(options);
+    expect(summary.dryRun).toBe(true);
+  });
+
+  it('does NOT check SMS_SHORT_LINK_SECRET — that one is already fail-closed elsewhere', () => {
+    // encodeShortLink throws inside buildWeeklySms, before any dispatch. Guarding it here would
+    // duplicate a guarantee that already holds, and imply the other two were redundant as well.
+    vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
+    vi.stubEnv('SMS_PREFERENCES_SECRET', 'test-preferences-secret');
+    // No SMS_SHORT_LINK_SECRET at all, and the pre-flight is still satisfied.
+    expect(() => assertSendPreconditions(false)).not.toThrow();
   });
 });
 

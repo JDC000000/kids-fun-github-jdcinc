@@ -92,8 +92,9 @@ describe('the dry-run gate', () => {
   it('allows a real run ONLY when the env flag is on and the caller did not ask for a dry run', async () => {
     vi.stubEnv('SMS_CRON_SECRET', SECRET);
     vi.stubEnv('SMS_SENDING_ENABLED', 'true');
-    // A real run also needs the salt now — the route 503s without it. Asserted on its own below.
+    // A real run needs BOTH secrets now — the route 503s without either. Asserted on its own below.
     vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
+    vi.stubEnv('SMS_PREFERENCES_SECRET', 'test-preferences-secret');
     await POST(post({}, authed));
     expect(mockBulk).toHaveBeenCalledWith(expect.objectContaining({ dryRun: false }));
   });
@@ -225,5 +226,62 @@ describe('input handling', () => {
     mockBulk.mockClear();
     await POST(post({ limit: -1 }, authed));
     expect(mockBulk).toHaveBeenCalledWith(expect.objectContaining({ limit: undefined }));
+  });
+});
+
+describe('the secret pre-flight — 503 rather than a real unauditable send', () => {
+  /**
+   * ⚠ THIS IS THE PATH `sendWeeklySmsBulk`'s OWN GUARD CANNOT COVER.
+   * Single-subscriber mode calls `sendWeeklySmsForSubscriber` DIRECTLY, and that function is
+   * contractually never-throws (the bulk loop depends on it), so the guard cannot live inside it.
+   * Without this route check the ad-hoc path would be the one way to send a real, unauditable
+   * text — which is why these assert on BOTH modes, not just the bulk one.
+   */
+  const enabled = () => {
+    vi.stubEnv('SMS_CRON_SECRET', SECRET);
+    vi.stubEnv('SMS_SENDING_ENABLED', 'true');
+  };
+
+  it('503s a real run when SMS_PHONE_HASH_SALT is absent, and dispatches nothing', async () => {
+    enabled();
+    vi.stubEnv('SMS_PREFERENCES_SECRET', 'test-preferences-secret');
+    const res = await POST(post({}, authed));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toContain('SMS_PHONE_HASH_SALT');
+    expect(mockBulk).not.toHaveBeenCalled();
+  });
+
+  it('503s a real run when SMS_PREFERENCES_SECRET is absent, and dispatches nothing', async () => {
+    enabled();
+    vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
+    const res = await POST(post({}, authed));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toContain('SMS_PREFERENCES_SECRET');
+    expect(mockBulk).not.toHaveBeenCalled();
+  });
+
+  it('503s SINGLE-SUBSCRIBER mode too — the path the job guard cannot reach', async () => {
+    enabled();
+    vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
+    const res = await POST(post({ subscriberId: 'sub-1' }, authed));
+    expect(res.status).toBe(503);
+    expect(mockForSubscriber).not.toHaveBeenCalled();
+  });
+
+  it('does NOT 503 a DRY run with neither secret — verification must keep working', async () => {
+    vi.stubEnv('SMS_CRON_SECRET', SECRET);
+    // Sending disabled, so dryRun is forced true. Neither secret is set.
+    const res = await POST(post({}, authed));
+    expect(res.status).toBe(200);
+    expect(mockBulk).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
+  });
+
+  it('does NOT 503 when both secrets are present', async () => {
+    enabled();
+    vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
+    vi.stubEnv('SMS_PREFERENCES_SECRET', 'test-preferences-secret');
+    const res = await POST(post({}, authed));
+    expect(res.status).toBe(200);
+    expect(mockBulk).toHaveBeenCalledWith(expect.objectContaining({ dryRun: false }));
   });
 });
