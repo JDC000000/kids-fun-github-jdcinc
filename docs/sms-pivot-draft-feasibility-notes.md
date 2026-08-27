@@ -2779,6 +2779,30 @@ visible.
 
 ## cf. Verification
 
-`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **401 tests across 23
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **402 tests across 23
 files** (was 376/21). Full `unit` lane: **229 files / 3867 tests passing**. Both QA mutations
 re-run and confirmed to fail now.
+
+> **Corrected.** This originally read 401. The measurement was real but STALE — taken before the
+> coverage-swap regression test was added to `weekly_picks.test.ts`, which was the last change in
+> the same commit, and never re-run afterwards. Caught on review. See §cg: this is a different
+> failure mode from the three before it, and the rule adopted after those did not catch it.
+
+## cg. A note on the verification rule, because it just failed
+
+Four times now a specific value in a report has been wrong while the underlying work held. The
+first three were the same shape — a character, a count, a version, recalled instead of read — and
+the rule adopted after them was: **measure it, or state it as unverified.**
+
+**The fourth was different and the rule did not catch it.** The round-18 test count was genuinely
+measured. It was measured *in the middle of the work*, one edit before the end, and then reported
+as though it described the commit. A real measurement of a tree that was never committed.
+
+So the rule needed a second half, and now has one:
+
+> **Measure it or call it unverified — and measure it AFTER the last commit, not during the work.**
+
+The point is not diligence, it is ordering. A figure taken mid-work is a claim about a tree that no
+longer exists by the time it is reported, and it is more dangerous than a recalled one precisely
+because it feels verified. Every verification run in a report from here is the one that ran against
+the committed tree, and the numbers in §cf now come from that run.
