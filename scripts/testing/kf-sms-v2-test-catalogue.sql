@@ -53,6 +53,25 @@
 -- uses for regions, where nothing checks) would insert fine and then 404 on /activity/{id} —
 -- i.e. every short link in every test text would be dead.
 --
+-- ── THE TRAP THAT ONLY AN APPLY COULD FIND ─────────────────────────────────────────────────
+-- Recorded here because the first version of this file was reviewed carefully, verified offline,
+-- and still failed on its first execution.
+--
+-- Migration 0021 puts a BEFORE INSERT/UPDATE TRIGGER on activity_occurrence that rejects
+-- status_state='confirmed' when the OWNING SOURCE is not terms-approved. The rule is
+-- cross-table — activity_occurrence → activity_series → source.terms_status — so it is invisible
+-- from activity_occurrence's own DDL, invisible to a column-by-column read of the file, and
+-- invisible to every offline structural check. Reading `0004_activities.sql` end to end tells you
+-- nothing about it. The source row now sets `terms_status = 'allowed'` for exactly this reason;
+-- section 1 carries the full argument for why that is safe here and what enforces it.
+--
+-- GENERALISED, for whoever writes the next fixture: DDL is not the whole contract. Before
+-- assuming a hand-written INSERT is legal, enumerate the TRIGGERS too —
+--     SELECT c.relname, t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+--      WHERE NOT t.tgisinternal AND c.relname IN (…your tables…);
+-- On this database that returns seven, of which exactly one is a gate. The other six are
+-- updated_at stamps and search_tsv reindexers, which is precisely why the gate is easy to miss.
+--
 -- ── WHAT THIS CREATES ──────────────────────────────────────────────────────────────────────
 --     1 source, 15 venues (3 per municipality), 15 series, 34 occurrences.
 --     34 = 30 PICKABLE (6 per municipality) + 4 DELIBERATE NEGATIVE CONTROLS.
@@ -104,18 +123,60 @@
 -- inside 7 days is what yields the `official_recent` label real ingested rows carry. Anything
 -- lower would make every test listing render with a caveat no production listing would have.
 --
--- terms_status / robots_status stay at their 'pending' defaults: this source is never fetched.
-INSERT INTO source (id, family, name, authority_tier, ingestion_method, baseline_cadence)
+-- ═══ terms_status = 'allowed' IS REQUIRED, AND EVERY OTHER COLUMN HERE IS WHAT MAKES IT SAFE ═══
+--
+-- THE FIRST DRAFT OF THIS FILE LEFT terms_status AT ITS 'pending' DEFAULT AND THE APPLY FAILED.
+-- Migration 0021 installs a BEFORE INSERT/UPDATE trigger on activity_occurrence
+-- (enforce_confirmed_requires_terms_approval) that rejects ANY row written as
+-- status_state='confirmed' whose owning source is not terms-approved:
+--
+--     activity_occurrence 5e300000-…-0001 may not be status_state=confirmed:
+--     owning source terms_status=pending is not terms-approved (allowed/summarise_only)
+--     — Round 27 approval-bypass invariant
+--
+-- All 30 confirmed rows fail on the same rule. It is a real safety invariant installed after a
+-- real incident (documents/execution/kids-fun-round27-incident-approval-bypass-2026-07-21.md),
+-- it deliberately covers RAW SQL as well as the app, and it fails closed. It cannot be worked
+-- around and must not be; the source row simply has to be approved.
+--
+-- WHY MARKING THIS ONE SOURCE 'allowed' WEAKENS NOTHING. What 0021 protects against is an
+-- UNVETTED REAL SCRAPED SOURCE rendering to parents as verified content. This source is fetched
+-- by nobody, ever, and that is enforced by THREE independent mechanisms — none of which is
+-- terms_status:
+--
+--   1. `ingestion_method = 'manual'`. worker/scheduler/tiered.ts's candidate query carries
+--      `AND s.ingestion_method <> 'manual'`. A manual source is never enqueued, full stop.
+--   2. `robots_status = 'pending'`. The same query ANDs in terms-gate.ts's
+--      robotsClearedForLiveFetchSql(), which passes ONLY on 'allowed', or on 'unknown' plus a
+--      robots_override_decision. 'pending' fails closed.
+--   3. No adapter exists. worker/core/adapter-registry.ts resolves an adapter by family::name;
+--      'testing_kf_sms_v2' is in no registry, so even a hand-enqueued job resolves nothing.
+--
+-- So (1) and (2) are LOAD-BEARING, NOT DECORATIVE, and both are now written explicitly and
+-- carried in the ON CONFLICT clause rather than left to a column default — a default can be
+-- changed by a future migration without anyone re-reading this file, and the safety argument
+-- above would silently lose two of its three legs. If you ever change either value, you are
+-- changing what this comment claims.
+--
+-- 'allowed' rather than 'summarise_only' (both are in 0021's approved set): 'summarise_only' is a
+-- real, meaningful statement about a real publisher's terms, and borrowing it for a fixture would
+-- put a fiction into the one column the terms review actually reads. 'allowed' on a source whose
+-- name says SYNTHETIC, NOT A REAL SOURCE cannot be mistaken for a terms decision about anybody.
+INSERT INTO source (id, family, name, authority_tier, ingestion_method, baseline_cadence,
+                    terms_status, robots_status)
 VALUES (
   '5e000000-0000-4000-8000-000000000001',
   'testing_kf_sms_v2',
   'KF SMS v2 TEST CATALOGUE — SYNTHETIC, NOT A REAL SOURCE',
-  'official', 'manual', '365 days'
+  'official', 'manual', '365 days',
+  'allowed',   -- required by 0021 for the 30 confirmed occurrences; see the block above
+  'pending'    -- load-bearing: fails the robots clause in terms-gate.ts, so never fetchable
 )
 ON CONFLICT (id) DO UPDATE SET
   family = EXCLUDED.family, name = EXCLUDED.name,
   authority_tier = EXCLUDED.authority_tier, ingestion_method = EXCLUDED.ingestion_method,
-  baseline_cadence = EXCLUDED.baseline_cadence;
+  baseline_cadence = EXCLUDED.baseline_cadence,
+  terms_status = EXCLUDED.terms_status, robots_status = EXCLUDED.robots_status;
 
 
 -- ── 2. VENUES ──────────────────────────────────────────────────────────────────────────────
