@@ -145,6 +145,65 @@ identically on every send forever, and "no audit trail" is arguably the one book
 worth stopping a send for. **That is a judgement about what happens to a real subscriber, so it
 belongs to the Operator or Jon, and the code has deliberately been left alone.**
 
+## B6. The other two SMS secrets have no owner either — and they fail DIFFERENTLY
+**Blocked:** nothing. `SMS_PREFERENCES_SECRET` and `SMS_SHORT_LINK_SECRET` are both in
+`.env.example` and neither has ever appeared on this page. Found by asking the obvious follow-up to
+B5 — *is the salt the only one?* — rather than by anything failing. All eight secret getters in
+`lib/sms/config.ts` are `env(...) ?? null`, so none of them can fail loudly on its own.
+**Needs:** Operator — two generated secrets. **Not decisions** — values.
+
+**⚠ THEY ARE NOT EQUALLY URGENT, AND THE DIFFERENCE IS THE WHOLE POINT OF THIS ENTRY.**
+
+### `SMS_PREFERENCES_SECRET` — SILENT, and it breaks the CASL unsubscribe path
+`lib/sms/config.ts:166-168` states the rule, in the codebase's own words, above `preferencesUrl`:
+
+> "This link is in EVERY message, and it is not decoration — it is the CASL unsubscribe path and
+> the PIPEDA access/correction mechanism at the same time. **A message that renders without it is a
+> message that must not be sent.**"
+
+What actually happens when the secret is absent:
+
+| where | what happens |
+|---|---|
+| `signup-store.ts:153` | `mintPreferencesToken` returns null → `if (token)` → **the UPDATE is silently skipped**. No throw, no log. |
+| the row | `preferences_token` stays NULL |
+| `weekly-send-io.ts:212` | `row.preferences_token ?? ''` → **NULL becomes an empty string** |
+| `config.ts:170` | `${siteUrl()}/u/${''}` → `https://…/u/` |
+| `message.ts` | the link is UNCONDITIONAL in the weekly, welcome, empty-week and pause-notice templates |
+
+So the message does not render *without* the link — **it renders with a dead one**, which is worse
+than the case the comment forbids, because it looks compliant. Under CASL the unsubscribe
+mechanism must actually function; "the URL was present" is not the test.
+
+**What the dead link actually does, since two readings of this differ and both are right about
+different inputs:**
+* **A MISSING SECRET produces `https://…/u/` — a bare path with no segment.** `app/u/` contains
+  only `[preferencesToken]/`, there is no catch-all and `trailingSlash` is unset, so a dynamic
+  segment cannot match an empty one. **It is a hard 404**, not the designed notice.
+* **A WRONG-BUT-PRESENT token** (a mangled link, a purged row) reaches the page, matches no row,
+  and gets the deliberate *"this link is not working"* notice — the behaviour `app/u/` was built
+  for. That path is fine and is not what this entry is about.
+
+Not hypothetical: this exact variable being absent from `.env.e2e.local` is what broke the Stage C
+database run. Same silent-null behaviour, caught then only because a test failed.
+
+### `SMS_SHORT_LINK_SECRET` — LOUD, and therefore much less dangerous
+`encodeShortLink` THROWS when it is absent. The throw happens inside `buildWeeklySms` (step 1 of
+`sendWeeklySmsForSubscriber`), which is *before* any dispatch, and it lands in that function's
+outer catch → `status: 'error'` for that subscriber, nothing sent, no audit gap. A run with no
+short-link secret reports errors for every subscriber and texts nobody. **That is a configuration
+gap, not a compliance failure** — it is on this page for completeness and so nobody assumes the
+three secrets behave alike.
+
+**Cost if left:** the preferences secret ships a broken unsubscribe link to every subscriber, in
+every message, silently. The short-link secret stops the send instead, loudly. Only the first is
+urgent.
+
+**Related, and deliberately not decided here:** B5 proposes a fail-loud pre-flight for
+`SMS_PHONE_HASH_SALT`. If that is built, ONE pre-flight covering all three secrets is very likely a
+better answer than three separate reactive throws — but that is a scope question for whoever takes
+B5(b), recorded here rather than assumed.
+
 ---
 
 # C. NEEDS NEITHER — recorded so nobody re-derives them
