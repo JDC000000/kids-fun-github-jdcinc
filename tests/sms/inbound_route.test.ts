@@ -23,6 +23,7 @@ import {
   renderConfirmRequestMessage,
   renderStartSignupInviteMessage,
 } from '@/lib/sms/message';
+import { smsSendingEnabled, stagingReplyBodyAllowed } from '@/lib/sms/config';
 import type { TransitionOutcome } from '@/lib/sms/consent-transitions';
 import { renderUnknownKeywordMessage, assertGsm7Safe, estimateSegments } from '@/lib/sms/message';
 
@@ -177,6 +178,118 @@ describe('POST /api/sms/inbound — the unknown branch', () => {
     expect(await xml(res)).toBe(
       `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${EXPECTED_REPLY}</Message></Response>`
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SMS_STAGING_ALLOW_REPLY_BODY — the local-harness reply-visibility flag
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// It changes ONE thing: whether this route emits the `<Message>` body it has already built, or an
+// empty `<Response>`. It dispatches nothing, touches no transition, and cannot cause a Twilio API
+// call. The flag exists because the reply text was invisible to the local testing harness — the
+// same gate suppressing the send was suppressing the evidence — and a TwiML reply needs no
+// credential and makes no API call, so the two are separable.
+//
+// 🔴 THE REASON IT IS A SEPARATE, DEFAULT-OFF, NEVER-SHIPPED FLAG: in the harness the response goes
+// back to the agent that posted it. IN PRODUCTION the thing posting is TWILIO, and Twilio DELIVERS
+// a `<Message>` body it receives. So this flag set in a real environment would send real texts
+// while SMS_SENDING_ENABLED was false and an operator believed sending was off. The first describe
+// below is the one that matters most: it pins that the production path is untouched when the flag
+// is absent.
+
+const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
+
+describe('with the flag UNSET, production behaviour is byte-identical to before', () => {
+  it('an unknown keyword is still met with silence on a dry run', async () => {
+    // SMS_SENDING_ENABLED unset (dry run) and SMS_STAGING_ALLOW_REPLY_BODY unset. This is the
+    // exact assertion that existed before the flag, unchanged, and it must keep passing verbatim.
+    configure(); // no sending, no staging flag
+    const res = await POST(inbound('hi there'));
+    expect(res.status).toBe(200);
+    expect(await xml(res)).toBe(EMPTY_TWIML);
+  });
+
+  it('a START from an unknown number is still met with silence on a dry run', async () => {
+    configure();
+    const res = await POST(inbound('START'));
+    expect(res.status).toBe(200);
+    expect(await xml(res)).toBe(EMPTY_TWIML);
+  });
+
+  it('every keyword returns the identical empty document — no partial leakage', async () => {
+    configure();
+    for (const keyword of ['JOIN', 'STOP', 'START', 'HELP', 'hi there', '', '\u{1F44D}']) {
+      expect(await xml(await POST(inbound(keyword))), keyword).toBe(EMPTY_TWIML);
+    }
+  });
+
+  it('is off for every value that is not "true", and PARSES EXACTLY LIKE SMS_SENDING_ENABLED', async () => {
+    // Not stricter and not more lenient than the flag it sits beside — a new flag that parsed its
+    // input differently from the established one would be its own trap. Both go through the same
+    // `env()` reader, which TRIMS, so ' true ' is a deliberate value with stray whitespace and is
+    // accepted; everything else is off, and the failure direction is silence.
+    for (const value of ['TRUE', 'True', '1', 'yes', 'on', 'false', '']) {
+      configure();
+      vi.stubEnv('SMS_STAGING_ALLOW_REPLY_BODY', value);
+      expect(await xml(await POST(inbound('hi there'))), JSON.stringify(value)).toBe(EMPTY_TWIML);
+    }
+
+    // The parity itself, asserted directly rather than described: whatever one flag makes of a
+    // value, the other makes of it too.
+    for (const value of ['true', ' true ', 'TRUE', '1', 'false', '']) {
+      vi.unstubAllEnvs();
+      vi.stubEnv('SMS_SENDING_ENABLED', value);
+      vi.stubEnv('SMS_STAGING_ALLOW_REPLY_BODY', value);
+      expect(stagingReplyBodyAllowed(), JSON.stringify(value)).toBe(smsSendingEnabled());
+    }
+  });
+});
+
+describe('with the flag SET, the harness can see the real reply', () => {
+  function staging() {
+    configure(); // SMS_SENDING_ENABLED still unset — sending stays off throughout
+    vi.stubEnv('SMS_STAGING_ALLOW_REPLY_BODY', 'true');
+  }
+
+  it('returns the real unknown-keyword body, and SMS_SENDING_ENABLED stays off', async () => {
+    staging();
+    expect(smsSendingEnabled()).toBe(false); // the point of the whole exercise
+    const res = await POST(inbound('hi there'));
+    expect(res.status).toBe(200);
+    expect(await xml(res)).toBe(
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${EXPECTED_REPLY}</Message></Response>`
+    );
+  });
+
+  it('returns the real START invite body', async () => {
+    staging();
+    expect(await xml(await POST(inbound('START')))).toBe(
+      `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${INVITE}</Message></Response>`
+    );
+  });
+
+  it('does NOT make the other keywords speak — it reveals, it does not create', async () => {
+    // JOIN, STOP and HELP are silent by design (Twilio's Advanced Opt-Out already answered them;
+    // JOIN answers with the welcome text via the REST API). The flag must not change which
+    // branches reply, only whether an already-built body is emitted.
+    staging();
+    for (const keyword of ['JOIN', 'STOP', 'HELP', 'unsubscribe', 'info']) {
+      expect(await xml(await POST(inbound(keyword))), keyword).toBe(EMPTY_TWIML);
+    }
+  });
+
+  it('still refuses an unverified caller — the flag is not an auth bypass', async () => {
+    staging();
+    const bad = await POST(signed({ From: FROM, Body: 'hi there' }, { signature: 'nope' }));
+    expect(bad.status).toBe(403);
+    expect(await xml(bad)).not.toContain('<Message>');
+  });
+
+  it('still says nothing to a signed request with no From', async () => {
+    staging();
+    const res = await POST(signed({ To: '+18778357776', Body: 'hi there' }));
+    expect(await xml(res)).toBe(EMPTY_TWIML);
   });
 });
 

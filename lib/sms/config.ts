@@ -50,6 +50,45 @@ export function smsSendingEnabled(): boolean {
 }
 
 /**
+ * STAGING ONLY: may the inbound webhook return its TwiML reply BODY while sending is disabled?
+ *
+ * ═══ WHAT THIS DOES AND, MORE IMPORTANTLY, WHAT IT DOES NOT ═══
+ * It changes exactly one thing: whether `app/api/sms/inbound/route.ts` emits the `<Message>` body
+ * it has ALREADY BUILT, or emits an empty `<Response>`. It does not dispatch anything, does not
+ * touch `smsSendingEnabled`, does not alter a single consent transition, and cannot cause a Twilio
+ * API call. Every send path on this branch still gates on `smsSendingEnabled()` alone.
+ *
+ * ═══ WHY IT EXISTS ═══
+ * The inbound reply is dropped on a dry run (round 13) because until Toll-Free Verification is
+ * granted, outbound traffic from an unverified number should not flow. Correct for production, and
+ * it made the reply text invisible to the local testing harness — the same flag suppressing the
+ * send was suppressing the evidence. A TwiML reply needs no credential and makes no API call, so
+ * the two are separable, and this separates them.
+ *
+ * ═══ 🔴 THE RISK, STATED PLAINLY, BECAUSE IT IS THE WHOLE REASON FOR THE CONDITIONS ═══
+ * In the HARNESS, the TwiML response goes back to the test agent that posted it, and nothing is
+ * sent to anyone. IN PRODUCTION, the thing posting to that webhook is TWILIO — and Twilio WILL
+ * DELIVER a `<Message>` body it receives. So this flag set in a production environment would send
+ * real texts while `SMS_SENDING_ENABLED` was false and an operator believed sending was off.
+ *
+ * That is precisely why, per the Operator's conditions:
+ *   • it is a SEPARATE flag rather than a loosening of `SMS_SENDING_ENABLED`;
+ *   • it defaults to OFF everywhere, including the staging harness, until switched on for a run;
+ *   • it is DELIBERATELY ABSENT from `.env.example` and from every tracked config file, so it
+ *     cannot be copied into a real environment by someone filling in the blanks. It lives only in
+ *     the harness's own local, gitignored env.
+ *
+ * `=== 'true'`, THE SAME COMPARISON `smsSendingEnabled` MAKES, through the same `env()` reader —
+ * so 'TRUE', '1' and 'yes' are all off, and ' true ' is on because `env()` trims. Deliberately
+ * neither stricter nor more lenient than the flag it sits beside: a new flag that parsed its input
+ * differently from the established one would be its own trap. tests/sms/inbound_route.test.ts
+ * asserts that parity directly rather than describing it.
+ */
+export function stagingReplyBodyAllowed(): boolean {
+  return env('SMS_STAGING_ALLOW_REPLY_BODY') === 'true';
+}
+
+/**
  * Whether the public signup form and POST /api/sms/signup exist at all.
  *
  * Defaults to FALSE. PRD §2.1: "Form stays behind a feature flag until the sign-off gate is

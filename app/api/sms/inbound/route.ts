@@ -33,7 +33,13 @@
 // into sms_consent.status so our database does not drift from Twilio's suppression list —
 // see lib/sms/keywords.ts for why that mirror is load-bearing rather than bookkeeping.
 import { NextResponse } from 'next/server';
-import { signupUrl, smsSendingEnabled, twilioAuthToken, webhookPublicUrl } from '@/lib/sms/config';
+import {
+  signupUrl,
+  smsSendingEnabled,
+  stagingReplyBodyAllowed,
+  twilioAuthToken,
+  webhookPublicUrl,
+} from '@/lib/sms/config';
 import { classifyInboundKeyword, type InboundKeyword } from '@/lib/sms/keywords';
 import { verifyTwilioSignature } from '@/lib/sms/twilio-signature';
 import {
@@ -157,6 +163,26 @@ async function smsInboundPost(request: Request): Promise<NextResponse> {
   return reply ? twiml(messageResponse(reply)) : twiml();
 }
 
+/**
+ * May a reply body actually go out on this request?
+ *
+ * THE PRODUCTION RULE IS UNCHANGED: a dry run says nothing. `SMS_SENDING_ENABLED !== 'true'` means
+ * "this deployment sends no messages", and until Toll-Free Verification is granted that has to
+ * include the one reply this webhook can emit.
+ *
+ * THE ONE EXCEPTION IS THE LOCAL TESTING HARNESS, where the response goes back to the agent that
+ * posted it rather than to Twilio, so nothing reaches a person. `stagingReplyBodyAllowed()`
+ * defaults to FALSE everywhere and is deliberately absent from `.env.example`; see its own doc in
+ * lib/sms/config.ts for why that absence is load-bearing rather than an oversight.
+ *
+ * IT IS A SECOND CONDITION, NOT A REPLACEMENT. With sending enabled the reply flows regardless, so
+ * this flag is a no-op on any real deployment that is actually sending — it can only ever turn a
+ * silence into a visible reply on a deployment that is already dispatching nothing.
+ */
+function replyBodyPermitted(dryRun: boolean): boolean {
+  return !dryRun || stagingReplyBodyAllowed();
+}
+
 /** What one inbound message produced: a state transition, a reply, or neither. */
 interface InboundDispatch {
   /** The transition that ran, if any. Structured for observability; not returned to Twilio. */
@@ -212,7 +238,7 @@ async function dispatch(
       const result = await mirrorCarrierStart(from, { dryRun });
       // Built on every path so a broken template fails in a dry run, dropped when sending is off.
       const reply = startReplyFor(result.outcome);
-      return { result, reply: dryRun ? null : reply };
+      return { result, reply: replyBodyPermitted(dryRun) ? reply : null };
     }
     case 'help':
       return { result: await recordHelpRequest(from, { dryRun }), reply: null };
@@ -229,7 +255,7 @@ async function dispatch(
       // no consumer. `redactPhone` (lib/sms/redact.ts) remains the required shape if one is ever
       // added — see the import.
       const message = renderUnknownKeywordMessage(signupUrl());
-      return { result: null, reply: dryRun ? null : message.body };
+      return { result: null, reply: replyBodyPermitted(dryRun) ? message.body : null };
     }
   }
 }
