@@ -89,7 +89,14 @@ async function cleanup(): Promise<void> {
 
 beforeAll(async () => {
   vi.stubEnv('SMS_PHONE_HASH_SALT', 'stage-c-salt');
+  // STUBBED HERE RATHER THAN RELIED ON FROM THE ENVIRONMENT. The first live run failed partly
+  // because this secret was missing from .env.e2e.local — the same class of gap as Stage B's salt.
+  // The Operator has since added it, but a suite that needs a secret should carry its own: an
+  // ambient dependency is a failure that only appears on someone else's machine.
+  vi.stubEnv('SMS_PREFERENCES_SECRET', 'stage-c-preferences-secret');
   await cleanup();
+  // The memo must not outlive the rows it points at — cleanup just deleted them.
+  fixtureSeriesId = null;
 });
 afterAll(async () => {
   await cleanup();
@@ -105,8 +112,24 @@ async function subscriber(): Promise<{ id: string; phone: string }> {
 const activate = (id: string) =>
   query(`UPDATE sms_consent SET status='active', confirmed_timestamp=now() WHERE id=$1`, [id]);
 
-/** The minimum catalogue chain, returning a live occurrence id and its short_ref. */
-async function occurrence(): Promise<{ id: string; shortRef: number }> {
+/**
+ * The source + series every fixture occurrence hangs off, created ONCE per run.
+ *
+ * ═══ WHY MEMOISED, WHICH IS THE SECOND HALF OF A TWO-PART BUG ═══
+ * This used to insert a fresh source on every call, with `TAG` as a FIXED name — and
+ * `idx_source_family_name_unique (family, name)` is real. So the second call collided, always,
+ * independently of anything else. The first live run showed two failures and it was natural to
+ * read them as one root cause (an aborted first call leaving a committed source behind); they are
+ * genuinely two defects, and fixing only the CHECK below would have turned two failures into one.
+ *
+ * Sharing one series across occurrences is also the truer shape: a series HAS many occurrences,
+ * which is exactly what `findLastWeek` reads back. Cleanup still keys on the fixed `TAG`, and now
+ * has exactly one source row to find.
+ */
+let fixtureSeriesId: string | null = null;
+
+async function fixtureSeries(): Promise<string> {
+  if (fixtureSeriesId) return fixtureSeriesId;
   const [src] = await query<{ id: string }>(
     `INSERT INTO source (family, name) VALUES ('manual', $1) RETURNING id`,
     [TAG]
@@ -115,10 +138,33 @@ async function occurrence(): Promise<{ id: string; shortRef: number }> {
     `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
     ['Stage C Fixture Series', src.id]
   );
+  fixtureSeriesId = series.id;
+  return series.id;
+}
+
+/**
+ * One live occurrence, returning its id and short_ref.
+ *
+ * ═══ `start_datetime_utc` IS NOT OPTIONAL ═══
+ * `occurrence_has_time_or_open_hours CHECK (start_datetime_utc IS NOT NULL OR open_hours_state IS
+ * NOT NULL)` is a real, pre-existing constraint: an occurrence is either a dated session or an
+ * open-hours listing, and the schema refuses to hold one that is neither. The original helper
+ * supplied neither and threw on its first call.
+ *
+ * A DATED SESSION rather than open hours, because that is the shape these tests are about — a
+ * weekly pick with a day on it. `end_datetime_utc` is set too: not required by the CHECK, but an
+ * hour-long session is the realistic row, and a fixture that is legal-but-impossible is how a test
+ * ends up passing against data the product could never produce.
+ */
+async function occurrence(): Promise<{ id: string; shortRef: number }> {
+  const seriesId = await fixtureSeries();
+  const start = new Date('2026-08-29T17:00:00Z'); // the Saturday of the branch's canonical weekend
+  const end = new Date('2026-08-29T18:00:00Z');
   const [occ] = await query<{ id: string; short_ref: string | number }>(
-    `INSERT INTO activity_occurrence (series_id, activity_name) VALUES ($1, $2)
+    `INSERT INTO activity_occurrence (series_id, activity_name, start_datetime_utc, end_datetime_utc)
+     VALUES ($1, $2, $3, $4)
      RETURNING id, short_ref`,
-    [series.id, 'Stage C Fixture Occurrence']
+    [seriesId, 'Stage C Fixture Occurrence', start, end]
   );
   return { id: occ.id, shortRef: Number(occ.short_ref) };
 }

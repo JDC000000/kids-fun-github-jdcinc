@@ -14,7 +14,7 @@
 // because the db lane had been leaving rows behind for months (176 of 249 venues were test
 // residue). This file deletes every row it creates, keyed on a run-unique phone prefix, in
 // `afterAll` AND defensively at the start — so a crashed run does not poison the next one.
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { query } from '@/lib/db/client';
 import { createPendingSubscriber } from '@/lib/sms/signup-store';
 import {
@@ -81,10 +81,15 @@ async function cleanup(): Promise<void> {
 }
 
 beforeAll(async () => {
+  // Self-sufficient: this suite asserts the minted preferences token, so it must not depend on the
+  // secret happening to be present in whoever's shell runs the lane.
+  vi.stubEnv('SMS_PREFERENCES_SECRET', 'stage-a-preferences-secret');
+  vi.stubEnv('SMS_PHONE_HASH_SALT', 'stage-a-salt');
   await cleanup();
 });
 afterAll(async () => {
   await cleanup();
+  vi.unstubAllEnvs();
 });
 
 describe('createPendingSubscriber', () => {
