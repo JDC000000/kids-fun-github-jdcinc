@@ -46,7 +46,7 @@ export default function ActivityUnavailablePage() {
             product owner rather than drafted and approved — do not smooth it. */}
         <p className="kf-gone__body">{ACTIVITY_GONE_BODY}</p>
 
-        {/* "Let me know if you have any other questions" needs somewhere to be let known. Same
+        {/* "Let us know if you have any other questions" needs somewhere to be let known. Same
             support contact as every other surface, from the same constant. */}
         <p className="kf-gone__support">
           <a href={SUPPORT_PHONE_HREF}>Text {SENDER_IDENTITY.supportPhone}</a>

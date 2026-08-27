@@ -366,12 +366,22 @@ export const PREFS_UNKNOWN_TOKEN_BODY =
 /**
  * Jon's wording, VERBATIM. Do not smooth it — the voice is the point, and it is the one piece of
  * copy on this branch written by the product owner rather than drafted and approved.
+ *
+ * ── "me" BECAME "us" IN ROUND 22, AND THE GUARD DID ITS JOB ─────────────────────────────
+ * V1 testing flagged the first person as off-voice: everything else in the product says "we", and
+ * a lone "me" implies one person behind the number. It was correctly NOT changed when it came
+ * through as a routine copy-polish item, because this sentence is the product owner's own and this
+ * comment said so. JON THEN CHANGED IT HIMSELF — "-we APPROVED", his own suggested phrasing — so
+ * the edit is his, not ours. That is the whole distinction the guard exists to enforce, and it
+ * held: a tone note could not move these words, and the author could.
+ *
+ * One word. Nothing else in the sentence was touched.
  */
 export const ACTIVITY_GONE_BODY =
-  "Oops, looks like that's been canceled! Let me know if you have any other questions. Keep moving.";
+  "Oops, looks like that's been canceled! Let us know if you have any other questions. Keep moving.";
 
 /**
- * "Let me know if you have any other questions" needs somewhere to be let known. It points at the
+ * "Let us know if you have any other questions" needs somewhere to be let known. It points at the
  * SAME support contact as everything else — see SUPPORT_PHONE_E164 for why the number is written
  * down exactly once.
  */

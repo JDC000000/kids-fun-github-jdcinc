@@ -117,9 +117,23 @@ describe('the CASL / double-opt-in copy (PRD §1.4)', () => {
 
 describe('the "activity gone" interstitial (PRD §8 Q3)', () => {
   it('is Jon\'s wording VERBATIM — do not smooth it', () => {
+    // Updated in round 22, and the update is the point: this guard held when the change arrived as
+    // a routine copy-polish item ("me" reads as off-voice against the product's "we"), and moved
+    // only when JON HIMSELF changed his own sentence — "-we APPROVED". A tone note could not move
+    // these words; the author could. Same guard, new approved text.
     expect(ACTIVITY_GONE_BODY).toBe(
-      "Oops, looks like that's been canceled! Let me know if you have any other questions. Keep moving."
+      "Oops, looks like that's been canceled! Let us know if you have any other questions. Keep moving."
     );
+  });
+
+  it('speaks as "we", like the rest of the product, and only that changed', () => {
+    // The one word Jon changed, asserted on its own so a future edit that also "tidied" the rest
+    // of the sentence fails loudly rather than passing the exact-match test by coincidence.
+    expect(ACTIVITY_GONE_BODY).toContain('Let us know');
+    expect(ACTIVITY_GONE_BODY).not.toContain('Let me know');
+    // Everything either side of it is untouched.
+    expect(ACTIVITY_GONE_BODY.startsWith("Oops, looks like that's been canceled!")).toBe(true);
+    expect(ACTIVITY_GONE_BODY.endsWith('Keep moving.')).toBe(true);
   });
 });
 
