@@ -92,6 +92,8 @@ describe('the dry-run gate', () => {
   it('allows a real run ONLY when the env flag is on and the caller did not ask for a dry run', async () => {
     vi.stubEnv('SMS_CRON_SECRET', SECRET);
     vi.stubEnv('SMS_SENDING_ENABLED', 'true');
+    // A real run also needs the salt now — the route 503s without it. Asserted on its own below.
+    vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
     await POST(post({}, authed));
     expect(mockBulk).toHaveBeenCalledWith(expect.objectContaining({ dryRun: false }));
   });

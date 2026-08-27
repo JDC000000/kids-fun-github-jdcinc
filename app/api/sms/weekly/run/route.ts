@@ -21,7 +21,7 @@
 // rule (lib/sms/weekly-send-io.ts), and `sanitize` below is the second, independent barrier:
 // this route must not become the place a future field on that type leaks out of.
 import { NextResponse } from 'next/server';
-import { smsCronSecret, smsSendingEnabled } from '@/lib/sms/config';
+import { phoneHashSalt, smsCronSecret, smsSendingEnabled } from '@/lib/sms/config';
 import { safeEqual } from '@/lib/sms/safe-compare';
 import {
   loadWeeklySmsDeps,
@@ -94,6 +94,26 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // A real send requires BOTH the env flag AND that the caller did not force a dry run.
   const dryRun = !smsSendingEnabled() || body.dryRun === true;
+
+  // ── A REAL SEND THAT CANNOT BE AUDITED IS REFUSED HERE, NOT DISCOVERED LATER ───────────
+  // 503 and the same shape as the missing-cron-secret gate above, because it is the same kind of
+  // fact: a required secret is absent, so this endpoint is not configured to do what was asked.
+  //
+  // WHY HERE AS WELL AS IN `sendWeeklySmsBulk`. The bulk job carries its own `assertAuditableSend`
+  // pre-flight, but SINGLE-SUBSCRIBER MODE BELOW DOES NOT GO THROUGH IT — it calls
+  // `sendWeeklySmsForSubscriber` directly, and that function is contractually NEVER-THROWS (the
+  // bulk loop depends on it), so the guard cannot live inside it. Without this line the ad-hoc
+  // path would be the one way to send a real, unauditable text.
+  //
+  // A dry run is exempt for the same reason it is exempt in the job: `dispatchSms` returns
+  // `dry_run` before anything is dispatched or logged, so no salt is needed and gating it would
+  // break verification runs on every unconfigured machine.
+  if (!dryRun && !phoneHashSalt()) {
+    return NextResponse.json(
+      { ok: false, error: 'weekly sms send not configured: SMS_PHONE_HASH_SALT is absent' },
+      { status: 503 }
+    );
+  }
 
   if (typeof body.subscriberId === 'string' && body.subscriberId.trim()) {
     const subscriberId = body.subscriberId.trim();

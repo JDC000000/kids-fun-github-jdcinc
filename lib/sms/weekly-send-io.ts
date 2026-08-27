@@ -39,7 +39,8 @@ import { loadPostgresListings } from '@/lib/search/postgres-repository';
 import { getPostgresAliasResolver } from '@/lib/search/postgres-alias-resolver';
 import { getPostgresRegionHierarchy } from '@/lib/search/postgres-region-hierarchy';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
-import { smsSendingEnabled } from './config';
+import { phoneHashSalt, smsSendingEnabled } from './config';
+import { MissingPhoneHashSaltError } from './phone-hash';
 import { nextEmptyWeekState, type EmptyWeekState } from './empty-week';
 import {
   buildWeeklySms,
@@ -445,6 +446,86 @@ async function bestEffort(write: () => Promise<unknown>): Promise<void> {
 }
 
 /**
+ * The same swallow, for the AUDIT write specifically — but LOUD.
+ *
+ * ═══ WHY A VARIANT AND NOT A CHANGE TO `bestEffort` ═══
+ * `bestEffort` also wraps `markStopped` and `applyState`, which are STATE writes. Those are
+ * genuinely fine to lose quietly: they are idempotent, next week's run re-derives them, and a
+ * failed one costs a subscriber one miscounted empty week. The AUDIT write is not like that —
+ * `sms_send_log` is the CASL evidence that we texted a number, it cannot be re-derived after the
+ * fact, and losing one is unrecoverable. Changing `bestEffort` universally would make the
+ * recoverable failures as noisy as the unrecoverable one and teach whoever reads the logs to
+ * ignore all of them.
+ *
+ * ═══ WHY IT STILL DOES NOT THROW ═══
+ * The block above `bestEffort` is not decoration: throwing here would (1) report `status: 'error'`
+ * for a message the subscriber genuinely received, and (2) put a driver error string — which can
+ * contain the phone number — into an HTTP response. Both were real, documented reasons. The
+ * message cannot be unsent, so the honest outcome is still "the send happened", and the failure
+ * belongs in the LOG rather than in the result.
+ *
+ * The pre-flight in `sendWeeklySmsBulk` is what makes the salt case unreachable BEFORE any message
+ * goes out. This is the second layer, for everything the pre-flight cannot know about — a
+ * connection lost mid-run, a constraint violation, a permissions change.
+ *
+ * ═══ SCRUBBED TWICE, AND THE SECOND PASS IS NOT BELT-AND-BRACES ═══
+ * A pg driver error can quote the parameters it failed on, and one of them is an E.164 number. The
+ * obvious scrub is `scrubNumber(detail, context.phoneNumber)` — THIS SUBSCRIBER'S number — and it
+ * is not enough. A unique-violation raised while writing subscriber B's row names the CONFLICTING
+ * row's value, which is ANOTHER SUBSCRIBER'S NUMBER, and a context-keyed scrub cannot see it.
+ *
+ * That is not hypothetical: it was caught by reading this function's own output in
+ * tests/sms/weekly_send_bulk.test.ts, which simulates exactly that error. The log line read
+ * `DETAIL: Key (phone)=(+16045550001) already exists.` — a raw number, from the fix meant to stop
+ * raw numbers reaching logs.
+ *
+ * So the second pass is pattern-based and subscriber-agnostic: ANY E.164-shaped run of digits is
+ * redacted to its last four, whoever it belongs to.
+ */
+async function bestEffortAudit(
+  write: () => Promise<unknown>,
+  context: { stage: string; subscriberId: string; phoneNumber: string }
+): Promise<void> {
+  try {
+    await write();
+  } catch (err) {
+    const raw = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    // Pass 1: this subscriber's number, which we know exactly. Pass 2: anything else E.164-shaped
+    // — a conflicting row's number, a number embedded in a constraint detail. See above.
+    const detail = scrubAnyNumber(scrubNumber(raw, context.phoneNumber));
+    // eslint-disable-next-line no-console -- deliberate: an unrecoverable CASL audit-write failure
+    // must not be silent, and lib/sms has no logger of its own. See the block above.
+    console.error(
+      `[sms] AUDIT WRITE FAILED — sms_send_log row lost for a message that was sent. ` +
+        `stage=${context.stage} subscriber=${context.subscriberId} ` +
+        `error=${scrubNumber(detail, context.phoneNumber)}`
+    );
+  }
+}
+
+/**
+ * Refuse to start a real send that cannot be audited.
+ *
+ * ═══ WHY THIS EXISTS, AND WHY IT IS NOT A PER-MESSAGE CHECK ═══
+ * `recordSmsSend` already throws `MissingPhoneHashSaltError` when SMS_PHONE_HASH_SALT is absent —
+ * but it throws AFTER the dispatch, inside `bestEffortAudit`. Without this guard, a missing salt
+ * means every text goes out and every audit row is lost, one subscriber at a time, and the run
+ * still reports success. Checking once, before anything is dispatched, converts that into a
+ * refusal to start. Same convention as `recordSmsSend`'s own error rather than a new policy.
+ *
+ * ═══ A DRY RUN IS EXEMPT, AND THAT IS LOAD-BEARING, NOT A LOOPHOLE ═══
+ * `dispatchSms` returns `{ outcome: 'dry_run' }` as its FIRST branch (twilio-client.ts:161),
+ * before the client check, so a dry run can never reach a log write and genuinely does not need
+ * the salt. Gating dry runs on it would break every verification run on every unconfigured
+ * machine — including this branch's own, where the salt has never been set and never needed to be.
+ * The guard fires on exactly the case that matters: a run that will really text somebody.
+ */
+export function assertAuditableSend(dryRun: boolean): void {
+  if (dryRun) return;
+  if (!phoneHashSalt()) throw new MissingPhoneHashSaltError();
+}
+
+/**
  * Build and (unless dry-run) send one subscriber's weekly text.
  *
  * The single testable unit; bulk simply loops it. NEVER THROWS — every failure path returns a
@@ -547,16 +628,18 @@ export async function sendWeeklySmsForSubscriber(
     //     empty-week state — they are not paused, they are stopped.
     if (dispatch.outcome === 'stopped_via_carrier') {
       await bestEffort(() => markStopped(subscriber.id));
-      await bestEffort(() =>
-        log({
-          subscriberId: subscriber.id,
-          phoneNumber,
-          sendType,
-          outcome: 'stopped_via_carrier',
-          picksSnapshot: null,
-          twilioSid: dispatch.twilioSid,
-          consentTextVersion,
-        })
+      await bestEffortAudit(
+        () =>
+          log({
+            subscriberId: subscriber.id,
+            phoneNumber,
+            sendType,
+            outcome: 'stopped_via_carrier',
+            picksSnapshot: null,
+            twilioSid: dispatch.twilioSid,
+            consentTextVersion,
+          }),
+        { stage: 'stopped_via_carrier', subscriberId: subscriber.id, phoneNumber }
       );
       return { ...base, status: 'stopped_via_carrier' };
     }
@@ -564,16 +647,18 @@ export async function sendWeeklySmsForSubscriber(
     if (dispatch.outcome === 'failed') {
       // A failed dispatch changes nothing. The counter must not advance for a message that was
       // never delivered — otherwise a Twilio outage would pause subscribers three weeks later.
-      await bestEffort(() =>
-        log({
-          subscriberId: subscriber.id,
-          phoneNumber,
-          sendType,
-          outcome: 'failed',
-          picksSnapshot: null,
-          twilioSid: null,
-          consentTextVersion,
-        })
+      await bestEffortAudit(
+        () =>
+          log({
+            subscriberId: subscriber.id,
+            phoneNumber,
+            sendType,
+            outcome: 'failed',
+            picksSnapshot: null,
+            twilioSid: null,
+            consentTextVersion,
+          }),
+        { stage: 'dispatch_failed', subscriberId: subscriber.id, phoneNumber }
       );
       return { ...base, status: 'error', error: dispatch.error ?? 'dispatch failed' };
     }
@@ -586,16 +671,18 @@ export async function sendWeeklySmsForSubscriber(
 
     // 6. A real send. Record the audit row and apply the state TOGETHER — a subscriber must never
     //    be paused for a week they were not texted about, nor texted without the log saying so.
-    await bestEffort(() =>
-      log({
-        subscriberId: subscriber.id,
-        phoneNumber,
-        sendType,
-        outcome: sendType === 'weekly' ? 'sent' : sendType === 'pause_notice' ? 'paused' : 'empty',
-        picksSnapshot: picksSnapshot(plan),
-        twilioSid: dispatch.twilioSid,
-        consentTextVersion,
-      })
+    await bestEffortAudit(
+      () =>
+        log({
+          subscriberId: subscriber.id,
+          phoneNumber,
+          sendType,
+          outcome: sendType === 'weekly' ? 'sent' : sendType === 'pause_notice' ? 'paused' : 'empty',
+          picksSnapshot: picksSnapshot(plan),
+          twilioSid: dispatch.twilioSid,
+          consentTextVersion,
+        }),
+      { stage: 'sent', subscriberId: subscriber.id, phoneNumber }
     );
     await bestEffort(() => applyState(subscriber.id, state));
 
@@ -627,6 +714,19 @@ export async function sendWeeklySmsForSubscriber(
  * error text in the first place — see the catch above for why nothing that holds it can get here
  * — it is the cheap second barrier for the case where that reasoning is wrong.
  */
+/**
+ * Redact EVERY E.164-shaped number in a string, not just one we can name.
+ *
+ * `scrubNumber` needs to be told which number to look for. This does not — which is the only way
+ * to catch a number that arrived from somewhere we were not holding, such as the conflicting row
+ * quoted in a unique-violation's DETAIL. Deliberately conservative about what counts: a leading
+ * `+` and 8-15 digits is the E.164 shape migration 0034's CHECK enforces, so this cannot chew
+ * through timestamps, ids or short_refs.
+ */
+function scrubAnyNumber(text: string): string {
+  return text.replace(/\+[1-9]\d{7,14}/g, (m) => redactPhone(m));
+}
+
 function scrubNumber(text: string, phoneNumber: string): string {
   return phoneNumber && text.includes(phoneNumber)
     ? text.split(phoneNumber).join(redactPhone(phoneNumber))
@@ -697,6 +797,15 @@ function emptyCounts(): Record<SubscriberSendStatus, number> {
 export async function sendWeeklySmsBulk(options: BulkOptions = {}): Promise<BulkSummary> {
   const now = options.now ?? new Date();
   const dryRun = options.dryRun ?? !smsSendingEnabled();
+
+  // ── THE PRE-FLIGHT: refuse to start a real run we could not audit ──────────────────────
+  // BEFORE the subscriber load, before the read model, before any dispatch. A missing
+  // SMS_PHONE_HASH_SALT would otherwise be discovered one subscriber at a time, AFTER each text
+  // had already gone out, by a throw that `bestEffortAudit` catches — every message delivered and
+  // every CASL audit row silently lost, with the run still reporting success. Failing the whole
+  // job once, loudly, before the first text, is the only point at which this is still recoverable.
+  // Exempt on a dry run — see `assertAuditableSend`.
+  assertAuditableSend(dryRun);
 
   // THE READ MODEL IS LOADED ONCE FOR THE WHOLE BATCH, never once per subscriber — the design
   // decision this function exists to enforce (round 4, mirroring lib/email/weekly.ts). `deps` is

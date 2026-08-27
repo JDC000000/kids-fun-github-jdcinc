@@ -19,9 +19,11 @@ import {
   sendWeeklySmsBulk,
   type ActiveSubscriber,
   type WeeklySmsDeps,
+  assertAuditableSend,
 } from '@/lib/sms/weekly-send-io';
 import type { SmsSubscriber } from '@/lib/sms/weekly-send';
 import type { RecordSendInput } from '@/lib/sms/send-log';
+import { MissingPhoneHashSaltError } from '@/lib/sms/phone-hash';
 import type { DispatchResult } from '@/lib/sms/twilio-client';
 import { SearchEngine } from '@/lib/search/engine';
 import { InMemoryListingRepository } from '@/lib/search/repository';
@@ -103,6 +105,11 @@ function harness(subscribers: ActiveSubscriber[], over: Parameters<typeof sendWe
 
 function withSecret() {
   vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-short-link-secret');
+  // A REAL RUN (dryRun: false, which this harness uses) NOW REQUIRES THE SALT. `sendWeeklySmsBulk`
+  // refuses to start a send it could not audit — see `assertAuditableSend`. Every test in this
+  // file simulates a real send, so every one of them needs it; the guard's own behaviour is
+  // asserted separately below, WITHOUT this stub.
+  vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
 }
 
 afterEach(() => {
@@ -358,5 +365,142 @@ describe('dry run applies to the whole batch, not per subscriber', () => {
     });
     await sendWeeklySmsBulk(options);
     expect(dispatched).toEqual(['true', 'true', 'true']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The pre-flight: a real run that could not be audited must not start
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('assertAuditableSend — the pre-flight guard', () => {
+  /**
+   * WHY THIS GUARD EXISTS. `recordSmsSend` already throws when SMS_PHONE_HASH_SALT is absent — but
+   * it throws AFTER the dispatch, inside `bestEffortAudit`. Without a pre-flight, a missing salt
+   * means every text goes out and every CASL audit row is lost, one subscriber at a time, and the
+   * run still reports success. These tests pin the difference.
+   */
+  it('THROWS before dispatching anything when the salt is absent on a real run', async () => {
+    vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-short-link-secret');
+    // Deliberately NO SMS_PHONE_HASH_SALT.
+    const { options, dispatched, logged } = harness([subscriber('s1'), subscriber('s2')]);
+
+    await expect(sendWeeklySmsBulk(options)).rejects.toThrow(MissingPhoneHashSaltError);
+
+    // THE POINT OF THE WHOLE FIX: nothing was sent. Not "sent and unlogged" — not sent.
+    expect(dispatched).toEqual([]);
+    expect(logged).toEqual([]);
+  });
+
+  it('does not even load the subscriber list — the guard is before every read', async () => {
+    vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-short-link-secret');
+    let loadedSubscribers = 0;
+    const { options } = harness([subscriber('s1')], {
+      loadSubscribers: async () => {
+        loadedSubscribers += 1;
+        return [subscriber('s1')];
+      },
+    });
+
+    await expect(sendWeeklySmsBulk(options)).rejects.toThrow(MissingPhoneHashSaltError);
+    expect(loadedSubscribers).toBe(0);
+  });
+
+  it('A DRY RUN IS EXEMPT AND STILL WORKS WITHOUT THE SALT', async () => {
+    // Load-bearing, not a loophole: `dispatchSms` returns `dry_run` as its FIRST branch, so a dry
+    // run can never reach a log write and genuinely does not need the salt. Gating it would break
+    // verification on every unconfigured machine — including this branch, where the salt has never
+    // been set.
+    vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-short-link-secret');
+    const { options } = harness([subscriber('s1')], { dryRun: true });
+
+    const summary = await sendWeeklySmsBulk(options);
+    expect(summary.dryRun).toBe(true);
+    expect(summary.candidates).toBe(1);
+  });
+
+  it('a real run WITH the salt is unaffected', async () => {
+    withSecret();
+    const { options, dispatched } = harness([subscriber('s1')]);
+    const summary = await sendWeeklySmsBulk(options);
+    expect(summary.dryRun).toBe(false);
+    expect(dispatched).toHaveLength(1);
+  });
+
+  it('called directly, it throws only for a real run with no salt', () => {
+    expect(() => assertAuditableSend(true)).not.toThrow();
+    expect(() => assertAuditableSend(false)).toThrow(MissingPhoneHashSaltError);
+    vi.stubEnv('SMS_PHONE_HASH_SALT', 'test-salt');
+    expect(() => assertAuditableSend(false)).not.toThrow();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The audit-write failure is LOUD, and it carries no phone number
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('bestEffortAudit — a lost sms_send_log row must not be silent', () => {
+  it('logs loudly when the audit write fails, and still reports the send as sent', async () => {
+    // The send HAPPENED. Reporting it as an error would lie about what the subscriber
+    // experienced, so the outcome is unchanged and the failure goes to the log instead.
+    withSecret();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { options } = harness([subscriber('s1')], {
+      record: async () => {
+        throw new Error('connection terminated unexpectedly');
+      },
+    });
+
+    const summary = await sendWeeklySmsBulk(options);
+
+    // The send is reported by its REAL outcome, whatever that is for this fixture — the point is
+    // that a failed audit write did not turn it into an error.
+    expect(summary.results[0].status).not.toBe('error');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toContain('AUDIT WRITE FAILED');
+    expect(spy.mock.calls[0][0]).toContain('subscriber=s1');
+    spy.mockRestore();
+  });
+
+  /**
+   * ⚠ REGRESSION PIN FOR A LEAK THIS FIX ITSELF INTRODUCED.
+   * The first version scrubbed only `context.phoneNumber` — the subscriber being written. A
+   * unique-violation names the CONFLICTING row's number, which belongs to someone else, and it
+   * went into the log raw. Found by reading this suite's own output, not by an assertion.
+   */
+  it('redacts a phone number belonging to a DIFFERENT subscriber', async () => {
+    withSecret();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const OTHER = '+16045559999';
+    const { options } = harness([subscriber('s1')], {
+      record: async () => {
+        throw new Error(`duplicate key value: Key (phone)=(${OTHER}) already exists.`);
+      },
+    });
+
+    await sendWeeklySmsBulk(options);
+
+    const line = String(spy.mock.calls[0][0]);
+    expect(line).not.toContain(OTHER);
+    expect(line).toContain('****9999');
+    spy.mockRestore();
+  });
+
+  it('still swallows a STATE write failure silently — bestEffort is unchanged', async () => {
+    // `markStopped` and `applyState` are idempotent and re-derivable; next week's run fixes them.
+    // Only the audit write is unrecoverable, and only it is loud. Making both noisy would teach
+    // whoever reads these logs to ignore all of them.
+    withSecret();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { options } = harness([subscriber('s1')], {
+      applyState: async () => {
+        throw new Error('deadlock detected');
+      },
+    });
+
+    const summary = await sendWeeklySmsBulk(options);
+
+    expect(summary.results[0].status).not.toBe('error');
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
