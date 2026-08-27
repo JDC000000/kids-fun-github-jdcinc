@@ -571,9 +571,34 @@ export interface CoverageSwapResult {
  *
  * WHEN THE SELECTION IS FULL, a forced pick displaces the LOWEST-RANKED pick that was not itself
  * forced — so two forced picks can never evict each other and the cap cannot be spent twice on
- * one slot. When the selection is not yet full it simply appends; that still counts against the
- * cap, because the cap is about how much forcing this surface does, not about how many slots
+ * one slot. When the selection is not yet full nothing is displaced; the pick still counts against
+ * the cap, because the cap is about how much forcing this surface does, not about how many slots
  * happened to be occupied.
+ *
+ * ═══ A FORCED PICK JUMPS THE QUEUE, SO IT IS ALWAYS NAMED (PRD §8 Q4, Jon-approved) ═══
+ * A forced pick is placed at the FRONT of the selection, not appended to the tail.
+ *
+ * IT USED TO APPEND, AND THAT QUIETLY DEFEATED THE WHOLE FEATURE. lib/sms/weekly-send.ts names and
+ * links only the first `DIRECT_LINK_PICKS` (3) picks; everything after folds into an anonymous
+ * "+N more". A tail-appended forced pick on a full 10-pick week ranked 10 of 10 — so the pick
+ * chosen SPECIFICALLY because a child's age band had no organic match was the one pick guaranteed
+ * never to be named. A parent of a 12-year-old got three toddler activities named, and a count.
+ *
+ * JON'S RULING, verbatim: *"I approve option A. Let it jump the Q so it's always named."*
+ *
+ * THE COST IS REAL AND IS THE POINT, NOT A SIDE EFFECT: a lower-relevance forced pick now displaces
+ * a higher-ranked organic one from the named top 2–3 on any short-band send. That tradeoff is now
+ * an explicit product decision rather than a default nobody chose.
+ *
+ * FRONT, NOT "INSERTED AT SLOT 3". Placing it at the last named slot would displace less and still
+ * satisfy "always named" TODAY — but only while `MAX_FORCED_PICKS` (2) stays ≤ `DIRECT_LINK_PICKS`
+ * (3). Lower the direct-link count to 2 and a slot-3 insertion silently stops being named again,
+ * with no test failing, which is precisely the failure this ruling exists to end. Front-placement
+ * holds regardless of how either constant is later tuned.
+ *
+ * Forced picks are placed in the order they were forced (canonical youngest-band-first), so two
+ * of them do not reorder each other, and the organic picks keep their relative rank order behind
+ * them.
  *
  * Bands are considered in canonical youngest-first order so the outcome is deterministic.
  */
@@ -603,7 +628,9 @@ export function applyCoverageSwap(
 
     let displaced: string | null = null;
     if (picks.length >= maxPicks) {
-      // Lowest-ranked non-forced pick. Scan from the end; `picks` is in rank order.
+      // Lowest-ranked non-forced pick. Scan from the end: forced picks sit at the FRONT and the
+      // organic ones keep their relative rank order behind them, so the last non-forced entry is
+      // still the lowest-ranked organic pick.
       let victimIndex = -1;
       for (let i = picks.length - 1; i >= 0; i -= 1) {
         if (!forcedIds.has(picks[i].listing.id)) {
@@ -616,7 +643,9 @@ export function applyCoverageSwap(
       picks.splice(victimIndex, 1);
     }
 
-    picks.push(candidate);
+    // FRONT, not tail — see the header. `forced.length` is how many are already at the front, so
+    // each new one lands just behind them and the organic remainder shifts back by one.
+    picks.splice(forced.length, 0, candidate);
     forcedIds.add(candidate.listing.id);
     forced.push({ band, occurrenceId: candidate.listing.id, displacedOccurrenceId: displaced });
   }

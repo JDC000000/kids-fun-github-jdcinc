@@ -217,6 +217,45 @@ describe('the interest checkboxes', () => {
   });
 });
 
+describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approved)", () => {
+  it("carries Jon's sentence VERBATIM — do not smooth it", () => {
+    // Asked to choose between options, he wrote the copy: "please make up that sentence and insert
+    // it. Solve that problem. approved". Reproduced exactly, straight apostrophe and all.
+    expect(SUBMITTED_BODY).toContain(
+      "If you've texted us before and replied STOP, text START to +1 877-835-7776 first to " +
+        'turn our texts back on, then try again.'
+    );
+  });
+
+  it('takes the number from SUPPORT_PHONE_DISPLAY, not a fourth hand-typed copy', () => {
+    // The signup footer, the preferences footer and the "activity gone" page all derive from
+    // SUPPORT_PHONE_E164. A number typed a fourth time is a number that will eventually be four
+    // different numbers.
+    expect(SUBMITTED_BODY).toContain(SUPPORT_PHONE_DISPLAY);
+    expect(SUPPORT_PHONE_DISPLAY.replace(/[^\d+]/g, '')).toBe(SUPPORT_PHONE_E164);
+  });
+
+  it('is UNCONDITIONAL — a constant, not a function of the signup outcome', () => {
+    // The security half of the ruling. Showing it only on a 21610 would rebuild, in prose, the
+    // exact oracle app/api/sms/signup/route.ts refuses to expose as a field: whether SOMEBODY
+    // ELSE'S number is opted out. A `const string` cannot be conditional; that is the point.
+    expect(typeof SUBMITTED_BODY).toBe('string');
+    // And it still says the two things every reader needs, not only the opted-out one.
+    expect(SUBMITTED_BODY).toContain('Reply JOIN to confirm');
+    expect(SUBMITTED_BODY).toContain('check the number and try again');
+  });
+
+  it('does NOT move CONSENT_TEXT_VERSION — it is not wording anyone agreed to', () => {
+    // The version answers "which wording did this subscriber AGREE to". This copy is shown only
+    // AFTER submitting, so it cannot be part of that. Bumping would stamp two subscribers with
+    // different versions who agreed to identical wording — a false statement in an audit column,
+    // not extra safety. See this file's own header for the narrowed rule and PRD v3.9 for the
+    // precedent. Pinned so the reasoning is checked rather than remembered.
+    expect(CONSENT_TEXT_VERSION).toBe('2026-08-26.v2');
+    expect(CONSENT_CHECKBOX_TEXT).not.toContain('texted us before'); // the consent text is untouched
+  });
+});
+
 describe('the web-page strings that look reusable as SMS copy', () => {
   // WHY THIS BLOCK EXISTS. Round 14 rejected both of these as replies for the START
   // `awaiting_confirmation` case and recorded the reason as "both contain curly apostrophes".

@@ -10,8 +10,26 @@
 // together. Copy living inline in a component can be edited without anyone thinking about the
 // version column; copy living here, next to the constant, cannot be edited without seeing it.
 //
-//   >>> IF YOU CHANGE ANY STRING IN THIS FILE, BUMP CONSENT_TEXT_VERSION. <<<
+//   >>> IF YOU CHANGE WORDING A SUBSCRIBER AGREES TO, BUMP CONSENT_TEXT_VERSION. <<<
 //   Not "consider bumping". The version is what a regulator would be shown.
+//
+//   ── WHAT THAT COVERS, made precise in round 20 because it used to read "ANY STRING IN THIS
+//   ── FILE" and that is broader than what the column means.
+//   `sms_consent.consent_text_version` answers ONE question: which wording did this subscriber
+//   AGREE TO. So it moves for `CONSENT_CHECKBOX_TEXT` and for anything else presented as part of
+//   the act of consenting — and it does NOT move for copy shown AFTER submission, which cannot be
+//   part of what was agreed to.
+//     • MOVES IT: the consent checkbox, the field labels and help text around it, the carrier
+//       disclosures shown beside it, the sender identification block.
+//     • DOES NOT MOVE IT: `SUBMITTED_HEADING` / `SUBMITTED_BODY` (the post-submit confirmation
+//       page), and the preferences-page status lines — all displayed only to somebody who has
+//       already consented.
+//   Bumping for those would stamp two subscribers with different versions who agreed to identical
+//   wording, which makes the column a WORSE answer to its own question, not a safer one. A
+//   spurious bump is not conservative here; it is a false statement in an audit column.
+//   Precedent: PRD v3.9 declined to bump for the /privacy wording change on the same reasoning.
+//   ⚠ This narrowing was the DO's judgment call (round 20) and is one constant and one comment to
+//   reverse if the Operator disagrees.
 //
 // ── THIS FORM IS ALSO A COMPLIANCE ARTEFACT, NOT ONLY A UI ───────────────────────────────
 // Per the Operator: a screenshot of this form is intended as the opt-in evidence for the Twilio
@@ -190,9 +208,52 @@ export const FIELD_COPY = {
 
 /** What the page says once the signup has been accepted. */
 export const SUBMITTED_HEADING = 'Check your phone';
+
+/**
+ * ═══ THE LAST SENTENCE IS JON'S OWN WORDING, INSERTED VERBATIM (PRD §8 Q5, v3.15) ═══
+ * Asked to choose between options, he wrote the copy instead: *"please make up that sentence and
+ * insert it. Solve that problem. approved"* — and the Operator authored the sentence below, which
+ * is reproduced exactly rather than smoothed.
+ *
+ * WHAT IT SOLVES. Twilio error 21610 on the confirmation send means the number signing up has
+ * ALREADY blocked our sender — usually because they texted STOP at some point in the past. The
+ * text is undeliverable and always will be until they text START themselves. Before this, the page
+ * said "check your phone" and nothing ever arrived. Round 12 flagged it; this closes it.
+ *
+ * ═══ IT IS SHOWN TO EVERYONE, AND THAT IS A SECURITY DECISION, NOT LAZINESS ═══
+ * The obvious implementation is to show it only when the dispatch actually returned 21610. That
+ * would be a real regression: app/api/sms/signup/route.ts deliberately never surfaces `errorCode`
+ * or the dispatch outcome to an unauthenticated caller, precisely so the form cannot be used to
+ * probe whether SOMEONE ELSE'S number is opted out. Making this copy conditional would rebuild
+ * that oracle out of a paragraph instead of a JSON field, and would be harder to notice.
+ *
+ * So the sentence is written to be true and useful for everyone who reads it, and it costs a
+ * reader who does not need it one sentence.
+ *
+ * ═══ `SUPPORT_PHONE_DISPLAY`, NOT A FOURTH HAND-TYPED NUMBER ═══
+ * The signup footer, the preferences footer and the "activity gone" page all derive from
+ * `SUPPORT_PHONE_E164`. A number typed a fourth time is a number that will eventually be four
+ * different numbers.
+ *
+ * ═══ NOT SMS COPY — no GSM-7 guard applies ═══
+ * This is HTML shown in a browser. It never goes near a Twilio message body, so segment cost and
+ * the GSM-7 alphabet are irrelevant to it, which is why it can keep the curly apostrophe in
+ * "We've" that would be a real cost in a text. tests/sms/signup_copy.test.ts asserts exactly that
+ * — that this string is NOT GSM-7 clean and is not sendable — so the distinction is checked
+ * rather than assumed.
+ *
+ * ⚠ ONE INCONSISTENCY LEFT DELIBERATELY IN PLACE: Jon's sentence uses a STRAIGHT apostrophe in
+ * "you've" while the sentence above it uses a curly one in "We've". Left exactly as authored,
+ * because "insert verbatim" is the instruction and a one-character typographic edit to approved
+ * copy is still an edit to approved copy. Flagged rather than normalised; it is a one-character
+ * change in either direction if anyone wants them to match, and there is no encoding cost either
+ * way on a web page.
+ */
 export const SUBMITTED_BODY =
   'We’ve sent you one text. Reply JOIN to confirm, and your first picks arrive Friday around ' +
-  '4pm. If it does not arrive in a few minutes, check the number and try again.';
+  '4pm. If it does not arrive in a few minutes, check the number and try again. ' +
+  `If you've texted us before and replied STOP, text START to ${SUPPORT_PHONE_DISPLAY} first to ` +
+  'turn our texts back on, then try again.';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // THE PREFERENCES / HUB PAGE (PRD §2.4)

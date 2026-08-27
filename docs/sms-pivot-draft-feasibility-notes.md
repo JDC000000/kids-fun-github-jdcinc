@@ -2882,3 +2882,113 @@ parents.
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **416 tests across 24
 files** (was 403/23). Full `unit` lane: **230 files / 3882 tests passing**. Measured after the
 commit, per §cg.
+
+---
+
+# Round 20 — Jon's Q4 and Q5 rulings, built
+
+PRD **v3.15** read directly, not from the relay. Both rulings quoted verbatim below from the
+document rather than from the brief.
+
+| File | What |
+|---|---|
+| `lib/sms/weekly-picks.ts` | forced picks jump the queue; docstring rewritten to the new mechanism |
+| `tests/sms/weekly_picks.test.ts` | the round-18 pinning test switched sides; +2 tests |
+| `lib/sms/consent-copy.ts` | Jon's sentence, verbatim; the version-bump rule narrowed |
+| `tests/sms/signup_copy.test.ts` | +4 tests |
+
+## cm. Q4 — ⚠ AN INTENTIONAL, JON-APPROVED BEHAVIOUR CHANGE TO WHAT SUBSCRIBERS SEE
+
+**Not routine test maintenance. Not a refactor.** This changes which activities are named in a
+parent's text.
+
+**Jon, verbatim (PRD v3.15):** *"I approve option A. Let it jump the Q so it's always named."*
+
+`applyCoverageSwap` now places the forced pick at the **front** of the selection instead of
+appending it to the tail. Since `weekly-send.ts` names and links only the first
+`DIRECT_LINK_PICKS` (3), the pick chosen *because* a child's age band had no organic match is now
+guaranteed to be one of the named ones — where before, on a full 10-pick week, it ranked 10 of 10
+and was folded into an anonymous "+N more".
+
+**THE COST IS THE APPROVED TRADEOFF, NOT A SIDE EFFECT:** a lower-relevance forced pick now
+displaces a higher-ranked organic one from the named slots on any short-band send. With
+`MAX_FORCED_PICKS` at 2, a thin week can spend two of the three named slots on forced picks. Both
+are asserted, so neither is a surprise later.
+
+**Front, not "insert at slot 3."** Inserting at the last named position would displace less and
+still satisfy "always named" *today* — but only while `MAX_FORCED_PICKS` (2) ≤ `DIRECT_LINK_PICKS`
+(3). Lower the direct-link count to 2 and a slot-3 insertion silently stops being named again, with
+no test failing — precisely the failure this ruling exists to end. A test now asserts the guarantee
+against the constants rather than against their current values.
+
+**The round-18 pinning test switched sides, and that is it finishing its job.** It was written to
+pin the defect explicitly *without* endorsing it — "NOT AN ASSERTION THAT THIS IS RIGHT… so the
+product decision is measurable and a future change to it is loud." It is now loud, and it now
+asserts the opposite. That is the test being completed, not loosened to fit new code, and its
+comment says so at the point where a future reader will ask.
+
+**The docstring was rewritten, not amended.** It described append-to-tail; describing the new
+mechanism is the whole point of the ruling, since the old comment claimed a surfacing the code did
+not do.
+
+## cn. Q5 — Jon's own sentence, verbatim
+
+**Jon, verbatim:** *"please make up that sentence and insert it. Solve that problem. approved"* — he
+authored the copy rather than choosing between options. `SUBMITTED_BODY` now ends:
+
+> If you've texted us before and replied STOP, text START to +1 877-835-7776 first to turn our
+> texts back on, then try again.
+
+Closes the round-12 dead end: a 21610 on the confirmation send means the number already blocked our
+sender, so the text is undeliverable and the page used to say "check your phone" while nothing ever
+arrived.
+
+**SHOWN TO EVERYONE, AND THAT IS A SECURITY DECISION.** The obvious implementation — show it only
+when the dispatch returned 21610 — would be a real regression. `app/api/sms/signup/route.ts`
+deliberately never surfaces `errorCode` or the dispatch outcome to an unauthenticated caller, so
+the form cannot be used to probe whether *someone else's* number is opted out. Conditioning this
+copy would rebuild that oracle in prose instead of a JSON field, where it is harder to notice. A
+`const string` cannot be conditional; a test pins that too.
+
+`SUPPORT_PHONE_DISPLAY` supplies the number rather than a fourth hand-typed copy.
+
+**Not SMS copy, so no GSM-7 guard.** This is HTML and never reaches a Twilio body — which is why it
+can keep the curly apostrophe in "We've" that would cost real money in a text.
+`tests/sms/signup_copy.test.ts` already asserts this string is *not* GSM-7 clean and is not
+sendable, so the distinction is checked rather than assumed.
+
+⚠ **One inconsistency left deliberately:** Jon's sentence uses a **straight** apostrophe in
+"you've" while the sentence above it uses a **curly** one in "We've". Left exactly as authored —
+"insert verbatim" was the instruction, and a one-character typographic edit to approved copy is
+still an edit to approved copy. One character in either direction if anyone wants them to match,
+and no encoding cost either way on a web page.
+
+## co. ⚠ A judgment call inside Q5: the version-bump rule was too broad
+
+This file's header said **"IF YOU CHANGE ANY STRING IN THIS FILE, BUMP CONSENT_TEXT_VERSION"**, and
+`SUBMITTED_BODY` is a string in this file. Read literally, Q5 requires a bump. **It was not
+bumped**, and the rule was narrowed instead.
+
+`sms_consent.consent_text_version` answers exactly one question: *which wording did this subscriber
+agree to.* `SUBMITTED_BODY` is displayed only **after** they have submitted, so it cannot be part of
+what was agreed. Bumping would stamp two subscribers with different versions who agreed to identical
+wording — **a false statement in an audit column, not extra safety.** Over-recording is not the
+conservative direction when the column's meaning is this specific.
+
+The rule now names both sides explicitly (what moves it: the checkbox, its labels, the carrier
+disclosures, the sender identification. What does not: the post-submit page, the preferences status
+lines). PRD v3.9 declined a bump on adjacent reasoning.
+
+**Flagged because it is mine, not Jon's.** He ruled on the copy, not on the versioning discipline.
+One constant and one comment to reverse.
+
+## cp. Q6 — closed, no code
+
+Jon confirmed the round-14 START-reply copy already on the branch. Paperwork, not a build task; it
+closes the gap that a shipped string had never been through sign-off.
+
+## cq. Verification
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **422 tests across 24
+files** (was 416/24). Full `unit` lane: **230 files / 3888 tests passing**. Measured after the
+commit, per §cg.

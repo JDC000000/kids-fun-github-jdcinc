@@ -513,7 +513,7 @@ describe('the age-coverage swap (PRD §2.2 step 4)', () => {
     expect(inReach.forced.map((f) => f.occurrenceId)).toEqual(['tween']);
   });
 
-  it('appends rather than displaces when the selection is not yet full', () => {
+  it('displaces NOTHING when the selection is not yet full (but still goes to the front)', () => {
     const ranked = [
       ...distinctActivities(3, { ageBandMatches: ['under2'], ageMinMonths: 0, ageMaxMonths: 24 }),
       kidActivity({
@@ -538,15 +538,19 @@ describe('the age-coverage swap (PRD §2.2 step 4)', () => {
     ]);
   });
 
-  it('⚠ REPRODUCES A FLAGGED DEFECT: a forced pick lands LAST and is never named in the text', () => {
-    // NOT AN ASSERTION THAT THIS IS RIGHT. It pins the CURRENT behaviour so the product decision
-    // in docs §ca is measurable and so a future change to it is loud rather than silent.
+  it('a forced pick JUMPS THE QUEUE so it is always named (PRD §8 Q4, Jon-approved)', () => {
+    // ═══ THIS TEST CHANGED SIDES, DELIBERATELY ═══
+    // It was written in round 18 to PIN the old defect — a forced pick appended to the tail,
+    // ranked 10 of 10, and therefore folded into the anonymous "+N more" while only the first
+    // DIRECT_LINK_PICKS (3) are named. It said so at the time: "NOT AN ASSERTION THAT THIS IS
+    // RIGHT... so the product decision is measurable and a future change to it is loud."
     //
-    // `applyCoverageSwap` always `push`es the forced candidate onto the tail, so on a full
-    // selection it is ranked last. lib/sms/weekly-send.ts names and links only the first
-    // DIRECT_LINK_PICKS (3). So the pick chosen SPECIFICALLY to represent an underrepresented age
-    // band is the one pick guaranteed to be folded into the anonymous "+N more" — which is the
-    // opposite of the feature's stated purpose.
+    // Jon ruled, verbatim: "I approve option A. Let it jump the Q so it's always named."
+    // (PRD v3.15, §8 Q4.) So this now asserts the OPPOSITE, which is the test doing exactly the
+    // job it was built for rather than being loosened to fit new code.
+    //
+    // THE COST IS INTENDED: a lower-relevance forced pick displaces a higher-ranked organic one
+    // from the named slots on a short-band send. That is the approved tradeoff.
     const ranked = [
       ...distinctActivities(10, { ageBandMatches: ['under2'], ageMinMonths: 0, ageMaxMonths: 24 }),
       kidActivity({
@@ -562,15 +566,81 @@ describe('the age-coverage swap (PRD §2.2 step 4)', () => {
     const { selection, forced } = applyCoverageSwap(ranked.slice(0, 10), ranked, ['under2', '10-14'], 10);
 
     expect(forced.map((f) => f.occurrenceId)).toEqual(['tween']);
-    // Rank 10 of 10 — dead last.
     expect(selection).toHaveLength(10);
-    expect(selection[selection.length - 1].listing.id).toBe('tween');
-    // And therefore outside the direct-link window entirely.
+    // Rank 1 of 10 — at the FRONT, not the tail.
+    expect(selection[0].listing.id).toBe('tween');
+    // And therefore inside the direct-link window, which is the entire point.
     const namedIds = selection.slice(0, DIRECT_LINK_PICKS).map((s) => s.listing.id);
-    expect(namedIds).not.toContain('tween');
-    expect(selection.findIndex((s) => s.listing.id === 'tween')).toBeGreaterThanOrEqual(
-      DIRECT_LINK_PICKS
+    expect(namedIds).toContain('tween');
+    expect(selection.findIndex((s) => s.listing.id === 'tween')).toBeLessThan(DIRECT_LINK_PICKS);
+    // The organic picks keep their relative rank order behind it — a forced pick reorders the
+    // selection by exactly one position, it does not shuffle it.
+    const organic = selection.filter((s) => s.listing.id !== 'tween').map((s) => s.listing.id);
+    expect(organic).toEqual(ranked.slice(0, 9).map((s) => s.listing.id));
+  });
+
+  it('is named even at the tightest constants the tuning could reach', () => {
+    // WHY FRONT-PLACEMENT AND NOT "INSERT AT SLOT 3". Inserting at the last named slot would
+    // satisfy "always named" today and stop doing so the moment DIRECT_LINK_PICKS is lowered to 2
+    // — silently, with no test failing. This asserts the guarantee against the constants rather
+    // than against today's values.
+    const ranked = [
+      ...distinctActivities(10, { ageBandMatches: ['under2'], ageMinMonths: 0, ageMaxMonths: 24 }),
+      kidActivity({
+        id: 'tween',
+        activityName: 'Tween Hangout',
+        venueName: 'Tween Hall',
+        ageBandMatches: ['10-14'],
+        ageMinMonths: 120,
+        ageMaxMonths: 180,
+      }),
+    ].map(asItem);
+
+    const { selection } = applyCoverageSwap(ranked.slice(0, 10), ranked, ['under2', '10-14'], 10);
+    const forcedIndex = selection.findIndex((s) => s.listing.id === 'tween');
+    // Inside the cap on forced picks, which is what makes the guarantee independent of tuning:
+    // every forced pick sits within the first MAX_FORCED_PICKS positions.
+    expect(forcedIndex).toBeLessThan(MAX_FORCED_PICKS);
+    expect(MAX_FORCED_PICKS).toBeLessThanOrEqual(DIRECT_LINK_PICKS);
+  });
+
+  it('two forced picks both get named, in canonical band order', () => {
+    // MAX_FORCED_PICKS is 2 and DIRECT_LINK_PICKS is 3, so "always named" means two of the three
+    // named slots can be forced. That is the direct consequence of the ruling, asserted so it is
+    // a visible property rather than a surprise on a thin week.
+    const ranked = [
+      ...distinctActivities(10, { ageBandMatches: ['5-9'], ageMinMonths: 60, ageMaxMonths: 120 }),
+      kidActivity({
+        id: 'baby',
+        activityName: 'Baby Time',
+        venueName: 'Baby Hall',
+        ageBandMatches: ['under2'],
+        ageMinMonths: 0,
+        ageMaxMonths: 24,
+      }),
+      kidActivity({
+        id: 'tween',
+        activityName: 'Tween Hangout',
+        venueName: 'Tween Hall',
+        ageBandMatches: ['10-14'],
+        ageMinMonths: 120,
+        ageMaxMonths: 180,
+      }),
+    ].map(asItem);
+
+    const { selection, forced } = applyCoverageSwap(
+      ranked.slice(0, 10),
+      ranked,
+      ['under2', '5-9', '10-14'],
+      10
     );
+
+    expect(forced.map((f) => f.band)).toEqual(['under2', '10-14']); // youngest-first
+    // Both at the front, in that same order, and both inside the named window.
+    expect(selection.slice(0, 2).map((s) => s.listing.id)).toEqual(['baby', 'tween']);
+    const namedIds = selection.slice(0, DIRECT_LINK_PICKS).map((s) => s.listing.id);
+    expect(namedIds).toContain('baby');
+    expect(namedIds).toContain('tween');
   });
 });
 
