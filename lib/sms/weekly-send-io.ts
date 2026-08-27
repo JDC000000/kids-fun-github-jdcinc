@@ -161,9 +161,56 @@ export interface ActiveSubscriber {
  * NOT LOADED, AND WORTH KNOWING WHY NOT: the previous week's `picks_snapshot`. See the
  * "repeat picks" note in the header of `sendWeeklySmsForSubscriber`.
  */
-export async function loadActiveSubscribers(_limit?: number): Promise<ActiveSubscriber[]> {
-  // Draft scaffold: sms_consent is unapplied SQL and this branch holds no write credentials.
-  return [];
+export async function loadActiveSubscribers(limit?: number): Promise<ActiveSubscriber[]> {
+  const rows = await query<{
+    id: string;
+    short_ref: string | number;
+    phone_number: string;
+    postal_code: string | null;
+    birth_years: number[] | null;
+    category_interests: string[] | null;
+    consecutive_empty_weeks: number;
+    preferences_token: string | null;
+    consent_text_version: string;
+  }>(
+    `SELECT id, short_ref, phone_number, postal_code, birth_years, category_interests,
+            consecutive_empty_weeks, preferences_token, consent_text_version
+       FROM sms_consent
+      WHERE status = 'active'
+        AND phone_number IS NOT NULL
+      ORDER BY id
+      ${typeof limit === 'number' && limit > 0 ? 'LIMIT $1' : ''}`,
+    typeof limit === 'number' && limit > 0 ? [limit] : []
+  );
+
+  return rows.map((row) => ({
+    // THE NUMBER TRAVELS BESIDE THE SUBSCRIBER, NEVER ON IT. `SmsSubscriber` has no phone field by
+    // design — the pure builder geocodes, selects and renders, and none of that needs one, so the
+    // type system keeps it out rather than a convention someone has to remember.
+    subscriber: {
+      id: row.id,
+      // bigint comes back as a STRING from node-postgres to avoid silent precision loss. Number()
+      // is exact far past anything this sequence will reach, and `encodeShortLink` rejects an
+      // out-of-range ref rather than truncating it into a link to the wrong activity.
+      shortRef: Number(row.short_ref),
+      // COERCED, NOT DROPPED. `SmsSubscriber` requires these; the columns are nullable because
+      // the 30-day purge NULLs them in place. The WHERE clause already excludes purged rows via
+      // `phone_number IS NOT NULL` (the purge clears all four together), so this only fires for a
+      // row that is genuinely anomalous — a number with no postal code.
+      //
+      // Such a row is passed THROUGH rather than filtered out, on purpose: an empty postal fails
+      // to geocode, and `sendWeeklySmsForSubscriber` already reports that as
+      // `skipped_geocode_failed` — a visible per-subscriber outcome in the run summary. Dropping
+      // the row here would make the same anomaly invisible, which is the worse failure.
+      postalCode: row.postal_code ?? '',
+      birthYears: row.birth_years ?? [],
+      categoryInterests: row.category_interests ?? undefined,
+      consecutiveEmptyWeeks: row.consecutive_empty_weeks,
+      preferencesToken: row.preferences_token ?? '',
+      consentTextVersion: row.consent_text_version,
+    },
+    phoneNumber: row.phone_number,
+  }));
 }
 
 /**
@@ -253,10 +300,19 @@ export const loadRecentlySentPickIds: RecentPickIdsLoader = async (subscriberId)
  * someone who opted out mid-run. The inbound path wins; this write simply does not apply.
  */
 export async function applyEmptyWeekState(
-  _subscriberId: string,
-  _state: EmptyWeekState
+  subscriberId: string,
+  state: EmptyWeekState
 ): Promise<void> {
-  // Draft scaffold: sms_consent is unapplied SQL.
+  // `AND status = 'active'` IS A GUARD, NOT DECORATION. Between loading the batch and writing this
+  // row back, an inbound STOP webhook may have set the subscriber to 'stopped'. Without it this
+  // UPDATE would quietly resurrect them to 'active' or 'paused' and the Friday job would have
+  // texted someone who opted out mid-run. The inbound path wins; this write simply does not apply.
+  await query(
+    `UPDATE sms_consent
+        SET consecutive_empty_weeks = $2, status = $3
+      WHERE id = $1 AND status = 'active'`,
+    [subscriberId, state.consecutiveEmptyWeeks, state.status]
+  );
 }
 
 /**
@@ -272,8 +328,23 @@ export async function applyEmptyWeekState(
  * time the send job hit their number again — a retention promise quietly extended by a retry.
  * Same rule as the inbound STOP mirror in lib/sms/consent-transitions.ts.
  */
-export async function markStoppedViaCarrier(_subscriberId: string): Promise<void> {
-  // Draft scaffold: sms_consent is unapplied SQL.
+export async function markStoppedViaCarrier(subscriberId: string): Promise<void> {
+  // COALESCE, not a bare now(). Migration 0034's 30-day purge clock keys off `stopped_at`, so
+  // re-stamping it on a subscriber who already stopped would push their purge deadline out every
+  // time the send job hit their number again — a retention promise quietly extended by a retry.
+  // Same rule as the inbound STOP mirror in lib/sms/consent-transitions.ts.
+  //
+  // NO STATUS PREDICATE HERE, unlike `applyEmptyWeekState` above, and the asymmetry is deliberate:
+  // the carrier has told us this number is suppressed, which is true regardless of what our row
+  // currently says. Refusing to record it because the row was already 'paused' would leave our
+  // database disagreeing with Twilio's suppression list, which is the exact drift the mirror
+  // exists to prevent.
+  await query(
+    `UPDATE sms_consent
+        SET status = 'stopped', stopped_at = COALESCE(stopped_at, now())
+      WHERE id = $1`,
+    [subscriberId]
+  );
 }
 
 // ── The per-subscriber unit ─────────────────────────────────────────────────────────────

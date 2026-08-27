@@ -138,6 +138,7 @@ export const DB_INTEGRATION_SUITES = [
   // Stage A: the first suites on this branch that write a real sms_consent row.
   'tests/sms/signup_persistence-db.test.ts',
   'tests/sms/send_log-db.test.ts',
+  'tests/sms/preferences_weekly-db.test.ts',
   'tests/search/postgres-repository.test.ts',
   'tests/snapshot/catalogue-shape.test.ts',
   'tests/snapshot/policy-schema-guard.test.ts',

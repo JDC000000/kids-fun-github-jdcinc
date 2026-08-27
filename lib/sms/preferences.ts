@@ -54,6 +54,7 @@ import {
   type ProfileFields,
   type SmsSignupField,
 } from './signup-validate';
+import { query } from '@/lib/db/client';
 import { activityPath, hubClickPath } from './click-through';
 import { encodeShortLink } from './short-link';
 
@@ -147,9 +148,44 @@ export interface LastWeekView {
  */
 export type PreferencesLookup = (token: string) => Promise<PreferencesRow | null>;
 
-export const findByPreferencesToken: PreferencesLookup = async () => {
-  // Draft scaffold: sms_consent is unapplied SQL and this branch holds no read credentials.
-  return null;
+export const findByPreferencesToken: PreferencesLookup = async (token) => {
+  // A PLAIN EQUALITY MATCH against 0034's unique partial index. Unlike the short link there is no
+  // check value to fall back on — this token's entire security is that it was minted at full width
+  // (lib/sms/preferences-token.ts). `looksLikePreferencesToken` is not applied here: the caller
+  // already rejects impossible shapes, and re-testing would only change WHICH lookup misses.
+  //
+  // NO `phone_number IS NOT NULL` CLAUSE, deliberately. A purged-but-not-deleted row still has a
+  // token, and a subscriber who kept the link should still get an honest "you have unsubscribed
+  // and your details are gone" page rather than a dead end. The row's own `status` says what to
+  // render; the query does not pre-judge it.
+  const rows = await query<{
+    id: string;
+    status: ConsentStatus;
+    stopped_at: Date | null;
+    postal_code: string | null;
+    birth_years: number[] | null;
+    category_interests: string[] | null;
+    consecutive_empty_weeks: number;
+    short_ref: string | number | null;
+  }>(
+    `SELECT id, status, stopped_at, postal_code, birth_years, category_interests,
+            consecutive_empty_weeks, short_ref
+       FROM sms_consent
+      WHERE preferences_token = $1`,
+    [token]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    status: row.status,
+    stoppedAt: row.stopped_at,
+    postalCode: row.postal_code,
+    birthYears: row.birth_years,
+    categoryInterests: row.category_interests,
+    consecutiveEmptyWeeks: row.consecutive_empty_weeks,
+    shortRef: row.short_ref == null ? null : Number(row.short_ref),
+  };
 };
 
 /**
@@ -186,7 +222,63 @@ export const findByPreferencesToken: PreferencesLookup = async () => {
  */
 export type LastWeekLookup = (subscriberId: string) => Promise<LastWeek>;
 
-export const findLastWeek: LastWeekLookup = async () => ({ kind: 'none', picks: [], sentAt: null });
+export const findLastWeek: LastWeekLookup = async (subscriberId) => {
+  const rows = await query<{
+    send_type: LastWeekKind;
+    picks_snapshot: Array<{ occurrence_id: string; rank: number }> | null;
+    created_at: Date;
+  }>(
+    // ALL THREE SEND TYPES, not just 'weekly' — PRD §2.4 asks for the empty and paused states too,
+    // and they are the states a subscriber most needs explained. A parent whose last text said
+    // "nothing this week" should land here and see that reflected, not a blank panel reading as a
+    // bug. Uses idx_sms_send_log_subscriber (subscriber_id, created_at DESC) from 0035.
+    `SELECT send_type, picks_snapshot, created_at
+       FROM sms_send_log
+      WHERE subscriber_id = $1
+        AND send_type IN ('weekly','empty_week','pause_notice')
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [subscriberId]
+  );
+  const row = rows[0];
+  if (!row) return { kind: 'none', picks: [], sentAt: null };
+
+  const snapshot = row.picks_snapshot ?? [];
+  if (snapshot.length === 0) {
+    return { kind: row.send_type, picks: [], sentAt: row.created_at };
+  }
+
+  // ── The second read: the snapshot holds ids, a hub link needs short_refs ──
+  // `picks_snapshot` stores [{occurrence_id, rank}] and nothing else (0035), but a hub link is
+  // minted from the occurrence's short_ref (0037). LEFT-JOIN SEMANTICS BY CONSTRUCTION: a pick
+  // whose occurrence has since been archived simply does not come back from this query, and its
+  // `occurrenceShortRef` stays null — so it keeps its place in the panel and degrades to an
+  // unattributed link. The snapshot is the record of what we SENT, and it must still list a pick
+  // that has since been cancelled.
+  const ids = snapshot.map((p) => p.occurrence_id).filter((id) => typeof id === 'string');
+  const refRows = ids.length
+    ? await query<{ id: string; short_ref: string | number }>(
+        `SELECT id, short_ref FROM activity_occurrence
+          WHERE id = ANY($1::uuid[]) AND archived_at IS NULL`,
+        [ids]
+      )
+    : [];
+  const refs = new Map(refRows.map((r) => [r.id, Number(r.short_ref)]));
+
+  return {
+    kind: row.send_type,
+    // Rank order, because the panel reads top to bottom the way the text did.
+    picks: [...snapshot]
+      .filter((p) => p && typeof p.occurrence_id === 'string')
+      .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
+      .map((p) => ({
+        occurrenceId: p.occurrence_id,
+        rank: p.rank,
+        occurrenceShortRef: refs.get(p.occurrence_id) ?? null,
+      })),
+    sentAt: row.created_at,
+  };
+};
 
 /** One decided write against `sms_consent`. */
 export type PreferencesChange =
@@ -234,8 +326,57 @@ export type PreferencesWriter = (change: PreferencesChange, now: Date) => Promis
  *     (The row SURVIVES with its id, short_ref and consent metadata — that is what keeps
  *      sms_send_log's FK and the CASL audit trail intact. See `decideDelete`.)
  */
-export const applyPreferencesChange: PreferencesWriter = async () => {
-  // Draft scaffold: sms_consent is unapplied SQL and this branch holds no write credentials.
+export const applyPreferencesChange: PreferencesWriter = async (change, now) => {
+  if (change.kind === 'save') {
+    // `status = 'active'` ONLY when the decision asked for it (un-pausing). Otherwise the status
+    // is left exactly as it was — a save must not resurrect a stopped subscriber.
+    const sets = [
+      'postal_code = $2',
+      'birth_years = $3',
+      'category_interests = $4',
+      'consecutive_empty_weeks = 0',
+    ];
+    const params: unknown[] = [
+      change.subscriberId,
+      change.postalCode,
+      change.birthYears,
+      change.categoryInterests,
+    ];
+    if (change.status) sets.push('status = $' + (params.push(change.status) + 0));
+    await query(`UPDATE sms_consent SET ${sets.join(', ')} WHERE id = $1`, params);
+    return;
+  }
+
+  if (change.kind === 'unsubscribe') {
+    // COALESCE, never a bare now(): re-stamping would push the 30-day purge deadline out. Same
+    // rule as the carrier-STOP mirror. `stoppedAt: 'leave'` means they were already stopped, so
+    // the COALESCE is doing the work either way — but the decision still says which it intended.
+    await query(
+      `UPDATE sms_consent
+          SET status = 'stopped', stopped_at = COALESCE(stopped_at, $2)
+        WHERE id = $1`,
+      [change.subscriberId, now]
+    );
+    return;
+  }
+
+  // ── delete ──
+  // THE ROW SURVIVES. Its id, short_ref, consent timestamps and consent_text_version stay, because
+  // sms_send_log's FK points at it and the CASL audit trail is the thing that must outlive the
+  // personal data. What goes is everything that identifies a person: the number, the postal code,
+  // the children's ages, the interests. This is the same shape migration 0034's scheduled purge
+  // performs — an explicit request just runs it early (PRD §1.3, Operator-approved).
+  await query(
+    `UPDATE sms_consent
+        SET status = 'stopped',
+            stopped_at = COALESCE(stopped_at, $2),
+            phone_number = NULL,
+            postal_code = NULL,
+            birth_years = NULL,
+            category_interests = NULL
+      WHERE id = $1`,
+    [change.subscriberId, now]
+  );
 };
 
 // ── Reading ─────────────────────────────────────────────────────────────────────────────
