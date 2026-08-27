@@ -28,7 +28,9 @@
 // consent state. It displaces ONLY `applied` — see `runTransition` for why the read-only
 // outcomes are reported as themselves even in a dry run.
 
+import { query } from '@/lib/db/client';
 import { smsSendingEnabled } from './config';
+import { CONSENT_TEXT_VERSION } from './consent-copy';
 
 /** `sms_consent.status` (migration 0034). */
 export type ConsentStatus = 'pending' | 'active' | 'paused' | 'stopped';
@@ -192,9 +194,17 @@ export interface TransitionOptions extends TransitionDeps {
  * Every "after the purge" case in the decisions below resolves to null through this function
  * without anything having to test for a purge.
  */
-export const findSubscriberByPhone: SubscriberLookup = async () => {
-  // Draft scaffold: sms_consent is unapplied SQL and this branch holds no read credentials.
-  return null;
+export const findSubscriberByPhone: SubscriberLookup = async (phoneNumber) => {
+  const rows = await query<{ id: string; status: ConsentStatus; stopped_at: Date | null }>(
+    `SELECT id, status, stopped_at FROM sms_consent WHERE phone_number = $1`,
+    [phoneNumber]
+  );
+  const row = rows[0];
+  // THREE FIELDS, AND NO MORE. `ConsentRow` is the minimum a decision needs, by round-5 design —
+  // a decision function that cannot see personal data cannot leak it into a result or a log line.
+  // The SELECT list is that guarantee's other half: widening it here would quietly defeat a
+  // property the type was shaped to enforce.
+  return row ? { id: row.id, status: row.status, stoppedAt: row.stopped_at } : null;
 };
 
 /**
@@ -231,11 +241,46 @@ export const findSubscriberByPhone: SubscriberLookup = async () => {
  *
  * The service pool writes this (`sms_consent` is default-deny RLS, service-role only — 0034).
  */
-export const applyConsentChange: ConsentChangeApplier = async () => {
-  // Draft scaffold: sms_consent is unapplied SQL and this branch holds no write credentials.
-  // Reports 'applied' so the scaffold behaves as though the compare-and-set succeeded, which is
-  // the case a caller must handle correctly anyway.
-  return 'applied';
+export const applyConsentChange: ConsentChangeApplier = async (change, now) => {
+  // ── The SET clause, built from the change rather than branched over ──
+  // `stoppedAt` is a three-way instruction ('set' | 'clear' | 'leave') and 'leave' means the column
+  // is OMITTED, not written with its current value — that difference is the repeat-STOP bug this
+  // type exists to prevent, and building the fragment list is how it stays expressible.
+  const sets: string[] = ['status = $3'];
+  const params: unknown[] = [change.subscriberId, change.expectedStatus, change.status];
+
+  if (change.stoppedAt === 'set') {
+    // COALESCE, never a bare now(): re-stamping would push migration 0034's 30-day purge deadline
+    // out every time a duplicate STOP arrived — a retention promise quietly extended by a retry.
+    sets.push('stopped_at = COALESCE(stopped_at, $' + (params.push(now) + 0) + ')');
+  } else if (change.stoppedAt === 'clear') {
+    sets.push('stopped_at = NULL');
+  }
+
+  if (change.reconsent) {
+    // A FRESH ACT OF EXPRESS CONSENT, against whatever wording is live today. JOIN only — START is
+    // a carrier resume signal and must never re-stamp these, or the audit trail would record a
+    // consent act that never happened.
+    sets.push('consent_timestamp = $' + (params.push(now) + 0));
+    sets.push('consent_text_version = $' + (params.push(CONSENT_TEXT_VERSION) + 0));
+    sets.push('consecutive_empty_weeks = 0');
+  }
+  if (change.confirm) {
+    sets.push('confirmed_timestamp = $' + (params.push(now) + 0));
+  }
+
+  // ── THE COMPARE-AND-SET ──
+  // `AND status = $2` is the whole reason this returns a value. Two copies of one inbound webhook
+  // can both read `pending` and both decide `applied`; without this predicate both would write and
+  // both would report success, and the inbound route keys the welcome text off exactly that. See
+  // `ConsentChange.expectedStatus`.
+  const rows = await query<{ id: string }>(
+    `UPDATE sms_consent SET ${sets.join(', ')}
+      WHERE id = $1 AND status = $2
+      RETURNING id`,
+    params
+  );
+  return rows.length > 0 ? 'applied' : 'no_match';
 };
 
 // ── The pure decisions ──────────────────────────────────────────────────────────────────

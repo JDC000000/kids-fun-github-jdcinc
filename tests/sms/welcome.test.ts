@@ -31,6 +31,20 @@ import { fsaGeocoder } from '@/lib/geo/postal-fsa';
 import { REGIONS } from '@/lib/search/__fixtures__/regions';
 import { ALIAS_SEED } from '@/lib/search/__fixtures__/aliases';
 
+// ═══ THE UNIT LANE DOES NOT TOUCH A DATABASE ═══
+// Stage A made the consent seams real: they now issue actual SQL through lib/db/client. This file
+// tests decisions and wiring, not persistence, so the db seam is mocked to an empty result — which
+// restores exactly the "finds nothing" world these tests were written against, honestly and
+// without a connection. The real seams are covered in tests/sms/signup_persistence-db.test.ts,
+// which runs in the `db` lane. That split is the convention vitest.workspace.ts documents.
+vi.mock('@/lib/db/client', () => ({
+  query: async () => [],
+  getPool: () => {
+    throw new Error('the unit lane must not open a pool');
+  },
+}));
+
+
 /** A subscriber for the weekly path, used only by the cross-path agreement test below. */
 const WEEKLY_SUBSCRIBER: SmsSubscriber = {
   id: 'sub-weekly',

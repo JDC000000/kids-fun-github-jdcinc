@@ -22,6 +22,20 @@ import {
   type TransitionOptions,
 } from '@/lib/sms/consent-transitions';
 
+// ═══ THE UNIT LANE DOES NOT TOUCH A DATABASE ═══
+// Stage A made the consent seams real: they now issue actual SQL through lib/db/client. This file
+// tests decisions and wiring, not persistence, so the db seam is mocked to an empty result — which
+// restores exactly the "finds nothing" world these tests were written against, honestly and
+// without a connection. The real seams are covered in tests/sms/signup_persistence-db.test.ts,
+// which runs in the `db` lane. That split is the convention vitest.workspace.ts documents.
+vi.mock('@/lib/db/client', () => ({
+  query: async () => [],
+  getPool: () => {
+    throw new Error('the unit lane must not open a pool');
+  },
+}));
+
+
 const PHONE = '+16045550123';
 const STOPPED_AT = new Date('2026-08-10T00:00:00Z');
 const NOW = new Date('2026-08-28T23:00:00Z');

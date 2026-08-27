@@ -12,9 +12,12 @@
 // archaeological. Read the SQL in each TODO before implementing — the non-obvious parts are
 // written out.
 
+import { query } from '@/lib/db/client';
 import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { smsSendingEnabled } from './config';
 import { renderConfirmRequestMessage } from './message';
+import { mintPreferencesToken } from './preferences-token';
+import { redactPhone } from './redact';
 import type { SmsSignup } from './signup-validate';
 import { dispatchSms, type DispatchResult } from './twilio-client';
 import { recordSmsSend } from './send-log';
@@ -36,6 +39,8 @@ export interface SignupWriteOptions {
   /** Defaults to !smsSendingEnabled() — a real write requires opting in explicitly. */
   dryRun?: boolean;
   now?: Date;
+  /** Injected for tests; defaults to the shared pool in lib/db/client.ts. */
+  query?: typeof query;
 }
 
 /**
@@ -91,7 +96,105 @@ export async function createPendingSubscriber(
 ): Promise<SignupWriteResult> {
   const dryRun = options.dryRun ?? !smsSendingEnabled();
   if (dryRun) return { outcome: 'dry_run', subscriberId: null };
-  return { outcome: 'error', subscriberId: null, error: 'not implemented (draft scaffold)' };
+
+  const run = options.query ?? query;
+
+  try {
+    // ONE STATEMENT. The upsert and the "was this new?" answer come back together, because doing
+    // it as a SELECT-then-INSERT would race two simultaneous submissions of the same number
+    // straight into the UNIQUE index — which is exactly the collision the upsert exists to absorb.
+    //
+    // `xmax = 0` IS THE STANDARD POSTGRES TRICK for "did this row come from the INSERT or the
+    // UPDATE branch". On a freshly inserted tuple the xmax system column is 0; on one updated by
+    // ON CONFLICT it carries the updating transaction. It is not pretty and it is not in the
+    // documentation as an API, but the alternative — a second round trip, or a RETURNING that
+    // cannot tell the branches apart — is worse. Asserted directly in the db-lane test.
+    const rows = await run<{ id: string; short_ref: string | number; inserted: boolean }>(
+      `INSERT INTO sms_consent
+         (phone_number, postal_code, birth_years, category_interests,
+          status, consent_method, consent_timestamp, consent_text_version)
+       VALUES ($1, $2, $3, $4, 'pending', $5, now(), $6)
+       ON CONFLICT (phone_number) DO UPDATE SET
+         postal_code             = EXCLUDED.postal_code,
+         birth_years             = EXCLUDED.birth_years,
+         category_interests      = EXCLUDED.category_interests,
+         status                  = 'pending',
+         consent_method          = EXCLUDED.consent_method,
+         consent_timestamp       = now(),
+         consent_text_version    = EXCLUDED.consent_text_version,
+         confirmed_timestamp     = NULL,
+         stopped_at              = NULL,
+         consecutive_empty_weeks = 0
+       RETURNING id, short_ref, (xmax = 0) AS inserted`,
+      [
+        signup.phoneNumber,
+        signup.postalCode,
+        signup.birthYears,
+        signup.categoryInterests,
+        signup.consentMethod,
+        signup.consentTextVersion,
+      ]
+    );
+
+    const row = rows[0];
+    if (!row) {
+      // Unreachable with this statement — an upsert always returns its row. Handled rather than
+      // asserted, because a silent undefined here would become a confident `subscriberId: null`.
+      return { outcome: 'error', subscriberId: null, error: 'upsert returned no row' };
+    }
+
+    // ── The preferences token, minted from the id the database just assigned ──
+    // SECOND STATEMENT, and it has to be: the token is an HMAC over the row id, and the id does
+    // not exist until the insert has run. Generating a uuid client-side to get one round trip
+    // would break the upsert — on the conflict branch the row keeps its ORIGINAL id, so a token
+    // computed from a locally-invented one would be wrong for the row it landed on.
+    //
+    // `WHERE preferences_token IS NULL` so a returning subscriber KEEPS THE LINK THEY HAVE. Their
+    // old messages still carry it, and re-minting would silently break every one of them.
+    const token = mintPreferencesToken(row.id);
+    if (token) {
+      await run(
+        `UPDATE sms_consent SET preferences_token = $2
+          WHERE id = $1 AND preferences_token IS NULL`,
+        [row.id, token]
+      );
+    }
+
+    return {
+      outcome: row.inserted ? 'created' : 'reactivated',
+      subscriberId: row.id,
+    };
+  } catch (err) {
+    // NEVER LET THE NUMBER REACH THE ERROR STRING. Postgres echoes the offending values back on a
+    // constraint violation — `Key (phone_number)=(+1604...) already exists` — and this result is
+    // returned to a route that reports failures. Same discipline as lib/sms/weekly-send-io.ts.
+    return {
+      outcome: 'error',
+      subscriberId: null,
+      error: `write failed: ${redactSqlError(err, signup.phoneNumber)}`,
+    };
+  }
+}
+
+/**
+ * A database error, with the subscriber's number taken out of it.
+ *
+ * Postgres constraint violations quote the offending value: a UNIQUE violation on
+ * `phone_number` produces `Key (phone_number)=(+16045550123) already exists`. That string reaches
+ * a route's error handling and, from there, a log line.
+ *
+ * BOTH the code and a scrubbed message, because the code alone is often not enough to act on and
+ * the message alone is not safe. The scrub matches the exact E.164 string we hold — a backstop,
+ * named as one, exactly like `scrubNumber` in lib/sms/weekly-send-io.ts.
+ */
+function redactSqlError(err: unknown, phoneNumber: string): string {
+  const code = (err as { code?: string })?.code;
+  const raw = (err as Error)?.message ?? 'unknown error';
+  const scrubbed =
+    phoneNumber && raw.includes(phoneNumber)
+      ? raw.split(phoneNumber).join(redactPhone(phoneNumber))
+      : raw;
+  return code ? `[${code}] ${scrubbed}` : scrubbed;
 }
 
 export type ConfirmationSendOutcome = 'sent' | 'dry_run' | 'error';

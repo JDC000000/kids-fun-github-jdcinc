@@ -27,6 +27,20 @@ import { smsSendingEnabled, stagingReplyBodyAllowed } from '@/lib/sms/config';
 import type { TransitionOutcome } from '@/lib/sms/consent-transitions';
 import { renderUnknownKeywordMessage, assertGsm7Safe, estimateSegments } from '@/lib/sms/message';
 
+// ═══ THE UNIT LANE DOES NOT TOUCH A DATABASE ═══
+// Stage A made the consent seams real: they now issue actual SQL through lib/db/client. This file
+// tests decisions and wiring, not persistence, so the db seam is mocked to an empty result — which
+// restores exactly the "finds nothing" world these tests were written against, honestly and
+// without a connection. The real seams are covered in tests/sms/signup_persistence-db.test.ts,
+// which runs in the `db` lane. That split is the convention vitest.workspace.ts documents.
+vi.mock('@/lib/db/client', () => ({
+  query: async () => [],
+  getPool: () => {
+    throw new Error('the unit lane must not open a pool');
+  },
+}));
+
+
 const URL = 'https://kidsfun.example/api/sms/inbound';
 const TOKEN = 'test-auth-token';
 const FROM = '+16045550123';

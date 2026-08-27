@@ -33,6 +33,7 @@
 // this ordering prevents. A JOIN from an active subscriber is a normal event — a parent replying
 // twice, a carrier redelivering — and it must be silent.
 
+import { query } from '@/lib/db/client';
 import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
 import { preferencesUrl as buildPreferencesUrl } from './config';
 import { renderWelcomeMessage, type RenderedMessage } from './message';
@@ -78,9 +79,41 @@ export interface WelcomeSubscriber {
  */
 export type WelcomeSubscriberLookup = (subscriberId: string) => Promise<WelcomeSubscriber | null>;
 
-export const loadWelcomeSubscriber: WelcomeSubscriberLookup = async () => {
-  // Draft scaffold: sms_consent is unapplied SQL and this branch holds no read credentials.
-  return null;
+export const loadWelcomeSubscriber: WelcomeSubscriberLookup = async (subscriberId) => {
+  const rows = await query<{
+    id: string;
+    phone_number: string | null;
+    postal_code: string | null;
+    birth_years: number[] | null;
+    preferences_token: string | null;
+    consent_text_version: string;
+  }>(
+    `SELECT id, phone_number, postal_code, birth_years, preferences_token, consent_text_version
+       FROM sms_consent
+      WHERE id = $1`,
+    [subscriberId]
+  );
+  const row = rows[0];
+  if (!row) return null;
+
+  // NO PHONE NUMBER MEANS NO WELCOME. Migration 0034's 30-day purge NULLs the personal columns in
+  // place rather than deleting the row, so a purged subscriber still HAS a row — and `dispatchSms`
+  // would be handed `null` as a recipient. The type says `phoneNumber: string`, so this is the
+  // line that keeps that true. Reported as "no such subscriber" because that is what it means to
+  // this caller: there is nobody left here to welcome.
+  if (!row.phone_number) return null;
+
+  return {
+    id: row.id,
+    phoneNumber: row.phone_number,
+    postalCode: row.postal_code,
+    birthYears: row.birth_years,
+    // A row written before the token was minted, or minted with no secret configured. The welcome
+    // still sends; `renderWelcomeMessage` would print a broken link, so the caller gets an empty
+    // string and the message degrades rather than lying about where to manage a subscription.
+    preferencesToken: row.preferences_token ?? '',
+    consentTextVersion: row.consent_text_version,
+  };
 };
 
 export type WelcomeOutcome =
