@@ -21,8 +21,8 @@
 // rule (lib/sms/weekly-send-io.ts), and `sanitize` below is the second, independent barrier:
 // this route must not become the place a future field on that type leaks out of.
 import { NextResponse } from 'next/server';
-import { timingSafeEqual } from 'node:crypto';
 import { smsCronSecret, smsSendingEnabled } from '@/lib/sms/config';
+import { safeEqual } from '@/lib/sms/safe-compare';
 import {
   loadWeeklySmsDeps,
   loadActiveSubscribers,
@@ -40,13 +40,15 @@ function presentedSecret(request: Request): string | null {
   return request.headers.get('x-cron-secret');
 }
 
+/**
+ * The cron gate. Constant-time in the VALUE and in the LENGTH — see lib/sms/safe-compare.ts.
+ *
+ * THE LENGTH MATTERS MORE HERE than on the signature check: a Twilio signature is a fixed-length
+ * digest whose length is public, but the cron secret's is not, and this secret is the only thing
+ * between an unauthenticated caller and triggering a live send.
+ */
 function secretOk(presented: string | null, expected: string): boolean {
-  if (!presented) return false;
-  const a = Buffer.from(presented);
-  const b = Buffer.from(expected);
-  // timingSafeEqual requires equal-length buffers; a length mismatch is an immediate reject.
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  return safeEqual(presented, expected);
 }
 
 /**

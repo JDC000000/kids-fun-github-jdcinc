@@ -2499,3 +2499,151 @@ parent who never texted us.
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds with `/api/sms/status` registered.
 SMS suite **368 tests across 20 files** (was 330/18). Full `unit` lane: **226 files / 3834 tests
 passing**.
+
+---
+
+# Round 17 — the Operator's review: six findings
+
+All six confirmed in source before changing anything. Five fixed, one flagged with a sharper
+finding underneath it.
+
+| # | File | Fix |
+|---|---|---|
+| 1 | `next.config.mjs`, `app/u/[preferencesToken]/page.tsx` | the two missing headers, for real |
+| 2 | `lib/sms/welcome.ts`, `lib/sms/weekly-send-io.ts` | 21610 now marks the subscriber stopped |
+| 3 | `lib/sms/safe-compare.ts` **NEW**, `twilio-signature.ts`, `weekly/run/route.ts` | length-flat compare |
+| 4 | `lib/sms/redact.ts` **NEW**, two callers | one `redactPhone` |
+| 5 | `app/api/sms/inbound/route.ts` | documented; see §bw for the real mechanism |
+| 6 | merge commit | `origin/main` absorbed |
+
+## bs. P1 — the comment was true and the code was not
+
+`no-store` and `no-referrer` were described in the page's header block, with correct reasoning for
+each, and **set nowhere**. Only `metadata.robots` existed.
+
+**MECHANISM CHOSEN: `next.config.mjs`'s `headers()`.** A Server Component page cannot set response
+headers the way `app/s/[shortId]/route.ts` does — that is a Route Handler returning a
+`NextResponse`. Next's declarative `headers()` is the supported mechanism for a page, it matches
+dynamic segments (`/u/:preferencesToken`), and it needed no change to `middleware.ts` — which
+exists for an unrelated analytics-cookie concern, is owned by another workstream, and would have
+meant putting a security header inside a function whose matcher covers the whole site.
+
+**VERIFIED AGAINST A REAL RESPONSE, not against the config object.** Built, ran `next start`, and
+curled the route:
+
+```
+GET /u/alice-token-0123456789abcdef
+  referrer-policy: no-referrer
+  cache-control: no-store, max-age=0
+  <meta name="robots" content="noindex, nofollow, nocache"/>
+GET /search   → no referrer-policy   (the rule is scoped, not global)
+```
+
+The automated test loads **the real `next.config.mjs` and Next's own `path-to-regexp`** rather than
+a copied literal — a test against a copy keeps passing after somebody deletes the rule it protects —
+and asserts the pattern matches `/u/abc` but not `/search`, `/u`, or `/u/abc/extra`.
+
+The page's header block now says where each protection actually comes from.
+
+## bt. P2 — a real bug, and the "correct" half was never tested either
+
+`sendWelcomeText` logged `stopped_via_carrier` and left `sms_consent.status` at `'active'`. Fixed
+by calling `markStoppedViaCarrier` on the 21610 branch, before the log write, mirroring
+`weekly-send-io.ts`.
+
+**Writing the cross-path test surfaced a second thing:** `sendWeeklySmsForSubscriber` — the half the
+review called correct — **had no direct test at all.** It was only ever mocked wholesale by
+`weekly_run_route.test.ts`. "Correct" was an assertion nobody had run. It now has the same three
+injection seams (`dispatch`, `record`, `markStopped`) that `welcome.ts` and `signup-store.ts` have
+carried since they were written, and the agreement test drives **both real functions** with the same
+Twilio error code and asserts both mark the same subscriber stopped — rather than asserting one and
+describing the other.
+
+Also pinned: no other outcome marks anyone stopped (a plain delivery failure must never
+unsubscribe), and a failed state write still leaves the 21610 in the audit trail.
+
+## bu. P3 — the codebase already had the better pattern
+
+Both SMS copies used `if (a.length !== b.length) return false`, which is constant-time in the value
+and not in the length. `lib/admin/access.ts`'s `safeEqual` burns a same-length comparison instead.
+Extracted to `lib/sms/safe-compare.ts` and used by both.
+
+One implementation detail worth stating: the burn compares **the attacker's input with itself**, not
+the secret with itself, so the work done scales with what they sent rather than with the length of
+the secret.
+
+**Honest severity:** the Twilio signature is a fixed-length base64 digest, so its length is public
+and that leak was theoretical. The **cron secret** is the real one — its length is not public and it
+is the only thing between an unauthenticated caller and a live send. Neither was an emergency; the
+reason to fix both is that the weaker pattern is the one that gets copied into the next check, and
+this branch has now written three.
+
+`lib/email/unsubscribe.ts` left alone as instructed — outside this branch's footprint, its own
+judgment call, already made.
+
+## bv. P4 — one `redactPhone`
+
+Byte-for-byte duplicated, and the inbound route's copy carried a comment claiming the redaction
+"lives here rather than at each call site" — which was true of neither copy. Now
+`lib/sms/redact.ts`, re-exported from `weekly-send-io.ts` so existing importers are unaffected, and
+both comments corrected.
+
+## bw. P5 — 🔴 the duplicate risk is real, and its mechanism is NOT the one in the brief
+
+**`after()` does not exist here.** Verified two ways: absent from `next/server`'s exports on the
+installed package, and Next's own docs record `unstable_after` arriving in **15.0.0-rc** and
+stabilising in **15.1.0**. This repo is on **14.2.35**.
+
+**The Twilio side is narrower than stated.** From Twilio's connection-override documentation: the
+total webhook budget including retries is capped at **15s** (`tt`, enforced at maximum when unset),
+the default retry count is **1**, and the default retry policy is **`rp=ct` — TCP connect or TLS
+handshake failure only.** A handler that is merely SLOW is **not** retried under the defaults; that
+requires `rp` set to `rt` or `all`. Which it is, is an Operator console setting.
+
+**But the duplicate is reachable by a shorter path, and this is the actual finding.** A sequential
+replay is already safe: the second `confirmSubscriber` reads `active`, returns `already_in_state`,
+and round 11's guard sends nothing. A **concurrent** one is not —
+`applyConsentChange`'s documented UPDATE is:
+
+```sql
+UPDATE sms_consent SET ... WHERE id = $1
+```
+
+**No status predicate.** Two in-flight passes can both read `pending`, both write, and both report
+`applied` → two welcome texts. Its sibling writes both guard: `applyEmptyWeekState` has
+`AND status = 'active'` and `markStoppedViaCarrier` uses `COALESCE(stopped_at, now())` for exactly
+this class of reason. JOIN's does not, and its own doc explains the `WHERE id` choice on PII grounds
+without noticing it gave up idempotency.
+
+**Not fixed, deliberately**, and the options ranked honestly:
+
+1. **The status predicate on JOIN's UPDATE** is the cheapest real fix and makes the double send
+   *impossible* rather than unlikely. It needs `applyChange` to report rows-affected so the
+   transition can answer `already_in_state` when it matched none — a change to a stub's contract,
+   and a decision rather than a guess.
+2. **`waitUntil` from `@vercel/functions`** is the primitive `after()` wraps and would work — not a
+   dependency here, and it couples this route to one platform.
+3. **Bare fire-and-forget** is *worse than the status quo*: on a serverless runtime the instance may
+   be frozen the moment the response returns, dropping the send non-deterministically, with nothing
+   in any log to say which times it did not go.
+4. **A queue** is real infrastructure, out of scope.
+
+Documented in the route itself, at the guard, so the next person to touch it sees it.
+
+## bx. P6 — merged, clean, and checked rather than assumed
+
+`git merge origin/main` (not a rebase — the 36 commits here have been reviewed individually).
+`275c7c9` is now an ancestor. The only commit on `origin/main` since this branch's base
+(`30e232a`) is that one, it touches only `app/privacy/page.tsx`, and this branch has **zero**
+commits touching that file — verified with `git log --name-only`, not assumed. No conflicts.
+
+⚠ **`git fetch` fails here** (no GitHub credentials on this branch, by design — the Operator holds
+them). The `origin/main` ref was already present locally, so the merge used it; but this branch
+cannot confirm it is current with the true remote. If main has moved since that ref was written,
+this merge does not include it.
+
+## by. Verification
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **376 tests across 21
+files** (was 368/20). Full `unit` lane: **227 files / 3842 tests passing**. Plus the live
+`next start` header check recorded in §bs.

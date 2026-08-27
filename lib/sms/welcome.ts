@@ -39,6 +39,7 @@ import { renderWelcomeMessage, type RenderedMessage } from './message';
 import { agesFromBirthYears } from './signup-validate';
 import { dispatchSms, type DispatchResult } from './twilio-client';
 import { recordSmsSend } from './send-log';
+import { markStoppedViaCarrier } from './weekly-send-io';
 import { smsSendingEnabled } from './config';
 
 /**
@@ -111,6 +112,8 @@ export interface WelcomeOptions {
   dispatch?: typeof dispatchSms;
   /** Injected for tests; defaults to the shared send-log writer in weekly-send-io. */
   record?: typeof recordSmsSend;
+  /** Injected for tests; defaults to the shared carrier-opt-out writer in weekly-send-io. */
+  markStopped?: typeof markStoppedViaCarrier;
 }
 
 /**
@@ -138,6 +141,7 @@ export async function sendWelcomeText(
   const load = options.loadSubscriber ?? loadWelcomeSubscriber;
   const send = options.dispatch ?? dispatchSms;
   const log = options.record ?? recordSmsSend;
+  const markStopped = options.markStopped ?? markStoppedViaCarrier;
 
   let subscriber: WelcomeSubscriber | null;
   try {
@@ -180,6 +184,31 @@ export async function sendWelcomeText(
   }
 
   const failed = dispatched.outcome !== 'sent';
+
+  // ── A CARRIER OPT-OUT MUST CHANGE THE SUBSCRIBER'S STATE, NOT JUST THE LOG ──────────────
+  // Twilio error 21610 means this number has told the carrier not to hear from us. Logging the
+  // outcome and leaving `sms_consent.status` at 'active' would record that we know they opted out
+  // and then keep the Friday job selecting them every week — building a message, getting it
+  // rejected, and writing an audit trail that says we kept trying to text somebody who had opted
+  // out. PRD §2.2 step 6 makes this a send-time safeguard INDEPENDENT of the inbound webhook, and
+  // "independent" means every send path has to honour it, not just the weekly one.
+  //
+  // This was missing here while lib/sms/weekly-send-io.ts did it correctly one branch over. It was
+  // dormant only because `markStoppedViaCarrier` is still a stub with no live database — the day
+  // that is wired, a JOIN from a carrier-suppressed number would have left them 'active' forever
+  // while the identical Twilio code on a weekly send stopped them properly.
+  //
+  // BEFORE the log write, matching weekly-send-io's ordering: the state change is the part that
+  // protects the subscriber, and the audit row is the part that records it.
+  if (dispatched.outcome === 'stopped_via_carrier') {
+    try {
+      await markStopped(subscriber.id);
+    } catch {
+      // Best-effort, like everything else on this path. The 21610 is still logged below, so the
+      // fact is not lost even when the write is.
+    }
+  }
+
   try {
     await log({
       subscriberId: subscriber.id,

@@ -24,7 +24,15 @@ import { PreferencesForm } from './_components/PreferencesForm';
 // every message. It is the CASL unsubscribe path and the PIPEDA access/correction mechanism at the
 // same time, which is why it must render even when almost everything else has failed.
 //
-// ═══ THIS PAGE RENDERS PERSONAL DATA AND MUTATES CONSENT. THE HEADERS BELOW ARE NOT BOILERPLATE.
+// ═══ THIS PAGE RENDERS PERSONAL DATA AND MUTATES CONSENT. ITS HEADERS ARE NOT BOILERPLATE.
+//
+// WHERE EACH ONE ACTUALLY COMES FROM — stated because an earlier version of this block described
+// all three as though they were set here, and TWO OF THEM WERE NOT SET ANYWHERE AT ALL. A Server
+// Component cannot set response headers the way a Route Handler can, so `no-store` and
+// `no-referrer` are configured declaratively in next.config.mjs's `headers()`, matched on
+// `/u/:preferencesToken`; only `noindex` is a meta tag and belongs to `metadata` below.
+// tests/sms/preferences_headers.test.ts asserts all of it, and the round-17 notes record the
+// check against a real `next start` response.
 //
 // `noindex, nofollow` — THE MOST IMPORTANT ONE. If a token URL ever reaches a crawler (a parent
 //   pastes it into a public forum asking for help, a link shortener expands it, a browser

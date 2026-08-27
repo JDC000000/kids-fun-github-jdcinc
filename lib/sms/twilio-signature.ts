@@ -39,7 +39,8 @@
 // !! verifyTwilioSignature() returns false for everything and the route rejects every request —
 // !! which is the intended unconfigured behaviour, not a bug to work around.
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { safeEqual } from './safe-compare';
 
 /**
  * Build the exact string Twilio signs: the full URL, then every form parameter appended as
@@ -91,9 +92,8 @@ export function verifyTwilioSignature(args: {
     return false;
   }
 
-  const a = Buffer.from(signature);
-  const b = Buffer.from(expected);
-  // timingSafeEqual requires equal lengths; a length mismatch is an immediate reject.
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  // Constant-time in the VALUE and in the LENGTH — see lib/sms/safe-compare.ts. A Twilio
+  // signature is a fixed-length base64 digest, so the length leak this closes is theoretical
+  // here; it is closed anyway because the weaker pattern is the one that gets copied onward.
+  return safeEqual(signature, expected);
 }

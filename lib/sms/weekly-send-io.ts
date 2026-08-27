@@ -48,6 +48,9 @@ import {
 } from './weekly-send';
 import { dispatchSms, type DispatchResult } from './twilio-client';
 import { recordSmsSend, type SendLogType } from './send-log';
+// Re-exported: this module's own header documents the PII rule `redactPhone` serves, and callers
+// have imported it from here since round 4. The rule itself now has one home in lib/sms/redact.ts.
+export { redactPhone } from './redact';
 
 // ── Re-exported so every existing importer of this module keeps working ─────────────────
 // `dispatchSms` and `recordSmsSend` moved to lib/sms/twilio-client.ts and lib/sms/send-log.ts in
@@ -295,11 +298,19 @@ export interface SendSubscriberOptions {
   deps?: WeeklySmsDeps;
   /** Injected for tests; defaults to the stubbed loader above. */
   loadRecentPickIds?: RecentPickIdsLoader;
-}
-
-/** Last four digits only. The one shape in which a number may appear in an operational message. */
-export function redactPhone(phone: string): string {
-  return phone.length <= 4 ? '****' : `****${phone.slice(-4)}`;
+  /**
+   * The three write/send seams, injected for tests.
+   *
+   * ADDED IN ROUND 17 BECAUSE THIS FUNCTION HAD NO DIRECT TEST AT ALL — it was only ever mocked
+   * wholesale by tests/sms/weekly_run_route.test.ts. Its 21610 handling was the CORRECT half of
+   * the pair round 17's review found (lib/sms/welcome.ts was missing the state change), and
+   * "correct" was an assertion nobody had ever run. lib/sms/welcome.ts and lib/sms/signup-store.ts
+   * have carried the same three seams since they were written; this aligns the weekly path with
+   * them rather than inventing an idiom.
+   */
+  dispatch?: typeof dispatchSms;
+  record?: typeof recordSmsSend;
+  markStopped?: typeof markStoppedViaCarrier;
 }
 
 /**
@@ -330,6 +341,9 @@ export async function sendWeeklySmsForSubscriber(
 ): Promise<SubscriberSendResult> {
   const now = options.now ?? new Date();
   const dryRun = options.dryRun ?? !smsSendingEnabled();
+  const send = options.dispatch ?? dispatchSms;
+  const log = options.record ?? recordSmsSend;
+  const markStopped = options.markStopped ?? markStoppedViaCarrier;
   // Copied from the subscriber's own row, never defaulted — see SmsSubscriber.consentTextVersion.
   const consentTextVersion = subscriber.consentTextVersion;
 
@@ -394,14 +408,14 @@ export async function sendWeeklySmsForSubscriber(
     };
 
     // 5. Dispatch.
-    const dispatch = await dispatchSms(phoneNumber, message, { dryRun });
+    const dispatch = await send(phoneNumber, message, { dryRun });
 
     // 5a. The carrier says this number opted out. Independent of, and faster than, the inbound
     //     webhook mirror (PRD §2.2 step 6). Stop them now, log it, and do NOT apply the
     //     empty-week state — they are not paused, they are stopped.
     if (dispatch.outcome === 'stopped_via_carrier') {
-      await markStoppedViaCarrier(subscriber.id);
-      await recordSmsSend({
+      await markStopped(subscriber.id);
+      await log({
         subscriberId: subscriber.id,
         sendType,
         outcome: 'stopped_via_carrier',
@@ -415,7 +429,7 @@ export async function sendWeeklySmsForSubscriber(
     if (dispatch.outcome === 'failed') {
       // A failed dispatch changes nothing. The counter must not advance for a message that was
       // never delivered — otherwise a Twilio outage would pause subscribers three weeks later.
-      await recordSmsSend({
+      await log({
         subscriberId: subscriber.id,
         sendType,
         outcome: 'failed',
@@ -434,7 +448,7 @@ export async function sendWeeklySmsForSubscriber(
 
     // 6. A real send. Record the audit row and apply the state TOGETHER — a subscriber must never
     //    be paused for a week they were not texted about, nor texted without the log saying so.
-    await recordSmsSend({
+    await log({
       subscriberId: subscriber.id,
       sendType,
       outcome: sendType === 'weekly' ? 'sent' : sendType === 'pause_notice' ? 'paused' : 'empty',

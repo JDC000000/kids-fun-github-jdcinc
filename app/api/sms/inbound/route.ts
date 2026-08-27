@@ -44,6 +44,11 @@ import {
   type TransitionOutcome,
   type TransitionResult,
 } from '@/lib/sms/consent-transitions';
+// Last 4 digits only, for logs and error context. A full phone number must never reach a log line,
+// a Sentry breadcrumb or an error message. IMPORTED, not defined here: an earlier copy in this file
+// claimed the redaction "lives here rather than at each call site" while a byte-for-byte identical
+// one lived in lib/sms/weekly-send-io.ts. It now genuinely has one home.
+import { redactPhone } from '@/lib/sms/redact';
 import {
   renderConfirmRequestMessage,
   renderStartSignupInviteMessage,
@@ -92,15 +97,6 @@ function twiml(body = '<Response></Response>', status = 200): NextResponse {
     status,
     headers: { 'content-type': 'text/xml; charset=utf-8' },
   });
-}
-
-/**
- * Last 4 digits only, for logs and error context. A full phone number must never reach a log
- * line, a Sentry breadcrumb or an error message — this route is the one place in the codebase
- * that routinely holds one, so the redaction lives here rather than at each call site.
- */
-function redactPhone(phone: string): string {
-  return phone.length <= 4 ? '****' : `****${phone.slice(-4)}`;
 }
 
 export const POST = withObservedRoute(smsInboundPost, { tags: { route: 'api/sms/inbound' } });
@@ -328,6 +324,42 @@ export function startReplyFor(outcome: TransitionOutcome): string | null {
  * result is deliberately discarded: the subscription is already active, which is the part that
  * matters, and a non-2xx here would make Twilio retry the whole inbound message and replay the
  * transition. One lost welcome beats one duplicated confirmation.
+ *
+ * ═══ ⚠ OPEN, PRE-LAUNCH: THIS AWAITS A REAL TWILIO CALL BEFORE THE WEBHOOK RESPONDS ═══
+ * As of round 16 `sendWelcomeText` issues an actual Messages API request, and this line waits for
+ * it. That is currently masked — the subscriber loader is a stub returning null, so the send
+ * returns before reaching the network — and it must be decided before the loader is wired.
+ *
+ * THE BUDGET, from Twilio's own connection-override documentation rather than from memory: the
+ * total time for a webhook including retries is capped at 15s (`tt`, max 15000ms, enforced at the
+ * maximum when unset). Twilio's default retry policy is `rp=ct` — TCP connect or TLS handshake
+ * failure ONLY — with `rc=1`. So a handler that is merely SLOW is not retried by default; that
+ * needs `rp` set to `rt` or `all`. The risk is real but narrower than "any slow response is
+ * retried", and which of those is true is an Operator console setting.
+ *
+ * IF A REPLAY DOES HAPPEN, THE GUARD ABOVE IS ONLY HALF THE PROTECTION, and this is the part
+ * worth knowing: a SEQUENTIAL replay is safe, because the second `confirmSubscriber` reads
+ * `active` and returns `already_in_state`, which sends nothing. A CONCURRENT one is not —
+ * `applyConsentChange`'s documented UPDATE is `WHERE id = $1` with NO status predicate, so two
+ * in-flight passes can both read `pending`, both write, and both report `applied`. Two welcome
+ * texts. Its sibling writes (`applyEmptyWeekState`, `markStoppedViaCarrier`) both carry a status
+ * guard in their own TODOs; JOIN's does not.
+ *
+ * NOT FIXED HERE, because the honest fix is not a line in this file:
+ *   • `after()` — Next's supported "work after the response" primitive — DOES NOT EXIST in this
+ *     repo's Next 14.2.35. Verified two ways: it is absent from `next/server`'s exports, and
+ *     Next's own docs record `unstable_after` arriving in 15.0.0-rc and stabilising in 15.1.0.
+ *   • Bare fire-and-forget (dropping the `await`) is worse, not better: on a serverless runtime
+ *     the instance may be frozen or reclaimed the moment the response is returned, so the send
+ *     would be dropped non-deterministically — a welcome that sometimes arrives, with nothing in
+ *     any log to say which times it did not.
+ *   • `waitUntil` from `@vercel/functions` is the primitive `after()` wraps, and would work — but
+ *     it is not a dependency here and adding it couples this route to one platform.
+ *   • A queue is real infrastructure and out of scope for a draft branch.
+ * The cheapest real fix is the status predicate on JOIN's UPDATE, which makes the DOUBLE SEND
+ * impossible rather than unlikely — but it needs `applyChange` to report rows-affected so the
+ * transition can answer `already_in_state` when it matched none, and that is a change to a stub's
+ * contract. Flagged for a decision in the round-17 notes rather than guessed at here.
  */
 async function confirmAndWelcome(from: string, dryRun: boolean): Promise<TransitionResult> {
   const result = await confirmSubscriber(from, { dryRun });
