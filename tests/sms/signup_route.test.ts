@@ -72,11 +72,37 @@ describe('POST /api/sms/signup', () => {
     }
   });
 
-  it('rejects a submission with no consent, and says which field', async () => {
+  it('rejects a submission with no consent, and returns EVERY failure', () => {
+    // PRD §8 item 2 (Jon: "Show all errors at once"). The single-error contract still holds —
+    // `error`/`field` are the head of the list — so a caller reading only those is unaffected.
     enableSignup();
-    const res = await POST(post({ ...validBody, consent: false }));
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ ok: false, error: 'consent is required', field: 'consent' });
+    return POST(post({ ...validBody, consent: false, phone: 'garbage' })).then(async (res) => {
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.errors.map((e: { field?: string }) => e.field)).toEqual(['phone', 'consent']);
+      expect(body.error).toBe(body.errors[0].message);
+      expect(body.field).toBe('phone');
+    });
+  });
+
+  it('reports coverage BEFORE consent — the outcome Jon ruled on (item 1)', async () => {
+    enableSignup();
+    const res = await POST(post({ ...validBody, postal: 'V3S 1A1', consent: false }));
+    const body = await res.json();
+    const fields = body.errors.map((e: { field?: string }) => e.field);
+    expect(fields.indexOf('postal')).toBeLessThan(fields.indexOf('consent'));
+    // And the friendly sentence, not a terse code — the same words the browser form shows.
+    expect(body.error).toContain('North Vancouver');
+  });
+
+  it('a non-validation failure still carries the single-error shape', async () => {
+    // 413/503/404 responses have no `errors` list; the form falls back to `error`.
+    enableSignup();
+    const huge = await POST(post({ blob: 'x'.repeat(8 * 1024) }));
+    expect(huge.status).toBe(413);
+    const body = await huge.json();
+    expect(body.error).toBe('payload too large');
+    expect(body.errors).toBeUndefined();
   });
 
   it('answers an out-of-area postal with the full sentence, not the terse code', async () => {

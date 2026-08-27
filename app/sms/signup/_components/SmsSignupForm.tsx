@@ -31,7 +31,12 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input } from '@/components/ui';
 import { FIELD_COPY, CONSENT_CHECKBOX_TEXT, PREFERENCES_LINK_LABEL, SUBMITTED_BODY, SUBMITTED_HEADING, WHAT_HAPPENS_NEXT } from '@/lib/sms/consent-copy';
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
-import { MAX_CHILDREN, parseSmsSignupBody, type SmsSignupField } from '@/lib/sms/signup-validate';
+import {
+  MAX_CHILDREN,
+  parseSmsSignupBody,
+  type SignupFieldError,
+  type SmsSignupField,
+} from '@/lib/sms/signup-validate';
 import { fieldA11y } from '@/lib/sms/form-a11y';
 import { sparseAreaNoticeFor } from '@/lib/sms/sparse-areas';
 
@@ -67,7 +72,12 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
   const [interests, setInterests] = useState<string[]>([]);
   const [consent, setConsent] = useState(false); // UNCHECKED BY DEFAULT — PRD §1.3/§1.4.
   const [phase, setPhase] = useState<Phase>('idle');
-  const [error, setError] = useState<{ message: string; field?: SmsSignupField } | null>(null);
+  // EVERY failure, not the first (PRD §8 item 2, Jon: "Show all errors at once"). The validator
+  // returns them in form order, so this list renders top to bottom the way the page reads.
+  const [errors, setErrors] = useState<SignupFieldError[]>([]);
+  const errorFor = (field: SmsSignupField) => errors.find((e) => e.field === field);
+  // A failure with no field of its own (network, 503, 404-while-flagged-off).
+  const generalError = errors.find((e) => !e.field);
   const errorRef = useRef<HTMLParagraphElement | null>(null);
 
   // BRING THE ERROR TO THE PERSON, rather than expecting them to go and find it. V1 testing
@@ -83,10 +93,13 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
   // Focus is deliberately NOT moved. The error node carries role="alert", which screen readers
   // announce without being focused; stealing focus mid-correction would fight a sighted keyboard
   // user who is already on their way back to the field.
+  // Scrolls to the FIRST error, which — because the validator returns them in form order — is the
+  // topmost one on the page. Bringing someone to the bottom of a list of problems would be worse
+  // than not scrolling at all.
   useEffect(() => {
-    if (!error) return;
+    if (errors.length === 0) return;
     errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [error]);
+  }, [errors]);
 
   // Recomputed as they type. Pure, no request — see the prop's comment.
   const sparseNotice = useMemo(
@@ -114,12 +127,12 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (phase === 'sending') return;
-    setError(null);
+    setErrors([]);
 
     // Same validator the server runs. See this file's header.
     const parsed = parseSmsSignupBody(body(), { now: new Date() });
     if (!parsed.ok) {
-      setError({ message: parsed.error, field: parsed.field });
+      setErrors(parsed.errors);
       return;
     }
 
@@ -132,16 +145,22 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as
-          | { error?: string; field?: SmsSignupField }
+          | { error?: string; field?: SmsSignupField; errors?: SignupFieldError[] }
           | null;
         setPhase('error');
-        setError({ message: data?.error ?? `Couldn’t sign you up (${res.status}).`, field: data?.field });
+        // Prefer the full list; fall back to the single-error contract for any response that does
+        // not carry one (a 413, a 503, a 404 while the flag is off).
+        setErrors(
+          data?.errors?.length
+            ? data.errors
+            : [{ message: data?.error ?? `Couldn’t sign you up (${res.status}).`, field: data?.field }]
+        );
         return;
       }
       setPhase('done');
     } catch {
       setPhase('error');
-      setError({ message: 'Network error — please try again.' });
+      setErrors([{ message: 'Network error — please try again.' }]);
     }
   }
 
@@ -154,12 +173,23 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
     );
   }
 
-  const errFor = (field: SmsSignupField) =>
-    error?.field === field ? (
-      <p className="kf-sms-signup__err" id={`kf-sms-${field}-err`} role="alert" ref={errorRef}>
-        {error.message}
+  const errFor = (field: SmsSignupField) => {
+    const found = errorFor(field);
+    if (!found) return null;
+    // The ref goes on the FIRST error only — several nodes claiming it would leave the last one
+    // rendered holding it, which is the bottom of the page rather than the top.
+    const isFirst = errors[0] === found;
+    return (
+      <p
+        className="kf-sms-signup__err"
+        id={`kf-sms-${field}-err`}
+        role="alert"
+        ref={isFirst ? errorRef : undefined}
+      >
+        {found.message}
       </p>
-    ) : null;
+    );
+  };
 
   return (
     <form className="kf-sms-signup__form" onSubmit={submit} noValidate>
@@ -176,7 +206,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
           autoComplete="tel"
           placeholder="604 555 0123"
           value={phone}
-          {...fieldA11y('phone', error?.field, {
+          {...fieldA11y('phone', errorFor('phone')?.field, {
             errorId: 'kf-sms-phone-err',
             helpId: 'kf-sms-phone-help',
           })}
@@ -201,7 +231,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
           placeholder="V5L 1A1"
           maxLength={12}
           value={postal}
-          {...fieldA11y('postal', error?.field, {
+          {...fieldA11y('postal', errorFor('postal')?.field, {
             errorId: 'kf-sms-postal-err',
             helpId: 'kf-sms-postal-help',
           })}
@@ -239,7 +269,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
               // The children error belongs to the fieldset, not to one row, so EVERY row is
               // marked — a screen reader user tabbing through has no way to know which age we
               // rejected, and guessing one would be worse than marking the group.
-              {...fieldA11y('children', error?.field, { errorId: 'kf-sms-children-err' })}
+              {...fieldA11y('children', errorFor('children')?.field, { errorId: 'kf-sms-children-err' })}
               name="childAge"
               type="number"
               inputMode="numeric"
@@ -309,7 +339,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
             type="checkbox"
             name="consent"
             checked={consent}
-            {...fieldA11y('consent', error?.field, { errorId: 'kf-sms-consent-err' })}
+            {...fieldA11y('consent', errorFor('consent')?.field, { errorId: 'kf-sms-consent-err' })}
             onChange={(e) => setConsent(e.target.checked)}
           />
           {/*
@@ -339,10 +369,13 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
         {phase === 'sending' ? FIELD_COPY.submitting : FIELD_COPY.submit}
       </Button>
 
-      {/* A failure with no field of its own (network, 503, 404-while-flagged-off). */}
-      {error && !error.field && (
-        <p className="kf-sms-signup__err" role="alert" ref={errorRef}>
-          {error.message}
+      {generalError && (
+        <p
+          className="kf-sms-signup__err"
+          role="alert"
+          ref={errors[0] === generalError ? errorRef : undefined}
+        >
+          {generalError.message}
         </p>
       )}
     </form>

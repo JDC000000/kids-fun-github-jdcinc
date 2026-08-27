@@ -72,9 +72,34 @@ export interface SmsSignup {
   consentTextVersion: string;
 }
 
+/** One thing wrong with a submission. */
+export interface SignupFieldError {
+  message: string;
+  field?: SmsSignupField;
+}
+
+/**
+ * ═══ EVERY FAILURE, NOT THE FIRST ONE (PRD §8 item 2, Jon-approved) ═══
+ * This used to short-circuit: the first failing check returned and the rest never ran, so a
+ * submission with three problems took three submits to fix, each revealing one more. Jon's ruling,
+ * verbatim: *"Yes. Show all errors at once. I approve your recommendation."*
+ *
+ * `errors` is the whole list. `error` and `field` are `errors[0]`, DERIVED not duplicated, kept so
+ * that a caller wanting one message (and the existing HTTP error contract) still has one.
+ */
 export type SmsSignupParseResult =
   | { ok: true; value: SmsSignup }
-  | { ok: false; error: string; field?: SmsSignupField };
+  | { ok: false; errors: SignupFieldError[]; error: string; field?: SmsSignupField };
+
+/** Build the failure shape from an accumulated list. Never called with an empty list. */
+function failures(errors: SignupFieldError[]): {
+  ok: false;
+  errors: SignupFieldError[];
+  error: string;
+  field?: SmsSignupField;
+} {
+  return { ok: false, errors, error: errors[0].message, field: errors[0].field };
+}
 
 /** Which control an error belongs to, so the form can put the message under the right field. */
 export type SmsSignupField = 'phone' | 'postal' | 'children' | 'interests' | 'consent';
@@ -181,7 +206,7 @@ export interface ProfileFields {
 
 export type ProfileFieldsParseResult =
   | { ok: true; value: ProfileFields }
-  | { ok: false; error: string; field?: SmsSignupField };
+  | { ok: false; errors: SignupFieldError[]; error: string; field?: SmsSignupField };
 
 /**
  * Validate the postal code, child ages and interests — the fields that are IDENTICAL at signup and
@@ -199,71 +224,101 @@ export function parseProfileFields(
   raw: Record<string, unknown>,
   options: ParseOptions
 ): ProfileFieldsParseResult {
+  const errors: SignupFieldError[] = [];
+
   // ── Postal ──
+  // FIRST, AND THAT ORDER IS NOW A RULING RATHER THAN AN ACCIDENT (PRD §8 item 1). See
+  // `parseSmsSignupBody` for why coverage has to be reportable before consent is.
+  let postalCode: string | null = null;
+  let regionId: CoveredRegionId | null = null;
   if (typeof raw.postal !== 'string') {
-    return { ok: false, error: 'a postal code is required', field: 'postal' };
-  }
-  const postalCode = normalizePostal(raw.postal);
-  if (!postalCode) {
-    return { ok: false, error: 'that does not look like a Canadian postal code', field: 'postal' };
-  }
-  const regionId = regionIdForPostal(postalCode);
-  if (!regionId) {
-    // THE FULL, FRIENDLY NOTICE, NOT A TERSE CODE — and it lives here rather than being
-    // substituted downstream. It used to read 'out of coverage area', with
-    // app/api/sms/signup/route.ts swapping in `OUT_OF_AREA_NOTICE` by matching that literal. The
-    // BROWSER form calls this same function directly and never went through that route, so a
-    // parent typing a Surrey postal code saw the terse internal string while the identical
-    // submission through the API got the sentence naming all five municipalities. Two testers and
-    // the Operator all found it independently.
-    //
-    // Fixing it HERE rather than duplicating the substitution client-side removes the string
-    // comparison entirely: there is now one copy of this sentence and no code anywhere that has to
-    // recognise an error by its exact text. This is the one rejection that is about US rather than
-    // about what they typed, so it is also the one that most needs to say what we do cover.
-    return { ok: false, error: OUT_OF_AREA_NOTICE, field: 'postal' };
+    errors.push({ message: 'a postal code is required', field: 'postal' });
+  } else {
+    postalCode = normalizePostal(raw.postal);
+    if (!postalCode) {
+      errors.push({
+        message: 'that does not look like a Canadian postal code',
+        field: 'postal',
+      });
+    } else {
+      regionId = regionIdForPostal(postalCode);
+      if (!regionId) {
+        // THE FULL, FRIENDLY NOTICE, NOT A TERSE CODE — and it lives here rather than being
+        // substituted downstream. The BROWSER form calls this same function directly and never
+        // goes through the API route, so a parent typing a Surrey postal code used to see a terse
+        // internal string while the identical submission through the API got the sentence naming
+        // all five municipalities. Two testers and the Operator all found it independently.
+        //
+        // Fixing it HERE rather than duplicating the substitution client-side removes the string
+        // comparison entirely: one copy of this sentence, and no code anywhere that has to
+        // recognise an error by its exact text. This is the one rejection that is about US rather
+        // than about what they typed, so it is the one that most needs to say what we do cover.
+        errors.push({ message: OUT_OF_AREA_NOTICE, field: 'postal' });
+      }
+    }
   }
 
   // ── Children ──
-  if (!Array.isArray(raw.childAges) || raw.childAges.length === 0) {
-    return { ok: false, error: 'add at least one child’s age', field: 'children' };
-  }
-  if (raw.childAges.length > MAX_CHILDREN) {
-    return { ok: false, error: `at most ${MAX_CHILDREN} children`, field: 'children' };
-  }
+  // AT MOST ONE CHILDREN ERROR, not one per row. The rows share a single error node and a single
+  // `aria-describedby` target (see lib/sms/form-a11y.ts), so three bad ages produce one message
+  // rather than three identical ones stacked under the same fieldset.
   const birthYears: number[] = [];
-  for (const entry of raw.childAges) {
-    const age = asInteger(entry);
-    if (age == null || age < 0 || age > MAX_CHILD_AGE_YEARS) {
-      return {
-        ok: false,
-        error: `each age must be a whole number from 0 to ${MAX_CHILD_AGE_YEARS}`,
-        field: 'children',
-      };
+  if (!Array.isArray(raw.childAges) || raw.childAges.length === 0) {
+    errors.push({ message: 'add at least one child’s age', field: 'children' });
+  } else if (raw.childAges.length > MAX_CHILDREN) {
+    errors.push({ message: `at most ${MAX_CHILDREN} children`, field: 'children' });
+  } else {
+    let badAge = false;
+    for (const entry of raw.childAges) {
+      const age = asInteger(entry);
+      if (age == null || age < 0 || age > MAX_CHILD_AGE_YEARS) {
+        badAge = true;
+        break;
+      }
+      birthYears.push(birthYearFromAge(age, options.now));
     }
-    birthYears.push(birthYearFromAge(age, options.now));
+    if (badAge) {
+      birthYears.length = 0;
+      errors.push({
+        message: `each age must be a whole number from 0 to ${MAX_CHILD_AGE_YEARS}`,
+        field: 'children',
+      });
+    }
   }
 
   // ── Interests (optional) ──
   let categoryInterests: string[] = [];
   if (raw.interests != null) {
     if (!Array.isArray(raw.interests)) {
-      return { ok: false, error: 'interests must be a list', field: 'interests' };
-    }
-    const seen = new Set<string>();
-    for (const key of raw.interests) {
-      if (typeof key !== 'string' || !isKnownInterestKey(key)) {
-        // An unknown key means the client and this allowlist disagree, which is a bug worth
-        // surfacing rather than silently dropping — a silently-dropped interest is a filter the
-        // subscriber believes is on.
-        return { ok: false, error: 'unknown interest', field: 'interests' };
+      errors.push({ message: 'interests must be a list', field: 'interests' });
+    } else {
+      const seen = new Set<string>();
+      let unknown = false;
+      for (const key of raw.interests) {
+        if (typeof key !== 'string' || !isKnownInterestKey(key)) {
+          // An unknown key means the client and this allowlist disagree, which is a bug worth
+          // surfacing rather than silently dropping — a silently-dropped interest is a filter the
+          // subscriber believes is on.
+          unknown = true;
+          break;
+        }
+        seen.add(key);
       }
-      seen.add(key);
+      if (unknown) errors.push({ message: 'unknown interest', field: 'interests' });
+      else categoryInterests = [...seen];
     }
-    categoryInterests = [...seen];
   }
 
-  return { ok: true, value: { postalCode, regionId, birthYears, categoryInterests } };
+  if (errors.length > 0) return failures(errors);
+  return {
+    ok: true,
+    value: {
+      postalCode: postalCode as string,
+      regionId: regionId as CoveredRegionId,
+      birthYears,
+      categoryInterests,
+    },
+  };
 }
 
 /**
@@ -289,32 +344,58 @@ export function parseProfileFields(
  *   code. If the preference is to capture them as a waiting list instead, `region_notify_signup`
  *   (migration 0033) is the table that already does exactly that, and this rejection is where
  *   that hand-off would go.
+ *
+ * ═══ THE ORDER OF THE LIST IS A RULING, NOT A STYLE CHOICE (PRD §8 items 1+2) ═══
+ * CONSENT USED TO BE CHECKED FIRST, and its comment argued the case: "Nothing else about this
+ * submission matters if it is not there." That reasoning was sound for a short-circuiting
+ * validator and produced a bad outcome anyway — submit an out-of-area postal code with the box
+ * unticked and the ONLY thing you were told was "consent is required". So you ticked the box,
+ * agreeing to have your children's ages stored, resubmitted, and only THEN learned we cannot serve
+ * your area at all. You consented for nothing.
+ *
+ * Jon ruled on both halves. Item 1, verbatim: *"Move the coverage check earlier so it fires before
+ * consent is asked."* Item 2, verbatim: *"Show all errors at once."*
+ *
+ * So errors accumulate in FORM ORDER — phone, postal, children, interests, consent — which is the
+ * order the fields appear on the page, and which puts coverage ahead of consent as required. The
+ * two rulings reinforce each other: showing everything at once is what makes "before consent is
+ * asked" true no matter which field a person filled in first.
+ *
+ * CONSENT IS STILL THE ONE THAT BLOCKS THE WRITE. Moving it last in the LIST changes what a person
+ * is told, not what is stored: `ok` is false whenever anything failed, so an unticked box still
+ * rejects the submission outright. Nothing is persisted for an out-of-area or unconsented signup —
+ * see app/api/sms/signup/route.ts.
  */
 export function parseSmsSignupBody(raw: unknown, options: ParseOptions): SmsSignupParseResult {
-  if (!isPlainObject(raw)) return { ok: false, error: 'body must be a JSON object' };
-
-  // ── Consent first. Nothing else about this submission matters if it is not there. ──
-  if (raw.consent !== true) {
-    return { ok: false, error: 'consent is required', field: 'consent' };
+  if (!isPlainObject(raw)) {
+    // A whole-body failure, not a field one: there is nothing to enumerate.
+    return failures([{ message: 'body must be a JSON object' }]);
   }
+
+  const errors: SignupFieldError[] = [];
 
   // ── Phone ──
+  let phoneNumber: string | null = null;
   if (typeof raw.phone !== 'string') {
-    return { ok: false, error: 'a mobile number is required', field: 'phone' };
-  }
-  const phoneNumber = normalizePhoneE164(raw.phone);
-  if (!phoneNumber) {
-    return {
-      ok: false,
-      error: 'that does not look like a 10-digit Canadian mobile number',
-      field: 'phone',
-    };
+    errors.push({ message: 'a mobile number is required', field: 'phone' });
+  } else {
+    phoneNumber = normalizePhoneE164(raw.phone);
+    if (!phoneNumber) {
+      errors.push({
+        message: 'that does not look like a 10-digit Canadian mobile number',
+        field: 'phone',
+      });
+    }
   }
 
   // ── The profile fields, shared verbatim with the preferences page. ──
   const profile = parseProfileFields(raw, options);
-  if (!profile.ok) return profile;
-  const { postalCode, regionId, birthYears, categoryInterests } = profile.value;
+  if (!profile.ok) errors.push(...profile.errors);
+
+  // ── Consent, LAST ──
+  if (raw.consent !== true) {
+    errors.push({ message: 'consent is required', field: 'consent' });
+  }
 
   // ── Consent method (optional; the three doors all funnel to this one form) ──
   let consentMethod: ConsentMethod = 'web_form';
@@ -323,19 +404,22 @@ export function parseSmsSignupBody(raw: unknown, options: ParseOptions): SmsSign
       typeof raw.consentMethod !== 'string' ||
       !CONSENT_METHODS.includes(raw.consentMethod as ConsentMethod)
     ) {
-      return { ok: false, error: 'unknown consent method' };
+      errors.push({ message: 'unknown consent method' });
+    } else {
+      consentMethod = raw.consentMethod as ConsentMethod;
     }
-    consentMethod = raw.consentMethod as ConsentMethod;
   }
+
+  if (errors.length > 0 || !profile.ok) return failures(errors);
 
   return {
     ok: true,
     value: {
-      phoneNumber,
-      postalCode,
-      regionId,
-      birthYears,
-      categoryInterests,
+      phoneNumber: phoneNumber as string,
+      postalCode: profile.value.postalCode,
+      regionId: profile.value.regionId,
+      birthYears: profile.value.birthYears,
+      categoryInterests: profile.value.categoryInterests,
       consentMethod,
       consentTextVersion: CONSENT_TEXT_VERSION,
     },

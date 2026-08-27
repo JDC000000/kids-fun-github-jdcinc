@@ -91,17 +91,72 @@ describe('parseSmsSignupBody', () => {
     });
   });
 
-  it('REQUIRES consent, and checks it before anything else', () => {
-    // Checked first on purpose: nothing else about a submission matters if consent is absent,
-    // and reporting a phone-number typo to someone who never ticked the box would be asking them
-    // to fix the wrong thing.
-    const noConsent = parseSmsSignupBody(valid({ consent: false, phone: 'garbage' }), { now: NOW });
-    expect(noConsent).toEqual({ ok: false, error: 'consent is required', field: 'consent' });
+  it('REQUIRES consent — and no longer hides everything else behind it', () => {
+    // THIS TEST CHANGED SIDES (PRD §8 items 1+2). It used to assert consent was checked FIRST and
+    // short-circuited, on the reasoning that "nothing else matters if consent is absent". Jon
+    // ruled both halves the other way: "Move the coverage check earlier so it fires before consent
+    // is asked" and "Show all errors at once."
+    //
+    // The old behaviour produced the bad outcome the ruling exists to fix: submit garbage AND no
+    // consent, be told only "consent is required", tick the box agreeing to store your children's
+    // ages, resubmit, and only then find out the rest is wrong.
+    const both = parseSmsSignupBody(valid({ consent: false, phone: 'garbage' }), { now: NOW });
+    expect(both.ok).toBe(false);
+    if (both.ok) return;
+    expect(both.errors.map((e) => e.field)).toEqual(['phone', 'consent']);
+    // Form order: the phone field is above the consent box, so it is reported first.
+    expect(both.error).toBe(both.errors[0].message);
+    expect(both.field).toBe('phone');
 
     for (const value of [undefined, null, 'true', 1, 'on']) {
       const r = parseSmsSignupBody(valid({ consent: value }), { now: NOW });
       expect(r.ok).toBe(false);
     }
+  });
+
+  it('reports COVERAGE before consent — the specific outcome Jon ruled on', () => {
+    // The exact submission from the ruling: an out-of-area postal with the box unticked. Before,
+    // this said only "consent is required" and never mentioned coverage, so a parent consented to
+    // data storage before learning we cannot serve them at all.
+    const r = parseSmsSignupBody(valid({ postal: 'V3S 1A1', consent: false }), { now: NOW });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    const fields = r.errors.map((e) => e.field);
+    expect(fields).toContain('postal');
+    expect(fields).toContain('consent');
+    expect(fields.indexOf('postal')).toBeLessThan(fields.indexOf('consent'));
+    // And the coverage sentence is the one surfaced first, naming where we DO cover.
+    expect(r.error).toBe(OUT_OF_AREA_NOTICE);
+  });
+
+  it('reports EVERY failure in one pass, in form order', () => {
+    const r = parseSmsSignupBody(
+      { phone: 'nope', postal: 'not-a-postal', childAges: [], interests: 'not-a-list', consent: false },
+      { now: NOW }
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.map((e) => e.field)).toEqual([
+      'phone',
+      'postal',
+      'children',
+      'interests',
+      'consent',
+    ]);
+  });
+
+  it('reports ONE children error, not one per bad row', () => {
+    // The rows share a single error node and a single aria-describedby target, so three bad ages
+    // must not stack three identical messages under one fieldset.
+    const r = parseSmsSignupBody(valid({ childAges: [99, 99, 99] }), { now: NOW });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.filter((e) => e.field === 'children')).toHaveLength(1);
+  });
+
+  it('consent still BLOCKS the write — the ruling changed what you are told, not what is stored', () => {
+    // Moving consent last in the LIST must not make it optional.
+    expect(parseSmsSignupBody(valid({ consent: false }), { now: NOW }).ok).toBe(false);
   });
 
   it('normalises the postal code and resolves its municipality', () => {
@@ -120,7 +175,12 @@ describe('parseSmsSignupBody', () => {
     const surrey = parseSmsSignupBody(valid({ postal: 'V3S 1A1' }), { now: NOW });
     // The FULL sentence, not a terse code: the browser form renders this error verbatim, so the
     // validator is where it has to be readable. Naming the covered municipalities is the point.
-    expect(surrey).toEqual({ ok: false, error: OUT_OF_AREA_NOTICE, field: 'postal' });
+    expect(surrey.ok).toBe(false);
+    if (!surrey.ok) {
+      expect(surrey.error).toBe(OUT_OF_AREA_NOTICE);
+      expect(surrey.field).toBe('postal');
+      expect(surrey.errors).toEqual([{ message: OUT_OF_AREA_NOTICE, field: 'postal' }]);
+    }
     expect(OUT_OF_AREA_NOTICE).toContain('North Vancouver');
 
     // A sparse-but-covered municipality is NOT rejected — thin coverage is real coverage.
@@ -139,7 +199,10 @@ describe('parseSmsSignupBody', () => {
 
   it('requires at least one child and caps the list', () => {
     const none = parseSmsSignupBody(valid({ childAges: [] }), { now: NOW });
-    expect(none).toEqual({ ok: false, error: 'add at least one child’s age', field: 'children' });
+    expect(none.ok).toBe(false);
+    if (!none.ok) {
+      expect(none.errors).toEqual([{ message: 'add at least one child’s age', field: 'children' }]);
+    }
 
     const tooMany = parseSmsSignupBody(
       valid({ childAges: Array.from({ length: MAX_CHILDREN + 1 }, () => 5) }),
@@ -185,7 +248,8 @@ describe('parseSmsSignupBody', () => {
     // A silently-dropped interest is a filter the subscriber believes is on. It also means the
     // client and the allowlist have drifted, which is worth an error.
     const r = parseSmsSignupBody(valid({ interests: ['underwater_basket_weaving'] }), { now: NOW });
-    expect(r).toEqual({ ok: false, error: 'unknown interest', field: 'interests' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors).toEqual([{ message: 'unknown interest', field: 'interests' }]);
     // 'class_program' is a real seeded category that this form deliberately does NOT offer —
     // see lib/sms/interests.ts. It must be rejected like any other key the form cannot produce.
     expect(parseSmsSignupBody(valid({ interests: ['class_program'] }), { now: NOW }).ok).toBe(false);

@@ -19,6 +19,7 @@ import { smsSendingEnabled, smsSignupEnabled } from '@/lib/sms/config';
 import {
   MAX_SIGNUP_PAYLOAD_BYTES,
   parseSmsSignupBody,
+  type SignupFieldError,
   type SmsSignupField,
 } from '@/lib/sms/signup-validate';
 import { createPendingSubscriber, sendConfirmationRequest } from '@/lib/sms/signup-store';
@@ -29,13 +30,29 @@ export const runtime = 'nodejs'; // pg pool + node:crypto need the Node runtime,
 
 interface ErrorBody {
   ok: false;
+  /** `errors[0].message`. Kept so the existing single-error contract still holds. */
   error: string;
   field?: SmsSignupField;
+  /**
+   * EVERY validation failure, not just the first (PRD §8 item 2, Jon: "Show all errors at once").
+   * Added rather than replacing `error`/`field`, so nothing that already reads this response
+   * breaks — those two are now defined as the head of this list.
+   */
+  errors?: SignupFieldError[];
 }
 
 function fail(status: number, error: string, field?: SmsSignupField): NextResponse {
   const body: ErrorBody = field ? { ok: false, error, field } : { ok: false, error };
   return NextResponse.json(body, { status });
+}
+
+/** A validation failure, with the whole list attached. */
+function failValidation(errors: SignupFieldError[]): NextResponse {
+  const [first] = errors;
+  return NextResponse.json(
+    { ok: false, error: first.message, ...(first.field ? { field: first.field } : {}), errors },
+    { status: 400 }
+  );
 }
 
 export const POST = withObservedRoute(smsSignupPost, { tags: { route: 'api/sms/signup' } });
@@ -77,7 +94,9 @@ async function smsSignupPost(request: Request): Promise<NextResponse> {
     // by matching the validator's terse error text; the sentence now comes out of the validator
     // itself, so the browser form — which calls `parseSmsSignupBody` directly and never reaches
     // this route — shows the same words a parent gets from the API. See that function.
-    return fail(400, parsed.error, parsed.field);
+    //
+    // ALL of them, in form order. A caller reading only `error` still gets the first one.
+    return failValidation(parsed.errors);
   }
 
   // 5. Persist as `pending`. STUB — see lib/sms/signup-store.ts.

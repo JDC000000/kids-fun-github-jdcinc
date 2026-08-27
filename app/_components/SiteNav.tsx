@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AccountNav } from './AccountNav';
+import { isSmsSurface } from '@/lib/sms/surfaces';
 import {
   SEARCH_SHORTCUTS,
   destinationHref,
@@ -97,7 +98,21 @@ export function SiteNav() {
           </ul>
         </nav>
 
-        <AccountNav />
+        {/*
+          HIDDEN ON THE SMS SURFACES (PRD §8 item 4, Jon-approved). An SMS subscriber has no
+          account — that is the product's premise — so offering "Sign in with Google" on the page
+          where somebody is signing up by phone number invites a data relationship the product
+          deliberately does not need. Jon's own framing: "let's emphasize capturing the least
+          amount of data we need to provide value."
+
+          The route list lives in lib/sms/surfaces.ts rather than here, so the SMS product's own
+          map of itself stays with the SMS product. This file only asks the question.
+
+          The rest of the bar stays: a parent who lands on the signup form from a QR code should
+          still be able to reach the catalogue. It is the ACCOUNT touchpoint that does not belong,
+          not the navigation.
+        */}
+        {!isSmsSurface(pathname) && <AccountNav />}
       </div>
     </header>
   );
