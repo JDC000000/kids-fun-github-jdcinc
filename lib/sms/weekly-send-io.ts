@@ -605,13 +605,17 @@ export async function sendWeeklySmsBulk(options: BulkOptions = {}): Promise<Bulk
   // then passed into every per-subscriber call, which is what stops `loadWeeklySmsDeps` being
   // re-entered five hundred times. Pinned by a test that counts the calls rather than trusting it.
   //
-  // ⚠ IT IS LOADED BEFORE THE SUBSCRIBER LIST, so a week with zero active subscribers still pulls
-  // the entire listing catalogue, alias resolver and region hierarchy out of Postgres for nothing.
-  // Reachable — every week before launch, and any week the product is paused. Left as-is rather
-  // than reordered, because round 19 was scoped to coverage rather than behaviour; the wasted work
-  // is one read per week and the reorder is two lines. Recorded in the round-19 notes.
-  const deps = await (options.loadDeps ?? loadWeeklySmsDeps)();
+  // SUBSCRIBERS FIRST, THEN THE READ MODEL — reordered in round 21 (pre-approved). It used to load
+  // deps first, unconditionally, so a week with zero active subscribers pulled the entire listing
+  // catalogue, alias resolver and region hierarchy out of Postgres for nothing. Reachable every
+  // week before launch and any week the product is paused.
   const subscribers = await (options.loadSubscribers ?? loadActiveSubscribers)(options.limit);
+  if (subscribers.length === 0) {
+    // Nothing to send to, so nothing to build a message from. Returns the same shape as any other
+    // run — an empty batch is a normal Friday, not an error.
+    return { dryRun, candidates: 0, counts: emptyCounts(), totalSegments: 0, results: [] };
+  }
+  const deps = await (options.loadDeps ?? loadWeeklySmsDeps)();
 
   const counts = emptyCounts();
   const results: SubscriberSendResult[] = [];

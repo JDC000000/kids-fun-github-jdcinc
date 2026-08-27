@@ -127,19 +127,25 @@ describe('the read model is loaded ONCE per batch', () => {
     expect(loads).toHaveLength(1);
   });
 
-  it('still loads it exactly once when there are NO subscribers', async () => {
-    // ⚠ PINS A SMALL KNOWN WASTE rather than endorsing it. The deps load happens BEFORE the
-    // subscriber query, so an empty week pulls the whole listing catalogue, alias resolver and
-    // region hierarchy out of Postgres for nothing. Reachable every week before launch and any
-    // week the product is paused. Left as-is (round 19 was scoped to coverage, not behaviour); if
-    // it is ever reordered, this test is where that decision becomes visible.
+  it('does NOT load it at all when there are no subscribers', async () => {
+    // Round 19 pinned the opposite and said so: "if it is ever reordered, this test is where that
+    // decision becomes visible." It was reordered in round 21 (pre-approved), so this test now
+    // asserts the saving rather than the waste — the same job the round-18 coverage-swap test did.
+    // An empty week no longer pulls the listing catalogue, alias resolver and region hierarchy out
+    // of Postgres for nothing, which is every week before launch and any week the product is paused.
     withSecret();
     const { loads, options } = harness([]);
     const summary = await sendWeeklySmsBulk(options);
 
     expect(summary.candidates).toBe(0);
     expect(summary.results).toEqual([]);
-    expect(loads).toHaveLength(1); // ← the wasted one
+    expect(loads).toEqual([]); // ← not loaded at all
+    // Still the same summary shape as any other run: an empty batch is a normal Friday.
+    expect(summary.counts).toEqual({
+      sent: 0, dry_run: 0, empty: 0, paused: 0,
+      stopped_via_carrier: 0, skipped_geocode_failed: 0, error: 0,
+    });
+    expect(summary.totalSegments).toBe(0);
   });
 
   it('passes the SAME read model into every subscriber, not a fresh one', async () => {

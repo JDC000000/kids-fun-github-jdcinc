@@ -92,11 +92,31 @@ describe('the unknown-keyword reply (copy)', () => {
     assertGsm7Safe(EXPECTED_REPLY);
     const live = renderUnknownKeywordMessage('https://kidsfun.ca/sms/signup');
     expect(live.encoding).toBe('GSM-7');
-    expect(live.characters).toBe(149);
+    expect(live.characters).toBe(143);
     expect(live.segments).toBe(1);
-    // 11 septets of headroom, which is the real constraint on this copy: a longer host — a
-    // preview deployment, say — tips it into a second segment. Measured, not assumed.
-    expect(estimateSegments('x'.repeat(11)).characters).toBe(160 - 149);
+    // 17 septets of headroom — MORE than the 11 this copy had before round 21 added the product
+    // clause, because the acknowledgement it replaced was longer than the clause itself.
+    expect(160 - live.characters).toBe(17);
+  });
+
+  it('says what KIDS FUN actually is, inline (V1 testing finding)', () => {
+    // The message most likely to reach somebody with no idea who is texting them. It used to tell
+    // a stranger what to TYPE without saying what they would be signing up FOR.
+    expect(EXPECTED_REPLY).toContain('We text weekly kid activity picks');
+    // The same clause the START invite uses, so a stranger meets ONE description of the product
+    // however they reach us.
+    expect(INVITE).toContain('We text weekly kid activity picks');
+  });
+
+  it('🔴 no longer acknowledges that it did not understand — a MEASURED trade', () => {
+    // Keeping "Sorry, we didn't catch that" AND the product clause measures 163 septets against
+    // the production URL: three over one segment, and every variant tried landed 161-185. Pinned
+    // so the cost of putting it back is a number rather than an argument.
+    expect(EXPECTED_REPLY).not.toContain("didn't catch that");
+    const withBoth =
+      "KIDS FUN: We text weekly kid activity picks. Sorry, we didn't catch that - reply JOIN to " +
+      'confirm, HELP for info, or STOP to end. Not signed up? https://kidsfun.ca/sms/signup';
+    expect(estimateSegments(withBoth).segments).toBe(2);
   });
 
   it('drops the signup clause rather than printing a placeholder', () => {
@@ -107,9 +127,9 @@ describe('the unknown-keyword reply (copy)', () => {
     assertGsm7Safe(bare);
   });
 
-  it('uses a straight apostrophe — the curly one would triple the cost', () => {
-    expect(EXPECTED_REPLY).toContain("didn't");
-    expect(EXPECTED_REPLY).not.toContain('’');
+  it('uses straight punctuation throughout — a curly apostrophe would triple the cost', () => {
+    expect(EXPECTED_REPLY).not.toContain('\u2019');
+    expect(EXPECTED_REPLY).not.toContain('\u2014');
   });
 });
 
@@ -134,7 +154,7 @@ describe('POST /api/sms/inbound — the unknown branch', () => {
     configure({ sending: true });
     for (const typo of ['JOIM', 'join please', 'yes please', 'Jion']) {
       const res = await POST(inbound(typo));
-      expect(await xml(res), typo).toContain('Reply JOIN to confirm your signup');
+      expect(await xml(res), typo).toContain('Reply JOIN to confirm');
     }
   });
 

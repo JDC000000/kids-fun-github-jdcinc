@@ -84,8 +84,18 @@ describe('the fields', () => {
     expect(html).not.toMatch(/type="date"/);
     expect(html).not.toMatch(/<input[^>]*(name|id)="[^"]*birth/i);
     expect(html).not.toMatch(/type="month"/);
-    // And the promise itself is on the page.
-    expect(html.toLowerCase()).toContain('no birthdays, no names');
+    // And the promise itself is on the page. The WORDING changed in round 21 (V1 testing read
+    // "no birthdays, no names... we store the year they were born" as briefly self-contradictory),
+    // so this asserts the PROMISE rather than one phrasing of it: whatever the sentence says, it
+    // still has to rule out both a birthday and a name.
+    expect(html.toLowerCase()).toContain('never ask for a birthday or a name');
+    // Explains BEFORE it reassures — the birth year is accounted for by the time the promise
+    // lands, which is what stopped it reading as a contradiction.
+    expect(FIELD_COPY.childrenHelp.indexOf('birth year')).toBeLessThan(
+      FIELD_COPY.childrenHelp.indexOf('never ask')
+    );
+    // What is COLLECTED is unchanged: an age now, converted to a year. Not a new promise.
+    expect(FIELD_COPY.childrenHelp.toLowerCase()).toContain('age now');
   });
 
   it('renders every interest checkbox, all unchecked, and says they are optional', () => {
@@ -127,3 +137,18 @@ describe('what the form tells a parent before they submit', () => {
     expect(html).not.toContain('TWILIO');
   });
 });
+
+describe('V1 testing fixes (round 21)', () => {
+  it('marks NOTHING invalid when there is no error', () => {
+    // `aria-invalid={... || undefined}` rather than `{false}`: React omits an undefined attribute
+    // entirely, so a clean form does not announce every untouched control as checked-and-valid.
+    expect(html).not.toMatch(/aria-invalid/);
+  });
+
+  it('every field still points at its help text when nothing is wrong', () => {
+    // The describedby fallback, which the helper must not have dropped while adding aria-invalid.
+    expect(html).toContain('aria-describedby="kf-sms-phone-help"');
+    expect(html).toContain('aria-describedby="kf-sms-postal-help"');
+  });
+});
+

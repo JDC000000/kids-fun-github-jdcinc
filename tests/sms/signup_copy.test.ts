@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { isGsm7, nonGsm7Characters } from '@/lib/sms/message';
 import { PREFS_STATUS_PENDING, SUBMITTED_BODY } from '@/lib/sms/consent-copy';
 import {
+  PREFS_UNKNOWN_TOKEN_BODY,
   CARRIER_DISCLOSURES,
   CONSENT_CHECKBOX_TEXT,
   CONSENT_TEXT_VERSION,
@@ -288,5 +289,28 @@ describe('the web-page strings that look reusable as SMS copy', () => {
     // And this one points at a different message than itself: correct on a web page, where the
     // confirmation text is elsewhere; wrong sent AS that text.
     expect(PREFS_STATUS_PENDING).toContain('our confirmation text');
+  });
+});
+
+describe('the preferences fallback page (V1 testing, round 21)', () => {
+  it('tells someone with a broken link that STOP still works', () => {
+    // THE FINDING: this page IS the CASL unsubscribe path, and somebody landing on the fallback
+    // has just been told their link does not work. For a person trying to stop the texts that
+    // reads as a dead end — the one place a broken link could look like a trapped subscription.
+    expect(PREFS_UNKNOWN_TOKEN_BODY).toMatch(/replying STOP/i);
+    expect(PREFS_UNKNOWN_TOKEN_BODY).toMatch(/always works/i);
+  });
+
+  it('frames STOP as INDEPENDENT of the link, which is the load-bearing part', () => {
+    // Texting STOP never depended on this page: Twilio's Advanced Opt-Out handles it at the
+    // carrier layer before our webhook runs. The sentence has to say the backup works EVEN IF
+    // this link does not, or it just reads as one more thing to try.
+    expect(PREFS_UNKNOWN_TOKEN_BODY).toMatch(/even if this link does not/i);
+  });
+
+  it('still offers the way back in, for the other kind of visitor', () => {
+    // The same page serves someone whose subscription was deleted and who wants to return. The
+    // opt-out reminder must not crowd that out.
+    expect(PREFS_UNKNOWN_TOKEN_BODY).toMatch(/sign up again/i);
   });
 });

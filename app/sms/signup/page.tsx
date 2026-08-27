@@ -79,6 +79,8 @@ async function measureSparseRegionIds(): Promise<{ ids: readonly string[]; measu
 }
 
 export default async function SmsSignupPage() {
+  // Staging and development show the internal version line; production does not — see below.
+  const isProduction = process.env.NEXT_PUBLIC_APP_ENV === 'production';
   if (!smsSignupEnabled()) notFound();
 
   const { ids: sparseRegionIds } = await measureSparseRegionIds();
@@ -132,14 +134,29 @@ export default async function SmsSignupPage() {
         </p>
 
         {/*
-          Version stamp, rendered rather than hidden. `sms_consent.consent_text_version` records
-          which wording a subscriber agreed to (migration 0034); printing it means a screenshot
-          taken today is self-identifying, and a future dispute can be matched against the page
-          the parent actually saw rather than against whatever the page says by then.
+          Version stamp. `sms_consent.consent_text_version` records which wording a subscriber
+          agreed to (migration 0034), and printing it makes a screenshot of this page
+          self-identifying — a future dispute can be matched against the page the parent actually
+          saw rather than against whatever the page says by then.
+
+          V1 TESTING FOUND IT READS AS LEAKED INTERNALS to an ordinary visitor, which it does:
+          "Consent wording 2026-08-26.v2" means nothing to a parent signing their kids up. So the
+          VISIBLE line is now non-production only, while the value itself stays in the served HTML
+          as a data attribute on every environment.
+
+          THE ATTRIBUTE IS THE PART THAT MATTERED. The audit argument was never about a human
+          reading the string off the page — it was about the page being self-identifying to anyone
+          who inspects it later. `data-consent-version` does that in production without showing a
+          parent a version number, and it survives view-source, `curl`, and archive tooling. What
+          it does NOT survive is a purely visual screenshot, which is the one trade here.
         */}
-        <p className="kf-sms-signup__version">
-          Consent wording {CONSENT_TEXT_VERSION}
-          {!smsSendingEnabled() && ' · sending disabled in this environment'}
+        <p className="kf-sms-signup__version" data-consent-version={CONSENT_TEXT_VERSION}>
+          {!isProduction && (
+            <>
+              Consent wording {CONSENT_TEXT_VERSION}
+              {!smsSendingEnabled() && ' · sending disabled in this environment'}
+            </>
+          )}
         </p>
       </div>
     </main>

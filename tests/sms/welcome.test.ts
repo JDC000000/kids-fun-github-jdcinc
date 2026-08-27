@@ -104,9 +104,18 @@ describe('the welcome message (PRD §2.6)', () => {
     preferencesUrl: 'https://kidsfun.example/u/8fJ2q',
   });
 
+  it('restates the cadence — the only lifecycle message that never did', () => {
+    // V1 testing: the confirmation request says "weekly kid activity picks", then the very next
+    // text a subscriber gets said only "your first picks... Friday", which reads as a one-off.
+    expect(message.body).toContain('weekly picks');
+    expect(message.body).not.toContain('first picks');
+    // "start", not "land": it says a series is beginning, not that one thing is arriving.
+    expect(message.body).toContain('start Friday');
+  });
+
   it("matches §2.6's shape", () => {
     expect(message.body).toBe(
-      "KIDS FUN: You're in! Your first picks for East Van, ages 5, 8, land Friday ~4pm.\n" +
+      "KIDS FUN: You're in! Your weekly picks for East Van, ages 5, 8, start Friday ~4pm.\n" +
         'Manage anytime: https://kidsfun.example/u/8fJ2q\nReply STOP to end'
     );
   });
@@ -137,7 +146,7 @@ describe('the welcome message (PRD §2.6)', () => {
       childAges: [5],
       preferencesUrl: 'https://kidsfun.example/u/8fJ2q',
     });
-    expect(noArea.body).toContain("You're in! Your first picks, ages 5, land Friday");
+    expect(noArea.body).toContain("You're in! Your weekly picks, ages 5, start Friday");
     expect(noArea.body).not.toContain('null');
     expect(noArea.body).not.toContain('for ,');
   });
@@ -148,7 +157,7 @@ describe('the welcome message (PRD §2.6)', () => {
       childAges: [],
       preferencesUrl: 'https://kidsfun.example/u/8fJ2q',
     });
-    expect(noAges.body).toContain('Your first picks for Burnaby land Friday');
+    expect(noAges.body).toContain('Your weekly picks for Burnaby start Friday');
     expect(noAges.body).not.toContain('ages');
   });
 

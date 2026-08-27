@@ -25,7 +25,7 @@
 import { normalizePostal } from '@/lib/user/profile-validate';
 import { regionIdForPostal, type CoveredRegionId } from '@/lib/geo/postal-fsa';
 import { localIsoDate } from '@/lib/search/time/vancouver';
-import { CONSENT_TEXT_VERSION } from './consent-copy';
+import { CONSENT_TEXT_VERSION, OUT_OF_AREA_NOTICE } from './consent-copy';
 import { isKnownInterestKey } from './interests';
 
 /** Whole-request payload cap — a sanity ceiling against abuse (matches the corrections route). */
@@ -209,7 +209,19 @@ export function parseProfileFields(
   }
   const regionId = regionIdForPostal(postalCode);
   if (!regionId) {
-    return { ok: false, error: 'out of coverage area', field: 'postal' };
+    // THE FULL, FRIENDLY NOTICE, NOT A TERSE CODE — and it lives here rather than being
+    // substituted downstream. It used to read 'out of coverage area', with
+    // app/api/sms/signup/route.ts swapping in `OUT_OF_AREA_NOTICE` by matching that literal. The
+    // BROWSER form calls this same function directly and never went through that route, so a
+    // parent typing a Surrey postal code saw the terse internal string while the identical
+    // submission through the API got the sentence naming all five municipalities. Two testers and
+    // the Operator all found it independently.
+    //
+    // Fixing it HERE rather than duplicating the substitution client-side removes the string
+    // comparison entirely: there is now one copy of this sentence and no code anywhere that has to
+    // recognise an error by its exact text. This is the one rejection that is about US rather than
+    // about what they typed, so it is also the one that most needs to say what we do cover.
+    return { ok: false, error: OUT_OF_AREA_NOTICE, field: 'postal' };
   }
 
   // ── Children ──

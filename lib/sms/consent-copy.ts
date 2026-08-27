@@ -195,9 +195,13 @@ export const FIELD_COPY = {
   postalLabel: 'Postal code',
   postalHelp: 'Used to find activities near you. We store the postal code, never a precise location.',
   childrenLabel: 'How old are your kids?',
+  // Reworded in round 21 after V1 testing read it as briefly self-contradictory: "no birthdays"
+  // followed immediately by "we store the year they were born" lands as a contradiction until the
+  // reader works out that a YEAR is not a BIRTHDAY. Same meaning, same consent posture, same data
+  // collected — the sentence now explains before it reassures, instead of the other way round.
   childrenHelp:
-    'Just their age now, in years — no birthdays, no names. We store the year they were born so ' +
-    'the ages stay right as they grow up.',
+    'Just their age now, in years. We turn that into a birth year so the ages stay right as they ' +
+    'grow up — we never ask for a birthday or a name.',
   addChild: 'Add another child',
   removeChild: 'Remove',
   interestsLabel: 'Anything they’re especially into? (optional)',
@@ -340,7 +344,15 @@ export const PREFS_DELETED = 'Deleted. Nothing about you is stored any more.';
 export const PREFS_UNKNOWN_TOKEN_HEADING = 'This link is not working';
 export const PREFS_UNKNOWN_TOKEN_BODY =
   'It may be incomplete, or it may belong to a subscription that has since been deleted. ' +
-  'You can sign up again any time.';
+  'You can sign up again any time. ' +
+  // THE INDEPENDENT BACKUP OPT-OUT, added in round 21 after V1 testing. This page is the CASL
+  // unsubscribe path, and somebody arriving here has just been told their link does not work —
+  // which, for a person trying to stop the texts, reads as a dead end. Texting STOP never depended
+  // on this link: it is handled at the carrier layer by Twilio's Advanced Opt-Out before our
+  // webhook runs. Saying so costs one sentence and removes the one situation where a broken link
+  // could look like a trapped subscription.
+  'If you are trying to stop the texts, replying STOP to any message always works, even if this ' +
+  'link does not.';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // THE "ACTIVITY GONE" INTERSTITIAL (PRD §8 Q3, Jon-approved 2026-08-26)

@@ -27,11 +27,12 @@
 // dead is a lost signup. Submitting with it unticked produces a real, focused error that says
 // what to do.
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input } from '@/components/ui';
 import { FIELD_COPY, CONSENT_CHECKBOX_TEXT, PREFERENCES_LINK_LABEL, SUBMITTED_BODY, SUBMITTED_HEADING, WHAT_HAPPENS_NEXT } from '@/lib/sms/consent-copy';
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
 import { MAX_CHILDREN, parseSmsSignupBody, type SmsSignupField } from '@/lib/sms/signup-validate';
+import { fieldA11y } from '@/lib/sms/form-a11y';
 import { sparseAreaNoticeFor } from '@/lib/sms/sparse-areas';
 
 interface SmsSignupFormProps {
@@ -67,6 +68,25 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
   const [consent, setConsent] = useState(false); // UNCHECKED BY DEFAULT — PRD §1.3/§1.4.
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<{ message: string; field?: SmsSignupField } | null>(null);
+  const errorRef = useRef<HTMLParagraphElement | null>(null);
+
+  // BRING THE ERROR TO THE PERSON, rather than expecting them to go and find it. V1 testing
+  // compared screenshots and found the out-of-area notice renders next to the POSTAL field, which
+  // on a phone is most of a screen above the Submit button they just pressed — so a rejected
+  // submit looked like nothing happened at all. Runs on every new error, including the ones that
+  // come back from the server after a round trip.
+  //
+  // `block: 'center'` rather than 'start': the field the error belongs to sits directly above it,
+  // and centring brings both into view instead of pinning the message to the top edge with its
+  // own field scrolled off.
+  //
+  // Focus is deliberately NOT moved. The error node carries role="alert", which screen readers
+  // announce without being focused; stealing focus mid-correction would fight a sighted keyboard
+  // user who is already on their way back to the field.
+  useEffect(() => {
+    if (!error) return;
+    errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [error]);
 
   // Recomputed as they type. Pure, no request — see the prop's comment.
   const sparseNotice = useMemo(
@@ -136,7 +156,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
 
   const errFor = (field: SmsSignupField) =>
     error?.field === field ? (
-      <p className="kf-sms-signup__err" id={`kf-sms-${field}-err`} role="alert">
+      <p className="kf-sms-signup__err" id={`kf-sms-${field}-err`} role="alert" ref={errorRef}>
         {error.message}
       </p>
     ) : null;
@@ -156,7 +176,10 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
           autoComplete="tel"
           placeholder="604 555 0123"
           value={phone}
-          aria-describedby={error?.field === 'phone' ? 'kf-sms-phone-err' : 'kf-sms-phone-help'}
+          {...fieldA11y('phone', error?.field, {
+            errorId: 'kf-sms-phone-err',
+            helpId: 'kf-sms-phone-help',
+          })}
           onChange={(e) => setPhone(e.target.value)}
         />
         <p className="kf-sms-signup__help" id="kf-sms-phone-help">
@@ -178,7 +201,10 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
           placeholder="V5L 1A1"
           maxLength={12}
           value={postal}
-          aria-describedby={error?.field === 'postal' ? 'kf-sms-postal-err' : 'kf-sms-postal-help'}
+          {...fieldA11y('postal', error?.field, {
+            errorId: 'kf-sms-postal-err',
+            helpId: 'kf-sms-postal-help',
+          })}
           onChange={(e) => setPostal(e.target.value)}
         />
         <p className="kf-sms-signup__help" id="kf-sms-postal-help">
@@ -210,6 +236,10 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
             <Input
               id={`kf-sms-child-${child.id}`}
               className="kf-sms-signup__child-input"
+              // The children error belongs to the fieldset, not to one row, so EVERY row is
+              // marked — a screen reader user tabbing through has no way to know which age we
+              // rejected, and guessing one would be worse than marking the group.
+              {...fieldA11y('children', error?.field, { errorId: 'kf-sms-children-err' })}
               name="childAge"
               type="number"
               inputMode="numeric"
@@ -279,7 +309,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
             type="checkbox"
             name="consent"
             checked={consent}
-            aria-describedby={error?.field === 'consent' ? 'kf-sms-consent-err' : undefined}
+            {...fieldA11y('consent', error?.field, { errorId: 'kf-sms-consent-err' })}
             onChange={(e) => setConsent(e.target.checked)}
           />
           {/*
@@ -311,7 +341,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
 
       {/* A failure with no field of its own (network, 503, 404-while-flagged-off). */}
       {error && !error.field && (
-        <p className="kf-sms-signup__err" role="alert">
+        <p className="kf-sms-signup__err" role="alert" ref={errorRef}>
           {error.message}
         </p>
       )}

@@ -22,7 +22,6 @@ import {
   type SmsSignupField,
 } from '@/lib/sms/signup-validate';
 import { createPendingSubscriber, sendConfirmationRequest } from '@/lib/sms/signup-store';
-import { OUT_OF_AREA_NOTICE } from '@/lib/sms/consent-copy';
 import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 
 export const dynamic = 'force-dynamic';
@@ -74,12 +73,10 @@ async function smsSignupPost(request: Request): Promise<NextResponse> {
   // 4. Validate. Pure, and the whole accept/reject surface lives in lib/sms/signup-validate.ts.
   const parsed = parseSmsSignupBody(json, { now: new Date() });
   if (!parsed.ok) {
-    // The out-of-area rejection gets the full sentence rather than the validator's terse code —
-    // it is the one rejection that is about US, not about what they typed, and the form should
-    // say which areas we do cover instead of implying they made a mistake.
-    if (parsed.field === 'postal' && parsed.error === 'out of coverage area') {
-      return fail(400, OUT_OF_AREA_NOTICE, 'postal');
-    }
+    // NO SPECIAL CASE HERE ANY MORE. The out-of-area rejection used to be substituted at this line
+    // by matching the validator's terse error text; the sentence now comes out of the validator
+    // itself, so the browser form — which calls `parseSmsSignupBody` directly and never reaches
+    // this route — shows the same words a parent gets from the API. See that function.
     return fail(400, parsed.error, parsed.field);
   }
 

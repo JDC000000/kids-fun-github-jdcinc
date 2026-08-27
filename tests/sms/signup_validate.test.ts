@@ -10,7 +10,7 @@ import {
   normalizePhoneE164,
   parseSmsSignupBody,
 } from '@/lib/sms/signup-validate';
-import { CONSENT_TEXT_VERSION } from '@/lib/sms/consent-copy';
+import { CONSENT_TEXT_VERSION, OUT_OF_AREA_NOTICE } from '@/lib/sms/consent-copy';
 
 /** Friday 2026-08-28, 16:00 PDT. Local year is 2026. */
 const NOW = new Date('2026-08-28T23:00:00Z');
@@ -118,7 +118,10 @@ describe('parseSmsSignupBody', () => {
     // none, ever. Accepting would mean holding a phone number and a child's age under CASL for
     // someone we can demonstrably never serve. See parseSmsSignupBody's own comment.
     const surrey = parseSmsSignupBody(valid({ postal: 'V3S 1A1' }), { now: NOW });
-    expect(surrey).toEqual({ ok: false, error: 'out of coverage area', field: 'postal' });
+    // The FULL sentence, not a terse code: the browser form renders this error verbatim, so the
+    // validator is where it has to be readable. Naming the covered municipalities is the point.
+    expect(surrey).toEqual({ ok: false, error: OUT_OF_AREA_NOTICE, field: 'postal' });
+    expect(OUT_OF_AREA_NOTICE).toContain('North Vancouver');
 
     // A sparse-but-covered municipality is NOT rejected — thin coverage is real coverage.
     const westVan = parseSmsSignupBody(valid({ postal: 'V7V 1A1' }), { now: NOW });

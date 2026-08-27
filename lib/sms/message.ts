@@ -329,9 +329,17 @@ export interface WelcomeMessageInput {
 /**
  * The welcome text (PRD §2.1, §2.6) — sent once, immediately after a JOIN confirms a subscription.
  *
- *     KIDS FUN: You're in! Your first picks for East Van, ages 5, 8, land Friday ~4pm.
+ *     KIDS FUN: You're in! Your weekly picks for East Van, ages 5, 8, start Friday ~4pm.
  *     Manage anytime: https://kidsfun.ca/u/8fJ2q
  *     Reply STOP to end
+ *
+ * ── IT SAYS "WEEKLY", ADDED IN ROUND 21 ─────────────────────────────────────────────────
+ * V1 testing found that this was the only message in the lifecycle that never restated the
+ * cadence: the confirmation request says "weekly kid activity picks", and then the very next text
+ * a subscriber receives — the one confirming what they just signed up for — said only "your first
+ * picks... Friday". A parent could reasonably read that as a one-off. "first" became "weekly", and
+ * "land" became "start", which is what makes the sentence say a series is beginning rather than
+ * that one thing is arriving. Same length to the character, so the segment count is unchanged.
  *
  * STATIC BY DESIGN. §2.1 is explicit: "one static welcome text (no live matching logic — just
  * confirms signup and sets expectations for Friday)." It runs no search and touches no engine.
@@ -352,7 +360,7 @@ export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessag
   const area = input.areaLabel ? ` for ${input.areaLabel}` : '';
   const ages = input.childAges.length > 0 ? `, ages ${input.childAges.join(', ')},` : '';
   return render(
-    `${BRAND} You're in! Your first picks${area}${ages} land Friday ~4pm.\n` +
+    `${BRAND} You're in! Your weekly picks${area}${ages} start Friday ~4pm.\n` +
       `Manage anytime: ${input.preferencesUrl}\n${STOP_LINE}`
   );
 }
@@ -360,8 +368,26 @@ export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessag
 /**
  * The reply to an inbound text we do not recognise (webhook `unknown` branch).
  *
- *     KIDS FUN: Sorry, we didn't catch that. Reply JOIN to confirm your signup, HELP for info,
- *     or STOP to end. Not signed up? https://kidsfun.ca/sms/signup
+ *     KIDS FUN: We text weekly kid activity picks. Reply JOIN to confirm, HELP for info, or STOP
+ *     to end. Not signed up? kidsfun.ca/sms/signup
+ *
+ * ── IT SAYS WHAT WE ARE, ADDED IN ROUND 21 — AND SOMETHING HAD TO GO ────────────────────
+ * V1 testing found the reply told a stranger what to TYPE without ever saying what they would be
+ * signing up FOR. This is the message most likely to reach somebody with no idea who we are — a
+ * wrong number, a forwarded text, a poster half-remembered — and "KIDS FUN" alone does not tell
+ * them. The clause is lifted verbatim from `renderStartSignupInviteMessage`, which already had to
+ * solve exactly this for the other cold-contact message, so a stranger meets one description of
+ * the product however they reach us.
+ *
+ * 🔴 THE ACKNOWLEDGEMENT WAS THE CASUALTY, AND THAT WAS A MEASURED CHOICE, NOT AN OVERSIGHT.
+ * The message used to open "Sorry, we didn't catch that." Keeping BOTH that and the product clause
+ * measures 163 septets against the production signup URL — three over one GSM-7 segment, and every
+ * variant tried landed 161-185. Measured, not estimated; the candidates are in the round-21 notes.
+ * So this reply no longer says it failed to understand, which is a real loss: the apology is what
+ * made it read as a REPLY rather than a broadcast. It was traded for the product clause because a
+ * stranger who does not know who is texting them cannot act on either sentence, and doubling the
+ * cost of the one message that fires on arbitrary inbound text is the alternative.
+ * Now 143 septets, one segment, 17 to spare — MORE headroom than before the edit (11).
  *
  * ── ⚠ THIS COPY IS A SUGGESTION, NOT APPROVED WORDING ───────────────────────────────────
  * PRD §2.6 specifies five messages and this is not one of them; §1.4 and §2.1 both assume an
@@ -397,8 +423,8 @@ export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessag
 export function renderUnknownKeywordMessage(signupUrl: string | null): RenderedMessage {
   const signup = signupUrl ? ` ${signupClause(signupUrl)}` : '';
   return render(
-    `${BRAND} Sorry, we didn't catch that. Reply JOIN to confirm your signup, ` +
-      `HELP for info, or STOP to end.${signup}`
+    `${BRAND} We text weekly kid activity picks. Reply JOIN to confirm, HELP for info, ` +
+      `or STOP to end.${signup}`
   );
 }
 
