@@ -2806,3 +2806,79 @@ The point is not diligence, it is ordering. A figure taken mid-work is a claim a
 longer exists by the time it is reported, and it is more dangerous than a recalled one precisely
 because it feels verified. Every verification run in a report from here is the one that ran against
 the committed tree, and the numbers in §cf now come from that run.
+
+---
+
+# Round 19 — the batch driver, which had never been executed
+
+| File | What |
+|---|---|
+| `lib/sms/weekly-send-io.ts` | `BulkOptions` gains the two batch loaders and the four write seams |
+| `tests/sms/weekly_send_bulk.test.ts` | **NEW**, 13 tests |
+
+## ch. It was not under-tested, it was un-runnable
+
+`sendWeeklySmsBulk`'s only appearance anywhere in `tests/sms/` was a `vi.mock` in
+`weekly_run_route.test.ts` that replaces it wholesale. That was not an oversight of coverage — the
+function **could not be called from a test at all.** `loadWeeklySmsDeps()` is its first statement
+and goes straight to Postgres, so a direct call threw before reaching an assertion.
+
+So `BulkOptions` gained `loadDeps`, `loadSubscribers`, and the four per-subscriber write seams the
+unit already had. **`loadDeps` is injected rather than a ready-made `deps`**, deliberately: handing
+in the read model would leave nothing to COUNT, and "loaded once per batch" is precisely the
+property worth counting.
+
+The four write seams also revealed something smaller: `sendWeeklySmsBulk` was not threading
+`dispatch`/`record`/`markStopped`/`applyState` down to `sendWeeklySmsForSubscriber` at all. Rounds
+17 and 18 added them to the unit; the driver never passed them on. Harmless in production (both
+default to the same functions) and fatal to testing the batch.
+
+## ci. Point 5 — the "load once" claim HELD, and is now counted rather than believed
+
+Round 4's design decision, mirroring `lib/email/weekly.ts`: load the read model once, reuse it for
+every subscriber, never re-query Postgres per subscriber. **After eighteen rounds of changes it
+still holds** — one load for five subscribers.
+
+Checked in two directions, because a load counter alone is not enough:
+
+1. `loadDeps` is called exactly once for a five-subscriber batch.
+2. **The same instance is passed down.** Loading once and then not threading it through would look
+   identical to the counter and be just as wrong, so the test asserts the engine each subscriber
+   searched against is that one object.
+
+**Mutation-tested rather than asserted:** moving the load inside the loop fails both, and only
+those two. Restored clean.
+
+## cj. ⚠ One small waste the check found, pinned not fixed
+
+The deps load happens **before** the subscriber query, unconditionally. So a week with zero active
+subscribers still pulls the entire listing catalogue, alias resolver and region hierarchy out of
+Postgres for nothing — reachable every week before launch, and any week the product is paused.
+
+The reorder is two lines and strictly better. **Not done:** round 19 was scoped to coverage rather
+than behaviour, and quietly changing what a driver does under cover of "adding tests" is how a test
+round becomes a behaviour round nobody reviewed. A test asserts the current single wasted load, so
+the day someone reorders it, the decision is visible rather than silent.
+
+## ck. What the batch survives, and why
+
+**One subscriber's failure does not abort the run — but not because this loop is careful.** There
+is no `try`/`catch` in `sendWeeklySmsBulk` at all. It survives because
+`sendWeeklySmsForSubscriber` returns a structured result on every failure path and never throws.
+That is a contract between two functions, and it was only ever asserted on one side of it. It is
+now asserted from the batch's side too: a throwing `record()` for the middle subscriber of three
+leaves all three processed, reported, and — since round 18 — still carrying their true outcomes.
+
+Also covered: results keyed to their own subscriber ids; one subscriber's carrier opt-out not
+smearing onto its neighbours; a five-way mixed batch aggregating into `counts` that sum to the
+candidate list; `limit` capping deterministically; nothing in the serialised summary carrying a
+phone number, a driver error or a message body (the run route puts this straight into an HTTP
+response); and the dry-run flag being decided once at the top and reaching every subscriber, with
+no per-subscriber override — the flag that stands between a verification run and texting real
+parents.
+
+## cl. Verification
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **416 tests across 24
+files** (was 403/23). Full `unit` lane: **230 files / 3882 tests passing**. Measured after the
+commit, per §cg.

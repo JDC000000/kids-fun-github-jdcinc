@@ -544,6 +544,25 @@ export interface BulkOptions {
   limit?: number;
   /** Injected for tests; defaults to the stubbed loader. */
   loadRecentPickIds?: RecentPickIdsLoader;
+  /**
+   * The batch's own two loads, and the four per-subscriber write seams, injected for tests.
+   *
+   * ADDED IN ROUND 19 BECAUSE THIS FUNCTION COULD NOT BE CALLED IN A TEST AT ALL. `loadDeps` hits
+   * Postgres unconditionally on the first line, so any direct call threw before reaching a single
+   * assertion — which is why the only reference to `sendWeeklySmsBulk` anywhere in the suite was a
+   * `vi.mock` that replaced it. A driver that cannot be executed is a driver whose behaviour is
+   * assumed rather than known.
+   *
+   * `loadDeps` IS INJECTED RATHER THAN `deps` DIRECTLY, deliberately: handing in a ready-made read
+   * model would make the "load once per batch, never once per subscriber" property untestable,
+   * because there would be no call to count. See tests/sms/weekly_send_bulk.test.ts.
+   */
+  loadDeps?: typeof loadWeeklySmsDeps;
+  loadSubscribers?: typeof loadActiveSubscribers;
+  dispatch?: typeof dispatchSms;
+  record?: typeof recordSmsSend;
+  markStopped?: typeof markStoppedViaCarrier;
+  applyState?: typeof applyEmptyWeekState;
 }
 
 export interface BulkSummary {
@@ -580,19 +599,39 @@ function emptyCounts(): Record<SubscriberSendStatus, number> {
 export async function sendWeeklySmsBulk(options: BulkOptions = {}): Promise<BulkSummary> {
   const now = options.now ?? new Date();
   const dryRun = options.dryRun ?? !smsSendingEnabled();
-  const deps = await loadWeeklySmsDeps();
-  const subscribers = await loadActiveSubscribers(options.limit);
+
+  // THE READ MODEL IS LOADED ONCE FOR THE WHOLE BATCH, never once per subscriber — the design
+  // decision this function exists to enforce (round 4, mirroring lib/email/weekly.ts). `deps` is
+  // then passed into every per-subscriber call, which is what stops `loadWeeklySmsDeps` being
+  // re-entered five hundred times. Pinned by a test that counts the calls rather than trusting it.
+  //
+  // ⚠ IT IS LOADED BEFORE THE SUBSCRIBER LIST, so a week with zero active subscribers still pulls
+  // the entire listing catalogue, alias resolver and region hierarchy out of Postgres for nothing.
+  // Reachable — every week before launch, and any week the product is paused. Left as-is rather
+  // than reordered, because round 19 was scoped to coverage rather than behaviour; the wasted work
+  // is one read per week and the reorder is two lines. Recorded in the round-19 notes.
+  const deps = await (options.loadDeps ?? loadWeeklySmsDeps)();
+  const subscribers = await (options.loadSubscribers ?? loadActiveSubscribers)(options.limit);
 
   const counts = emptyCounts();
   const results: SubscriberSendResult[] = [];
   let totalSegments = 0;
 
   for (const { subscriber, phoneNumber } of subscribers) {
+    // NEVER THROWS — `sendWeeklySmsForSubscriber` returns a structured result on every failure
+    // path, which is what keeps one bad row from taking down a batch of five hundred. That is a
+    // property of the CALLEE, not of this loop: there is no try/catch here, and if that contract
+    // were ever broken the batch would abort mid-run. Asserted from this side too, in
+    // tests/sms/weekly_send_bulk.test.ts, so the dependency is checked rather than assumed.
     const result = await sendWeeklySmsForSubscriber(subscriber, phoneNumber, {
       now,
       dryRun,
       deps,
       loadRecentPickIds: options.loadRecentPickIds,
+      dispatch: options.dispatch,
+      record: options.record,
+      markStopped: options.markStopped,
+      applyState: options.applyState,
     });
     counts[result.status] += 1;
     totalSegments += result.segments;
