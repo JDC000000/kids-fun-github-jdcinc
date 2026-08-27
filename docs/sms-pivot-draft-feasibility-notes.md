@@ -2647,3 +2647,138 @@ this merge does not include it.
 `tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **376 tests across 21
 files** (was 368/20). Full `unit` lane: **227 files / 3842 tests passing**. Plus the live
 `next start` header check recorded in §bs.
+
+---
+
+# Round 18 — the multi-agent QA pass: four fixes, one product decision
+
+Six independent agents on fresh worktrees pinned at `b38a8ff`. Four defects fixed, one flagged for
+Jon, four smaller items documented.
+
+| # | Files | Fix |
+|---|---|---|
+| 1 | `lib/sms/weekly-send-io.ts`, `tests/sms/weekly_send_io.test.ts` **NEW** | post-dispatch writes wrapped |
+| 2 | `lib/sms/consent-transitions.ts`, `tests/sms/consent_transitions.test.ts` | the shared compare-and-set |
+| 3 | `app/api/sms/inbound/route.ts`, `tests/sms/welcome.test.ts` | the real guard, tested |
+| 4 | `tests/sms/redact.test.ts` **NEW** | `redactPhone`'s actual output |
+
+## bz. #1 — one unwrapped write, two different defects
+
+The three post-dispatch calls (`log`, `markStopped`, `applyEmptyWeekState`) fell into the
+function's single outer `catch`, which returns `error: (err as Error)?.message` verbatim — and
+`app/api/sms/weekly/run/route.ts` passes `r.error` straight into the HTTP response.
+
+**It leaks.** Those three are the ONLY calls in the function that hand a phone number to a
+database, and drivers routinely echo the offending row's values back in a constraint violation
+(`DETAIL: Key (phone)=(+1604…) already exists`). That is a subscriber's number in an HTTP response.
+
+**And it lies.** A message that genuinely went, or a carrier opt-out genuinely detected, was
+reported as `status: 'error'` because the AUDIT WRITE afterwards failed — discarding the outcome
+the subscriber actually experienced in favour of a fact about our own bookkeeping.
+
+Fixed with a `bestEffort` wrapper, matching what `welcome.ts` and `signup-store.ts` have done since
+they were written. **The path that had this pattern first never got it.**
+
+Two things worth noting beyond the fix:
+
+- **A `scrubNumber` backstop** on the outer catch, named as a backstop: it matches only the exact
+  E.164 string we hold, so a differently-formatted number would slip past. The real fix is that
+  after wrapping, no code path that HOLDS the number can reach that catch at all — the deps load
+  and the pure build are the only remaining throwers, and `dispatchSms` never throws.
+- **`sendWeeklySmsForSubscriber` now has its own test file** (11 tests). It previously had almost
+  none: mocked wholesale by the run-route test, touched once obliquely in round 17. Its branch
+  wiring — which `send_type` pairs with which outcome, that a failed dispatch does not advance the
+  empty-week counter, that a dry run writes nothing, that an out-of-area postal changes nothing —
+  is now covered.
+
+## ca. #2 — the race was never JOIN-specific, and the fix is on the shared contract
+
+Round 17 found it on JOIN and scoped the fix there. The QA pass was right that this was too narrow:
+`confirmSubscriber`, `mirrorCarrierStop` and `mirrorCarrierStart` all funnel through the same
+`runTransition` and the same `applyConsentChange`. A JOIN-only wrapper would have left the identical
+race live on the shared path, to resurface the first time any caller reacted to a STOP/START
+`applied`.
+
+**Fixed on the contract**, as round 17 scoped in its own option 1:
+
+- `ConsentChange` gains **`expectedStatus`** — the status the decision READ.
+- The UPDATE gains `AND status = $4` and `RETURNING id`.
+- `ConsentChangeApplier` returns `'applied' | 'no_match'` instead of `void`. A `Promise<void>`
+  applier literally cannot express "the compare-and-set failed".
+- `runTransition` maps `no_match` → **`already_in_state`**, which is both true (the end state was
+  reached, by someone else) and the outcome every caller already treats as "do nothing further".
+
+**`expectedStatus` carries the status that was read, not a per-decision list of acceptable ones.**
+Each decision already narrowed to one row in one state, so the tightest predicate is free — and a
+list is a second thing to keep in step with the decision that produced it.
+
+Tested for **JOIN vs JOIN, STOP vs STOP and START vs START** — winner reports `applied`, loser
+reports `already_in_state`, loser still attempted the write (losing is decided by the database, not
+predicted), and the loser is not an error. Plus: the loser's result feeds `shouldSendWelcome` and
+returns false, which is the whole point.
+
+## cb. #3 — a test of a copy is a test of the copy
+
+The guard preventing a repeat JOIN from re-sending the welcome was inline in an unexported
+function, and `welcome.test.ts` asserted a hand-written re-implementation of the same condition.
+The QA pass proved it: deleting half the real condition left every relevant test green.
+
+`shouldSendWelcome` is now exported and pure, `confirmAndWelcome` is exported with both
+collaborators injectable, and the copy is deleted. **Re-ran the QA pass's own mutation** — removing
+`&& Boolean(result.subscriberId)` now fails a test, where before it failed nothing.
+
+## cc. #4 — the consolidated helper nobody was checking
+
+Round 17 gave `redactPhone` one home specifically so the rule could not drift. The QA pass showed
+that home had no test: changing `slice(-4)` to `slice(-6)` — six digits in every log line instead
+of four — passed all 376 tests. **Verified the mutation now fails 4 of the 6 new assertions.**
+
+Giving a rule one home only helps if something checks what the rule says.
+
+## cd. 🔴 FOR JON — the coverage swap picks a band champion and then hides it
+
+**Reproduced and pinned by a test** (`tests/sms/weekly_picks.test.ts`), which asserts the current
+behaviour rather than endorsing it:
+
+`applyCoverageSwap` always `push`es the forced candidate onto the **tail** of the selection, so on a
+full 10-pick week it is ranked **10 of 10**. `lib/sms/weekly-send.ts` names and links only the first
+`DIRECT_LINK_PICKS` (3). So the pick chosen *specifically because* an age band was unrepresented is
+the one pick **guaranteed** to be folded into the anonymous "+N more" — the opposite of what the
+feature exists for. A parent of a 12-year-old gets a text naming three toddler activities and a
+count.
+
+**This is a product decision, not mine.** The two options, and what each costs:
+
+- **(a) Promote forced picks above the direct-link cutoff.** The feature then does what its
+  docstring says. Cost: it changes visible SMS content and ranking — a lower-relevance activity
+  displaces a higher-ranked one from the named three, on every send where a band was short.
+- **(b) Accept "counted but not named" for MVP.** Zero code change, and defensible if the swap's
+  real purpose is understood as *"the hub page shows something for every child"* rather than
+  *"every child sees a named pick in the text"*. Cost: the docstring currently claims the latter.
+
+**No recommendation, deliberately** — the choice depends on which of those two the feature is
+actually for, and only Jon can say. Flagged as a decision, with a test that makes either answer
+visible.
+
+## ce. Documented, not fixed
+
+- **`sendWeeklySmsBulk`** still has no direct coverage of its own loop/summary behaviour. #1 covered
+  the per-subscriber unit it calls; the bulk driver is a thin loop over it. Not blocking.
+- **`SMS_STATUS_CALLBACK_URL`** — added to `.env.example` and to `config.ts`'s env header, which
+  was the cheap half of this and is done.
+- **Dead code removed.** `void redactPhone(from)` computed a value nothing consumed, under a
+  comment implying it was logged. **Removed rather than wired up:** this route has no logging call
+  anywhere, and inventing one for a branch that fires on arbitrary inbound text would add a
+  PII-adjacent log line with no consumer. The comment now says that, and points at `redactPhone` as
+  the required shape if one is ever added.
+- **The 16 KiB inbound cap** is enforced after the body is buffered; the cheap pre-check only fires
+  on an honest `Content-Length`. Known defence-in-depth gap, almost certainly bounded by the
+  hosting platform's own request limit first. Noted, not fixed — closing it properly means reading
+  the body as a stream and aborting mid-read, which is a real change to a route whose correctness
+  currently rests on reading the raw body exactly once for signature verification.
+
+## cf. Verification
+
+`tsc --noEmit` clean, `eslint` clean, `npx next build` succeeds. SMS suite **401 tests across 23
+files** (was 376/21). Full `unit` lane: **229 files / 3867 tests passing**. Both QA mutations
+re-run and confirmed to fail now.

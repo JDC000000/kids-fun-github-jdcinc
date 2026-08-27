@@ -537,6 +537,41 @@ describe('the age-coverage swap (PRD §2.2 step 4)', () => {
       { band: '10-14', occurrenceId: 'tween', displacedOccurrenceId: null },
     ]);
   });
+
+  it('⚠ REPRODUCES A FLAGGED DEFECT: a forced pick lands LAST and is never named in the text', () => {
+    // NOT AN ASSERTION THAT THIS IS RIGHT. It pins the CURRENT behaviour so the product decision
+    // in docs §ca is measurable and so a future change to it is loud rather than silent.
+    //
+    // `applyCoverageSwap` always `push`es the forced candidate onto the tail, so on a full
+    // selection it is ranked last. lib/sms/weekly-send.ts names and links only the first
+    // DIRECT_LINK_PICKS (3). So the pick chosen SPECIFICALLY to represent an underrepresented age
+    // band is the one pick guaranteed to be folded into the anonymous "+N more" — which is the
+    // opposite of the feature's stated purpose.
+    const ranked = [
+      ...distinctActivities(10, { ageBandMatches: ['under2'], ageMinMonths: 0, ageMaxMonths: 24 }),
+      kidActivity({
+        id: 'tween',
+        activityName: 'Tween Hangout',
+        venueName: 'Tween Hall',
+        ageBandMatches: ['10-14'],
+        ageMinMonths: 120,
+        ageMaxMonths: 180,
+      }),
+    ].map(asItem);
+
+    const { selection, forced } = applyCoverageSwap(ranked.slice(0, 10), ranked, ['under2', '10-14'], 10);
+
+    expect(forced.map((f) => f.occurrenceId)).toEqual(['tween']);
+    // Rank 10 of 10 — dead last.
+    expect(selection).toHaveLength(10);
+    expect(selection[selection.length - 1].listing.id).toBe('tween');
+    // And therefore outside the direct-link window entirely.
+    const namedIds = selection.slice(0, DIRECT_LINK_PICKS).map((s) => s.listing.id);
+    expect(namedIds).not.toContain('tween');
+    expect(selection.findIndex((s) => s.listing.id === 'tween')).toBeGreaterThanOrEqual(
+      DIRECT_LINK_PICKS
+    );
+  });
 });
 
 describe('the degradation retry (PRD §2.2 step 5)', () => {

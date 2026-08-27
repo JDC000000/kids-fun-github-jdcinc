@@ -221,8 +221,13 @@ async function dispatch(
       // Deliberately NOT a fuzzy re-match against JOIN — see lib/sms/keywords.ts for why a
       // near-miss must not be promoted into a consent confirmation. This reply is the other half
       // of that decision: the near-miss gets told what the actual word is.
-      // `redactPhone(from)` is what any log line about this branch must use.
-      void redactPhone(from);
+      //
+      // THERE IS NO LOG LINE HERE, and there used to be a `void redactPhone(from)` pretending
+      // otherwise — a computed value nothing consumed, under a comment implying it was logged.
+      // Removed rather than wired up: this route has no logging call anywhere, and inventing one
+      // for a branch that fires on arbitrary inbound text would be adding a PII-adjacent log with
+      // no consumer. `redactPhone` (lib/sms/redact.ts) remains the required shape if one is ever
+      // added — see the import.
       const message = renderUnknownKeywordMessage(signupUrl());
       return { result: null, reply: dryRun ? null : message.body };
     }
@@ -361,10 +366,36 @@ export function startReplyFor(outcome: TransitionOutcome): string | null {
  * transition can answer `already_in_state` when it matched none, and that is a change to a stub's
  * contract. Flagged for a decision in the round-17 notes rather than guessed at here.
  */
-async function confirmAndWelcome(from: string, dryRun: boolean): Promise<TransitionResult> {
-  const result = await confirmSubscriber(from, { dryRun });
-  if (result.outcome === 'applied' && result.subscriberId) {
-    await sendWelcomeText(result.subscriberId, { dryRun });
+export async function confirmAndWelcome(
+  from: string,
+  dryRun: boolean,
+  deps: ConfirmAndWelcomeDeps = {}
+): Promise<TransitionResult> {
+  const confirm = deps.confirm ?? confirmSubscriber;
+  const welcome = deps.welcome ?? sendWelcomeText;
+  const result = await confirm(from, { dryRun });
+  if (shouldSendWelcome(result)) {
+    await welcome(result.subscriberId!, { dryRun });
   }
   return result;
+}
+
+/** Injected for tests; both default to the real functions. */
+export interface ConfirmAndWelcomeDeps {
+  confirm?: typeof confirmSubscriber;
+  welcome?: typeof sendWelcomeText;
+}
+
+/**
+ * THE GUARD. Exported and pure so it is tested as the SHIPPED code rather than as a copy.
+ *
+ * It was previously inline in `confirmAndWelcome`, which is unexported, and
+ * tests/sms/welcome.test.ts asserted a hand-written re-implementation of the same condition. That
+ * is not coverage of anything: a QA pass proved that deleting half of the REAL condition left
+ * every relevant test green, because no test ever executed it. A copied assertion tests the copy.
+ *
+ * The rule itself is unchanged — see `confirmAndWelcome` above for why each outcome is silent.
+ */
+export function shouldSendWelcome(result: TransitionResult): boolean {
+  return result.outcome === 'applied' && Boolean(result.subscriberId);
 }

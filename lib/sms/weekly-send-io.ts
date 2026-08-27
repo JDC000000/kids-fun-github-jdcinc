@@ -50,6 +50,7 @@ import { dispatchSms, type DispatchResult } from './twilio-client';
 import { recordSmsSend, type SendLogType } from './send-log';
 // Re-exported: this module's own header documents the PII rule `redactPhone` serves, and callers
 // have imported it from here since round 4. The rule itself now has one home in lib/sms/redact.ts.
+import { redactPhone } from './redact';
 export { redactPhone } from './redact';
 
 // ── Re-exported so every existing importer of this module keeps working ─────────────────
@@ -311,6 +312,41 @@ export interface SendSubscriberOptions {
   dispatch?: typeof dispatchSms;
   record?: typeof recordSmsSend;
   markStopped?: typeof markStoppedViaCarrier;
+  applyState?: typeof applyEmptyWeekState;
+}
+
+/**
+ * Run a post-dispatch write and swallow whatever it throws.
+ *
+ * ═══ WHY THESE WRITES MUST NOT REACH THE OUTER CATCH ═══
+ * Everything below the dispatch is bookkeeping about a message that HAS ALREADY BEEN SENT (or
+ * already been refused by the carrier). Letting one of them throw into the function's outer
+ * `catch` does two separate kinds of damage:
+ *
+ *   1. IT LEAKS. That catch returns `error: (err as Error)?.message` verbatim, and
+ *      app/api/sms/weekly/run/route.ts passes `r.error` through to the HTTP response unfiltered.
+ *      These three are the only calls in the function that hand a phone number to a database, and
+ *      many drivers echo the offending row's identifying values back in a constraint-violation
+ *      message. That is a phone number in an HTTP response.
+ *   2. IT LIES. A message that genuinely went, or a carrier opt-out we genuinely detected, would
+ *      be reported as `status: 'error'` because the AUDIT WRITE afterwards failed. The true
+ *      outcome — the one the subscriber experienced — is discarded in favour of a fact about our
+ *      own bookkeeping.
+ *
+ * lib/sms/welcome.ts and lib/sms/signup-store.ts have wrapped the equivalent calls since they were
+ * written, with the same reasoning. This is that, applied to the path that had it first and
+ * somehow never got it.
+ *
+ * SILENT IS DELIBERATE AND IS NOT "IGNORED". The dispatch result is already the return value, so
+ * a lost audit row is visible as a mismatch between `sms_send_log` and Twilio's own console rather
+ * than as nothing at all — and there is no honest alternative here: the message cannot be unsent.
+ */
+async function bestEffort(write: () => Promise<unknown>): Promise<void> {
+  try {
+    await write();
+  } catch {
+    // See above. A bookkeeping failure must not rewrite what happened to the subscriber.
+  }
 }
 
 /**
@@ -344,6 +380,7 @@ export async function sendWeeklySmsForSubscriber(
   const send = options.dispatch ?? dispatchSms;
   const log = options.record ?? recordSmsSend;
   const markStopped = options.markStopped ?? markStoppedViaCarrier;
+  const applyState = options.applyState ?? applyEmptyWeekState;
   // Copied from the subscriber's own row, never defaulted — see SmsSubscriber.consentTextVersion.
   const consentTextVersion = subscriber.consentTextVersion;
 
@@ -414,29 +451,33 @@ export async function sendWeeklySmsForSubscriber(
     //     webhook mirror (PRD §2.2 step 6). Stop them now, log it, and do NOT apply the
     //     empty-week state — they are not paused, they are stopped.
     if (dispatch.outcome === 'stopped_via_carrier') {
-      await markStopped(subscriber.id);
-      await log({
-        subscriberId: subscriber.id,
-        sendType,
-        outcome: 'stopped_via_carrier',
-        picksSnapshot: null,
-        twilioSid: dispatch.twilioSid,
-        consentTextVersion,
-      });
+      await bestEffort(() => markStopped(subscriber.id));
+      await bestEffort(() =>
+        log({
+          subscriberId: subscriber.id,
+          sendType,
+          outcome: 'stopped_via_carrier',
+          picksSnapshot: null,
+          twilioSid: dispatch.twilioSid,
+          consentTextVersion,
+        })
+      );
       return { ...base, status: 'stopped_via_carrier' };
     }
 
     if (dispatch.outcome === 'failed') {
       // A failed dispatch changes nothing. The counter must not advance for a message that was
       // never delivered — otherwise a Twilio outage would pause subscribers three weeks later.
-      await log({
-        subscriberId: subscriber.id,
-        sendType,
-        outcome: 'failed',
-        picksSnapshot: null,
-        twilioSid: null,
-        consentTextVersion,
-      });
+      await bestEffort(() =>
+        log({
+          subscriberId: subscriber.id,
+          sendType,
+          outcome: 'failed',
+          picksSnapshot: null,
+          twilioSid: null,
+          consentTextVersion,
+        })
+      );
       return { ...base, status: 'error', error: dispatch.error ?? 'dispatch failed' };
     }
 
@@ -448,28 +489,50 @@ export async function sendWeeklySmsForSubscriber(
 
     // 6. A real send. Record the audit row and apply the state TOGETHER — a subscriber must never
     //    be paused for a week they were not texted about, nor texted without the log saying so.
-    await log({
-      subscriberId: subscriber.id,
-      sendType,
-      outcome: sendType === 'weekly' ? 'sent' : sendType === 'pause_notice' ? 'paused' : 'empty',
-      picksSnapshot: picksSnapshot(plan),
-      twilioSid: dispatch.twilioSid,
-      consentTextVersion,
-    });
-    await applyEmptyWeekState(subscriber.id, state);
+    await bestEffort(() =>
+      log({
+        subscriberId: subscriber.id,
+        sendType,
+        outcome: sendType === 'weekly' ? 'sent' : sendType === 'pause_notice' ? 'paused' : 'empty',
+        picksSnapshot: picksSnapshot(plan),
+        twilioSid: dispatch.twilioSid,
+        consentTextVersion,
+      })
+    );
+    await bestEffort(() => applyState(subscriber.id, state));
 
     if (state.pausedNow) return { ...base, status: 'paused' };
     return { ...base, status: plan.outcome === 'picks' ? 'sent' : 'empty' };
   } catch (err) {
     // Never let the message or the number reach an error string.
+    //
+    // WHAT CAN STILL REACH HERE, now that the three post-dispatch writes are wrapped: the deps
+    // load (catalogue reads — no phone number in that query), the pure build, and nothing else.
+    // `dispatchSms` does not throw; it catches internally and returns a result. So no code path
+    // that HOLDS the number can land in this catch any more — which is the actual fix, and the
+    // scrub below is only a backstop.
     return {
       subscriberId: subscriber.id,
       status: 'error',
       pickCount: 0,
       segments: 0,
-      error: (err as Error)?.message ?? 'unknown error',
+      error: scrubNumber((err as Error)?.message ?? 'unknown error', phoneNumber),
     };
   }
+}
+
+/**
+ * Replace the subscriber's E.164 number with its redacted form if it somehow appears in an error.
+ *
+ * A BACKSTOP, AND NAMED ONE. It matches only the exact string we hold, so a driver that formatted
+ * the number differently would slip past it. It is not a substitute for keeping the number out of
+ * error text in the first place — see the catch above for why nothing that holds it can get here
+ * — it is the cheap second barrier for the case where that reasoning is wrong.
+ */
+function scrubNumber(text: string, phoneNumber: string): string {
+  return phoneNumber && text.includes(phoneNumber)
+    ? text.split(phoneNumber).join(redactPhone(phoneNumber))
+    : text;
 }
 
 // ── Bulk ────────────────────────────────────────────────────────────────────────────────

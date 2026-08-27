@@ -5,7 +5,9 @@
 // pure and are also tested directly, because they are the part that must be right — they are the
 // documented WHERE clauses expressed as functions.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { shouldSendWelcome } from '@/app/api/sms/inbound/route';
 import {
+  type ConsentWriteOutcome,
   confirmSubscriber,
   decideConfirm,
   decideStart,
@@ -38,13 +40,20 @@ function finds(found: ConsentRow | null): SubscriberLookup {
   return async () => found;
 }
 
-/** Records every write the transition attempted. */
-function recorder() {
+/**
+ * Records every write the transition attempted.
+ *
+ * `outcome` is what the applier reports back — 'applied' by default (the compare-and-set held),
+ * 'no_match' to simulate losing a concurrent race. See the concurrency block at the end of this
+ * file.
+ */
+function recorder(outcome: ConsentWriteOutcome = 'applied') {
   const writes: ConsentChange[] = [];
   return {
     writes,
-    applyChange: async (change: ConsentChange) => {
+    applyChange: async (change: ConsentChange): Promise<ConsentWriteOutcome> => {
       writes.push(change);
+      return outcome;
     },
   };
 }
@@ -83,6 +92,8 @@ describe('JOIN — the CASL express-consent confirmation', () => {
       subscriberId: 'sub-1',
       change: {
         subscriberId: 'sub-1',
+        // The status the decision READ — the compare-and-set predicate. See ConsentChange.
+        expectedStatus: 'stopped',
         status: 'active',
         stoppedAt: 'clear', // the row comes back to life
         reconsent: true, // re-stamped with TODAY's wording
@@ -148,6 +159,7 @@ describe('STOP — mirroring the carrier suppression', () => {
     expect(result.outcome).toBe('applied');
     expect(rec.writes[0]).toEqual({
       subscriberId: 'sub-1',
+      expectedStatus: 'active',
       status: 'stopped',
       stoppedAt: 'set',
       reconsent: false,
@@ -218,6 +230,7 @@ describe('START — mirroring the carrier un-suppression', () => {
     expect(result.outcome).toBe('applied');
     expect(rec.writes[0]).toEqual({
       subscriberId: 'sub-1',
+      expectedStatus: 'stopped',
       status: 'active',
       stoppedAt: 'clear',
       // NOT a re-consent. START is a carrier resume signal, not a fresh express-consent event;
@@ -315,6 +328,7 @@ describe('the dry-run gate holds on every transition', () => {
     expect(result.outcome).toBe('dry_run');
     expect(result.change).toEqual({
       subscriberId: 'sub-1',
+      expectedStatus: 'stopped',
       status: 'active',
       stoppedAt: 'clear',
       reconsent: true,
@@ -389,5 +403,89 @@ describe('failures surface as error, and never leak', () => {
     // the subscriber — postal code, ages, interests — is even visible to a decision function.
     const result = await confirmSubscriber(PHONE, { findByPhone: finds(row('stopped')) });
     expect(Object.keys(result).sort()).toEqual(['change', 'outcome', 'phoneNumber', 'subscriberId']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The compare-and-set: two copies of one inbound message
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('a lost concurrent race reports already_in_state, on EVERY transition', () => {
+  // Every transition is read-then-write, and between those two steps another copy of the same
+  // inbound webhook can do the same thing. Before `expectedStatus`, the UPDATE was
+  // `WHERE id = $1` with no predicate on what was read, so BOTH passes wrote and BOTH reported
+  // `applied` — and `applied` is what app/api/sms/inbound/route.ts keys the welcome text off.
+  //
+  // NOT JOIN-ONLY, which is why this covers all three: they share `runTransition` and one applier.
+  // STOP and START are silent today only because nothing reacts to their `applied` outcome; the
+  // race is live on the shared path regardless.
+  const CASES = [
+    { name: 'JOIN vs JOIN', fn: confirmSubscriber, from: 'pending' as const },
+    { name: 'STOP vs STOP', fn: mirrorCarrierStop, from: 'active' as const },
+    { name: 'START vs START', fn: mirrorCarrierStart, from: 'stopped' as const },
+  ];
+
+  it('the WINNER reports applied and the LOSER does not', async () => {
+    for (const { name, fn, from } of CASES) {
+      // Winner: the row was still in the state it read, so the UPDATE matched.
+      const winner = recorder('applied');
+      const won = await fn(PHONE, {
+        dryRun: false,
+        findByPhone: finds(row(from)),
+        applyChange: winner.applyChange,
+      });
+      expect(won.outcome, `${name} winner`).toBe('applied');
+
+      // Loser: same read, same decision — but by the time it wrote, the row had moved.
+      const loser = recorder('no_match');
+      const lost = await fn(PHONE, {
+        dryRun: false,
+        findByPhone: finds(row(from)),
+        applyChange: loser.applyChange,
+      });
+      expect(lost.outcome, `${name} loser`).toBe('already_in_state');
+      // It still ATTEMPTED the write — losing is decided by the database, not predicted.
+      expect(loser.writes, `${name} attempted`).toHaveLength(1);
+      // And it reports no change, like every other non-applied outcome: it wrote nothing.
+      expect(lost.change, `${name} change`).toBeNull();
+      expect(lost.subscriberId, `${name} id`).toBe('sub-1');
+    }
+  });
+
+  it('carries the status it READ as the predicate, on every transition', async () => {
+    // The value the UPDATE compares against. Taken from the row rather than from a per-decision
+    // list, so it cannot drift from the decision that produced it.
+    for (const { name, fn, from } of CASES) {
+      const rec = recorder();
+      await fn(PHONE, { dryRun: false, findByPhone: finds(row(from)), applyChange: rec.applyChange });
+      expect(rec.writes[0].expectedStatus, name).toBe(from);
+      // And it is never the status being written — that would make the predicate always fail.
+      expect(rec.writes[0].expectedStatus, name).not.toBe(rec.writes[0].status);
+    }
+  });
+
+  it('a lost race is NOT an error, and never reports one', async () => {
+    // The intended end state has been reached; it just was not us who reached it. Reporting
+    // `error` would make a webhook retry look like a failure and invite a third attempt.
+    const rec = recorder('no_match');
+    const result = await confirmSubscriber(PHONE, {
+      dryRun: false,
+      findByPhone: finds(row('pending')),
+      applyChange: rec.applyChange,
+    });
+    expect(result.outcome).toBe('already_in_state');
+    expect(result.error).toBeUndefined();
+  });
+
+  it('and the inbound route sends no welcome for it', async () => {
+    // The whole point. `already_in_state` is not `applied`, so the guard in the inbound route
+    // does not fire — which is what stops the second copy of one JOIN sending a second welcome.
+    const rec = recorder('no_match');
+    const result = await confirmSubscriber(PHONE, {
+      dryRun: false,
+      findByPhone: finds(row('pending')),
+      applyChange: rec.applyChange,
+    });
+    expect(shouldSendWelcome(result)).toBe(false);
   });
 });

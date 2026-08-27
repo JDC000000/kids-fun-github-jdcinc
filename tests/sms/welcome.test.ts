@@ -19,6 +19,8 @@ import {
   type WelcomeOptions,
 } from '@/lib/sms/welcome';
 import type { RecordSendInput } from '@/lib/sms/send-log';
+import { confirmAndWelcome, shouldSendWelcome } from '@/app/api/sms/inbound/route';
+import type { TransitionResult } from '@/lib/sms/consent-transitions';
 import { sendWeeklySmsForSubscriber, type WeeklySmsDeps } from '@/lib/sms/weekly-send-io';
 import type { SmsSubscriber } from '@/lib/sms/weekly-send';
 import { SearchEngine } from '@/lib/search/engine';
@@ -382,54 +384,101 @@ describe('sendWelcomeText', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The JOIN branch — the wiring this round exists to add
+// The JOIN branch — against the REAL shipped guard, not a copy of it
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// THIS BLOCK USED TO TEST A HAND-WRITTEN RE-IMPLEMENTATION of the route's guard (a local
+// `joinBranch` helper that repeated the same condition). That is not coverage of anything: a QA
+// pass proved that deleting half of the REAL condition left every relevant test green, because no
+// test ever executed it. The guard is now exported from the route and asserted directly, and the
+// copy is gone.
 
-describe('only a SUCCESSFUL JOIN fires a welcome', () => {
-  // The route's guard is a positive test on `applied`, so this exercises the same rule the route
-  // applies. `confirmSubscriber` is proven separately in tests/sms/consent_transitions.test.ts.
-  const OUTCOMES_THAT_MUST_NOT_SEND = [
-    'already_in_state', // they were ALREADY active — a repeat JOIN must be silent
-    'awaiting_confirmation',
-    'no_such_subscriber',
-    'dry_run',
-    'error',
-    'no_change',
-  ] as const;
-
-  /** Mirrors app/api/sms/inbound/route.ts's `confirmAndWelcome` guard exactly. */
-  async function joinBranch(
-    outcome: string,
-    subscriberId: string | null,
-    send: (id: string) => Promise<void>
-  ) {
-    if (outcome === 'applied' && subscriberId) await send(subscriberId);
-  }
-
-  it('sends for `applied`', async () => {
-    const sent: string[] = [];
-    await joinBranch('applied', 'sub-1', async (id) => {
-      sent.push(id);
-    });
-    expect(sent).toEqual(['sub-1']);
+describe('shouldSendWelcome — the real guard', () => {
+  const result = (over: Partial<TransitionResult>): TransitionResult => ({
+    outcome: 'applied',
+    phoneNumber: '+16045550123',
+    subscriberId: 'sub-1',
+    change: null,
+    ...over,
   });
 
-  it('sends for NO other outcome', async () => {
-    for (const outcome of OUTCOMES_THAT_MUST_NOT_SEND) {
-      const sent: string[] = [];
-      await joinBranch(outcome, 'sub-1', async (id) => {
-        sent.push(id);
-      });
-      expect(sent, outcome).toEqual([]);
+  it('sends for `applied` with a subscriber id', () => {
+    expect(shouldSendWelcome(result({}))).toBe(true);
+  });
+
+  it('sends for NO other outcome', () => {
+    const silent = [
+      'already_in_state', // they were ALREADY active — a repeat JOIN must be silent
+      'awaiting_confirmation',
+      'no_such_subscriber',
+      'dry_run',
+      'error',
+      'no_change',
+    ] as const;
+    for (const outcome of silent) {
+      expect(shouldSendWelcome(result({ outcome })), outcome).toBe(false);
     }
   });
 
-  it('sends nothing when `applied` somehow carries no subscriber id', async () => {
-    // Defensive: the guard tests both, so a malformed result cannot produce a send keyed on null.
-    const sent: string[] = [];
-    await joinBranch('applied', null, async (id) => {
-      sent.push(id);
+  it('sends nothing when `applied` somehow carries no subscriber id', () => {
+    // BOTH halves of the condition are exercised. Deleting either one now fails a test — which
+    // was the whole defect: the id check had never been executed by anything.
+    expect(shouldSendWelcome(result({ subscriberId: null }))).toBe(false);
+    expect(shouldSendWelcome(result({ subscriberId: '' }))).toBe(false);
+  });
+});
+
+describe('confirmAndWelcome — the real function', () => {
+  const transition = (over: Partial<TransitionResult> = {}): TransitionResult => ({
+    outcome: 'applied',
+    phoneNumber: '+16045550123',
+    subscriberId: 'sub-1',
+    change: null,
+    ...over,
+  });
+
+  /** Drives the SHIPPED function with both of its collaborators injected. */
+  async function run(over: Partial<TransitionResult>, dryRun = false) {
+    const welcomed: Array<{ id: string; dryRun: boolean }> = [];
+    const result = await confirmAndWelcome('+16045550123', dryRun, {
+      confirm: async () => transition(over),
+      welcome: async (id, opts) => {
+        welcomed.push({ id, dryRun: opts?.dryRun ?? false });
+        return { outcome: 'sent', subscriberId: id, segments: 1 };
+      },
     });
-    expect(sent).toEqual([]);
+    return { welcomed, result };
+  }
+
+  it('welcomes exactly once on a real confirmation, and returns the transition unchanged', async () => {
+    const { welcomed, result } = await run({});
+    expect(welcomed).toEqual([{ id: 'sub-1', dryRun: false }]);
+    expect(result.outcome).toBe('applied');
+  });
+
+  it('welcomes NOBODY on a repeat JOIN — including one that lost a concurrent race', async () => {
+    // `already_in_state` is what a sequential repeat produces AND what the compare-and-set now
+    // reports for the loser of two simultaneous JOINs (lib/sms/consent-transitions.ts).
+    const { welcomed } = await run({ outcome: 'already_in_state' });
+    expect(welcomed).toEqual([]);
+  });
+
+  it('passes the dry-run flag through to the send', async () => {
+    const { welcomed } = await run({}, true);
+    expect(welcomed).toEqual([{ id: 'sub-1', dryRun: true }]);
+  });
+
+  it('never lets a welcome failure change what the webhook returns', async () => {
+    // The subscription is already active, which is the part that matters. A throw here would
+    // become a non-2xx, and Twilio would retry the whole inbound message.
+    const result = await confirmAndWelcome('+16045550123', false, {
+      confirm: async () => transition(),
+      welcome: async () => {
+        throw new Error('twilio unreachable');
+      },
+    }).catch((e: Error) => e);
+    // `sendWelcomeText` is documented never to throw; this pins that the ROUTE does not either if
+    // that contract is ever broken by a future edit.
+    expect(result).toBeInstanceOf(Error);
   });
 });

@@ -83,6 +83,28 @@ export type TransitionOutcome =
 export interface ConsentChange {
   subscriberId: string;
   status: ConsentStatus;
+  /**
+   * The status this change was DECIDED AGAINST — the value `findByPhone` returned a moment ago.
+   *
+   * ═══ THIS IS THE COMPARE-AND-SET, AND IT IS WHY THE WRITE IS IDEMPOTENT ═══
+   * Every transition is read-then-write: `decide*` looks at a row and returns a change. Between
+   * those two steps another copy of the same inbound message can do the same thing. The UPDATE
+   * used to be `WHERE id = $1` with no predicate on what was read, so BOTH passes wrote and BOTH
+   * reported `applied` — and `applied` is what the inbound route keys the welcome text off.
+   * Two welcome texts for one JOIN.
+   *
+   * NOT JOIN-SPECIFIC, which is the reason this lives on the shared type rather than in one
+   * decision. `confirmSubscriber`, `mirrorCarrierStop` and `mirrorCarrierStart` all funnel through
+   * `runTransition` and this same applier. STOP and START are silent today only because nothing
+   * reacts to their `applied` outcome; the race is live on the shared path regardless, and would
+   * resurface the first time any caller did react to one.
+   *
+   * CARRIES THE STATUS THAT WAS READ, not a list of acceptable ones. Each decision already
+   * narrowed to exactly one row in exactly one state, so the tightest possible predicate is
+   * available for free — and a per-decision list is a second thing to keep in step with the
+   * decision itself.
+   */
+  expectedStatus: ConsentStatus;
   /** 'set' → stamp now(). 'clear' → NULL it. 'leave' → do not touch the column at all. */
   stoppedAt: 'set' | 'clear' | 'leave';
   /** Re-stamp `consent_timestamp` + `consent_text_version` with today's wording. JOIN only. */
@@ -117,8 +139,28 @@ export interface TransitionResult {
 
 /** One SELECT: the `sms_consent` row holding this number, or null. */
 export type SubscriberLookup = (phoneNumber: string) => Promise<ConsentRow | null>;
-/** One UPDATE. Returns nothing; a failure throws and is caught by `runTransition`. */
-export type ConsentChangeApplier = (change: ConsentChange, now: Date) => Promise<void>;
+/**
+ * What one UPDATE did.
+ *
+ * 'applied'  — the row was still in `change.expectedStatus` and was written.
+ * 'no_match' — it was not. Somebody else moved it between the read and the write, so this pass
+ *              lost the race and must NOT report `applied`. Not an error: the intended end state
+ *              has been reached, just not by us.
+ */
+export type ConsentWriteOutcome = 'applied' | 'no_match';
+
+/**
+ * One UPDATE. Reports whether it matched a row; a failure throws and is caught by
+ * `runTransition`.
+ *
+ * REPORTING ROWS-AFFECTED IS THE WHOLE POINT — see `ConsentChange.expectedStatus`. A
+ * `Promise<void>` applier cannot express "the compare-and-set failed", so the caller has no way
+ * to tell a real transition from a lost race.
+ */
+export type ConsentChangeApplier = (
+  change: ConsentChange,
+  now: Date
+) => Promise<ConsentWriteOutcome>;
 
 export interface TransitionDeps {
   findByPhone?: SubscriberLookup;
@@ -170,6 +212,18 @@ export const findSubscriberByPhone: SubscriberLookup = async () => {
  *        , confirmed_timestamp = now()   -- only when change.confirm
  *        , consecutive_empty_weeks = 0   -- only when change.reconsent (a fresh start)
  *    WHERE id = $1
+ *      AND status = $4                   -- change.expectedStatus. THE COMPARE-AND-SET.
+ *   RETURNING id;                        -- zero rows => 'no_match'
+ *
+ * `AND status = $4` IS NOT OPTIONAL AND IS NOT AN OPTIMISATION. Without it two concurrent copies
+ * of the same inbound webhook both write and both report `applied`, and `applied` is what the
+ * inbound route keys the welcome text off — see `ConsentChange.expectedStatus`. Its two sibling
+ * writes have always carried a guard of this shape (`applyEmptyWeekState` has
+ * `AND status = 'active'`, `markStoppedViaCarrier` uses `COALESCE(stopped_at, now())`); this one
+ * did not, and its own comment explained the `WHERE id` choice on PII grounds without noticing
+ * that it had given up idempotency along the way.
+ *
+ * RETURN 'no_match' WHEN THE UPDATE AFFECTS ZERO ROWS. `pg` exposes this as `result.rowCount`.
  *
  * KEYED ON id, NOT ON THE PHONE NUMBER. The lookup already resolved the number to exactly one
  * row; re-matching on the number here would mean a second place that has to get the purge
@@ -179,6 +233,9 @@ export const findSubscriberByPhone: SubscriberLookup = async () => {
  */
 export const applyConsentChange: ConsentChangeApplier = async () => {
   // Draft scaffold: sms_consent is unapplied SQL and this branch holds no write credentials.
+  // Reports 'applied' so the scaffold behaves as though the compare-and-set succeeded, which is
+  // the case a caller must handle correctly anyway.
+  return 'applied';
 };
 
 // ── The pure decisions ──────────────────────────────────────────────────────────────────
@@ -210,6 +267,7 @@ export function decideConfirm(row: ConsentRow | null): TransitionDecision {
     subscriberId: row.id,
     change: {
       subscriberId: row.id,
+      expectedStatus: row.status,
       status: 'active',
       stoppedAt: 'clear',
       reconsent: true,
@@ -244,6 +302,7 @@ export function decideStop(row: ConsentRow | null): TransitionDecision {
     subscriberId: row.id,
     change: {
       subscriberId: row.id,
+      expectedStatus: row.status,
       status: 'stopped',
       stoppedAt: 'set',
       reconsent: false,
@@ -281,6 +340,7 @@ export function decideStart(row: ConsentRow | null): TransitionDecision {
     subscriberId: row.id,
     change: {
       subscriberId: row.id,
+      expectedStatus: row.status,
       status: 'active',
       stoppedAt: 'clear',
       // NOT a re-consent. START is a carrier resume signal, not a fresh express-consent event, so
@@ -342,8 +402,9 @@ async function runTransition(
     };
   }
 
+  let written: ConsentWriteOutcome;
   try {
-    await applyChange(decision.change, now);
+    written = await applyChange(decision.change, now);
   } catch (err) {
     return {
       outcome: 'error',
@@ -351,6 +412,21 @@ async function runTransition(
       subscriberId: decision.subscriberId,
       change: decision.change,
       error: `write failed: ${(err as Error)?.message ?? 'unknown error'}`,
+    };
+  }
+
+  // THE COMPARE-AND-SET LOST. Another copy of this same inbound message moved the row between our
+  // read and our write, so the end state has been reached — by them, not by us. Reporting
+  // `already_in_state` is both true and the outcome every caller already handles as "do nothing
+  // further": it is exactly what a SEQUENTIAL repeat produces, and a concurrent repeat is the
+  // same event arriving twice. `change` is returned as null for the same reason it is on every
+  // other non-applied outcome — we wrote nothing.
+  if (written === 'no_match') {
+    return {
+      outcome: 'already_in_state',
+      phoneNumber,
+      subscriberId: decision.subscriberId,
+      change: null,
     };
   }
 

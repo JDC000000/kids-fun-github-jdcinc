@@ -23,6 +23,11 @@
 //                              orphan years of CASL records by changing every stored hash.
 //   SMS_WEBHOOK_PUBLIC_URL   — the exact public URL Twilio was configured to call, used for
 //                              signature verification. See the comment on webhookPublicUrl().
+//   SMS_STATUS_CALLBACK_URL  — the exact public URL sent to Twilio as `StatusCallback` on every
+//                              outbound message, AND verified against on the delivery-status
+//                              webhook. ONE value for both ends by construction — see
+//                              `statusCallbackUrl`. Unset means no delivery receipts are
+//                              requested; sends still work.
 //   SMS_CRON_SECRET          — shared secret guarding POST /api/sms/weekly/run.
 //   NEXT_PUBLIC_SITE_URL     — public app base URL, for the links inside a text. Shared,
 //                              app-level var; see siteUrl() for why this is a second reader.
