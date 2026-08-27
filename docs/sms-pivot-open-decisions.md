@@ -108,6 +108,43 @@ signature-gated, so the realistic risk there is an accidental auto-reply loop wi
 system, not abuse — a per-number cooldown needs a table the PRD already declined for MVP.
 → PRD §7 (round 8), notes §bb
 
+## B5. `SMS_PHONE_HASH_SALT` has no owner, and its absence fails SILENTLY
+**Blocked:** nothing. It is documented in `.env.example:78` and has simply never appeared on this
+page, unlike every other production value. Found while checking this list against what a live send
+actually needs, not by anything failing.
+**Needs:** Operator — a generated secret in the production environment. **Not a decision** — a
+value. It must be generated ONCE and never rotated casually: `sms_send_log.phone_hash_version`
+exists precisely because rotating the salt makes every historical hash unmatchable.
+**Cost if left:** **the weekly send succeeds and the CASL audit trail silently does not get
+written.** Traced, in order:
+
+| where | what happens |
+|---|---|
+| `weekly-send-io.ts:539` | the Twilio dispatch runs FIRST — the text is already gone |
+| `send-log.ts:95-96` | `phoneHash()` returns null, so `recordSmsSend` throws `MissingPhoneHashSaltError` |
+| `weekly-send-io.ts:586` | the audit write is wrapped in `bestEffort(...)` |
+| `bestEffort` | `try { await write() } catch { }` — **a bare catch. No logging, no metric.** |
+
+So with sending enabled and no salt: every weekly text goes out and no `sms_send_log` row is ever
+written, with no error anywhere. `phone_hash` is `NOT NULL` and migration 0035 calls it the CASL
+audit trail "retained INDEFINITELY" — so the failure is *we texted Canadians at scale and kept no
+record that we did*. It surfaces as a complaint, not an alarm.
+
+**There is no pre-flight.** `config.ts:225`'s `phoneHashSalt()` returns null and nothing validates
+it before a send — no startup check, no cron guard. The only detection is the reactive throw that
+`bestEffort` then swallows.
+
+**Unreachable today** only because `SMS_SENDING_ENABLED` has never been set. It becomes reachable
+on exactly the day the Operator flips it — the day nobody is re-reading this page.
+
+**A CODE FIX WAS PROPOSED AND IS NOT APPROVED.** Making the weekly send refuse to dispatch when the
+salt is absent is ~5 lines, and it is a deliberate behaviour change rather than a bug fix: the
+argument cuts both ways. `bestEffort` exists so that bookkeeping cannot break a subscriber's week,
+which is correct for a transient database blip. A missing secret is not transient — it fails
+identically on every send forever, and "no audit trail" is arguably the one bookkeeping failure
+worth stopping a send for. **That is a judgement about what happens to a real subscriber, so it
+belongs to the Operator or Jon, and the code has deliberately been left alone.**
+
 ---
 
 # C. NEEDS NEITHER — recorded so nobody re-derives them
