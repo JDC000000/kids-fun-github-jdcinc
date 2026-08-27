@@ -497,8 +497,7 @@ async function bestEffortAudit(
     // must not be silent, and lib/sms has no logger of its own. See the block above.
     console.error(
       `[sms] AUDIT WRITE FAILED — sms_send_log row lost for a message that was sent. ` +
-        `stage=${context.stage} subscriber=${context.subscriberId} ` +
-        `error=${scrubNumber(detail, context.phoneNumber)}`
+        `stage=${context.stage} subscriber=${context.subscriberId} error=${detail}`
     );
   }
 }
