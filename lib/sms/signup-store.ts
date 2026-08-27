@@ -167,6 +167,26 @@ export interface ConfirmationSendOptions extends SignupWriteOptions {
  * arrive. This function reports the code (`errorCode`) rather than flattening it into a generic
  * failure so that case is at least visible; the product answer to it is flagged, not invented.
  *
+ * ── AND SO THIS PATH DELIBERATELY DOES **NOT** CALL `markStoppedViaCarrier` ──────────────
+ * Stated outright rather than left to be inferred from the paragraph above. The weekly path and
+ * the JOIN welcome both DO call it on a 21610 (round 17 fixed `welcome.ts` for exactly that), so
+ * the omission here looks like the same bug and is not one:
+ *
+ *   • THE ROW IS `pending`, NOT `active`. It was created moments ago by this signup and has never
+ *     been confirmed. `loadActiveSubscribers` selects `WHERE status = 'active'`, so nothing will
+ *     text this number again on its own — the repeated-rejection failure that makes the weekly
+ *     path's write necessary cannot happen here.
+ *   • MARKING THEM STOPPED WOULD START THE PURGE CLOCK ON A SIGNUP THEY JUST MADE. `status =
+ *     'stopped'` stamps `stopped_at`, and migration 0034's 30-day purge keys off it. So we would
+ *     begin deleting the postal code and children's ages a parent gave us thirty seconds earlier,
+ *     with express consent, because of a CARRIER state they can clear themselves by texting START.
+ *   • IT WOULD ALSO OVERWRITE A FRESH CASL CONSENT RECORD with a status that says the opposite of
+ *     what just happened. They did not opt out. They opted IN, to a number that was already
+ *     blocked.
+ *
+ * The honest end state is a `pending` row that never confirms and is purged after 90 days — which
+ * is exactly what the schema already does for any signup that never replies JOIN.
+ *
  * NEVER THROWS, and nothing it returns carries the number or the body.
  */
 export async function sendConfirmationRequest(

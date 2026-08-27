@@ -269,6 +269,24 @@ describe('sendConfirmationRequest', () => {
     expect(logged[0].outcome).toBe('failed');
   });
 
+  it('does NOT mark them stopped — unlike the weekly and welcome paths, deliberately', async () => {
+    // The divergence, asserted rather than left implicit. `welcome.ts` and `weekly-send-io.ts`
+    // both call markStoppedViaCarrier on a 21610; this path must not, because the row is `pending`
+    // (nothing will text it again on its own) and because `status = 'stopped'` stamps `stopped_at`,
+    // which starts migration 0034's 30-day purge on a signup made thirty seconds ago with express
+    // consent. They did not opt out — they opted IN, to a number that was already blocked.
+    const { logged, options } = wired({
+      dryRun: false,
+      dispatch: async () => ({ outcome: 'stopped_via_carrier', twilioSid: null, errorCode: 21610 }),
+    });
+    // No markStopped seam is passed and none is needed: this function has no such call to make.
+    expect('markStopped' in options).toBe(false);
+    const result = await sendConfirmationRequest(SIGNUP, options);
+    // The fact is still recorded in the audit trail; only the state change is withheld.
+    expect(result.errorCode).toBe(21610);
+    expect(logged[0].outcome).toBe('stopped_via_carrier');
+  });
+
   it('surfaces 21610 as its own code — the case the route cannot fix', async () => {
     // On this path a carrier opt-out means the number blocked us BEFORE signing up: the
     // confirmation is undeliverable and stays that way until they text START themselves. Reported
