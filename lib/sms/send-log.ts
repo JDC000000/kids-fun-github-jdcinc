@@ -1,9 +1,9 @@
 // lib/sms/send-log.ts — append one `sms_send_log` row: the per-subscriber watermark AND the
 // CASL audit trail (migration 0035).
 //
-// DRAFT (SMS pivot). Still a STUB — `sms_send_log` is unapplied SQL and this branch holds no write
-// credentials — but it carries the exact INSERT it will issue and the four columns that are easy
-// to get wrong.
+// DRAFT (SMS pivot). REAL — the INSERT below runs against `sms_send_log` (migration 0035, applied
+// by the Operator), and tests/sms/send_log-db.test.ts exercises it against a real database. Four
+// of its columns are easy to get wrong; they are documented on `recordSmsSend`.
 //
 // ── WHY IT IS ITS OWN MODULE ────────────────────────────────────────────────────────────
 // It lived in lib/sms/weekly-send-io.ts, which top-level imports the SearchEngine, the postgres
@@ -59,15 +59,9 @@ export interface RecordSendInput {
 }
 
 /**
- * Append one `sms_send_log` row — the per-subscriber watermark AND the CASL audit trail. STUB.
+ * Append one `sms_send_log` row — the per-subscriber watermark AND the CASL audit trail.
  *
- * TODO:
- *   INSERT INTO sms_send_log
- *     (subscriber_id, phone_hash, phone_hash_version, send_type, picks_snapshot,
- *      outcome, twilio_sid, consent_text_version)
- *   VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
- *
- * GET THESE FOUR RIGHT — a future implementation copies this shape verbatim:
+ * FOUR COLUMNS ARE EASY TO GET WRONG, and each is load-bearing:
  *
  *   phone_hash          NOT NULL on EVERY row, including rows whose subscriber still exists.
  *                       Populating it only after a purge would leave the pre-purge history

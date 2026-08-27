@@ -1,6 +1,6 @@
 // lib/sms/preferences.ts — the no-login preferences / hub page (PRD §2.4).
 //
-// DRAFT (SMS pivot). Pure decisions + stubbed reads and writes, the same shape as
+// DRAFT (SMS pivot). Pure decisions + real reads and writes behind injected seams, the same shape as
 // lib/sms/consent-transitions.ts: `decide*` functions are total over the row they are handed, the
 // database is two injected seams, and the page and route are thin transport over this.
 //
@@ -121,16 +121,10 @@ export interface LastWeekView {
   sentAt: Date | null;
 }
 
-// ── The stubbed seams ───────────────────────────────────────────────────────────────────
+// ── The database seams ──────────────────────────────────────────────────────────────────
 
 /**
- * `sms_consent.preferences_token` → the row. STUB.
- *
- * TODO:
- *   SELECT id, status, stopped_at, postal_code, birth_years, category_interests,
- *          consecutive_empty_weeks
- *     FROM sms_consent
- *    WHERE preferences_token = $1
+ * `sms_consent.preferences_token` → the row.
  *
  * UNLIKE THE SHORT LINK, THIS TOKEN IS STORED, NOT DERIVED. `decodeShortLink` verifies an HMAC
  * and needs no database to reject a forgery; this is a plain equality match against 0034's unique
@@ -189,15 +183,7 @@ export const findByPreferencesToken: PreferencesLookup = async (token) => {
 };
 
 /**
- * The subscriber's most recent weekly attempt, for the "last week's picks" panel. STUB.
- *
- * TODO:
- *   SELECT send_type, picks_snapshot, created_at
- *     FROM sms_send_log
- *    WHERE subscriber_id = $1
- *      AND send_type IN ('weekly','empty_week','pause_notice')
- *    ORDER BY created_at DESC
- *    LIMIT 1
+ * The subscriber's most recent weekly attempt, for the "last week's picks" panel.
  *
  * …then, for a 'weekly' row, ONE more read to turn the snapshot into linkable picks:
  *
@@ -299,9 +285,9 @@ export type PreferencesChange =
 export type PreferencesWriter = (change: PreferencesChange, now: Date) => Promise<void>;
 
 /**
- * Apply a decided change. STUB.
+ * Apply a decided change.
  *
- * TODO — three statements, one per `kind`:
+ * THREE STATEMENTS, ONE PER `kind` — the map, with the implementation directly below:
  *
  *   save:
  *     UPDATE sms_consent

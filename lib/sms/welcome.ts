@@ -59,12 +59,7 @@ export interface WelcomeSubscriber {
 }
 
 /**
- * Load what the welcome text needs. STUB.
- *
- * TODO:
- *   SELECT id, phone_number, postal_code, birth_years, preferences_token, consent_text_version
- *     FROM sms_consent
- *    WHERE id = $1
+ * Load what the welcome text needs.
  *
  * KEYED ON id, NOT ON THE PHONE NUMBER, even though the inbound webhook only ever had a number to
  * start with. `confirmSubscriber` already resolved that number to exactly one row and returns its
@@ -139,7 +134,7 @@ export interface WelcomeOptions {
   /** Defaults to !smsSendingEnabled() — a real send requires opting in explicitly. */
   dryRun?: boolean;
   now?: Date;
-  /** Injected for tests; defaults to the stubbed loader above. */
+  /** Injected for tests; defaults to the real loader above. */
   loadSubscriber?: WelcomeSubscriberLookup;
   /** Injected for tests; defaults to the shared Twilio seam in weekly-send-io. */
   dispatch?: typeof dispatchSms;
@@ -226,10 +221,11 @@ export async function sendWelcomeText(
   // out. PRD §2.2 step 6 makes this a send-time safeguard INDEPENDENT of the inbound webhook, and
   // "independent" means every send path has to honour it, not just the weekly one.
   //
-  // This was missing here while lib/sms/weekly-send-io.ts did it correctly one branch over. It was
-  // dormant only because `markStoppedViaCarrier` is still a stub with no live database — the day
-  // that is wired, a JOIN from a carrier-suppressed number would have left them 'active' forever
-  // while the identical Twilio code on a weekly send stopped them properly.
+  // This was missing here while lib/sms/weekly-send-io.ts did it correctly one branch over, and it
+  // was dormant only for as long as `markStoppedViaCarrier` was a stub with no live database. That
+  // seam is now real, so this branch is live: without it, a JOIN from a carrier-suppressed number
+  // would leave them 'active' forever while the identical Twilio code on a weekly send stopped them
+  // properly.
   //
   // BEFORE the log write, matching weekly-send-io's ordering: the state change is the part that
   // protects the subscriber, and the audit row is the part that records it.

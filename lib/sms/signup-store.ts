@@ -1,11 +1,9 @@
-// lib/sms/signup-store.ts — SCAFFOLD. Persisting a signup, and asking for confirmation.
+// lib/sms/signup-store.ts — persisting a signup, and asking for confirmation.
 //
-// DRAFT (SMS pivot). Both functions here are deliberate STUBS: a real signature, a documented
-// contract, the exact SQL/payload they will issue, and a TODO body. Same posture as
-// lib/sms/consent-transitions.ts, and for the same two reasons — the `sms_consent` table exists
-// only as UNAPPLIED SQL in supabase/migrations/0034, and nobody on this branch holds write
-// credentials for any database. A "working" implementation would be code that has never once run
-// against a schema that exists.
+// DRAFT (SMS pivot). Both functions here are REAL: `createPendingSubscriber` issues the upsert
+// against `sms_consent` (migration 0034, applied by the Operator) and `sendConfirmationRequest`
+// renders, dispatches and logs the confirmation text. tests/sms/signup_persistence-db.test.ts
+// exercises the store against a real database.
 //
 // WHAT IS REAL ALREADY: the validated `SmsSignup` (lib/sms/signup-validate.ts) is exactly the
 // column set of one pending `sms_consent` row, so filling these in is mechanical rather than
@@ -46,7 +44,7 @@ export interface SignupWriteOptions {
 /**
  * Create (or revive) the pending `sms_consent` row for one signup.
  *
- * TODO: an UPSERT, not an INSERT:
+ * AN UPSERT, NOT AN INSERT:
  *
  *   INSERT INTO sms_consent
  *     (phone_number, postal_code, birth_years, category_interests,
@@ -81,8 +79,9 @@ export interface SignupWriteOptions {
  * that (lib/sms/consent-transitions.ts), because the whole value of the double opt-in is that
  * nobody can subscribe a phone number they do not hold.
  *
- * ALSO TODO: mint `preferences_token` — an HMAC over the new row's id with SMS_PREFERENCES_SECRET
- * (see lib/sms/config.ts).
+ * IT ALSO MINTS `preferences_token` — an HMAC over the new row's id with SMS_PREFERENCES_SECRET
+ * (see lib/sms/preferences-token.ts), in a second statement because the id does not exist until
+ * the first one returns.
  *
  * THE `sms_send_log` ROW FOR THE CONFIRMATION REQUEST IS NOT WRITTEN HERE. An earlier draft of
  * this comment listed it as part of this function's job, which would have produced TWO audit rows
@@ -220,10 +219,9 @@ export interface ConfirmationSendOptions extends SignupWriteOptions {
   /**
    * The id `createPendingSubscriber` just returned, for the audit row.
    *
-   * NULLABLE, and legitimately so in exactly two cases: a dry run (which writes no row and needs
-   * no id) and this draft scaffold (whose store stub returns null). Once the store is implemented
-   * a real `created`/`reactivated` write always carries one, and a failed write never reaches
-   * here — the route 503s first.
+   * NULLABLE, and legitimately so for a dry run, which writes no row and needs no id. Now that
+   * the store is real, a `created`/`reactivated` write always carries one, and a failed write
+   * never reaches here — the route 503s first.
    */
   subscriberId?: string | null;
   /** Injected for tests; defaults to the shared Twilio seam in weekly-send-io. */
@@ -235,7 +233,7 @@ export interface ConfirmationSendOptions extends SignupWriteOptions {
 /**
  * Send the one confirmation text (PRD §1.4, §2.1, §2.6).
  *
- * ── WHAT IS REAL HERE, AND WHAT IS STILL A STUB ─────────────────────────────────────────
+ * ── THE MESSAGE, AND WHY IT WAS BUILT BEFORE THE DISPATCH ───────────────────────────────
  * THE MESSAGE IS REAL. `renderConfirmRequestMessage` produces §2.6's approved copy, goes through
  * the same GSM-7 wall as every other template (tests/sms/weekly_send.test.ts), and is built on
  * EVERY path including a dry run — so a verification run in an unconfigured environment renders
@@ -243,9 +241,10 @@ export interface ConfirmationSendOptions extends SignupWriteOptions {
  * body existed only as the comment below, which is precisely how a message escapes the encoding
  * guard: round 11 found a real bug in that guard by implementing a template against it.
  *
- * STILL STUBS: `dispatchSms` and `recordSmsSend`, shared with the weekly path
- * (lib/sms/weekly-send-io.ts). Same posture as everything else outbound on this branch — Twilio
- * has no credential here and `sms_send_log` is unapplied SQL in migration 0035.
+ * `dispatchSms` and `recordSmsSend` are shared with the weekly path (lib/sms/twilio-client.ts and
+ * lib/sms/send-log.ts) rather than reimplemented here: one Twilio call site, one `sms_send_log`
+ * writer. Both are real; whether anything is actually dispatched is governed by
+ * SMS_SENDING_ENABLED, which is deliberately unset.
  *
  * ── THE ONE DETAIL THAT IS NOT BOILERPLATE ──────────────────────────────────────────────
  * JOIN, NOT YES. Twilio's Advanced Opt-Out treats YES (with START and UNSTOP) as a carrier-level

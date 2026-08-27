@@ -1,20 +1,19 @@
 // lib/sms/consent-transitions.ts — the four inbound state transitions (JOIN / STOP / START / HELP).
 //
-// DRAFT (SMS pivot). The tables these read and write — `sms_consent` (migration 0034) — exist
-// only as unapplied SQL, and this branch holds no write credentials. So the DATABASE is stubbed
-// and everything else is real: each transition performs a genuine lookup through an injected
-// seam, runs a PURE decision function against the row it finds, and hands a fully-formed change
-// to a stubbed applier that carries the exact UPDATE it will issue.
+// DRAFT (SMS pivot). `sms_consent` (migration 0034) is applied and both seams below are real.
+// The structure they were built with survives and is the point: each transition performs a lookup
+// through an injected seam, runs a PURE decision function against the row it finds, and hands a
+// fully-formed change to an applier that turns it into one UPDATE.
 //
-// That split is the point. Same posture as lib/sms/weekly-send-io.ts's stubs, and the same
+// That split is the point. Same posture as lib/sms/weekly-send-io.ts's seams, and the same
 // injection idiom `selectWeeklyPicks` uses for `sameParentOrg`: the DECISIONS are unit-testable
 // today against every row state, and filling in the two seams is mechanical rather than an
 // archaeology project.
 //
 //   decide*(row)        pure, total, exhaustively tested — the WHERE clause as a function
 //   ConsentChange       the SET clause as data, so "do not re-stamp stopped_at" is expressible
-//   findByPhone         STUB — one SELECT, injected for tests
-//   applyChange         STUB — one UPDATE, injected for tests
+//   findByPhone         one SELECT, injectable for tests
+//   applyChange         one UPDATE, injectable for tests
 //
 // ── THE PURGE IS WHY `no_such_subscriber` FALLS OUT RATHER THAN NEEDING A SPECIAL CASE ──
 // The lookup's WHERE clause is `phone_number = $1`. Migration 0034's 30-day post-stop purge NULLs
@@ -175,15 +174,10 @@ export interface TransitionOptions extends TransitionDeps {
   now?: Date;
 }
 
-// ── The two stubbed seams ───────────────────────────────────────────────────────────────
+// ── The two database seams ──────────────────────────────────────────────────────────────
 
 /**
- * Find the `sms_consent` row for a number. STUB.
- *
- * TODO:
- *   SELECT id, status, stopped_at
- *     FROM sms_consent
- *    WHERE phone_number = $1
+ * Find the `sms_consent` row for a number.
  *
  * The number is normalised to E.164 before it ever reaches here (lib/sms/signup-validate.ts
  * mints it that way and migration 0034's CHECK enforces it), so this is an equality match against
@@ -208,9 +202,9 @@ export const findSubscriberByPhone: SubscriberLookup = async (phoneNumber) => {
 };
 
 /**
- * Write one decided change. STUB.
+ * Write one decided change.
  *
- * TODO — built from the change, so each clause is present only when it should be:
+ * BUILT FROM THE CHANGE, so each clause is present only when it should be:
  *
  *   UPDATE sms_consent
  *      SET status = $2

@@ -107,26 +107,10 @@ export function parseDeliveryStatus(params: URLSearchParams): DeliveryStatusRepo
 }
 
 /**
- * Record the carrier's verdict against the send row. STUB.
+ * Record the carrier's verdict against the send row.
  *
- * TODO:
- *   UPDATE sms_send_log
- *      SET delivery_status = $1
- *    WHERE twilio_sid = $2
- *
- * KEYED ON `twilio_sid`, which is why 0035 indexes it — `idx_sms_send_log_twilio_sid` exists for
- * this callback and nothing else. The subscriber is not identified in the payload in any form we
- * would use: `To` is there, but matching on a phone number here would mean holding one in a route
- * that has no need of it, and would match the wrong row for a number that has been re-subscribed.
- *
- * NO ROW MATCHING IS NOT AN ERROR, and it is expected rather than theoretical: a dry-run send
- * writes no log row at all (see lib/sms/send-log.ts) but, if sending were enabled mid-flight,
- * could still produce callbacks. An UPDATE that matches nothing is the correct outcome.
- *
- * NOT AN UPSERT. If there is no send row, there is nothing this fact belongs to — inventing one
- * from a callback would put a row in the CASL audit trail that no send ever produced.
- *
- * ONLY `delivery_status`. See this file's header for why `outcome` is left alone.
+ * The seam, so the route is testable without a database. The single implementation below is
+ * `applyDeliveryStatus`, and it carries the reasoning for the query it issues.
  */
 export type DeliveryStatusWriter = (report: DeliveryStatusReport) => Promise<void>;
 
@@ -162,7 +146,7 @@ export interface DeliveryStatusOptions {
    * The flag remains explicit for tests, which need to exercise the parse without a writer.
    */
   dryRun?: boolean;
-  /** Injected for tests; defaults to the stubbed writer above. */
+  /** Injected for tests; defaults to the real writer above. */
   write?: DeliveryStatusWriter;
   /** Injected for tests; defaults to reading the configured token. */
   authToken?: string | null;

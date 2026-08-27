@@ -2,8 +2,8 @@
 //
 // DRAFT (SMS pivot). One pure function, in its own file so it is greppable and so the rule can
 // be read without reading the orchestration around it. No DB: it takes the counter as it stands
-// and returns what the counter and status SHOULD be. The caller applies that through a stub, the
-// same posture as lib/sms/consent-transitions.ts.
+// and returns what the counter and status SHOULD be. The caller applies that through an injected
+// writer, the same posture as lib/sms/consent-transitions.ts.
 //
 // ── WHY THIS IS NOT A FEW LINES INSIDE THE SEND JOB ──────────────────────────────────────
 // It decides whether a subscriber stops receiving the product. That is worth being able to test

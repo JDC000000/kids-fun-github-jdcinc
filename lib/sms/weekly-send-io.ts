@@ -11,14 +11,17 @@
 // must not move a subscriber's empty-week counter or write a CASL audit row for a message nobody
 // received.
 //
-// ── WHAT IS REAL HERE AND WHAT IS A STUB ────────────────────────────────────────────────
-// REAL: the deps loading shape, the per-subscriber flow, the dry-run gate, the outcome mapping,
-// the empty-week/pause transition wiring, and the PII discipline. All of it runs today.
-// STUB: `loadActiveSubscribers`, `applyEmptyWeekState` and `markStoppedViaCarrier`.
-// REAL AS OF ROUND 16: `dispatchSms` (lib/sms/twilio-client.ts) issues an actual Twilio Messages
-// API call. `recordSmsSend` (lib/sms/send-log.ts) is still a stub. `sms_consent` and `sms_send_log` exist only as unapplied SQL
-// (migrations 0034/0035) and nobody on this branch holds write credentials, so each carries the
-// exact query it will issue and its non-obvious notes. Same posture as
+// ── EVERYTHING HERE IS REAL ─────────────────────────────────────────────────────────────
+// The deps loading shape, the per-subscriber flow, the dry-run gate, the outcome mapping, the
+// empty-week/pause transition wiring and the PII discipline all run today. So do the database
+// seams — `loadActiveSubscribers`, `loadRecentlySentPickIds`, `applyEmptyWeekState` and
+// `markStoppedViaCarrier` issue their queries against `sms_consent` and `sms_send_log`
+// (migrations 0034/0035, applied by the Operator), and `dispatchSms` (lib/sms/twilio-client.ts)
+// issues an actual Twilio Messages API call. Each stays an injectable seam so the orchestration
+// is testable without a database; tests/sms/preferences_weekly-db.test.ts covers them for real.
+//
+// WHAT IS STILL OFF IS THE SENDING ITSELF: SMS_SENDING_ENABLED is deliberately unset, so
+// `dispatchSms` returns a dry-run outcome and no row is written. Same posture as
 // lib/sms/consent-transitions.ts and lib/sms/signup-store.ts.
 //
 // ── PII DISCIPLINE, WHICH IS NOT OPTIONAL ON THIS LANE ──────────────────────────────────
@@ -120,7 +123,7 @@ export async function loadWeeklySmsDeps(): Promise<WeeklySmsDeps> {
   return { engine, occurrenceShortRefs };
 }
 
-// ── Stubs: everything that touches the database or Twilio ───────────────────────────────
+// ── The seams: everything that touches the database or Twilio ───────────────────────────
 
 /**
  * One row from `sms_consent`, split into the part the PURE BUILDER may see and the part it may
@@ -139,9 +142,9 @@ export interface ActiveSubscriber {
 }
 
 /**
- * Every `active` subscriber the Friday job should consider. STUB.
+ * Every `active` subscriber the Friday job should consider.
  *
- * TODO:
+ * THE QUERY:
  *   SELECT id, short_ref, phone_number, postal_code, birth_years, category_interests,
  *          consecutive_empty_weeks, preferences_token, consent_text_version
  *     FROM sms_consent
@@ -234,9 +237,9 @@ export async function loadActiveSubscribers(limit?: number): Promise<ActiveSubsc
 export const NOVELTY_LOOKBACK_SENDS = 1;
 
 /**
- * Occurrence ids this subscriber has already been sent, for the novelty filter. STUB.
+ * Occurrence ids this subscriber has already been sent, for the novelty filter.
  *
- * TODO:
+ * THE QUERY:
  *   SELECT picks_snapshot
  *     FROM sms_send_log
  *    WHERE subscriber_id = $1
@@ -286,9 +289,9 @@ export const loadRecentlySentPickIds: RecentPickIdsLoader = async (subscriberId)
 };
 
 /**
- * Write back `consecutive_empty_weeks` and `status` after a week. STUB.
+ * Write back `consecutive_empty_weeks` and `status` after a week.
  *
- * TODO:
+ * THE QUERY:
  *   UPDATE sms_consent
  *      SET consecutive_empty_weeks = $2,
  *          status = $3
@@ -316,9 +319,9 @@ export async function applyEmptyWeekState(
 }
 
 /**
- * Mark a subscriber stopped because Twilio said they opted out at the carrier (21610). STUB.
+ * Mark a subscriber stopped because Twilio said they opted out at the carrier (21610).
  *
- * TODO:
+ * THE QUERY:
  *   UPDATE sms_consent
  *      SET status = 'stopped', stopped_at = COALESCE(stopped_at, now())
  *    WHERE id = $1
@@ -389,7 +392,7 @@ export interface SendSubscriberOptions {
   dryRun?: boolean;
   now?: Date;
   deps?: WeeklySmsDeps;
-  /** Injected for tests; defaults to the stubbed loader above. */
+  /** Injected for tests; defaults to the real loader above. */
   loadRecentPickIds?: RecentPickIdsLoader;
   /**
    * The three write/send seams, injected for tests.
@@ -637,7 +640,7 @@ export interface BulkOptions {
   dryRun?: boolean;
   /** Cap the number of candidate subscribers (safety for a first live run). */
   limit?: number;
-  /** Injected for tests; defaults to the stubbed loader. */
+  /** Injected for tests; defaults to the real loader. */
   loadRecentPickIds?: RecentPickIdsLoader;
   /**
    * The batch's own two loads, and the four per-subscriber write seams, injected for tests.
