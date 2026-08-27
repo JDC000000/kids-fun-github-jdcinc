@@ -212,9 +212,30 @@ export const NOVELTY_LOOKBACK_SENDS = 1;
  */
 export type RecentPickIdsLoader = (subscriberId: string) => Promise<Set<string>>;
 
-export const loadRecentlySentPickIds: RecentPickIdsLoader = async () => {
-  // Draft scaffold: sms_send_log is unapplied SQL and this branch holds no read credentials.
-  return new Set<string>();
+export const loadRecentlySentPickIds: RecentPickIdsLoader = async (subscriberId) => {
+  const rows = await query<{ picks_snapshot: Array<{ occurrence_id: string; rank: number }> }>(
+    `SELECT picks_snapshot
+       FROM sms_send_log
+      WHERE subscriber_id = $1
+        AND send_type = 'weekly'
+        AND picks_snapshot IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [subscriberId, NOVELTY_LOOKBACK_SENDS]
+  );
+
+  // FLATTENED ACROSS EVERY ROW IN THE WINDOW, not just the newest: with a lookback of more than
+  // one send, a pick is "already sent" if it appears in ANY of them.
+  const seen = new Set<string>();
+  for (const row of rows) {
+    for (const pick of row.picks_snapshot ?? []) {
+      // Defensive on the shape rather than trusting jsonb: this column is a snapshot written by an
+      // older version of the code by definition, so a row from before a shape change must degrade
+      // to "nothing to exclude" rather than throwing away a subscriber's whole week.
+      if (pick && typeof pick.occurrence_id === 'string') seen.add(pick.occurrence_id);
+    }
+  }
+  return seen;
 };
 
 /**
@@ -455,6 +476,7 @@ export async function sendWeeklySmsForSubscriber(
       await bestEffort(() =>
         log({
           subscriberId: subscriber.id,
+          phoneNumber,
           sendType,
           outcome: 'stopped_via_carrier',
           picksSnapshot: null,
@@ -471,6 +493,7 @@ export async function sendWeeklySmsForSubscriber(
       await bestEffort(() =>
         log({
           subscriberId: subscriber.id,
+          phoneNumber,
           sendType,
           outcome: 'failed',
           picksSnapshot: null,
@@ -492,6 +515,7 @@ export async function sendWeeklySmsForSubscriber(
     await bestEffort(() =>
       log({
         subscriberId: subscriber.id,
+        phoneNumber,
         sendType,
         outcome: sendType === 'weekly' ? 'sent' : sendType === 'pause_notice' ? 'paused' : 'empty',
         picksSnapshot: picksSnapshot(plan),

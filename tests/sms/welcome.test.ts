@@ -206,6 +206,9 @@ describe('sendWelcomeText', () => {
     expect(logged).toEqual([
       {
         subscriberId: 'sub-1',
+        // Stage B: the writer needs the number to compute phone_hash, which is the only
+        // identifier that survives the 30-day purge. It goes in and never comes back out.
+        phoneNumber: '+16045550123',
         sendType: 'welcome',
         outcome: 'sent',
         // Weekly sends only — migration 0035's CHECK rejects a snapshot on any other send_type.

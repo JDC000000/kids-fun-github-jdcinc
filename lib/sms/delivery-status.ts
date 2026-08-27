@@ -30,6 +30,7 @@
 // undelivered receipts would unsubscribe people who never asked to be — and a `30003` (unreachable
 // handset) is the most common delivery failure there is.
 
+import { query } from '@/lib/db/client';
 import { verifyTwilioSignature } from './twilio-signature';
 import { statusCallbackUrl, twilioAuthToken } from './config';
 
@@ -129,8 +130,22 @@ export function parseDeliveryStatus(params: URLSearchParams): DeliveryStatusRepo
  */
 export type DeliveryStatusWriter = (report: DeliveryStatusReport) => Promise<void>;
 
-export const applyDeliveryStatus: DeliveryStatusWriter = async () => {
-  // Draft scaffold: sms_send_log is unapplied SQL and this branch holds no write credentials.
+export const applyDeliveryStatus: DeliveryStatusWriter = async (report) => {
+  // ONLY `delivery_status`. Not `outcome` — see this file's header: `outcome` is the CASL record of
+  // what WE did, and the callback is a later fact about what the carrier then did with it.
+  //
+  // KEYED ON `twilio_sid`, which is why 0035 indexes it — `idx_sms_send_log_twilio_sid` exists for
+  // this callback and nothing else. NOT on the phone number: `To` is in the payload, but matching
+  // on it would hold a number in a route with no need of one AND would hit the wrong row for a
+  // number that has since been re-subscribed.
+  //
+  // NOT AN UPSERT, and a miss is not an error. A dry-run send writes no log row at all, so a
+  // callback with nothing to update is an expected outcome; inventing a row from a callback would
+  // put an entry in the audit trail that no send ever produced.
+  await query(`UPDATE sms_send_log SET delivery_status = $1 WHERE twilio_sid = $2`, [
+    report.status,
+    report.twilioSid,
+  ]);
 };
 
 export interface DeliveryStatusOptions {

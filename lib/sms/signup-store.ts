@@ -338,6 +338,7 @@ export async function sendConfirmationRequest(
     try {
       await log({
         subscriberId: options.subscriberId,
+        phoneNumber: signup.phoneNumber,
         sendType: 'confirm_request',
         outcome:
           dispatched.outcome === 'stopped_via_carrier'

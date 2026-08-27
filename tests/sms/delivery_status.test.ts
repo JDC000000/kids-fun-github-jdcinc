@@ -17,6 +17,16 @@ import {
   type DeliveryStatusReport,
 } from '@/lib/sms/delivery-status';
 
+// The unit lane does not touch a database — Stage B made applyDeliveryStatus issue real SQL. See
+// tests/sms/send_log-db.test.ts for the statement itself, in the `db` lane.
+vi.mock('@/lib/db/client', () => ({
+  query: async () => [],
+  getPool: () => {
+    throw new Error('the unit lane must not open a pool');
+  },
+}));
+
+
 const URL_ = 'https://kidsfun.example/api/sms/status';
 const TOKEN = 'test-auth-token';
 const SID = 'SM1342fe1b2c904d1ab04f0fc7a58abca9';
@@ -213,7 +223,10 @@ describe('recordDeliveryStatus', () => {
     expect(writes).toHaveLength(1);
   });
 
-  it('the default writer is inert — an unwired call writes nothing and still reports applied', async () => {
+  it('the default writer now issues a real UPDATE — proven by mocking the db seam', async () => {
+    // Stage B made this seam real. In the unit lane the db client is mocked (top of file), so this
+    // asserts the WIRING — that the default path reaches the query layer rather than a stub —
+    // while tests/sms/send_log-db.test.ts proves the statement itself against a real table.
     const result = await recordDeliveryStatus(params(DELIVERED), sig(DELIVERED), {
       authToken: TOKEN,
       url: URL_,

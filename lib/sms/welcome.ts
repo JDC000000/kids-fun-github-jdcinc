@@ -245,6 +245,7 @@ export async function sendWelcomeText(
   try {
     await log({
       subscriberId: subscriber.id,
+      phoneNumber: subscriber.phoneNumber,
       sendType: 'welcome',
       // A carrier-level opt-out at this exact moment is vanishingly unlikely (they just texted
       // JOIN) but it is still a real Twilio outcome, so it is mapped rather than assumed away.

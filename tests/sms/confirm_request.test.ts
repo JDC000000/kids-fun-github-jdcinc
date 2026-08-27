@@ -186,6 +186,8 @@ describe('sendConfirmationRequest', () => {
     expect(logged).toEqual([
       {
         subscriberId: 'sub-1',
+        // Stage B: hashed by the writer for the audit trail, never stored in the clear.
+        phoneNumber: '+16045550123',
         sendType: 'confirm_request',
         outcome: 'sent',
         // Weekly sends only — migration 0035's CHECK rejects a snapshot on any other send_type.
