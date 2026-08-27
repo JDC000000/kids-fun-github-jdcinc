@@ -19,6 +19,8 @@ import { phoneHash, PHONE_HASH_VERSION, MissingPhoneHashSaltError } from '@/lib/
 import type { SmsSignup } from '@/lib/sms/signup-validate';
 
 const PREFIX = '+1604555';
+/** Stamped on every row this suite creates, and the key its cleanup uses. See below. */
+const TEST_CONSENT_VERSION = 'test-stage-b';
 let seq = 0;
 const nextPhone = () => `${PREFIX}${String(8000 + seq++).padStart(4, '0')}`;
 const SALT = 'db-lane-phone-hash-salt';
@@ -31,13 +33,35 @@ function signup(phone: string): SmsSignup {
     birthYears: [2021],
     categoryInterests: [],
     consentMethod: 'web_form',
-    consentTextVersion: '2026-08-26.v2',
+    consentTextVersion: TEST_CONSENT_VERSION,
   };
 }
 
+/**
+ * ═══ THE CLEANUP KEY, AND WHY IT IS NOT THE PHONE NUMBER ═══
+ * These suites TEST THE PURGE — they NULL `phone_number` on purpose to prove the audit trail
+ * survives it. So a cleanup keyed on `phone_number LIKE '+1604555…'` cannot see exactly the rows
+ * those tests create, and they leak. That is not hypothetical: an earlier version of this file did
+ * precisely that and left 13 orphaned consent rows and a send-log row behind, found by reading the
+ * live table rather than by any test failing.
+ *
+ * `consent_text_version` is the right key. It is fully under the test's control, it is NOT touched
+ * by the purge (0034 clears only the personal columns), and a value this distinctive cannot
+ * collide with a real signup — which stamps the live CONSENT_TEXT_VERSION.
+ *
+ * The number prefix is kept as a SECOND sweep, because a run that crashes before its first purge
+ * leaves rows the version key would also catch, and belt-and-braces costs one statement.
+ */
 async function cleanup(): Promise<void> {
-  // The send log first — its FK is ON DELETE SET NULL, so orphaned rows would survive and leak
-  // into another run's assertions rather than failing loudly.
+  // Send-log rows FIRST — the FK is ON DELETE SET NULL, so deleting consent rows first would
+  // orphan them rather than fail loudly.
+  await query(
+    `DELETE FROM sms_send_log WHERE consent_text_version = $1
+        OR subscriber_id IN (SELECT id FROM sms_consent WHERE consent_text_version = $1)`,
+    [TEST_CONSENT_VERSION]
+  );
+  await query(`DELETE FROM sms_consent WHERE consent_text_version = $1`, [TEST_CONSENT_VERSION]);
+  // Second sweep, for a run that crashed before stamping anything.
   await query(
     `DELETE FROM sms_send_log WHERE subscriber_id IN
        (SELECT id FROM sms_consent WHERE phone_number LIKE $1)`,
@@ -72,7 +96,7 @@ describe('recordSmsSend', () => {
       outcome: 'sent',
       picksSnapshot: null,
       twilioSid: 'SM_welcome_1',
-      consentTextVersion: '2026-08-26.v2',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
 
     const [row] = await query<Record<string, unknown>>(
@@ -87,7 +111,7 @@ describe('recordSmsSend', () => {
     expect(row.send_type).toBe('welcome');
     expect(row.picks_snapshot).toBeNull();
     // COPIED, not joined — the wording in force at SEND time, which is the fact an audit asks about.
-    expect(row.consent_text_version).toBe('2026-08-26.v2');
+    expect(row.consent_text_version).toBe(TEST_CONSENT_VERSION);
   });
 
   it('🔴 NEVER stores the number in the clear — the hash is the only trace', async () => {
@@ -99,7 +123,7 @@ describe('recordSmsSend', () => {
       outcome: 'sent',
       picksSnapshot: null,
       twilioSid: 'SM_clear_1',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     // Cast the whole row to text and look for the number anywhere in it.
     const [{ dump }] = await query<{ dump: string }>(
@@ -121,7 +145,7 @@ describe('recordSmsSend', () => {
       outcome: 'sent',
       picksSnapshot: [{ occurrence_id: '11111111-1111-1111-1111-111111111111', rank: 1 }],
       twilioSid: 'SM_purge_1',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
 
     // The purge, as 0034 performs it.
@@ -149,7 +173,7 @@ describe('recordSmsSend', () => {
       outcome: 'sent',
       picksSnapshot: null,
       twilioSid: 'SM_nosub_1',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     const [row] = await query<{ subscriber_id: string | null; phone_hash: string }>(
       `SELECT subscriber_id, phone_hash FROM sms_send_log WHERE twilio_sid = $1`,
@@ -172,7 +196,7 @@ describe('recordSmsSend', () => {
       outcome: 'sent',
       picksSnapshot: [{ occurrence_id: occ, rank: 1 }],
       twilioSid: 'SM_json_1',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     const [row] = await query<{ hit: boolean }>(
       `SELECT (picks_snapshot @> $2::jsonb) AS hit FROM sms_send_log WHERE twilio_sid = $1`,
@@ -193,7 +217,7 @@ describe('recordSmsSend', () => {
         outcome: 'sent',
         picksSnapshot: null,
         twilioSid: 'SM_nosalt_1',
-        consentTextVersion: 'v',
+        consentTextVersion: TEST_CONSENT_VERSION,
       })
     ).rejects.toBeInstanceOf(MissingPhoneHashSaltError);
     vi.stubEnv('SMS_PHONE_HASH_SALT', SALT);
@@ -212,7 +236,7 @@ describe('recordSmsSend', () => {
         outcome: 'sent',
         picksSnapshot: [{ occurrence_id: '33333333-3333-3333-3333-333333333333', rank: 1 }],
         twilioSid: 'SM_badcheck_1',
-        consentTextVersion: 'v',
+        consentTextVersion: TEST_CONSENT_VERSION,
       })
     ).rejects.toThrow();
   });
@@ -230,7 +254,7 @@ describe('applyDeliveryStatus', () => {
       outcome: 'sent',
       picksSnapshot: null,
       twilioSid: 'SM_status_1',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
 
     await applyDeliveryStatus({ twilioSid: 'SM_status_1', status: 'undelivered', errorCode: 30003 });
@@ -260,7 +284,7 @@ describe('applyDeliveryStatus', () => {
       outcome: 'sent',
       picksSnapshot: null,
       twilioSid: 'SM_status_2',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     await applyDeliveryStatus({ twilioSid: 'SM_status_2', status: 'teleported', errorCode: null });
     const [row] = await query<{ delivery_status: string }>(
@@ -286,7 +310,7 @@ describe('loadRecentlySentPickIds — the novelty window', () => {
         { occurrence_id: b, rank: 2 },
       ],
       twilioSid: 'SM_nov_1',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     expect(await loadRecentlySentPickIds(id)).toEqual(new Set([a, b]));
   });
@@ -300,7 +324,7 @@ describe('loadRecentlySentPickIds — the novelty window', () => {
       outcome: 'empty',
       picksSnapshot: null,
       twilioSid: 'SM_nov_2',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     expect(await loadRecentlySentPickIds(id)).toEqual(new Set());
   });
@@ -318,7 +342,7 @@ describe('loadRecentlySentPickIds — the novelty window', () => {
       outcome: 'sent',
       picksSnapshot: [{ occurrence_id: old, rank: 1 }],
       twilioSid: 'SM_nov_3',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     await recordSmsSend({
       subscriberId: id,
@@ -327,7 +351,7 @@ describe('loadRecentlySentPickIds — the novelty window', () => {
       outcome: 'empty',
       picksSnapshot: null,
       twilioSid: 'SM_nov_4',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     // The empty week is skipped; the previous WEEKLY send is still the window.
     expect(await loadRecentlySentPickIds(id)).toEqual(new Set([old]));
@@ -343,7 +367,7 @@ describe('loadRecentlySentPickIds — the novelty window', () => {
       outcome: 'sent',
       picksSnapshot: [{ occurrence_id: '77777777-7777-7777-7777-777777777777', rank: 1 }],
       twilioSid: 'SM_nov_5',
-      consentTextVersion: 'v',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
     expect(await loadRecentlySentPickIds(two.id)).toEqual(new Set());
   });

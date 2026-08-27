@@ -29,6 +29,8 @@ import type { SmsSignup } from '@/lib/sms/signup-validate';
 
 // A NANP-valid block this suite owns outright, so cleanup can be exact and nothing else collides.
 const PREFIX = '+1604555';
+/** Stamped on every row this suite creates, and the key its cleanup uses. See below. */
+const TEST_CONSENT_VERSION = 'test-stage-a';
 let seq = 0;
 const nextPhone = () => `${PREFIX}${String(9000 + seq++).padStart(4, '0')}`;
 
@@ -40,12 +42,41 @@ function signup(over: Partial<SmsSignup> = {}): SmsSignup {
     birthYears: [2021, 2016],
     categoryInterests: ['public_swim'],
     consentMethod: 'web_form',
-    consentTextVersion: '2026-08-26.v2',
+    consentTextVersion: TEST_CONSENT_VERSION,
     ...over,
   };
 }
 
+/**
+ * ═══ THE CLEANUP KEY, AND WHY IT IS NOT THE PHONE NUMBER ═══
+ * These suites TEST THE PURGE — they NULL `phone_number` on purpose to prove the audit trail
+ * survives it. So a cleanup keyed on `phone_number LIKE '+1604555…'` cannot see exactly the rows
+ * those tests create, and they leak. That is not hypothetical: an earlier version of this file did
+ * precisely that and left 13 orphaned consent rows and a send-log row behind, found by reading the
+ * live table rather than by any test failing.
+ *
+ * `consent_text_version` is the right key. It is fully under the test's control, it is NOT touched
+ * by the purge (0034 clears only the personal columns), and a value this distinctive cannot
+ * collide with a real signup — which stamps the live CONSENT_TEXT_VERSION.
+ *
+ * The number prefix is kept as a SECOND sweep, because a run that crashes before its first purge
+ * leaves rows the version key would also catch, and belt-and-braces costs one statement.
+ */
 async function cleanup(): Promise<void> {
+  // Send-log rows FIRST — the FK is ON DELETE SET NULL, so deleting consent rows first would
+  // orphan them rather than fail loudly.
+  await query(
+    `DELETE FROM sms_send_log WHERE consent_text_version = $1
+        OR subscriber_id IN (SELECT id FROM sms_consent WHERE consent_text_version = $1)`,
+    [TEST_CONSENT_VERSION]
+  );
+  await query(`DELETE FROM sms_consent WHERE consent_text_version = $1`, [TEST_CONSENT_VERSION]);
+  // Second sweep, for a run that crashed before stamping anything.
+  await query(
+    `DELETE FROM sms_send_log WHERE subscriber_id IN
+       (SELECT id FROM sms_consent WHERE phone_number LIKE $1)`,
+    [`${PREFIX}9%`]
+  );
   await query(`DELETE FROM sms_consent WHERE phone_number LIKE $1`, [`${PREFIX}9%`]);
 }
 
@@ -78,7 +109,7 @@ describe('createPendingSubscriber', () => {
     // that nobody can subscribe a number they do not hold.
     expect(row.status).toBe('pending');
     expect(row.confirmed_timestamp).toBeNull();
-    expect(row.consent_text_version).toBe('2026-08-26.v2');
+    expect(row.consent_text_version).toBe(TEST_CONSENT_VERSION);
     // short_ref is GENERATED ALWAYS AS IDENTITY — the subscriber half of every short link.
     expect(Number(row.short_ref)).toBeGreaterThan(0);
     // And the token was minted from the id the database assigned.
@@ -299,7 +330,7 @@ describe('loadWelcomeSubscriber', () => {
       postalCode: 'V5L 1A1',
       birthYears: [2021, 2016],
       preferencesToken: mintPreferencesToken(created.subscriberId as string),
-      consentTextVersion: '2026-08-26.v2',
+      consentTextVersion: TEST_CONSENT_VERSION,
     });
   });
 

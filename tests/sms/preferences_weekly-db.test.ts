@@ -25,6 +25,8 @@ import { mintPreferencesToken } from '@/lib/sms/preferences-token';
 import type { SmsSignup } from '@/lib/sms/signup-validate';
 
 const PREFIX = '+1604555';
+/** Stamped on every row this suite creates, and the key its cleanup uses. See below. */
+const TEST_CONSENT_VERSION = 'test-stage-c';
 let seq = 0;
 const nextPhone = () => `${PREFIX}${String(7000 + seq++).padStart(4, '0')}`;
 const TAG = 'stage-c-db-fixture';
@@ -37,11 +39,35 @@ function signup(phone: string): SmsSignup {
     birthYears: [2021],
     categoryInterests: ['public_swim'],
     consentMethod: 'web_form',
-    consentTextVersion: '2026-08-26.v2',
+    consentTextVersion: TEST_CONSENT_VERSION,
   };
 }
 
+/**
+ * ═══ THE CLEANUP KEY, AND WHY IT IS NOT THE PHONE NUMBER ═══
+ * These suites TEST THE PURGE — they NULL `phone_number` on purpose to prove the audit trail
+ * survives it. So a cleanup keyed on `phone_number LIKE '+1604555…'` cannot see exactly the rows
+ * those tests create, and they leak. That is not hypothetical: an earlier version of this file did
+ * precisely that and left 13 orphaned consent rows and a send-log row behind, found by reading the
+ * live table rather than by any test failing.
+ *
+ * `consent_text_version` is the right key. It is fully under the test's control, it is NOT touched
+ * by the purge (0034 clears only the personal columns), and a value this distinctive cannot
+ * collide with a real signup — which stamps the live CONSENT_TEXT_VERSION.
+ *
+ * The number prefix is kept as a SECOND sweep, because a run that crashes before its first purge
+ * leaves rows the version key would also catch, and belt-and-braces costs one statement.
+ */
 async function cleanup(): Promise<void> {
+  // Send-log rows FIRST — the FK is ON DELETE SET NULL, so deleting consent rows first would
+  // orphan them rather than fail loudly.
+  await query(
+    `DELETE FROM sms_send_log WHERE consent_text_version = $1
+        OR subscriber_id IN (SELECT id FROM sms_consent WHERE consent_text_version = $1)`,
+    [TEST_CONSENT_VERSION]
+  );
+  await query(`DELETE FROM sms_consent WHERE consent_text_version = $1`, [TEST_CONSENT_VERSION]);
+  // Second sweep, for a run that crashed before stamping anything.
   await query(
     `DELETE FROM sms_send_log WHERE subscriber_id IN
        (SELECT id FROM sms_consent WHERE phone_number LIKE $1)`,
@@ -240,7 +266,7 @@ describe('findLastWeek', () => {
     const s = await subscriber();
     await recordSmsSend({
       subscriberId: s.id, phoneNumber: s.phone, sendType: 'empty_week', outcome: 'empty',
-      picksSnapshot: null, twilioSid: 'SM_c_1', consentTextVersion: 'v',
+      picksSnapshot: null, twilioSid: 'SM_c_1', consentTextVersion: TEST_CONSENT_VERSION,
     });
     const week = await findLastWeek(s.id);
     // PRD §2.4 wants the empty and paused states shown too — they are the states a subscriber most
@@ -256,7 +282,7 @@ describe('findLastWeek', () => {
     await recordSmsSend({
       subscriberId: s.id, phoneNumber: s.phone, sendType: 'weekly', outcome: 'sent',
       picksSnapshot: [{ occurrence_id: occ.id, rank: 1 }],
-      twilioSid: 'SM_c_2', consentTextVersion: 'v',
+      twilioSid: 'SM_c_2', consentTextVersion: TEST_CONSENT_VERSION,
     });
     const week = await findLastWeek(s.id);
     expect(week.kind).toBe('weekly');
@@ -274,7 +300,7 @@ describe('findLastWeek', () => {
     await recordSmsSend({
       subscriberId: s.id, phoneNumber: s.phone, sendType: 'weekly', outcome: 'sent',
       picksSnapshot: [{ occurrence_id: occ.id, rank: 1 }],
-      twilioSid: 'SM_c_3', consentTextVersion: 'v',
+      twilioSid: 'SM_c_3', consentTextVersion: TEST_CONSENT_VERSION,
     });
     const week = await findLastWeek(s.id);
     expect(week.picks).toHaveLength(1);
@@ -348,7 +374,7 @@ describe('applyPreferencesChange', () => {
     const s = await subscriber();
     await recordSmsSend({
       subscriberId: s.id, phoneNumber: s.phone, sendType: 'welcome', outcome: 'sent',
-      picksSnapshot: null, twilioSid: 'SM_c_del', consentTextVersion: '2026-08-26.v2',
+      picksSnapshot: null, twilioSid: 'SM_c_del', consentTextVersion: TEST_CONSENT_VERSION,
     });
 
     await applyPreferencesChange({ kind: 'delete', subscriberId: s.id }, new Date());
@@ -366,7 +392,7 @@ describe('applyPreferencesChange', () => {
     expect(row.category_interests).toBeNull();
     // Kept: the row itself, its short_ref, and which wording they consented to.
     expect(Number(row.short_ref)).toBeGreaterThan(0);
-    expect(row.consent_text_version).toBe('2026-08-26.v2');
+    expect(row.consent_text_version).toBe(TEST_CONSENT_VERSION);
     expect(row.stopped_at).not.toBeNull();
 
     // And the send row is still there, still attributed, still answerable by hash.
