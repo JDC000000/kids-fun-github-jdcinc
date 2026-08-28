@@ -49,16 +49,19 @@ async function rules(): Promise<HeaderRule[]> {
   return config.headers!();
 }
 
-async function hubHeaders(): Promise<Map<string, string>> {
+/** Every header that would actually be sent for `path`, collected across all matching rules. */
+async function headersFor(path: string): Promise<Map<string, string>> {
   const pathToRegexp = await loadMatcher();
   const matched = new Map<string, string>();
   for (const rule of await rules()) {
-    if (pathToRegexp(rule.source).test(HUB_PATH)) {
+    if (pathToRegexp(rule.source).test(path)) {
       for (const h of rule.headers) matched.set(h.key.toLowerCase(), h.value);
     }
   }
   return matched;
 }
+
+const hubHeaders = () => headersFor(HUB_PATH);
 
 describe('/u/[preferencesToken] response headers', () => {
   it('sets Referrer-Policy: no-referrer — the header that closes the token leak', async () => {
@@ -140,5 +143,55 @@ describe('/u/[preferencesToken] response headers', () => {
     // is owned by another workstream; a Server Component page cannot set response headers itself.
     // Next's declarative `headers()` matches dynamic segments and needed neither.
     expect(typeof (await loadConfig()).headers).toBe('function');
+  });
+});
+
+describe('/sms/signup response headers — the page where CONSENT is captured', () => {
+  const SIGNUP = '/sms/signup';
+
+  it('refuses to be framed, by both mechanisms', async () => {
+    // The consent argument, not the clickjacking one. A signup form rendered inside somebody
+    // else's frame — their heading, their branding, their surrounding claims — is not obviously
+    // the express consent CASL requires a record of. `consent_text_version` pins the WORDING a
+    // parent agreed to; nothing can pin the page around it except refusing to be embedded.
+    const h = await headersFor(SIGNUP);
+    expect(h.get('content-security-policy')).toBe("frame-ancestors 'none'");
+    expect(h.get('x-frame-options')).toBe('DENY');
+    expect(h.get('x-content-type-options')).toBe('nosniff');
+    expect(h.get('strict-transport-security')).toBe('max-age=31536000');
+  });
+
+  it('🔴 deliberately does NOT take the hub\'s other two headers', async () => {
+    // Asserted as ABSENCES so that "apply the same list everywhere" is a decision someone has to
+    // argue for rather than a tidy-up.
+    //   no-referrer:  this URL carries no credential, unlike /u/{token}. Nothing to leak.
+    //   no-store:     public page, nothing personal in its HTML. Making the product's most
+    //                 load-sensitive page uncacheable would buy no privacy — what a parent TYPES
+    //                 is protected by a POST over TLS, not by a cache header.
+    const h = await headersFor(SIGNUP);
+    expect(h.has('referrer-policy')).toBe(false);
+    expect(h.has('cache-control')).toBe(false);
+  });
+
+  it('shares ONE list with the hub rather than a second copy that can drift', async () => {
+    // Two hand-maintained copies of a security header list is how one of them silently stops
+    // matching the other. Asserted on the values, which is what a drift would actually change.
+    const hub = await hubHeaders();
+    const signup = await headersFor(SIGNUP);
+    for (const key of [
+      'content-security-policy',
+      'x-frame-options',
+      'x-content-type-options',
+      'strict-transport-security',
+    ]) {
+      expect(signup.get(key), key).toBe(hub.get(key));
+    }
+  });
+
+  it('still matches nothing it should not', async () => {
+    expect((await headersFor('/search')).size).toBe(0);
+    expect((await headersFor('/sms/signup/extra')).size).toBe(0);
+    // The hub keeps its own two, so adding the signup rule did not widen anything.
+    expect((await hubHeaders()).get('cache-control')).toBe('no-store, max-age=0');
   });
 });

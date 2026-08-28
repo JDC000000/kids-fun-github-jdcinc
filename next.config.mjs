@@ -38,41 +38,64 @@ const nextConfig = {
    * for the assertion on this configuration and the round-17 notes for the live check.
    */
   async headers() {
+    /*
+     * ── SHARED TRANSPORT HARDENING, APPLIED TO BOTH SMS-FACING PAGES ─────────────────────────
+     * Added 2026-08-28 for the preferences hub; extended to the signup form the same day.
+     * Written once because two copies of a security header list is how one of them silently
+     * stops matching the other.
+     *
+     * `frame-ancestors 'none'` and X-Frame-Options say the same thing to different generations
+     * of browser: these pages may not be framed. On the HUB that matters because a clickjacked
+     * preferences page is a clickjacked UNSUBSCRIBE and DELETE button, both one click with no
+     * confirmation behind no login. On the SIGNUP FORM it matters for a different and arguably
+     * stronger reason: that page is where EXPRESS CONSENT IS CAPTURED, and consent collected
+     * inside somebody else's frame — under their heading, their branding, their surrounding
+     * claims — is not obviously the consent CASL requires a record of. `consent_text_version`
+     * pins the wording a subscriber agreed to; it cannot pin the page around it. Refusing to be
+     * framed is what keeps that record meaning what it says.
+     *
+     * ⚠ DELIBERATELY NOT A FULL CSP. `frame-ancestors` is the one directive that cannot break
+     * rendering, because it constrains who may embed the page rather than what the page may
+     * load. A real script-src/style-src policy has to be built against Next's inline runtime and
+     * nonce handling and VERIFIED IN A BROWSER, which is a separate, testable pass — shipping a
+     * guessed CSP that silently blocks the app's own scripts would be worse than the gap it
+     * closes. Tracked as follow-up, not done here.
+     *
+     * HSTS is a no-op over plain HTTP (the local harness) and takes effect in production, which
+     * is the only place it matters. No `preload`, and no `includeSubDomains`: both are
+     * commitments about domains this config does not own, and preload in particular is
+     * effectively irreversible. Worth having on the signup form specifically because that page
+     * is frequently the FIRST one a subscriber ever opens — the earliest chance to set it.
+     */
+    const antiFramingAndSniffing = [
+      { key: 'content-security-policy', value: "frame-ancestors 'none'" },
+      { key: 'x-frame-options', value: 'DENY' },
+      { key: 'x-content-type-options', value: 'nosniff' },
+      { key: 'strict-transport-security', value: 'max-age=31536000' },
+    ];
+
     return [
       {
         source: '/u/:preferencesToken',
         headers: [
           { key: 'referrer-policy', value: 'no-referrer' },
           { key: 'cache-control', value: 'no-store, max-age=0' },
-          /*
-           * ── SECURITY HARDENING ON THE ONE PAGE THAT RENDERS A CHILD'S DATA ──────────────────
-           * Added 2026-08-28. This page displays a child's age and a household postal code to
-           * anyone holding the URL, and the URL IS the credential — so the cheap transport-level
-           * protections belong here even though none of them is the primary defence.
-           *
-           * `frame-ancestors 'none'` and X-Frame-Options say the same thing to different
-           * generations of browser: this page may not be framed. That matters more here than on a
-           * normal page — a clickjacked preferences page is a clickjacked UNSUBSCRIBE and DELETE
-           * button, and both are one click with no confirmation step behind a login.
-           *
-           * ⚠ DELIBERATELY NOT A FULL CSP. `frame-ancestors` is the one directive that cannot
-           * break rendering, because it constrains who may embed the page rather than what the
-           * page may load. A real script-src/style-src policy has to be built against Next's
-           * inline runtime and nonce handling and VERIFIED IN A BROWSER, which is a separate,
-           * testable pass — shipping a guessed CSP that silently blocks the app's own scripts
-           * would be worse than the gap it closes. Tracked as follow-up, not done here.
-           */
-          { key: 'content-security-policy', value: "frame-ancestors 'none'" },
-          { key: 'x-frame-options', value: 'DENY' },
-          { key: 'x-content-type-options', value: 'nosniff' },
-          /*
-           * HSTS is a no-op over plain HTTP (the local harness) and takes effect in production,
-           * which is the only place it matters. No `preload`, and no `includeSubDomains`: both are
-           * commitments about domains this config does not own, and preload in particular is
-           * effectively irreversible.
-           */
-          { key: 'strict-transport-security', value: 'max-age=31536000' },
+          ...antiFramingAndSniffing,
         ],
+      },
+      {
+        /*
+         * The public signup form. It renders NO stored personal data and its URL carries no
+         * credential, which is why it does not take the hub's other two headers:
+         *   · no `no-referrer` — there is nothing secret in this URL to leak to a link target.
+         *   · no `no-store` — this is a public page with nothing personal in its HTML, and
+         *     making it uncacheable would slow the one page the product most wants to load fast
+         *     while buying no privacy. The data a parent TYPES here is protected by being sent
+         *     in a POST body over TLS, not by a cache header.
+         * What it does need is to be un-frameable, for the consent reason above.
+         */
+        source: '/sms/signup',
+        headers: antiFramingAndSniffing,
       },
     ];
   },
