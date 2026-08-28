@@ -423,7 +423,14 @@ export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessag
 export function renderUnknownKeywordMessage(signupUrl: string | null): RenderedMessage {
   const signup = signupUrl ? ` ${signupClause(signupUrl)}` : '';
   return render(
-    `${BRAND} We text weekly kid activity picks. Reply JOIN to confirm, HELP for info, ` +
+    // PRD v3.11, "Approved verbatim". The ACKNOWLEDGEMENT CLAUSE IS LOAD-BEARING and had drifted
+    // out: this reply answers someone whose message we did not understand, and opening with what
+    // we do ("We text weekly kid activity picks") answers a question they did not ask. "Sorry, we
+    // didn't catch that" tells them what happened first, which is the difference between a reply
+    // and a broadcast. Restored 2026-08-28 after live testing found the drift.
+    // STRAIGHT apostrophe in "didn't" — U+0027 is in GSM-7, U+2019 is not and would double the
+    // segment cost of every one of these.
+    `${BRAND} Sorry, we didn't catch that. Reply JOIN to confirm your signup, HELP for info, ` +
       `or STOP to end.${signup}`
   );
 }
