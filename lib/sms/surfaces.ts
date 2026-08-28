@@ -52,21 +52,38 @@ export function isSmsSurface(pathname: string | null | undefined): boolean {
  * So: the SMS surfaces are hidden because they are SMS surfaces, and `/activity/{id}` is hidden
  * because a parent arrives there by tapping a link in a text — which is the reason Jon gave.
  *
- * ── WHY `/activity/{id}` AND NOT ALSO `/search` ─────────────────────────────────────────
- * `/search` is deliberately ABSENT, pending a decision, for two reasons found while implementing:
+ * ── `/search` TOO — JON OVERRODE THE RECOMMENDATION, KNOWING THE COST ───────────────────
+ * `/search` was held back pending a decision, and the recommendation put to Jon was to leave it
+ * alone. He ruled the other way: *"YES"* (2026-08-28). Recorded with BOTH halves, because a
+ * ruling that only preserves the winning argument is how the losing one gets rediscovered later
+ * and mistaken for a bug.
+ *
+ * The two reasons it was excluded, found while implementing, both still stand as FACTS:
  *   1. It carries a SIGNED-IN FEATURE. `SaveSearchButton` (app/search/page.tsx) has explicit
  *      signed-in / signed-out / session-lost states and initiates the OAuth flow. Hiding the
- *      account nav there removes the only sign-out control and the only `/account` link from a
- *      page that still offers a feature requiring an account — a page that would then let someone
- *      save a search without showing them they are signed in.
+ *      account nav removes the only sign-out control and the only `/account` link from a page
+ *      that still offers a feature requiring an account.
  *   2. It is not reached from a text. A weekly-text link resolves `/s/{token}` to `/activity/{id}`.
- *      No SMS path lands on `/search`, so Jon's stated rationale — the pages a parent reaches by
- *      tapping a weekly-text link — does not select it.
- * `/activity/{id}` has no auth dependency at all, so it carries neither cost.
+ *      No SMS path lands on `/search`, so the "pages a parent reaches from a text" rationale does
+ *      not select it.
+ *
+ * ⚠ SO #1 IS NOW A KNOWN, ACCEPTED GAP, NOT AN OVERSIGHT. Jon answered with the cost in front of
+ * him, and the Operator confirmed closing it is NOT a precondition for shipping this. A signed-in
+ * parent on `/search` can still save a search and can no longer sign out from that page; they can
+ * from anywhere else in the product. If that turns out to matter, the fix belongs in `/search`'s
+ * own UI — giving the page a sign-out affordance of its own — NOT in reverting this list, which
+ * would re-break the principle Jon is actually protecting.
+ *
+ * ── AND NOTE WHAT DID *NOT* CHANGE ──────────────────────────────────────────────────────
+ * `/search` is hidden here and is STILL NOT an SMS surface (`isSmsSurface('/search') === false`).
+ * That is the whole reason these are two lists rather than one: the nav question and the
+ * "is this the SMS product" question now have genuinely different answers, and a single list
+ * would have forced a lie about one of them.
  */
 export const ACCOUNT_NAV_HIDDEN_PREFIXES = [
   ...SMS_SURFACE_PREFIXES,
   '/activity/', // the shared detail page a weekly-text short link resolves to (Jon, 2026-08-28)
+  '/search', // Jon overrode the "leave it alone" recommendation knowingly — see above
 ] as const;
 
 /** Should the account touchpoint be hidden on this path? See the list above for why it differs. */
