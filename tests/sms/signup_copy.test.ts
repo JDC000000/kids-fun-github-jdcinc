@@ -140,13 +140,21 @@ describe('the "activity gone" interstitial (PRD §8 Q3)', () => {
     expect(ACTIVITY_GONE_BODY).not.toContain('Keep moving');
   });
 
-  it('drops the support lead-in without dropping the support ROUTE', () => {
-    // "Let us know if you have any other questions" is gone from the copy. That is safe only
-    // because app/activity-unavailable/page.tsx renders the support contact as its own paragraph
-    // directly beneath this text — the clause was a lead-in, not the only way to reach help. If the
-    // page ever stops rendering that paragraph, this copy no longer offers any route to support.
+  it('no longer carries a support lead-in of its own', () => {
+    // "Let us know if you have any other questions" is gone from the copy, which is safe only
+    // because the PAGE still renders the support contact as its own paragraph.
+    //
+    // ⚠ THIS FILE CANNOT ASSERT THAT, AND MUST NOT PRETEND TO. An earlier version of this test
+    // added `expect(SUPPORT_LINE).toContain(SUPPORT_PHONE_DISPLAY)` and claimed it proved the
+    // route survived. It did not: SUPPORT_LINE is a different constant used on other surfaces,
+    // and app/activity-unavailable/page.tsx renders SUPPORT_PHONE_HREF and
+    // SENDER_IDENTITY.supportPhone directly. The page could stop rendering support entirely and
+    // that assertion would still pass — a test that reads as a guarantee and holds nothing.
+    //
+    // The real invariant is asserted where it can be, against the RENDERED page:
+    //   tests/sms/click_through.test.tsx → "the interstitial the 'gone' outcome redirects to"
+    // A copy constant can only speak about the copy constant, so that is all this asserts.
     expect(ACTIVITY_GONE_BODY).not.toMatch(/let us know/i);
-    expect(SUPPORT_LINE).toContain(SUPPORT_PHONE_DISPLAY);
   });
 });
 

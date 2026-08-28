@@ -19,17 +19,59 @@
 /** Default From used when EMAIL_FROM is unset (dev/preview only; real sends require a verified domain). */
 const DEFAULT_FROM = 'KIDS FUN <onboarding@resend.dev>';
 
-/** Fallback app URL when NEXT_PUBLIC_SITE_URL is unset (links still render, just point local). */
-const DEFAULT_SITE_URL = 'http://localhost:3000';
+/**
+ * Fallback app URL when NEXT_PUBLIC_SITE_URL is unset.
+ *
+ * This comment used to end "links still render, just point local", which described the mechanism
+ * accurately and the consequence not at all. See `siteUrl()` — that benign-sounding fallback is
+ * only benign while nothing is being sent.
+ */
+export const DEFAULT_SITE_URL = 'http://localhost:3000';
 
 function env(name: string): string | undefined {
   const v = process.env[name];
   return v && v.trim() !== '' ? v.trim() : undefined;
 }
 
-/** The public site base URL, without a trailing slash. */
+/**
+ * The public site base URL, without a trailing slash.
+ *
+ * ═══ FAILS LOUDLY RATHER THAN SEND LINKS TO LOCALHOST ═══
+ * The email twin of the SMS lane's guard (lib/sms/config.ts, commit 05a5b56), added after the SMS
+ * one was found: the two lanes read the SAME `NEXT_PUBLIC_SITE_URL`, so a single missing variable
+ * would have hollowed out both at once — which is the part worth noticing.
+ *
+ * EVERY URL IN A DIGEST COMES FROM HERE. `appUrl` feeds the per-listing links, the saved-search
+ * links, the account link, and — through lib/email/unsubscribe.ts — the ONE-CLICK UNSUBSCRIBE URL
+ * that goes in both the email body and the RFC 8058 `List-Unsubscribe` header. So an unset or
+ * blank variable does not break a send, it empties it: Resend accepts the message, the digest
+ * arrives looking correct, and every link inside points at a machine the recipient does not own.
+ *   The unsubscribe link is the one that turns that from embarrassing into a compliance problem.
+ *   CASL's question is not "was an unsubscribe mechanism present" but "could they use it", and a
+ *   localhost URL satisfies the first while failing the second. `List-Unsubscribe` additionally
+ *   feeds the bulk-sender expectations Gmail and Yahoo enforce.
+ *
+ * GATED ON `sendingEnabled()`, NOT ON NODE_ENV — same reasoning as the SMS lane. NODE_ENV is
+ * 'production' during `next build`, in a local production build, and on every preview deploy, none
+ * of which puts a link in front of a person. The condition that matters is "are we about to send",
+ * and this module already owns that concept. So the guard cannot fire in dev or in the test lanes,
+ * where the localhost fallback is correct and wanted — asserted, so it stays that way.
+ *
+ * A BLANK VALUE COUNTS AS MISSING, because `env()` maps '' to undefined. A variable emptied in a
+ * hosting dashboard is an easier mistake than one deleted.
+ */
 export function siteUrl(): string {
-  return (env('NEXT_PUBLIC_SITE_URL') ?? DEFAULT_SITE_URL).replace(/\/+$/, '');
+  const configured = env('NEXT_PUBLIC_SITE_URL');
+  if (configured) return configured.replace(/\/+$/, '');
+  if (sendingEnabled()) {
+    throw new Error(
+      'NEXT_PUBLIC_SITE_URL is unset or blank while WEEKLY_EMAIL_ENABLED is true. Refusing to ' +
+        `build digest links against ${DEFAULT_SITE_URL}: every listing link and the one-click ` +
+        'unsubscribe URL — in the body and the List-Unsubscribe header — would point at ' +
+        'localhost, leaving recipients no working way to opt out.'
+    );
+  }
+  return DEFAULT_SITE_URL;
 }
 
 /** Build an absolute app URL from a path (path may start with or without a leading slash). */
