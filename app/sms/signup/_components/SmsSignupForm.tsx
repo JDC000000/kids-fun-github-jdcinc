@@ -65,6 +65,27 @@ function newChildRow(): ChildRow {
 // Split once, at module load, so the render path cannot reorder the consent sentence.
 const [consentBefore, consentAfter] = CONSENT_CHECKBOX_TEXT.split(PREFERENCES_LINK_LABEL);
 
+/**
+ * Drop the error belonging to one field, PRESERVING THE ARRAY IDENTITY when there is nothing to
+ * drop.
+ *
+ * Exported and pure so it can be tested: this component's suite renders with
+ * `renderToStaticMarkup` and deliberately carries no @testing-library dependency, so the initial
+ * render is the only thing it can observe. The interesting behaviour here happens on the fourth
+ * keystroke of a correction, which that harness cannot reach — so the decision lives in a function
+ * instead of inside a closure where it would be untestable.
+ *
+ * The identity guard is not a micro-optimisation. `setErrors` with a fresh array on every
+ * keystroke would re-render the whole form for each character typed into a field that has no
+ * error at all — which is every field, most of the time.
+ */
+export function withoutFieldError(
+  errors: readonly SignupFieldError[],
+  field: SmsSignupField
+): readonly SignupFieldError[] {
+  return errors.some((e) => e.field === field) ? errors.filter((e) => e.field !== field) : errors;
+}
+
 export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
   const [phone, setPhone] = useState('');
   const [postal, setPostal] = useState('');
@@ -75,7 +96,32 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
   // EVERY failure, not the first (PRD §8 item 2, Jon: "Show all errors at once"). The validator
   // returns them in form order, so this list renders top to bottom the way the page reads.
   const [errors, setErrors] = useState<SignupFieldError[]>([]);
+  /**
+   * Counts SUBMITS, not errors — and it exists so the scroll effect below can tell the two apart.
+   * See that effect, and `clearFieldError`, for why keying on `errors` is wrong once errors can
+   * disappear while somebody is typing.
+   */
+  const [submitCount, setSubmitCount] = useState(0);
   const errorFor = (field: SmsSignupField) => errors.find((e) => e.field === field);
+
+  /**
+   * ═══ THE STALE ERROR, AND WHY IT LOOKED INTERMITTENT ═══
+   * Errors were previously cleared ONLY at the top of `submit`. So after an out-of-area postal
+   * code was rejected, correcting it left the rejection sitting under the field it no longer
+   * described — the form saying "we don't cover that area" directly beneath a covered one, until
+   * a second submit. Reported as intermittent because it resolves itself the moment you resubmit,
+   * so whether you ever see it depends only on whether you read the page before pressing again.
+   *
+   * The postal field made it worst because it carries a SECOND, live signal: `sparseNotice` below
+   * recomputes on every keystroke. So the two messages about the same field disagreed on screen
+   * at the same time, one fresh and one stale.
+   *
+   * Returns `current` unchanged when there is nothing to drop, so typing in a field with no error
+   * does not queue a re-render on every keystroke.
+   */
+  function clearFieldError(field: SmsSignupField) {
+    setErrors((current) => withoutFieldError(current, field) as SignupFieldError[]);
+  }
   // A failure with no field of its own (network, 503, 404-while-flagged-off).
   const generalError = errors.find((e) => !e.field);
   const errorRef = useRef<HTMLParagraphElement | null>(null);
@@ -96,10 +142,21 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
   // Scrolls to the FIRST error, which — because the validator returns them in form order — is the
   // topmost one on the page. Bringing someone to the bottom of a list of problems would be worse
   // than not scrolling at all.
+  //
+  // ⚠ KEYED ON `submitCount`, NOT ON `errors` — and that is load-bearing, not a style choice.
+  // Now that fixing a field clears its error as you type, an `[errors]` dependency would fire this
+  // scroll on the CORRECTION too: land in the postal field, delete one character, and the page
+  // yanks itself to whatever error is now topmost, mid-edit. Scrolling belongs to the act of
+  // submitting, so it keys on submits.
+  //
+  // `errors` is read but deliberately not a dependency; the lint exception is the whole point of
+  // the comment above.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    if (submitCount === 0) return; // nothing has been submitted yet
     if (errors.length === 0) return;
     errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [errors]);
+  }, [submitCount]);
 
   // Recomputed as they type. Pure, no request — see the prop's comment.
   const sparseNotice = useMemo(
@@ -122,12 +179,26 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
     setInterests((current) =>
       current.includes(key) ? current.filter((k) => k !== key) : [...current, key]
     );
+    clearFieldError('interests');
+  }
+
+  /**
+   * The children error belongs to the FIELDSET, not to a row — so any edit to any row clears it,
+   * including adding or removing a row. A parent who was told "add at least one child" and then
+   * typed an age has answered the objection, whichever row they typed it into.
+   */
+  function editChildren(update: (rows: ChildRow[]) => ChildRow[]) {
+    setChildren(update);
+    clearFieldError('children');
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (phase === 'sending') return;
     setErrors([]);
+    // Every attempt, including one that produces the SAME errors as the last — otherwise a repeat
+    // submit with an unchanged mistake would scroll nowhere and look like nothing happened.
+    setSubmitCount((n) => n + 1);
 
     // Same validator the server runs. See this file's header.
     const parsed = parseSmsSignupBody(body(), { now: new Date() });
@@ -210,7 +281,10 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
             errorId: 'kf-sms-phone-err',
             helpId: 'kf-sms-phone-help',
           })}
-          onChange={(e) => setPhone(e.target.value)}
+          onChange={(e) => {
+            setPhone(e.target.value);
+            clearFieldError('phone');
+          }}
         />
         <p className="kf-sms-signup__help" id="kf-sms-phone-help">
           {FIELD_COPY.phoneHelp}
@@ -235,7 +309,10 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
             errorId: 'kf-sms-postal-err',
             helpId: 'kf-sms-postal-help',
           })}
-          onChange={(e) => setPostal(e.target.value)}
+          onChange={(e) => {
+            setPostal(e.target.value);
+            clearFieldError('postal');
+          }}
         />
         <p className="kf-sms-signup__help" id="kf-sms-postal-help">
           {FIELD_COPY.postalHelp}
@@ -279,7 +356,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
               placeholder="e.g. 4"
               value={child.age}
               onChange={(e) =>
-                setChildren((rows) =>
+                editChildren((rows) =>
                   rows.map((r) => (r.id === child.id ? { ...r, age: e.target.value } : r))
                 )
               }
@@ -289,7 +366,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => setChildren((rows) => rows.filter((r) => r.id !== child.id))}
+                onClick={() => editChildren((rows) => rows.filter((r) => r.id !== child.id))}
               >
                 <span className="kf-sms-signup__sr-only">
                   {FIELD_COPY.removeChild} child {index + 1}
@@ -303,7 +380,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
           <Button
             type="button"
             variant="secondary"
-            onClick={() => setChildren((rows) => [...rows, newChildRow()])}
+            onClick={() => editChildren((rows) => [...rows, newChildRow()])}
           >
             {FIELD_COPY.addChild}
           </Button>
@@ -340,7 +417,10 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
             name="consent"
             checked={consent}
             {...fieldA11y('consent', errorFor('consent')?.field, { errorId: 'kf-sms-consent-err' })}
-            onChange={(e) => setConsent(e.target.checked)}
+            onChange={(e) => {
+              setConsent(e.target.checked);
+              clearFieldError('consent');
+            }}
           />
           {/*
             The consent sentence is rendered VERBATIM, with the "preferences page" phrase

@@ -7,7 +7,7 @@
 // render specifically.
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SmsSignupForm } from '@/app/sms/signup/_components/SmsSignupForm';
+import { SmsSignupForm, withoutFieldError } from '@/app/sms/signup/_components/SmsSignupForm';
 import {
   CONSENT_CHECKBOX_TEXT,
   FIELD_COPY,
@@ -152,3 +152,41 @@ describe('V1 testing fixes (round 21)', () => {
   });
 });
 
+
+describe('the stale field error (post-launch item 5)', () => {
+  // THE BUG: errors were cleared only at the top of `submit`, so correcting a rejected postal code
+  // left "we don't cover that area" sitting under a covered one until a second submit. It read as
+  // intermittent because resubmitting fixes it — whether anyone ever saw it depended only on
+  // whether they read the page before pressing again.
+  const errs = [
+    { field: 'postal' as const, message: 'out of area' },
+    { field: 'phone' as const, message: 'bad phone' },
+    { message: 'network' },
+  ];
+
+  it('drops only the corrected field, leaving the other errors standing', () => {
+    // "Show all errors at once" is Jon's ruling (PRD §8 item 2). Fixing one field must not clear
+    // the list, or a parent fixes the postal code and believes they are done.
+    const after = withoutFieldError(errs, 'postal');
+    expect(after.map((e) => e.field)).toEqual(['phone', undefined]);
+  });
+
+  it('leaves the general error alone — it is not owned by any field', () => {
+    // A network failure is not answered by editing a postal code, so nothing a parent types
+    // should make it disappear.
+    expect(withoutFieldError(errs, 'postal').some((e) => !e.field)).toBe(true);
+    expect(withoutFieldError(errs, 'phone').some((e) => !e.field)).toBe(true);
+  });
+
+  it('🔴 returns the SAME array when the field has no error — not an equal one', () => {
+    // Identity, asserted with toBe rather than toEqual. This is what stops a re-render on every
+    // keystroke in a field that has nothing wrong with it, which is every field, most of the time.
+    // A `.filter()` that always allocates would satisfy every other assertion in this block.
+    expect(withoutFieldError(errs, 'children')).toBe(errs);
+    expect(withoutFieldError([], 'postal')).toEqual([]);
+  });
+
+  it('is not fooled into clearing a DIFFERENT field with a similar name', () => {
+    expect(withoutFieldError(errs, 'phone').map((e) => e.field)).toEqual(['postal', undefined]);
+  });
+});
