@@ -376,9 +376,32 @@ export const PREFS_UNKNOWN_TOKEN_BODY =
  * held: a tone note could not move these words, and the author could.
  *
  * One word. Nothing else in the sentence was touched.
+ *
+ * ── 2026-08-28, POST-LAUNCH: THE SPELLING, AND ONLY THE SPELLING ────────────────────────
+ * Jon raised this page again after launch with two complaints: the tone reads off-brand, and
+ * "canceled" should be "cancelled". THE TWO ARE NOT THE SAME KIND OF NOTE and they are not
+ * treated the same way here.
+ *
+ * The spelling is applied. It is a SPECIFIC change named by the author himself, and it is the
+ * only consumer-facing "canceled" left in the product: the detail page renders "Cancelled" and
+ * "This occurrence was cancelled.", terms/page.tsx says "cancelled", the CSS tokens are
+ * --kf-cancelled-*, and the occurrence status value in the database is literally 'cancelled'.
+ * This sentence was the lone outlier, so the fix is consistency, not taste.
+ *   (The other "canceled" spellings in this repo are NOT copy and must not be swept up with it:
+ *    Twilio's delivery-status enum and Trumba's `canceled` feed field are wire values. A
+ *    find-and-replace across the repo would break both.)
+ *
+ * THE TONE REWRITE IS DELIBERATELY NOT DONE. "The tone is off" is exactly the note this guard
+ * refused in round 22, and the guard was right to refuse it: what makes these words legitimate
+ * is that they are the author's, so a rewrite drafted here would fail for the same reason the
+ * "me"/"us" polish failed — no matter how much better it reads. It moved in round 22 only when
+ * JON WROTE THE NEW WORDS HIMSELF. That is the bar, and "Jon says he dislikes it" does not
+ * clear it: naming a problem is not the same act as writing the replacement.
+ * ⇒ Held for Jon's own replacement sentence. Candidates were offered for him to pick or edit;
+ *   none of them may be applied on a reviewer's say-so, including mine.
  */
 export const ACTIVITY_GONE_BODY =
-  "Oops, looks like that's been canceled! Let us know if you have any other questions. Keep moving.";
+  "Oops, looks like that's been cancelled! Let us know if you have any other questions. Keep moving.";
 
 /**
  * "Let us know if you have any other questions" needs somewhere to be let known. It points at the
