@@ -75,6 +75,50 @@ describe('/u/[preferencesToken] response headers', () => {
     expect((await hubHeaders()).get('cache-control')).toBe('no-store, max-age=0');
   });
 
+  // ═══ THE 2026-08-28 HARDENING (8eaa51e) ═══
+  // Same reasoning as the two above, and the same reason for asserting it: this block was added
+  // with a long comment explaining each choice, and a comment is exactly what the header at the
+  // top of this file says is not an invariant.
+
+  it('🔴 refuses to be framed — via BOTH mechanisms, not just the modern one', async () => {
+    // A clickjacked preferences page is a clickjacked UNSUBSCRIBE and DELETE, both one click with
+    // no confirmation and no login behind them. The two headers say the same thing to different
+    // generations of browser, so dropping either one silently narrows the protection to a subset
+    // of visitors — which is the kind of regression nothing else would surface.
+    const h = await hubHeaders();
+    expect(h.get('content-security-policy')).toBe("frame-ancestors 'none'");
+    expect(h.get('x-frame-options')).toBe('DENY');
+  });
+
+  it('sets X-Content-Type-Options: nosniff', async () => {
+    expect((await hubHeaders()).get('x-content-type-options')).toBe('nosniff');
+  });
+
+  it('sets HSTS with NO preload and NO includeSubDomains — the irreversible parts', async () => {
+    // Deliberate scope, asserted because it is far easier to "strengthen" this line than to undo
+    // it. `preload` is effectively PERMANENT once the domain is submitted to the browser list, and
+    // `includeSubDomains` makes a commitment on behalf of every subdomain this config does not own
+    // — including any plain-HTTP internal host. Adding either should be a decision someone argues
+    // for, not a tidy-up that passes review because it looks like more security.
+    const hsts = (await hubHeaders()).get('strict-transport-security');
+    expect(hsts).toBe('max-age=31536000');
+    expect(hsts).not.toContain('preload');
+    expect(hsts).not.toContain('includeSubDomains');
+  });
+
+  it('the CSP is frame-ancestors ONLY — a guessed script-src must not appear by accident', async () => {
+    // Recorded as a decision, not an oversight. `frame-ancestors` is the one directive that cannot
+    // break rendering, because it constrains who may EMBED the page rather than what the page may
+    // LOAD. A script-src/style-src policy has to be built against Next's inline runtime and nonce
+    // handling and verified in a real browser; a guessed one silently breaks the app's own scripts,
+    // which is worse than the gap it closes.
+    //
+    // So this assertion is a TRIPWIRE, not a ceiling: when the real CSP pass happens it SHOULD fail
+    // here, and whoever does it should update this test having verified the policy in a browser.
+    const csp = (await hubHeaders()).get('content-security-policy') ?? '';
+    expect(csp).not.toMatch(/script-src|style-src|default-src/);
+  });
+
   it('the rule matches the dynamic segment, and only it', async () => {
     // A `source` that silently matched nothing would leave the headers un-set with every
     // assertion above still passing against the literal config. So the pattern itself is

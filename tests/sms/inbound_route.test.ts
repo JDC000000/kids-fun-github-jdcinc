@@ -101,32 +101,50 @@ describe('the unknown-keyword reply (copy)', () => {
     expect(EXPECTED_REPLY).toContain('https://kidsfun.example/sms/signup');
   });
 
-  it('passes the GSM-7 guard and fits one segment at the production URL', () => {
+  it('passes the GSM-7 guard and fits one segment at the REAL production URL', () => {
     // Also on the all-templates wall in tests/sms/weekly_send.test.ts.
     assertGsm7Safe(EXPECTED_REPLY);
-    const live = renderUnknownKeywordMessage('https://kidsfun.ca/sms/signup');
+    // MEASURED AT THE DOMAIN THAT ACTUALLY SHIPS. The prior version of this test measured
+    // `kidsfun.ca`; production is `kidsfunapp.ca`, three characters longer. That difference is
+    // small and it is exactly the kind of thing that turns a 1-segment message into a 2-segment
+    // one, so the assertion now names the real host.
+    const live = renderUnknownKeywordMessage('https://kidsfunapp.ca/sms/signup');
     expect(live.encoding).toBe('GSM-7');
-    expect(live.characters).toBe(143);
+    expect(live.characters).toBe(152);
     expect(live.segments).toBe(1);
-    // 17 septets of headroom — MORE than the 11 this copy had before round 21 added the product
-    // clause, because the acknowledgement it replaced was longer than the clause itself.
-    expect(160 - live.characters).toBe(17);
+    expect(160 - live.characters).toBe(8);
+    // The shorter apex domain also fits, with more room, if it is ever used instead.
+    expect(renderUnknownKeywordMessage('https://kidsfun.ca/sms/signup').segments).toBe(1);
   });
 
-  it('says what KIDS FUN actually is, inline (V1 testing finding)', () => {
-    // The message most likely to reach somebody with no idea who is texting them. It used to tell
-    // a stranger what to TYPE without saying what they would be signing up FOR.
-    expect(EXPECTED_REPLY).toContain('We text weekly kid activity picks');
-    // The same clause the START invite uses, so a stranger meets ONE description of the product
-    // however they reach us.
+  it('⚠ NO LONGER says what KIDS FUN is inline — Jon chose the acknowledgement instead', () => {
+    // ═══ THIS REVERSES A V1 TESTING FINDING, DELIBERATELY, AND THE TRADE IS FORCED ═══
+    // V1 found this message told a stranger what to TYPE without saying what they would be
+    // signing up FOR, so round 21 added "We text weekly kid activity picks". PRD v3.11's approved
+    // wording does not contain that clause — it spends the room on the acknowledgement instead.
+    //
+    // BOTH DO NOT FIT: the two clauses together measure 163 septets at the production URL — two
+    // segments. That arithmetic is unchanged and is re-pinned below; what changed is which side of
+    // it the product owner chose. This is a copy ruling, not a regression, and it is recorded here
+    // rather than silently dropped so the V1 finding is not quietly lost.
+    //
+    // WHAT SOFTENS IT: the signup link is still present, so a stranger still has somewhere to go
+    // to find out what this is — which was the V1 finding's actual concern.
+    expect(EXPECTED_REPLY).not.toContain('We text weekly kid activity picks');
+    // The START invite is UNAFFECTED and still carries the product description, so the clause has
+    // not disappeared from the product — only from the message that could not afford both.
     expect(INVITE).toContain('We text weekly kid activity picks');
   });
 
-  it('🔴 no longer acknowledges that it did not understand — a MEASURED trade', () => {
-    // Keeping "Sorry, we didn't catch that" AND the product clause measures 163 septets against
-    // the production URL: three over one segment, and every variant tried landed 161-185. Pinned
-    // so the cost of putting it back is a number rather than an argument.
-    expect(EXPECTED_REPLY).not.toContain("didn't catch that");
+  it('✅ acknowledges that it did not understand — PRD v3.11, restored', () => {
+    // RESTORED 2026-08-28 after live testing found the delivered text had drifted off the approved
+    // wording. This clause is the difference between a reply and a broadcast: it answers someone
+    // whose message we did not understand by saying so first, rather than opening with what we do.
+    expect(EXPECTED_REPLY).toContain("didn't catch that");
+    expect(EXPECTED_REPLY).toContain('Reply JOIN to confirm your signup');
+    // THE TRADE THAT FORCES THE CHOICE, re-pinned unchanged: both clauses together are 2 segments.
+    // The earlier decision dropped this one to keep the product clause; v3.11 goes the other way.
+    // Either is defensible; having both is not available.
     const withBoth =
       "KIDS FUN: We text weekly kid activity picks. Sorry, we didn't catch that - reply JOIN to " +
       'confirm, HELP for info, or STOP to end. Not signed up? https://kidsfun.ca/sms/signup';

@@ -121,9 +121,30 @@ describe('the "activity gone" interstitial (PRD §8 Q3)', () => {
     // a routine copy-polish item ("me" reads as off-voice against the product's "we"), and moved
     // only when JON HIMSELF changed his own sentence — "-we APPROVED". A tone note could not move
     // these words; the author could. Same guard, new approved text.
+    //
+    // 2026-08-28: one letter, "canceled" -> "cancelled", named specifically by Jon and applied for
+    // CONSISTENCY (see below), not for taste. His tone complaint from the same message is NOT
+    // reflected here on purpose — that rewrite is held for his own words.
     expect(ACTIVITY_GONE_BODY).toBe(
-      "Oops, looks like that's been canceled! Let us know if you have any other questions. Keep moving."
+      "Oops, looks like that's been cancelled! Let us know if you have any other questions. Keep moving."
     );
+  });
+
+  it('spells it "cancelled", like every other consumer surface and the status value itself', () => {
+    // This sentence was the LAST consumer-facing "canceled" in the product. The detail page renders
+    // "Cancelled" / "This occurrence was cancelled.", terms says "cancelled", the CSS tokens are
+    // --kf-cancelled-*, and the occurrence status in the database is the string 'cancelled'.
+    expect(ACTIVITY_GONE_BODY).toContain('cancelled');
+    expect(ACTIVITY_GONE_BODY).not.toMatch(/\bcanceled\b/);
+  });
+
+  it('🔴 still carries the parts only the AUTHOR may change', () => {
+    // The guard, restated as an assertion rather than a comment: the shape of Jon's sentence is
+    // his. A future tone pass that rewrites it will fail here, which is the intended outcome until
+    // a replacement arrives from Jon himself. Deleting this test IS the decision to drop the rule.
+    expect(ACTIVITY_GONE_BODY.startsWith('Oops,')).toBe(true);
+    expect(ACTIVITY_GONE_BODY).toContain('Let us know if you have any other questions');
+    expect(ACTIVITY_GONE_BODY.endsWith('Keep moving.')).toBe(true);
   });
 
   it('speaks as "we", like the rest of the product, and only that changed', () => {
@@ -132,7 +153,7 @@ describe('the "activity gone" interstitial (PRD §8 Q3)', () => {
     expect(ACTIVITY_GONE_BODY).toContain('Let us know');
     expect(ACTIVITY_GONE_BODY).not.toContain('Let me know');
     // Everything either side of it is untouched.
-    expect(ACTIVITY_GONE_BODY.startsWith("Oops, looks like that's been canceled!")).toBe(true);
+    expect(ACTIVITY_GONE_BODY.startsWith("Oops, looks like that's been cancelled!")).toBe(true);
     expect(ACTIVITY_GONE_BODY.endsWith('Keep moving.')).toBe(true);
   });
 });

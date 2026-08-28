@@ -31,6 +31,27 @@ export interface SignupWriteResult {
   /** Populated once implemented. Never returned to the browser — see the route. */
   subscriberId: string | null;
   error?: string;
+  /**
+   * Was this number ALREADY an active subscriber before this write? (Jon's ruling, 2026-08-28.)
+   *
+   * The upsert resets an active row to 'pending' and clears `confirmed_timestamp`, which is correct
+   * CASL behaviour — re-consent that skipped the double opt-in would not be double opt-in — but it
+   * happens silently. This flag is what lets a surface say so.
+   *
+   * ⚠ IT IS NOT AUTOMATICALLY SAFE TO RETURN TO THE BROWSER. See the disclosure note on the route.
+   */
+  wasActive?: boolean;
+  /**
+   * Did this write REPLACE stored preferences with different ones? Postal code, children's ages or
+   * interests differing from what was already on the row.
+   *
+   * Separate from `wasActive` because they are different losses and a resubmitting parent can
+   * suffer either, both, or neither: a PENDING subscriber who resubmits loses saved preferences
+   * without any status change, and an ACTIVE one who resubmits identical details loses only the
+   * confirmation. Live reproduction 2026-08-28: a hub save of four interests plus a new postal code
+   * and age was silently reverted by one later signup submission.
+   */
+  preferencesReplaced?: boolean;
 }
 
 export interface SignupWriteOptions {
@@ -108,8 +129,23 @@ export async function createPendingSubscriber(
     // ON CONFLICT it carries the updating transaction. It is not pretty and it is not in the
     // documentation as an API, but the alternative — a second round trip, or a RETURNING that
     // cannot tell the branches apart — is worse. Asserted directly in the db-lane test.
-    const rows = await run<{ id: string; short_ref: string | number; inserted: boolean }>(
-      `INSERT INTO sms_consent
+    const rows = await run<{
+      id: string;
+      short_ref: string | number;
+      inserted: boolean;
+      prior_status: string | null;
+      preferences_replaced: boolean | null;
+    }>(
+      // THE `prior` CTE READS THE ROW AS IT WAS BEFORE THIS STATEMENT, so the upsert reports what
+      // it overwrote without a second round trip and WITHOUT THE RACE a separate SELECT would have.
+      // Every sub-statement of one statement sees the same snapshot, so `prior` cannot observe this
+      // upsert's own effect — which a preceding `SELECT ... ; INSERT ...` pair could not guarantee.
+      // RETURNING alone cannot do this: it reflects the row AFTER the update.
+      `WITH prior AS (
+         SELECT status, postal_code, birth_years, category_interests
+           FROM sms_consent WHERE phone_number = $1
+       )
+       INSERT INTO sms_consent
          (phone_number, postal_code, birth_years, category_interests,
           status, consent_method, consent_timestamp, consent_text_version)
        VALUES ($1, $2, $3, $4, 'pending', $5, now(), $6)
@@ -124,7 +160,12 @@ export async function createPendingSubscriber(
          confirmed_timestamp     = NULL,
          stopped_at              = NULL,
          consecutive_empty_weeks = 0
-       RETURNING id, short_ref, (xmax = 0) AS inserted`,
+       RETURNING id, short_ref, (xmax = 0) AS inserted,
+                 (SELECT status FROM prior) AS prior_status,
+                 (SELECT postal_code FROM prior) IS DISTINCT FROM $2
+                   OR (SELECT birth_years FROM prior) IS DISTINCT FROM $3
+                   OR (SELECT category_interests FROM prior) IS DISTINCT FROM $4
+                   AS preferences_replaced`,
       [
         signup.phoneNumber,
         signup.postalCode,
@@ -161,6 +202,11 @@ export async function createPendingSubscriber(
 
     return {
       outcome: row.inserted ? 'created' : 'reactivated',
+      // BOTH GUARDED ON `!row.inserted`, and that is not defensive tidiness. On the INSERT branch
+      // the `prior` CTE is EMPTY, so every `IS DISTINCT FROM` against it answers TRUE — a brand-new
+      // signup would otherwise report that it had replaced preferences it never had.
+      wasActive: !row.inserted && row.prior_status === 'active',
+      preferencesReplaced: !row.inserted && row.preferences_replaced === true,
       subscriberId: row.id,
     };
   } catch (err) {
