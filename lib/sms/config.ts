@@ -134,8 +134,52 @@ export function smsCronSecret(): string | null {
  *   import — a small refactor that touches the email lane, which this branch deliberately does
  *   not.
  */
+export const SITE_URL_DEV_FALLBACK = 'http://localhost:3000';
+
 export function siteUrl(): string {
-  return (env('NEXT_PUBLIC_SITE_URL') ?? 'http://localhost:3000').replace(/\/+$/, '');
+  const configured = env('NEXT_PUBLIC_SITE_URL');
+  if (configured) return configured.replace(/\/+$/, '');
+
+  /*
+   * ═══ FAIL LOUDLY RATHER THAN SEND LINKS TO LOCALHOST ═══
+   * Every user-facing URL this product puts in a text comes from here — `shortLinkUrl`,
+   * `signupUrl` and `preferencesUrl` are all `${siteUrl()}/...`. So an unset or BLANK
+   * NEXT_PUBLIC_SITE_URL does not degrade the message, it hollows it out: the texts send
+   * perfectly, Twilio reports success, nothing throws, and every link inside them points at a
+   * machine the recipient does not have.
+   *
+   * `preferencesUrl`'s own comment already states the standard this enforces — that link "is the
+   * CASL unsubscribe path and the PIPEDA access/correction mechanism at the same time. A message
+   * that renders without it is a message that must not be sent." A localhost link satisfies the
+   * type and fails the promise, which is the harder version of the same failure. The regulator's
+   * question is not "was a URL present" but "could they unsubscribe".
+   *
+   * ── WHY THIS IS GATED ON `smsSendingEnabled()` AND NOT ON NODE_ENV ──────────────────────
+   * NODE_ENV === 'production' is true for `next build`, for a local production build, and for
+   * every preview deploy — none of which is the thing that causes harm. The condition that
+   * actually matters is "are we about to put these links in front of a real person", and this
+   * module already has that concept and gates real dispatch on it. Reusing it means the guard
+   * cannot misfire in local dev or in the test lanes, where sending is off by default and the
+   * localhost fallback is correct and wanted.
+   *
+   * ⚠ THROWS rather than warns, deliberately. A warning in a serverless log is a thing nobody
+   * reads until a subscriber complains they cannot unsubscribe. Refusing to build the URL fails
+   * the weekly run instead — loud, immediate, and before anything reaches a phone. The blast
+   * radius is bounded by the same flag: with sending off, nothing here can throw at all.
+   *
+   * A BLANK VALUE IS TREATED AS MISSING, because `env()` maps an empty string to undefined —
+   * and an empty variable is the easier mistake to make in a hosting dashboard than a deleted
+   * one.
+   */
+  if (smsSendingEnabled()) {
+    throw new Error(
+      'NEXT_PUBLIC_SITE_URL is unset or blank while SMS_SENDING_ENABLED is true. Refusing to ' +
+        `build links against ${SITE_URL_DEV_FALLBACK}: every short link, signup link and ` +
+        'preferences link in a real text would point at localhost — including the CASL ' +
+        'unsubscribe path, which would leave subscribers no working way to opt out.'
+    );
+  }
+  return SITE_URL_DEV_FALLBACK;
 }
 
 /**
