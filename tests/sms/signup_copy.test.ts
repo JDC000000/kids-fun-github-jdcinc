@@ -299,10 +299,14 @@ describe('the web-page strings that look reusable as SMS copy', () => {
   // the third time on this branch that copy was described from memory rather than read. These
   // assertions replace the recollection.
 
-  it('SUBMITTED_BODY really would cost double — it has a curly apostrophe', () => {
+  it('SUBMITTED_BODY really would cost double — a curly apostrophe AND an em dash', () => {
     expect(SUBMITTED_BODY).toContain('We\u2019ve');
     expect(isGsm7(SUBMITTED_BODY)).toBe(false);
-    expect(nonGsm7Characters(SUBMITTED_BODY)).toEqual(['\u2019']);
+    // STILL PINNED EXACTLY, not loosened to "contains something non-GSM-7". The em dash arrived
+    // with the resubmission sentence (2026-08-28) and this assertion is what made that visible
+    // rather than silent, which is the entire job of pinning a set instead of a count. Anything
+    // added here should have to come and change this line on purpose.
+    expect(nonGsm7Characters(SUBMITTED_BODY)).toEqual(['\u2019', '\u2014']);
   });
 
   it('PREFS_STATUS_PENDING is GSM-7 SAFE — the encoding objection never applied to it', () => {
@@ -347,5 +351,41 @@ describe('the preferences fallback page (V1 testing, round 21)', () => {
     // The same page serves someone whose subscription was deleted and who wants to return. The
     // opt-out reminder must not crowd that out.
     expect(PREFS_UNKNOWN_TOKEN_BODY).toMatch(/sign up again/i);
+  });
+});
+
+describe('the resubmission warning (post-launch item 1)', () => {
+  // An active subscriber who signs up again is reset to `pending` and stops receiving texts until
+  // they reply JOIN. Nothing said so, which made a working product look like a broken one.
+
+  it('tells a resubmitter the status resets AND what to do about it', () => {
+    expect(SUBMITTED_BODY).toContain('resubmitting will reset your status to pending');
+    // The remedy matters more than the warning: a warning with no action is just bad news.
+    expect(SUBMITTED_BODY).toContain('reply JOIN again');
+  });
+
+  it('🔴 is UNCONDITIONAL — one string, so it CANNOT become an oracle', () => {
+    // The security property, asserted structurally rather than trusted to review. Because the
+    // sentence is part of a single exported constant with no interpolation of subscriber state,
+    // there is no branch anywhere that could show it only to numbers it actually happened to —
+    // which would let the form answer "is SOMEONE ELSE'S number already active?".
+    expect(typeof SUBMITTED_BODY).toBe('string');
+    // No placeholder survived into the shipped string.
+    expect(SUBMITTED_BODY).not.toMatch(/\$\{|\[\[|%s|undefined|\bnull\b/);
+  });
+
+  it('does NOT mention the discarded preferences — Jon scoped it to the status reset', () => {
+    // A resubmission also replaces saved preferences. Deliberately unmentioned: the status reset
+    // is the loss with a remedy attached, and a second one with no remedy would only make the
+    // sentence longer and vaguer. If this ever needs to change it is a scope decision, not copy
+    // polish, so it fails here first.
+    expect(SUBMITTED_BODY).not.toMatch(/preference|interests|replaced|overwrit/i);
+  });
+
+  it('is not accidentally sendable as a text', () => {
+    // Same guard the rest of this file applies to page copy: no sender ID, no opt-out, and now
+    // demonstrably not GSM-7 clean.
+    expect(SUBMITTED_BODY.startsWith('KIDS FUN:')).toBe(false);
+    expect(isGsm7(SUBMITTED_BODY)).toBe(false);
   });
 });
