@@ -491,12 +491,21 @@ describe('GET /s/[shortId] — the origin parameter end to end', () => {
 describe('the interstitial the "gone" outcome redirects to', () => {
   const html = renderToStaticMarkup(<ActivityUnavailablePage />);
 
-  it("renders Jon's copy verbatim", () => {
-    // react-dom/server escapes the apostrophe in "that's".
+  it('renders the approved copy verbatim', () => {
+    // The escaping is kept deliberately even though the 2026-08-28 sentence has no apostrophe:
+    // it costs nothing and stops this test breaking if the copy ever regains one.
     expect(html).toContain(ACTIVITY_GONE_BODY.replace(/'/g, '&#x27;'));
   });
 
-  it('gives "let me know if you have any other questions" somewhere to be let known', () => {
+  it('🔴 still offers a route to support — now the ONLY one, since the copy dropped its lead-in', () => {
+    // This assertion mattered before and matters MORE now. The old copy said "Let us know if you
+    // have any other questions", so the page carried its own pointer to support; the 2026-08-28
+    // rewrite ("That activity has been cancelled. Sorry about that.") removed it. This separately
+    // rendered paragraph is therefore the only remaining way a parent on this page reaches help.
+    //
+    // Asserted against the RENDERED page rather than a copy constant, because that is the only
+    // form of this check that means anything — see the note in signup_copy.test.ts about an
+    // assertion that claimed this and tested an unrelated string instead.
     expect(html).toContain(`tel:${SUPPORT_PHONE_E164}`);
     expect(html).toContain(SUPPORT_PHONE_DISPLAY);
   });
