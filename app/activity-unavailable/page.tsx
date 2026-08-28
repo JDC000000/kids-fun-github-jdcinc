@@ -42,8 +42,10 @@ export default function ActivityUnavailablePage() {
       <div className="kf-gone__panel">
         <h1 className="kf-gone__heading">{ACTIVITY_GONE_HEADING}</h1>
 
-        {/* Jon's wording, verbatim. The one piece of consumer copy on this branch written by the
-            product owner rather than drafted and approved — do not smooth it. */}
+        {/* Operator-authored under Jon's explicit advance delegation — "YOU WRTIE THE ONE LINE -
+            I APPROVE YOUR WORDS" (2026-08-28). NOT his own typing, which is what this comment
+            used to claim; see consent-copy.ts for why the distinction is recorded rather than
+            smoothed. Still not a sentence a reviewer may polish. */}
         <p className="kf-gone__body">{ACTIVITY_GONE_BODY}</p>
 
         {/* "Let us know if you have any other questions" needs somewhere to be let known. Same

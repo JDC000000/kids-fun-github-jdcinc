@@ -116,45 +116,37 @@ describe('the CASL / double-opt-in copy (PRD §1.4)', () => {
 });
 
 describe('the "activity gone" interstitial (PRD §8 Q3)', () => {
-  it('is Jon\'s wording VERBATIM — do not smooth it', () => {
-    // Updated in round 22, and the update is the point: this guard held when the change arrived as
-    // a routine copy-polish item ("me" reads as off-voice against the product's "we"), and moved
-    // only when JON HIMSELF changed his own sentence — "-we APPROVED". A tone note could not move
-    // these words; the author could. Same guard, new approved text.
-    //
-    // 2026-08-28: one letter, "canceled" -> "cancelled", named specifically by Jon and applied for
-    // CONSISTENCY (see below), not for taste. His tone complaint from the same message is NOT
-    // reflected here on purpose — that rewrite is held for his own words.
-    expect(ACTIVITY_GONE_BODY).toBe(
-      "Oops, looks like that's been cancelled! Let us know if you have any other questions. Keep moving."
-    );
+  it('is the approved sentence, EXACTLY', () => {
+    // Replaced wholesale on 2026-08-28. The previous assertion guarded Jon's own typed words; this
+    // guards the Operator's words written under his explicit advance delegation ("YOU WRTIE THE ONE
+    // LINE - I APPROVE YOUR WORDS"). Different provenance, same rule: not a reviewer's to polish.
+    expect(ACTIVITY_GONE_BODY).toBe('That activity has been cancelled. Sorry about that.');
   });
 
   it('spells it "cancelled", like every other consumer surface and the status value itself', () => {
-    // This sentence was the LAST consumer-facing "canceled" in the product. The detail page renders
-    // "Cancelled" / "This occurrence was cancelled.", terms says "cancelled", the CSS tokens are
-    // --kf-cancelled-*, and the occurrence status in the database is the string 'cancelled'.
+    // Survives the rewrite. The detail page renders "Cancelled" / "This occurrence was cancelled.",
+    // terms says "cancelled", the CSS tokens are --kf-cancelled-*, and the occurrence status in the
+    // database is the string 'cancelled'.
     expect(ACTIVITY_GONE_BODY).toContain('cancelled');
     expect(ACTIVITY_GONE_BODY).not.toMatch(/\bcanceled\b/);
   });
 
-  it('🔴 still carries the parts only the AUTHOR may change', () => {
-    // The guard, restated as an assertion rather than a comment: the shape of Jon's sentence is
-    // his. A future tone pass that rewrites it will fail here, which is the intended outcome until
-    // a replacement arrives from Jon himself. Deleting this test IS the decision to drop the rule.
-    expect(ACTIVITY_GONE_BODY.startsWith('Oops,')).toBe(true);
-    expect(ACTIVITY_GONE_BODY).toContain('Let us know if you have any other questions');
-    expect(ACTIVITY_GONE_BODY.endsWith('Keep moving.')).toBe(true);
+  it('🔴 no longer claims to carry the OLD sentence\'s shape', () => {
+    // The previous guard asserted startsWith('Oops,') / 'Let us know…' / endsWith('Keep moving.').
+    // Those assertions did not fail by accident — they were replaced because the author authorised
+    // a new sentence, which is the one thing that was ever allowed to move them. Asserted in the
+    // negative so a partial revert (restoring the old copy while keeping this file) fails loudly.
+    expect(ACTIVITY_GONE_BODY).not.toContain('Oops');
+    expect(ACTIVITY_GONE_BODY).not.toContain('Keep moving');
   });
 
-  it('speaks as "we", like the rest of the product, and only that changed', () => {
-    // The one word Jon changed, asserted on its own so a future edit that also "tidied" the rest
-    // of the sentence fails loudly rather than passing the exact-match test by coincidence.
-    expect(ACTIVITY_GONE_BODY).toContain('Let us know');
-    expect(ACTIVITY_GONE_BODY).not.toContain('Let me know');
-    // Everything either side of it is untouched.
-    expect(ACTIVITY_GONE_BODY.startsWith("Oops, looks like that's been cancelled!")).toBe(true);
-    expect(ACTIVITY_GONE_BODY.endsWith('Keep moving.')).toBe(true);
+  it('drops the support lead-in without dropping the support ROUTE', () => {
+    // "Let us know if you have any other questions" is gone from the copy. That is safe only
+    // because app/activity-unavailable/page.tsx renders the support contact as its own paragraph
+    // directly beneath this text — the clause was a lead-in, not the only way to reach help. If the
+    // page ever stops rendering that paragraph, this copy no longer offers any route to support.
+    expect(ACTIVITY_GONE_BODY).not.toMatch(/let us know/i);
+    expect(SUPPORT_LINE).toContain(SUPPORT_PHONE_DISPLAY);
   });
 });
 

@@ -54,12 +54,41 @@ const nextConfig = {
      * pins the wording a subscriber agreed to; it cannot pin the page around it. Refusing to be
      * framed is what keeps that record meaning what it says.
      *
-     * ⚠ DELIBERATELY NOT A FULL CSP. `frame-ancestors` is the one directive that cannot break
-     * rendering, because it constrains who may embed the page rather than what the page may
-     * load. A real script-src/style-src policy has to be built against Next's inline runtime and
-     * nonce handling and VERIFIED IN A BROWSER, which is a separate, testable pass — shipping a
-     * guessed CSP that silently blocks the app's own scripts would be worse than the gap it
-     * closes. Tracked as follow-up, not done here.
+     * ── THE FULL POLICY (2026-08-28). MEASURED AGAINST A REAL PRODUCTION BUILD. ─────────────
+     * Every directive below was derived by building the app, serving it with `next start`, and
+     * reading what the two pages ACTUALLY load — not from Next's documentation, and not from
+     * what a CSP "should" say. Verified in Chromium afterwards with the policy live. `next dev`
+     * was deliberately NOT used as the basis: dev needs 'unsafe-eval' for HMR, so a policy that
+     * passes there says nothing about production.
+     *
+     * What the measurement found on /sms/signup and /u/{token}:
+     *   · 14 external scripts, ALL same-origin /_next/static/…       → 'self'
+     *   · 5-6 INLINE <script> blocks — Next's hydration payload      → see 'unsafe-inline' below
+     *   · ZERO inline <style> blocks and ZERO style="" attributes    → style-src needs NO
+     *     'unsafe-inline', which is the directive that usually gets weakened by reflex
+     *   · CSS loaded same-origin, but it @imports Google Fonts       → style-src + font-src
+     *   · no <img>, no <svg>, no url() beyond the font import
+     *
+     * ⚠ `script-src` CARRIES 'unsafe-inline', AND THAT IS A REAL WEAKNESS — SAID PLAINLY.
+     * Next 14's App Router inlines its hydration payload as `self.__next_f.push([...])`, and the
+     * content differs per request, so hashes are impossible. The strong alternative is a
+     * per-request nonce, which on this version has to be minted in middleware.ts — a file that
+     * exists for an unrelated analytics concern and is OWNED BY ANOTHER WORKSTREAM. Reaching
+     * into it to add nonce plumbing is a bigger and more coupled change than this pass was
+     * scoped for.
+     *   So be honest about what this buys: it BLOCKS an injected <script src="https://evil…">
+     *   and any eval'd code, and it does NOT block injected inline script. That is a partial
+     *   win, not XSS protection. Anyone who reads "CSP" here and assumes the latter is being
+     *   misled, which is why it is written down.
+     *
+     * `connect-src` allows Sentry because instrumentation-client.ts initialises the browser SDK
+     * on every page. ⚠ The production DSN's host could NOT be verified from here — .env.example
+     * holds names only, correctly — so this uses Sentry's own domain wildcard. If the real DSN
+     * points somewhere else, error reporting from these two routes stops SILENTLY. Flagged for
+     * the Operator to confirm against the live DSN.
+     *
+     * No 'unsafe-eval' anywhere: the production bundle does not need it, which the browser check
+     * confirms rather than assumes.
      *
      * HSTS is a no-op over plain HTTP (the local harness) and takes effect in production, which
      * is the only place it matters. No `preload`, and no `includeSubDomains`: both are
@@ -67,8 +96,21 @@ const nextConfig = {
      * effectively irreversible. Worth having on the signup form specifically because that page
      * is frequently the FIRST one a subscriber ever opens — the earliest chance to set it.
      */
+    const contentSecurityPolicy = [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data:",
+      'connect-src \'self\' https://*.sentry.io',
+    ].join('; ');
+
     const antiFramingAndSniffing = [
-      { key: 'content-security-policy', value: "frame-ancestors 'none'" },
+      { key: 'content-security-policy', value: contentSecurityPolicy },
       { key: 'x-frame-options', value: 'DENY' },
       { key: 'x-content-type-options', value: 'nosniff' },
       { key: 'strict-transport-security', value: 'max-age=31536000' },

@@ -57,13 +57,31 @@ describe('hidesAccountNav — a DIFFERENT question from isSmsSurface', () => {
     expect(hidesAccountNav('/activity/anything')).toBe(true);
   });
 
-  it('⚠ does NOT hide on /search — it carries a signed-in feature, pending a decision', () => {
-    // SaveSearchButton has signed-in/signed-out/session-lost states and starts the OAuth flow, so
-    // hiding the nav there would remove the only sign-out control from a page that still offers an
-    // account feature. Also: no SMS path lands on /search — a text link resolves to /activity/{id}.
-    // If this is later ruled to hide too, change the list, not this test's reasoning.
-    expect(hidesAccountNav('/search')).toBe(false);
-    expect(hidesAccountNav('/search?q=swim')).toBe(false);
+  it('🎯 ALSO hides on /search — Jon overrode the recommendation (2026-08-28)', () => {
+    // This test previously asserted the OPPOSITE, and said "if this is later ruled to hide too,
+    // change the list, not this test's reasoning." That is exactly what happened, so the reasoning
+    // is preserved below rather than deleted with the assertion.
+    expect(hidesAccountNav('/search')).toBe(true);
+    expect(hidesAccountNav('/search?q=swim')).toBe(true);
+  });
+
+  it('⚠ and that leaves /search with NO sign-out control — accepted, not overlooked', () => {
+    // SaveSearchButton has signed-in / signed-out / session-lost states and starts the OAuth flow,
+    // so a signed-in parent can still save a search here while the nav that would let them sign out
+    // is hidden. Jon ruled with that cost in front of him and the Operator confirmed closing it is
+    // not a precondition.
+    //   Asserted so the gap is a RECORDED decision rather than folklore: if someone later "fixes"
+    //   it by dropping /search from the list, this test tells them what they are undoing and that
+    //   the fix belongs in /search's own UI instead.
+    expect(hidesAccountNav('/search')).toBe(true);
+  });
+
+  it('🔴 /search is nav-hidden but is STILL NOT an SMS surface', () => {
+    // The two-list design earning its keep. Until now both questions had the same answer for every
+    // path; /search is the first where they genuinely diverge. One list could not have expressed
+    // this without asserting something false about the shape of the product.
+    expect(hidesAccountNav('/search')).toBe(true);
+    expect(isSmsSurface('/search')).toBe(false);
   });
 
   it('leaves ordinary web pages alone', () => {

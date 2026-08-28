@@ -42,6 +42,8 @@ async function loadMatcher(): Promise<(source: string) => RegExp> {
 
 /** The route we are protecting, and routes that must not be caught by accident. */
 const HUB_PATH = '/u/alice-token-0123456789abcdef';
+/** The other SMS-facing page, which shares the same policy. */
+const SIGNUP = '/sms/signup';
 
 async function rules(): Promise<HeaderRule[]> {
   const config = await loadConfig();
@@ -62,6 +64,21 @@ async function headersFor(path: string): Promise<Map<string, string>> {
 }
 
 const hubHeaders = () => headersFor(HUB_PATH);
+
+/**
+ * The CSP as a directive → value map, so assertions can name one directive instead of matching
+ * substrings of a 300-character string (where "style-src 'self'" also matches inside
+ * "style-src-elem", and a missing directive looks identical to a present-but-empty one).
+ */
+async function csp(path: string): Promise<Map<string, string>> {
+  const raw = (await headersFor(path)).get('content-security-policy') ?? '';
+  const out = new Map<string, string>();
+  for (const part of raw.split(';')) {
+    const [name, ...rest] = part.trim().split(/\s+/);
+    if (name) out.set(name.toLowerCase(), rest.join(' '));
+  }
+  return out;
+}
 
 describe('/u/[preferencesToken] response headers', () => {
   it('sets Referrer-Policy: no-referrer — the header that closes the token leak', async () => {
@@ -89,7 +106,7 @@ describe('/u/[preferencesToken] response headers', () => {
     // generations of browser, so dropping either one silently narrows the protection to a subset
     // of visitors — which is the kind of regression nothing else would surface.
     const h = await hubHeaders();
-    expect(h.get('content-security-policy')).toBe("frame-ancestors 'none'");
+    expect((await csp(HUB_PATH)).get('frame-ancestors')).toBe("'none'");
     expect(h.get('x-frame-options')).toBe('DENY');
   });
 
@@ -109,17 +126,63 @@ describe('/u/[preferencesToken] response headers', () => {
     expect(hsts).not.toContain('includeSubDomains');
   });
 
-  it('the CSP is frame-ancestors ONLY — a guessed script-src must not appear by accident', async () => {
-    // Recorded as a decision, not an oversight. `frame-ancestors` is the one directive that cannot
-    // break rendering, because it constrains who may EMBED the page rather than what the page may
-    // LOAD. A script-src/style-src policy has to be built against Next's inline runtime and nonce
-    // handling and verified in a real browser; a guessed one silently breaks the app's own scripts,
-    // which is worse than the gap it closes.
-    //
-    // So this assertion is a TRIPWIRE, not a ceiling: when the real CSP pass happens it SHOULD fail
-    // here, and whoever does it should update this test having verified the policy in a browser.
-    const csp = (await hubHeaders()).get('content-security-policy') ?? '';
-    expect(csp).not.toMatch(/script-src|style-src|default-src/);
+  // ═══ THE FULL POLICY (2026-08-28) ═══
+  // The tripwire that used to live here asserted the CSP was frame-ancestors ONLY, and it did its
+  // job: it failed the moment the real policy landed. Replaced with assertions on the actual
+  // directives rather than loosened, which was the whole point of writing it as an exact check.
+  //
+  // Every value below was MEASURED against a production build served by `next start` and verified
+  // in Chromium, not taken from documentation. See next.config.mjs for the measurements.
+
+  it('locks each directive to the value that was actually verified', async () => {
+    const d = await csp(HUB_PATH);
+    expect(d.get('default-src')).toBe("'self'");
+    expect(d.get('base-uri')).toBe("'self'");
+    expect(d.get('object-src')).toBe("'none'");
+    expect(d.get('form-action')).toBe("'self'");
+    expect(d.get('frame-ancestors')).toBe("'none'");
+  });
+
+  it("🔴 style-src does NOT carry 'unsafe-inline' — the measurement earned that", async () => {
+    // The browser check found ZERO inline <style> blocks and ZERO style="" attributes on both
+    // pages, so this directive can be strict. It is the one that gets weakened by reflex, usually
+    // by someone adding a single inline style and loosening the policy to match. If that happens,
+    // this test should be the thing that argues back.
+    const styleSrc = (await csp(HUB_PATH)).get('style-src') ?? '';
+    expect(styleSrc).not.toContain("'unsafe-inline'");
+    expect(styleSrc).toContain("'self'");
+    // Google Fonts is permitted because the app's CSS intends to @import it. (That @import is
+    // currently a no-op for an unrelated, pre-existing reason — it is placed after other rules,
+    // which the CSS spec says browsers must ignore. Allowing the origin anyway means fixing THAT
+    // bug will not then fail a second time on this policy.)
+    expect(styleSrc).toContain('https://fonts.googleapis.com');
+  });
+
+  it("🔴 NOTHING anywhere may carry 'unsafe-eval'", async () => {
+    // The production bundle demonstrably does not need it — verified in a browser, where the app
+    // hydrated and stayed interactive with no eval permitted. `next dev` DOES need it for HMR,
+    // which is exactly why the policy was measured against a production build; a policy validated
+    // in dev would have carried this permanently for no reason.
+    const raw = (await headersFor(HUB_PATH)).get('content-security-policy') ?? '';
+    expect(raw).not.toContain('unsafe-eval');
+  });
+
+  it("documents that script-src 'unsafe-inline' is a KNOWN weakness, not an oversight", async () => {
+    // Asserted in the POSITIVE, deliberately. Next 14's App Router inlines its hydration payload
+    // and the content differs per request, so hashes are impossible and the strong fix is a
+    // per-request nonce minted in middleware.ts — a file owned by another workstream.
+    //   Removing this without doing that work would break the app in production, so the assertion
+    //   guards against a well-meaning "tighten the CSP" change. When nonces do land, this test
+    //   changes together with them, which is the correct coupling.
+    expect((await csp(HUB_PATH)).get('script-src')).toBe("'self' 'unsafe-inline'");
+  });
+
+  it('applies the SAME policy to both routes', async () => {
+    // One page renders a child's data, the other captures consent. A policy that drifted between
+    // them would mean the weaker one silently sets the real security posture.
+    const hub = await headersFor(HUB_PATH);
+    const signup = await headersFor(SIGNUP);
+    expect(signup.get('content-security-policy')).toBe(hub.get('content-security-policy'));
   });
 
   it('the rule matches the dynamic segment, and only it', async () => {
@@ -147,7 +210,6 @@ describe('/u/[preferencesToken] response headers', () => {
 });
 
 describe('/sms/signup response headers — the page where CONSENT is captured', () => {
-  const SIGNUP = '/sms/signup';
 
   it('refuses to be framed, by both mechanisms', async () => {
     // The consent argument, not the clickjacking one. A signup form rendered inside somebody
@@ -155,7 +217,7 @@ describe('/sms/signup response headers — the page where CONSENT is captured', 
     // the express consent CASL requires a record of. `consent_text_version` pins the WORDING a
     // parent agreed to; nothing can pin the page around it except refusing to be embedded.
     const h = await headersFor(SIGNUP);
-    expect(h.get('content-security-policy')).toBe("frame-ancestors 'none'");
+    expect((await csp(SIGNUP)).get('frame-ancestors')).toBe("'none'");
     expect(h.get('x-frame-options')).toBe('DENY');
     expect(h.get('x-content-type-options')).toBe('nosniff');
     expect(h.get('strict-transport-security')).toBe('max-age=31536000');
