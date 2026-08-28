@@ -177,6 +177,96 @@ describe('createPendingSubscriber', () => {
     expect(row.consecutive_empty_weeks).toBe(0);
   });
 
+  // ═══ WHAT A RESUBMISSION OVERWRITES (the `prior` CTE, commit 62f3d1c) ═══
+  // These two flags exist so a resubmitting parent can be warned about a loss they cannot
+  // currently see. NOTHING CONSUMES THEM YET — the warning's copy is blocked on a leak-vector
+  // ruling — which is exactly why they need coverage now: unconsumed logic is what rots silently,
+  // and both flags depend on a `!inserted` guard whose failure mode is INVISIBLE (it reports every
+  // brand-new signup as having replaced preferences it never had).
+
+  it('reports NOTHING replaced for a brand-new number — the !inserted guard', async () => {
+    // 🔴 THE GUARD'S WHOLE PURPOSE. On the INSERT branch the `prior` CTE selects zero rows, so
+    // every `IS DISTINCT FROM` against it answers TRUE. Without `!inserted` this returns
+    // preferencesReplaced: true for a first-time signup that replaced nothing whatsoever — and it
+    // would look completely correct in the SQL. Drop the guard and only this test notices.
+    const result = await createPendingSubscriber(signup(), { dryRun: false });
+    expect(result.outcome).toBe('created');
+    expect(result.wasActive).toBe(false);
+    expect(result.preferencesReplaced).toBe(false);
+  });
+
+  it('reports preferences REPLACED when a resubmission changes them', async () => {
+    const s = signup();
+    await createPendingSubscriber(s, { dryRun: false });
+    const second = await createPendingSubscriber(
+      { ...s, categoryInterests: ['public_swim', 'library'], birthYears: [2018] },
+      { dryRun: false }
+    );
+    expect(second.outcome).toBe('reactivated');
+    expect(second.preferencesReplaced).toBe(true);
+  });
+
+  it('reports preferences NOT replaced when a resubmission is identical', async () => {
+    // The double-tapped submit. It is still an UPDATE — so `inserted` is false and the row is
+    // rewritten — but nothing the parent cares about changed, and warning them would be a lie.
+    // This is the case that a `!inserted`-only implementation gets wrong.
+    const s = signup();
+    await createPendingSubscriber(s, { dryRun: false });
+    const second = await createPendingSubscriber(s, { dryRun: false });
+    expect(second.outcome).toBe('reactivated');
+    expect(second.preferencesReplaced).toBe(false);
+  });
+
+  it('detects a replacement in EACH of the three compared fields independently', async () => {
+    // Three ORed `IS DISTINCT FROM` terms. A typo in any one of them still passes a test that only
+    // ever varies interests, so each field is varied on its own against an otherwise identical
+    // resubmission.
+    for (const change of [
+      { postalCode: 'V6B 1A1' },
+      { birthYears: [2014] },
+      { categoryInterests: ['library'] },
+    ]) {
+      const s = signup();
+      await createPendingSubscriber(s, { dryRun: false });
+      const second = await createPendingSubscriber({ ...s, ...change }, { dryRun: false });
+      expect(second.preferencesReplaced, `changing ${Object.keys(change)[0]}`).toBe(true);
+    }
+  });
+
+  it('reports wasActive ONLY for a subscriber who had confirmed — the silent downgrade', async () => {
+    // The defect Jon reported: an ACTIVE subscriber who resubmits is knocked back to `pending` and
+    // stops receiving texts until they reply JOIN again. `wasActive` is how the product can know
+    // that happened. A still-pending resubmitter loses nothing, so it must stay false for them.
+    const pendingOne = signup();
+    await createPendingSubscriber(pendingOne, { dryRun: false });
+    const stillPending = await createPendingSubscriber(pendingOne, { dryRun: false });
+    expect(stillPending.wasActive).toBe(false);
+
+    const activeOne = signup();
+    const created = await createPendingSubscriber(activeOne, { dryRun: false });
+    await query(`UPDATE sms_consent SET status='active', confirmed_timestamp=now() WHERE id=$1`, [
+      created.subscriberId,
+    ]);
+    const resubmitted = await createPendingSubscriber(activeOne, { dryRun: false });
+    expect(resubmitted.wasActive).toBe(true);
+    // And the downgrade it is reporting is real, not theoretical.
+    const [row] = await query<Record<string, unknown>>(
+      `SELECT status FROM sms_consent WHERE id = $1`,
+      [created.subscriberId]
+    );
+    expect(row.status).toBe('pending');
+  });
+
+  it('reports wasActive for a STOPPED subscriber as false — they were not receiving texts', async () => {
+    const s = signup();
+    const created = await createPendingSubscriber(s, { dryRun: false });
+    await query(`UPDATE sms_consent SET status='stopped', stopped_at=now() WHERE id=$1`, [
+      created.subscriberId,
+    ]);
+    const second = await createPendingSubscriber(s, { dryRun: false });
+    expect(second.wasActive).toBe(false);
+  });
+
   it('writes NOTHING on a dry run', async () => {
     const s = signup();
     const result = await createPendingSubscriber(s, { dryRun: true });
