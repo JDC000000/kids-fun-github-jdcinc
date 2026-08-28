@@ -398,44 +398,48 @@ export const PREFS_UNKNOWN_TOKEN_BODY =
 // page's copy, and the outcome now has somewhere of its own to go.
 
 /**
- * Jon's wording, VERBATIM. Do not smooth it — the voice is the point, and it is the one piece of
- * copy on this branch written by the product owner rather than drafted and approved.
+ * ═══ PROVENANCE CHANGED ON 2026-08-28. READ THIS BEFORE EDITING. ═══
+ * These are NOT Jon's typed words any more, and the comment that used to say so would now be
+ * false. They are the OPERATOR'S words, written under Jon's explicit advance delegation:
  *
- * ── "me" BECAME "us" IN ROUND 22, AND THE GUARD DID ITS JOB ─────────────────────────────
- * V1 testing flagged the first person as off-voice: everything else in the product says "we", and
- * a lone "me" implies one person behind the number. It was correctly NOT changed when it came
- * through as a routine copy-polish item, because this sentence is the product owner's own and this
- * comment said so. JON THEN CHANGED IT HIMSELF — "-we APPROVED", his own suggested phrasing — so
- * the edit is his, not ours. That is the whole distinction the guard exists to enforce, and it
- * held: a tone note could not move these words, and the author could.
+ *     "NO - YOU WRTIE THE ONE LINE - I APPROVE YOUR WORDS"   — Jon, verbatim, typo preserved
  *
- * One word. Nothing else in the sentence was touched.
+ * That is a different thing from the old note and it is written down as a different thing,
+ * because "the author typed this" and "the author delegated this and pre-approved it" carry
+ * different weight for anyone deciding later whether they may touch it. The answer is the same
+ * either way — they may not — but the reason is not, and a comment that overstates who typed a
+ * sentence is the kind of thing that survives for years.
  *
- * ── 2026-08-28, POST-LAUNCH: THE SPELLING, AND ONLY THE SPELLING ────────────────────────
- * Jon raised this page again after launch with two complaints: the tone reads off-brand, and
- * "canceled" should be "cancelled". THE TWO ARE NOT THE SAME KIND OF NOTE and they are not
- * treated the same way here.
+ * Same mechanism as the Q5 STOP-recovery sentence above: Operator-authored, Jon-approved,
+ * recorded as his. This file now contains both patterns, deliberately.
  *
- * The spelling is applied. It is a SPECIFIC change named by the author himself, and it is the
- * only consumer-facing "canceled" left in the product: the detail page renders "Cancelled" and
- * "This occurrence was cancelled.", terms/page.tsx says "cancelled", the CSS tokens are
- * --kf-cancelled-*, and the occurrence status value in the database is literally 'cancelled'.
- * This sentence was the lone outlier, so the fix is consistency, not taste.
- *   (The other "canceled" spellings in this repo are NOT copy and must not be swept up with it:
- *    Twilio's delivery-status enum and Trumba's `canceled` feed field are wire values. A
- *    find-and-replace across the repo would break both.)
+ * ── THE HISTORY THAT LED HERE, KEPT BECAUSE THE GUARD IS THE POINT ──────────────────────
+ * Round 22: V1 testing flagged the first person ("me") as off-voice. The change was correctly
+ * REFUSED as a routine copy-polish item, because the sentence was the product owner's own. Jon
+ * then changed it himself — "-we APPROVED". A tone note could not move these words; the author
+ * could.
  *
- * THE TONE REWRITE IS DELIBERATELY NOT DONE. "The tone is off" is exactly the note this guard
- * refused in round 22, and the guard was right to refuse it: what makes these words legitimate
- * is that they are the author's, so a rewrite drafted here would fail for the same reason the
- * "me"/"us" polish failed — no matter how much better it reads. It moved in round 22 only when
- * JON WROTE THE NEW WORDS HIMSELF. That is the bar, and "Jon says he dislikes it" does not
- * clear it: naming a problem is not the same act as writing the replacement.
- * ⇒ Held for Jon's own replacement sentence. Candidates were offered for him to pick or edit;
- *   none of them may be applied on a reviewer's say-so, including mine.
+ * 2026-08-28, post-launch: Jon raised the page again with two complaints — off-brand tone, and
+ * "canceled" vs "cancelled". They were deliberately NOT treated the same way. The spelling was
+ * applied (a specific substitution named by the author, and the last consumer-facing "canceled"
+ * in a product that says "cancelled" everywhere, including the database status value). The TONE
+ * REWRITE WAS REFUSED, on the round-22 precedent: naming a problem is not the act of writing the
+ * replacement, and a rewrite drafted by a reviewer would have failed for exactly the reason the
+ * "me"/"us" polish failed, however much better it read.
+ *   That refusal is what produced this sentence. Asked for his words, Jon delegated authorship
+ *   instead — which is the one move that clears the bar without him typing anything. The guard
+ *   was not bypassed; it was satisfied.
+ *
+ * ⚠ THE SPELLING FIX IS SUPERSEDED, NOT LAYERED. The whole sentence was replaced, so ab6b4c3's
+ * one-letter change no longer exists as such — "cancelled" survives only because the new sentence
+ * happens to use the same word. Do not read the two commits as cumulative.
+ *
+ * ⚠ AND THE SUPPORT LINE IS NOT LOST. The old sentence carried "Let us know if you have any other
+ * questions", which is gone. Nothing is dropped: app/activity-unavailable/page.tsx already renders
+ * the support contact as its own paragraph directly beneath this one, so the removed clause was a
+ * lead-in to something still on the page, not the only route to it.
  */
-export const ACTIVITY_GONE_BODY =
-  "Oops, looks like that's been cancelled! Let us know if you have any other questions. Keep moving.";
+export const ACTIVITY_GONE_BODY = 'That activity has been cancelled. Sorry about that.';
 
 /**
  * "Let us know if you have any other questions" needs somewhere to be let known. It points at the
