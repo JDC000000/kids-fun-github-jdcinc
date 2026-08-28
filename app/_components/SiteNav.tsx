@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AccountNav } from './AccountNav';
-import { isSmsSurface } from '@/lib/sms/surfaces';
+import { hidesAccountNav } from '@/lib/sms/surfaces';
 import {
   SEARCH_SHORTCUTS,
   destinationHref,
@@ -112,7 +112,7 @@ export function SiteNav() {
           still be able to reach the catalogue. It is the ACCOUNT touchpoint that does not belong,
           not the navigation.
         */}
-        {!isSmsSurface(pathname) && <AccountNav />}
+        {!hidesAccountNav(pathname) && <AccountNav />}
       </div>
     </header>
   );

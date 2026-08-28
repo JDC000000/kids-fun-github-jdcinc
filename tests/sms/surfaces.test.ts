@@ -4,7 +4,7 @@
 // account and offering one invites a data relationship the product deliberately does not need
 // (Jon: "let's emphasize capturing the least amount of data we need to provide value").
 import { describe, expect, it } from 'vitest';
-import { isSmsSurface, SMS_SURFACE_PREFIXES } from '@/lib/sms/surfaces';
+import { isSmsSurface, hidesAccountNav, SMS_SURFACE_PREFIXES } from '@/lib/sms/surfaces';
 
 describe('isSmsSurface', () => {
   it('matches every anonymous SMS page', () => {
@@ -42,5 +42,44 @@ describe('isSmsSurface', () => {
     expect(SMS_SURFACE_PREFIXES).toContain('/sms');
     expect(SMS_SURFACE_PREFIXES).toContain('/u/');
     expect(SMS_SURFACE_PREFIXES).toContain('/activity-unavailable');
+  });
+});
+
+describe('hidesAccountNav — a DIFFERENT question from isSmsSurface', () => {
+  it('hides on every SMS surface, as before', () => {
+    for (const path of ['/sms/signup', '/u/abc123', '/activity-unavailable']) {
+      expect(hidesAccountNav(path), path).toBe(true);
+    }
+  });
+
+  it('🎯 also hides on /activity/{id} — the page a weekly-text link resolves to (Jon 2026-08-28)', () => {
+    expect(hidesAccountNav('/activity/5e300000-0000-4000-8000-000000000001')).toBe(true);
+    expect(hidesAccountNav('/activity/anything')).toBe(true);
+  });
+
+  it('⚠ does NOT hide on /search — it carries a signed-in feature, pending a decision', () => {
+    // SaveSearchButton has signed-in/signed-out/session-lost states and starts the OAuth flow, so
+    // hiding the nav there would remove the only sign-out control from a page that still offers an
+    // account feature. Also: no SMS path lands on /search — a text link resolves to /activity/{id}.
+    // If this is later ruled to hide too, change the list, not this test's reasoning.
+    expect(hidesAccountNav('/search')).toBe(false);
+    expect(hidesAccountNav('/search?q=swim')).toBe(false);
+  });
+
+  it('leaves ordinary web pages alone', () => {
+    for (const path of ['/', '/privacy', '/terms', '/account']) {
+      expect(hidesAccountNav(path), path).toBe(false);
+    }
+  });
+
+  it('does not sweep in a lookalike route', () => {
+    // Same trailing-slash discipline as isSmsSurface: '/activity/' must not match '/activities'.
+    expect(hidesAccountNav('/activities')).toBe(false);
+    expect(hidesAccountNav('/updates')).toBe(false);
+  });
+
+  it('isSmsSurface still means what its name says — /activity is NOT an SMS surface', () => {
+    expect(isSmsSurface('/activity/abc')).toBe(false);
+    expect(hidesAccountNav('/activity/abc')).toBe(true);
   });
 });
