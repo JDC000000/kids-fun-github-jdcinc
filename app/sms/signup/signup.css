@@ -1,0 +1,250 @@
+/* app/sms/signup/signup.css — the public SMS signup form.
+ *
+ * DRAFT (SMS pivot). Co-located with the page, like app/terms/terms.css.
+ *
+ * Every colour, radius and space is a --kf-* token from app/design-tokens.css, never a literal.
+ * That is what makes this page dark-mode aware and AA-contrasting for free, and it matters more
+ * than usual here: a screenshot of this form is intended as opt-in evidence for the Twilio
+ * Toll-Free Verification submission, so it has to look like the product rather than like a
+ * scaffold someone hand-styled.
+ *
+ * Mobile-first and single-column throughout. Every parent reaching this page arrives from a QR
+ * code, a text message or an email on their phone — there is no desktop-primary path to it — and
+ * the form's whole promise is that it is quick on a phone.
+ */
+
+.kf-sms-signup {
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  padding: var(--kf-space-5) var(--kf-space-4) var(--kf-space-8);
+  font-family: var(--kf-font-ui);
+  color: var(--kf-ink);
+}
+
+.kf-sms-signup__panel {
+  max-width: 34rem;
+  margin: 0 auto;
+  background: var(--kf-surface);
+  border-radius: var(--kf-r-card);
+  padding: var(--kf-space-5);
+  box-shadow: var(--kf-e-100);
+}
+
+.kf-sms-signup__heading {
+  font-size: 1.5rem;
+  line-height: 1.25;
+  margin: 0 0 var(--kf-space-2);
+  color: var(--kf-ink);
+}
+
+.kf-sms-signup__intro {
+  margin: 0 0 var(--kf-space-5);
+  color: var(--kf-ink-secondary);
+  line-height: 1.6;
+}
+
+.kf-sms-signup__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-5);
+}
+
+.kf-sms-signup__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+}
+
+/* A fieldset needs its browser defaults stripped before it can join the flex column. */
+.kf-sms-signup__fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.kf-sms-signup__label {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--kf-ink);
+  padding: 0; /* legend */
+}
+
+.kf-sms-signup__help {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--kf-ink-muted);
+}
+
+/* The sparse-municipality warning. Informational blue, NOT the danger palette: "some weeks may
+ * have fewer picks" is an expectation being set, not a mistake being reported, and dressing it
+ * as an error would talk a parent out of a product that does work in their area. */
+.kf-sms-signup__notice {
+  margin: 0;
+  background: var(--kf-info-bg);
+  color: var(--kf-info-text);
+  border-radius: var(--kf-r-control);
+  padding: var(--kf-space-3);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.kf-sms-signup__err {
+  margin: 0;
+  color: var(--kf-danger);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+/* ── Children rows ── */
+.kf-sms-signup__child {
+  display: flex;
+  align-items: center;
+  gap: var(--kf-space-3);
+}
+
+.kf-sms-signup__child-label {
+  flex: 0 0 4.5rem;
+  font-size: 0.875rem;
+  color: var(--kf-ink-secondary);
+}
+
+/* Narrow: the field holds at most two digits, and a full-width box invites a birth year. */
+.kf-sms-signup__child-input {
+  flex: 0 0 5.5rem;
+}
+
+/* ── Interests ── */
+.kf-sms-signup__interests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-2) var(--kf-space-4);
+}
+
+.kf-sms-signup__interest,
+.kf-sms-signup__consent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--kf-space-2);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+/* 20px checkboxes with generous hit areas — WCAG 2.5.8, and these are the two controls on the
+ * page a parent must be able to hit accurately on a phone. */
+.kf-sms-signup__interest input,
+.kf-sms-signup__consent input {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  flex: 0 0 20px;
+  accent-color: var(--kf-leaf);
+}
+
+/* The consent checkbox. Bordered and on its own subtle surface so it reads as a distinct act,
+ * not as the last item in the list of fields — a reviewer looking at a screenshot should be able
+ * to see at a glance that consent was requested separately and was not pre-ticked. */
+.kf-sms-signup__consent {
+  background: var(--kf-surface-subtle);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-control);
+  padding: var(--kf-space-4);
+  font-size: 0.9375rem;
+  color: var(--kf-ink);
+}
+
+.kf-sms-signup__next {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--kf-ink-secondary);
+}
+
+.kf-sms-signup__disclosures {
+  margin: var(--kf-space-5) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--kf-hairline);
+  padding-top: var(--kf-space-4);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--kf-ink-muted);
+}
+
+.kf-sms-signup__legal {
+  margin: var(--kf-space-3) 0 0;
+  font-size: 0.8125rem;
+  color: var(--kf-ink-muted);
+}
+
+.kf-sms-signup__legal a {
+  color: var(--kf-anchor);
+}
+
+.kf-sms-signup__version {
+  margin: var(--kf-space-2) 0 0;
+  font-size: 0.75rem;
+  color: var(--kf-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Submitted ── */
+.kf-sms-signup__done {
+  background: var(--kf-confirmed-bg);
+  color: var(--kf-confirmed-text);
+  border-radius: var(--kf-r-control);
+  padding: var(--kf-space-5);
+  line-height: 1.6;
+}
+
+.kf-sms-signup__done-heading {
+  margin: 0 0 var(--kf-space-2);
+  font-size: 1.25rem;
+}
+
+.kf-sms-signup__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── CASL sender identification (§1.4). ──
+ * Quiet but not hidden: this is the block a regulator or a Toll-Free Verification reviewer looks
+ * for, so it must be legible and unambiguous, while not competing with the controls above it.
+ * It replaced a loud amber draft banner that stood here while these facts did not exist. */
+.kf-sms-signup__identity {
+  margin-top: var(--kf-space-5);
+  padding-top: var(--kf-space-4);
+  border-top: 1px solid var(--kf-hairline);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--kf-ink-muted);
+}
+
+.kf-sms-signup__identity-lead {
+  margin: 0 0 var(--kf-space-1);
+  font-weight: 600;
+}
+
+/* <address> italicises by default in every browser; a mailing address on a compliance block reads
+ * better upright, and the semantic element is still the right one. */
+.kf-sms-signup__identity-block {
+  font-style: normal;
+  margin: 0 0 var(--kf-space-2);
+}
+
+.kf-sms-signup__identity-support {
+  margin: 0;
+}
+
+.kf-sms-signup__identity-support a {
+  color: var(--kf-anchor);
+}

@@ -135,6 +135,11 @@ export const DB_INTEGRATION_SUITES = [
   'tests/scheduler/job-dispatch-db.test.ts',
   'tests/scheduler/robots-override-db.test.ts',
   'tests/scheduler/shutdown-sql-db.test.ts',
+  // Stage A: the first suites on this branch that write a real sms_consent row.
+  'tests/sms/signup_persistence-db.test.ts',
+  'tests/sms/send_log-db.test.ts',
+  'tests/sms/preferences_weekly-db.test.ts',
+  'tests/sms/click_through-db.test.ts',
   'tests/search/postgres-repository.test.ts',
   'tests/snapshot/catalogue-shape.test.ts',
   'tests/snapshot/policy-schema-guard.test.ts',
