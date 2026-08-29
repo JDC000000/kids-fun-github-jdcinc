@@ -22,7 +22,6 @@
  * (D12). Raw palette tokens (e.g. --kf-leaf) are fixed brand values and never flip.
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 
 :root {
   /* ── Palette — production token names (kids-fun.json). Fixed brand values. ── */
@@ -98,7 +97,10 @@
   --kf-anchor-text: var(--kf-warm-paper);
 
   /* ── Typography ── */
-  --kf-font-ui: 'Manrope', 'Avenir Next', 'Segoe UI', Arial, sans-serif;
+  /* Manrope comes from next/font (app/layout.tsx), self-hosted and applied as a variable on
+   * <html>. It was previously an @import in this file that NEVER LOADED — see layout.tsx for why.
+   * The rest of the stack is unchanged and still does the work if the font fails. */
+  --kf-font-ui: var(--kf-font-manrope), 'Avenir Next', 'Segoe UI', Arial, sans-serif;
   --kf-font-display: 'Fraunces', Georgia, serif; /* optional display alt (D1) — not the default */
   --kf-font-feature: 'tnum' 1, 'lnum' 1; /* D2: tabular lining numerals for data */
 

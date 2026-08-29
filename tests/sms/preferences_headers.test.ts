@@ -151,11 +151,23 @@ describe('/u/[preferencesToken] response headers', () => {
     const styleSrc = (await csp(HUB_PATH)).get('style-src') ?? '';
     expect(styleSrc).not.toContain("'unsafe-inline'");
     expect(styleSrc).toContain("'self'");
-    // Google Fonts is permitted because the app's CSS intends to @import it. (That @import is
-    // currently a no-op for an unrelated, pre-existing reason — it is placed after other rules,
-    // which the CSS spec says browsers must ignore. Allowing the origin anyway means fixing THAT
-    // bug will not then fail a second time on this policy.)
-    expect(styleSrc).toContain('https://fonts.googleapis.com');
+  });
+
+  it("🔴 style-src and font-src are 'self' ONLY — no third-party font origins", async () => {
+    // TIGHTENED 2026-08-28 when Manrope moved to next/font. The policy used to allow
+    // fonts.googleapis.com and fonts.gstatic.com for an @import that had never actually loaded;
+    // self-hosting removed the request, so the allowance went with it.
+    //
+    // Asserted as an ABSENCE because the easy regression is re-adding a Google Fonts @import and
+    // "fixing" the resulting CSP error by widening the policy back out. The correct fix is
+    // next/font, which self-hosts and needs no CSP change — so this test should be what makes
+    // someone choose between those two rather than take the quicker-looking one.
+    const d = await csp(HUB_PATH);
+    expect(d.get('style-src')).toBe("'self'");
+    expect(d.get('font-src')).toBe("'self'");
+    const raw = (await headersFor(HUB_PATH)).get('content-security-policy') ?? '';
+    expect(raw).not.toContain('fonts.googleapis.com');
+    expect(raw).not.toContain('fonts.gstatic.com');
   });
 
   it("🔴 NOTHING anywhere may carry 'unsafe-eval'", async () => {

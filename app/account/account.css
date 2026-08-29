@@ -4,8 +4,6 @@
  * FUN palette + Manrope from the Visual Blueprint, but stays plain: this is a
  * lower-visibility, functional utility page. */
 
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
-
 .kf-account-page {
   --leaf: #48c774;
   --evergreen: #183b24;
@@ -24,7 +22,10 @@
   padding: 2rem 1rem 4rem;
   background: var(--warm-paper);
   color: var(--forest-ink);
-  font-family: 'Manrope', 'Avenir Next', 'Segoe UI', Arial, sans-serif;
+  /* Was a hardcoded duplicate of --kf-font-ui's stack, plus its own @import above — a SECOND
+   * definition of the same intent that a token-only fix would have missed, leaving this page
+   * pointing at a Manrope that still never loaded. Now the one token, like everywhere else. */
+  font-family: var(--kf-font-ui);
   font-feature-settings: 'tnum' 1, 'lnum' 1;
   -webkit-font-smoothing: antialiased;
 }

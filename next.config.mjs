@@ -66,7 +66,8 @@ const nextConfig = {
      *   · 5-6 INLINE <script> blocks — Next's hydration payload      → see 'unsafe-inline' below
      *   · ZERO inline <style> blocks and ZERO style="" attributes    → style-src needs NO
      *     'unsafe-inline', which is the directive that usually gets weakened by reflex
-     *   · CSS loaded same-origin, but it @imports Google Fonts       → style-src + font-src
+     *   · CSS loaded same-origin; its Google Fonts @import never worked and is now gone
+     *     (next/font, 2026-08-28) → style-src and font-src are 'self' only
      *   · no <img>, no <svg>, no url() beyond the font import
      *
      * ⚠ `script-src` CARRIES 'unsafe-inline', AND THAT IS A REAL WEAKNESS — SAID PLAINLY.
@@ -103,8 +104,15 @@ const nextConfig = {
       "frame-ancestors 'none'",
       "form-action 'self'",
       "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com",
+      // TIGHTENED once Manrope moved to next/font (self-hosted, app/layout.tsx). These two
+      // directives previously allowed fonts.googleapis.com and fonts.gstatic.com for an @import
+      // that — as it turned out — had never once loaded. Nothing external is fetched now, so the
+      // allowance was removed rather than left standing for a request that no longer happens.
+      //   ⚠ A consequence worth knowing: adding a Google Fonts @import back would now be BLOCKED
+      //   by this policy rather than silently ignored. That is the better failure, and the right
+      //   way to add a face is next/font, which needs no CSP change at all because it self-hosts.
+      "style-src 'self'",
+      "font-src 'self'",
       "img-src 'self' data:",
       'connect-src \'self\' https://*.sentry.io',
     ].join('; ');
