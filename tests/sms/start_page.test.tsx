@@ -6,7 +6,11 @@
 // looks at hardest.
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { StartForm, withoutFieldError } from '@/app/sms/start/_components/StartForm';
+import {
+  StartForm,
+  START_CONSENT_METHOD,
+  withoutFieldError,
+} from '@/app/sms/start/_components/StartForm';
 import {
   CARRIER_DISCLOSURES,
   CONSENT_CHECKBOX_TEXT,
@@ -139,5 +143,26 @@ describe('stale field errors', () => {
 
   it('returns the SAME array when there is nothing to drop', () => {
     expect(withoutFieldError(errs, 'phone')).toBe(errs);
+  });
+});
+
+describe('consent_method is the CASL channel, not a page label', () => {
+  it('🔴 /sms/start records web_form — because that is how consent is actually obtained here', () => {
+    // A parent on this page fills a form and ticks a checkbox. Migration 0034: consent_method
+    // records "HOW IT WAS OBTAINED". This is the correct value and it is asserted so the
+    // attractive-looking wrong one cannot land quietly.
+    expect(START_CONSENT_METHOD).toBe('web_form');
+  });
+
+  it("🔴 is NOT 'sms_start' — that is a different channel, despite the route name", () => {
+    // 'sms_start' is permitted by the CHECK constraint and currently unused, so it LOOKS available,
+    // and this route is /sms/start, so it LOOKS intended. It means the subscriber texted the START
+    // keyword (PRD §2.1 door 2, unbuilt). Using it here would assert we received a text that does
+    // not exist, and would burn the value for the real door when it ships.
+    //
+    // This was proposed once in good faith and withdrawn. The assertion is the thing that makes the
+    // withdrawal stick.
+    expect(START_CONSENT_METHOD).not.toBe('sms_start');
+    expect(START_CONSENT_METHOD).not.toBe('email_link');
   });
 });

@@ -57,6 +57,41 @@ export function withoutFieldError(
   return errors.some((e) => e.field === field) ? errors.filter((e) => e.field !== field) : errors;
 }
 
+/**
+ * ⛔ THIS STAYS 'web_form'. IT IS NOT A LABEL FOR THIS PAGE. ⛔
+ *
+ * `consent_method` is a CASL EVIDENCE FIELD. Migration 0034's own header: *"CASL requires us to be
+ * able to prove, per recipient, that express consent was obtained: HOW IT WAS OBTAINED
+ * (`consent_method`), when (`consent_timestamp`), when it was confirmed by the recipient's own
+ * reply, and WHICH WORDING they agreed to."* It records the CHANNEL consent arrived through — not
+ * which URL somebody landed on.
+ *
+ * A parent here fills in a form and ticks a checkbox. That is `web_form` consent. It is correct
+ * today, and nothing about this page makes it wrong.
+ *
+ * ── THE TRAP, WHICH LOOKS LIKE A FREE FIX ───────────────────────────────────────────────
+ * `'sms_start'` is already permitted by 0034's CHECK constraint and is currently UNUSED, so it
+ * looks available — and this route is called /sms/start, which makes it look intended. It is
+ * neither. `'sms_start'` means THE SUBSCRIBER TEXTED THE START KEYWORD: PRD §2.1's door 2, a
+ * different consent channel, not yet built. The similarity is a naming coincidence created when
+ * this route was named, and nothing more.
+ *
+ * Setting it here would do two separate kinds of damage:
+ *   1. It would assert, in the field a CASL audit reads, that we received a text message from this
+ *      person's handset — evidence that does not exist and could never be produced.
+ *   2. It would BURN THE VALUE. When the real START-keyword door ships, genuine SMS-originated
+ *      consents would be indistinguishable from these web-form signups, destroying the exact
+ *      distinction the value exists to make.
+ *
+ * This was proposed once, in good faith, as a way to tell /sms/start signups apart from
+ * /sms/signup's. It was withdrawn. If page-level attribution is wanted, it belongs in the analytics
+ * lane (/api/analytics/event + the kf_anon_id cookie) or in a NEW enum value added by migration —
+ * anywhere except by overloading a compliance field with a reporting concern.
+ *
+ * Exported and asserted in tests/sms/start_page.test.tsx, because a comment is not an invariant.
+ */
+export const START_CONSENT_METHOD = 'web_form' as const;
+
 export function StartForm({ sparseRegionIds }: StartFormProps) {
   const [postal, setPostal] = useState('');
   const [children, setChildren] = useState<ChildRow[]>([newChildRow()]);
@@ -85,7 +120,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
     childAges: children.map((c) => c.age),
     interests,
     consent,
-    consentMethod: 'web_form' as const,
+    consentMethod: START_CONSENT_METHOD,
   });
 
   async function submit(event: FormEvent<HTMLFormElement>) {
