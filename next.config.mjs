@@ -135,6 +135,17 @@ const nextConfig = {
       },
       {
         /*
+         * The minimal signup landing page (/sms/start). Collects the SAME data as /sms/signup —
+         * a phone number, a postal code and a child's age — so it gets the SAME protection. A
+         * second form behind weaker headers than the first would quietly undo the reasoning that
+         * put them on the first, and it is the consent-capture argument that matters most here:
+         * a consent form that can be framed is a consent record about a page we did not control.
+         */
+        source: '/sms/start',
+        headers: antiFramingAndSniffing,
+      },
+      {
+        /*
          * The public signup form. It renders NO stored personal data and its URL carries no
          * credential, which is why it does not take the hub's other two headers:
          *   · no `no-referrer` — there is nothing secret in this URL to leak to a link target.

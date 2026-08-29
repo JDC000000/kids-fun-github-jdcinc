@@ -42,8 +42,9 @@ async function loadMatcher(): Promise<(source: string) => RegExp> {
 
 /** The route we are protecting, and routes that must not be caught by accident. */
 const HUB_PATH = '/u/alice-token-0123456789abcdef';
-/** The other SMS-facing page, which shares the same policy. */
+/** The other SMS-facing pages, which share the same policy. */
 const SIGNUP = '/sms/signup';
+const START = '/sms/start';
 
 async function rules(): Promise<HeaderRule[]> {
   const config = await loadConfig();
@@ -267,5 +268,40 @@ describe('/sms/signup response headers — the page where CONSENT is captured', 
     expect((await headersFor('/sms/signup/extra')).size).toBe(0);
     // The hub keeps its own two, so adding the signup rule did not widen anything.
     expect((await hubHeaders()).get('cache-control')).toBe('no-store, max-age=0');
+  });
+});
+
+describe('/sms/start — the minimal landing page gets the SAME protection', () => {
+  it('🔴 is not a weaker second front door', async () => {
+    // It collects exactly what /sms/signup collects — a phone number, a postal code, a child's age
+    // — so shipping it behind thinner headers would quietly undo the reasoning that put them on
+    // the first form. Asserted against the hub's values rather than restated, so the three pages
+    // cannot drift apart one edit at a time.
+    const hub = await headersFor(HUB_PATH);
+    const start = await headersFor(START);
+    for (const key of [
+      'content-security-policy',
+      'x-frame-options',
+      'x-content-type-options',
+      'strict-transport-security',
+    ]) {
+      expect(start.get(key), key).toBe(hub.get(key));
+    }
+  });
+
+  it('refuses to be framed — the consent argument, on the page that captures consent', async () => {
+    expect((await csp(START)).get('frame-ancestors')).toBe("'none'");
+    expect((await headersFor(START)).get('x-frame-options')).toBe('DENY');
+  });
+
+  it('takes the same policy as the other signup form, exactly', async () => {
+    const signup = await headersFor(SIGNUP);
+    const start = await headersFor(START);
+    expect(start.get('content-security-policy')).toBe(signup.get('content-security-policy'));
+  });
+
+  it('still matches nothing it should not', async () => {
+    expect((await headersFor('/sms')).size).toBe(0);
+    expect((await headersFor('/sms/started')).size).toBe(0);
   });
 });

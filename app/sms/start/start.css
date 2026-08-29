@@ -1,0 +1,192 @@
+/* app/sms/start/start.css — the minimal signup landing page.
+ *
+ * Mobile-first and deliberately plain: every visitor arrives with one job, most of them on a phone
+ * from a link or a QR code. Tokens only (--kf-*), no new palette, so it inherits the brand
+ * (including Manrope, now that it actually loads) without restating it.
+ *
+ * This page renders WITHOUT the site chrome, so it owns its own vertical rhythm rather than
+ * sitting inside the nav's. */
+
+.kf-start {
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: var(--kf-space-5) var(--kf-space-4);
+  font-family: var(--kf-font-ui);
+  color: var(--kf-ink);
+}
+
+.kf-start__panel {
+  width: 100%;
+  max-width: 30rem;
+  background: var(--kf-surface);
+  border-radius: var(--kf-r-card);
+  padding: var(--kf-space-6) var(--kf-space-5);
+  box-shadow: var(--kf-e-100);
+}
+
+.kf-start__heading {
+  font-size: 1.5rem;
+  line-height: 1.25;
+  margin: 0 0 var(--kf-space-3);
+}
+
+/* Jon's call to action. Sized as a real subhead rather than help text: it is the instruction that
+ * tells someone what the next 30 seconds involve, which is the whole friction argument. */
+.kf-start__cta {
+  margin: 0 0 var(--kf-space-5);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  color: var(--kf-ink-secondary);
+}
+
+.kf-start__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+}
+
+.kf-start__label {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  margin-top: var(--kf-space-3);
+}
+
+.kf-start__input {
+  font: inherit;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-input, 8px);
+  background: var(--kf-surface);
+  color: var(--kf-ink);
+  /* 16px minimum: anything smaller makes iOS Safari zoom on focus, which on a one-goal form reads
+   * as the page jumping away from the person filling it in. */
+  font-size: 1rem;
+}
+.kf-start__input:focus-visible {
+  outline: 2px solid var(--kf-anchor);
+  outline-offset: 1px;
+}
+.kf-start__input--age {
+  max-width: 6rem;
+}
+
+.kf-start__fieldset {
+  border: 0;
+  padding: 0;
+  margin: var(--kf-space-3) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+}
+
+.kf-start__child {
+  display: flex;
+  align-items: center;
+  gap: var(--kf-space-2);
+}
+.kf-start__child-label {
+  font-size: 0.875rem;
+  color: var(--kf-ink-secondary);
+  min-width: 4.5rem;
+}
+
+.kf-start__add,
+.kf-start__remove {
+  font: inherit;
+  font-size: 0.875rem;
+  background: none;
+  border: 0;
+  padding: 0.25rem 0;
+  color: var(--kf-anchor);
+  text-decoration: underline;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.kf-start__interests {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--kf-space-2);
+}
+.kf-start__check,
+.kf-start__consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+.kf-start__check input,
+.kf-start__consent input {
+  margin-top: 0.2rem;
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+/* The consent sentence is long because it is the sentence a parent agrees to. It gets room and a
+ * hairline above it rather than being compressed into the surrounding gaps — condensing the LAYOUT
+ * was the brief, condensing the sentence was not. */
+.kf-start__consent {
+  margin-top: var(--kf-space-4);
+  padding-top: var(--kf-space-4);
+  border-top: 1px solid var(--kf-hairline);
+}
+
+.kf-start__submit {
+  font: inherit;
+  font-weight: 700;
+  margin-top: var(--kf-space-4);
+  padding: 0.85rem 1rem;
+  border: 0;
+  border-radius: var(--kf-r-input, 8px);
+  background: var(--kf-anchor);
+  color: var(--kf-anchor-text);
+  cursor: pointer;
+}
+.kf-start__submit:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.kf-start__error {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--kf-cancelled-text, #a3271f);
+}
+
+.kf-start__notice {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--kf-ink-secondary);
+}
+
+/* Small, but present and readable — CASL sender identification and the carrier disclosures are
+ * required content, not fine print to be hidden. Contrast stays on the secondary ink token rather
+ * than a lighter one invented for the purpose. */
+.kf-start__legal {
+  margin-top: var(--kf-space-5);
+  padding-top: var(--kf-space-4);
+  border-top: 1px solid var(--kf-hairline);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--kf-ink-secondary);
+}
+.kf-start__legal p {
+  margin: 0 0 var(--kf-space-2);
+}
+.kf-start__identity {
+  font-style: normal;
+  margin: 0 0 var(--kf-space-2);
+}
+.kf-start__legal a {
+  color: var(--kf-anchor);
+}
+
+.kf-start__done-heading {
+  font-size: 1.375rem;
+  margin: 0 0 var(--kf-space-3);
+}

@@ -86,6 +86,31 @@ export const ACCOUNT_NAV_HIDDEN_PREFIXES = [
   '/search', // Jon overrode the "leave it alone" recommendation knowingly — see above
 ] as const;
 
+/**
+ * Routes that render with NO SITE CHROME AT ALL — no nav bar, no category links, no footer, no
+ * child-profile bar. A THIRD question again, and deliberately a third list.
+ *
+ * ═══ WHY THIS IS NOT SIMPLY "SMS SURFACES" ═══
+ * `/sms/signup` is an SMS surface and KEEPS its nav, for a documented reason: SiteNav.tsx says
+ * *"a parent who lands on the signup form from a QR code should still be able to reach the
+ * catalogue. It is the ACCOUNT touchpoint that does not belong, not the navigation."* That
+ * implements PRD §2.1's door 2, and it is untouched.
+ *
+ * `/sms/start` is a different product decision, not a correction of that one. It is a single-
+ * purpose landing page whose entire job is one conversion — Jon's brief: "One goal... Minimal
+ * info, minimal friction." Nav links are friction there by definition, and the Operator ruled it
+ * nav-free explicitly rather than by omission.
+ *   ⇒ So both pages are right, and they differ because they are for different things. Anyone
+ *     tempted to unify these lists should read that as the reason not to.
+ */
+export const BARE_CHROME_PREFIXES = ['/sms/start'] as const;
+
+/** Should the whole site chrome be suppressed on this path? */
+export function hidesSiteChrome(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  return BARE_CHROME_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
 /** Should the account touchpoint be hidden on this path? See the list above for why it differs. */
 export function hidesAccountNav(pathname: string | null | undefined): boolean {
   if (!pathname) return false;

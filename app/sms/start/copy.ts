@@ -1,0 +1,30 @@
+// app/sms/start/copy.ts — Jon's brief for the minimal landing page, quoted verbatim.
+//
+// ═══ WHY THIS IS NOT IN lib/sms/consent-copy.ts ═══
+// That file is the natural home for SMS copy, and its own header argues the case: copy living next
+// to CONSENT_TEXT_VERSION cannot be edited without seeing the version. These two strings were
+// briefly placed there for exactly that reason.
+//
+// They were moved out because consent-copy.ts is under an explicit instruction not to be touched
+// while /sms/signup awaits its own iteration. Adding two unrelated constants would have had zero
+// behavioural effect on that flow — but "no behavioural change" and "no diff" are different
+// promises, and the conservative reading of that instruction is the one worth honouring when the
+// cost of honouring it is a small file.
+//
+// ⚠ NOTHING HERE IS CONSENT COPY, which is what makes the split safe rather than merely tolerable.
+// A page title and a call to action are not part of the act of consenting — the same distinction
+// consent-copy.ts draws at its line 24 for SUBMITTED_HEADING/SUBMITTED_BODY. The sentence a parent
+// actually agrees to on this page is CONSENT_CHECKBOX_TEXT, imported from consent-copy.ts and
+// shared byte-for-byte with /sms/signup. That is the string the version constant governs, and it
+// has not moved.
+//
+// If the Operator would rather these live with the rest of the SMS copy, moving them back is two
+// lines and no behaviour change.
+
+/** Jon, 2026-08-28, verbatim. */
+export const START_HEADING =
+  'Fun activities for you and your kids delivered by SMS once per week.';
+
+/** Jon, 2026-08-28, verbatim — including the missing full stop, which is his. */
+export const START_CTA =
+  "Enter your postal code, kids ages, activity preferences and tel number. We'll do the rest";
