@@ -42,8 +42,33 @@
  * The version stamped into `sms_consent.consent_text_version` for anyone who agrees to the
  * wording in this file. Date-prefixed so it sorts, suffixed so more than one revision can land
  * on one day.
+ *
+ * ── HISTORY, BECAUSE A VERSION NUMBER NOBODY CAN RESOLVE PROVES NOTHING ─────────────────
+ * Migration 0034 exists to prove "WHICH WORDING they agreed to". That is only answerable while
+ * each version can be resolved back to its text. With one version ever issued, reading the
+ * constant answered it; from the second onwards it does not, and rows stamped with a retired
+ * version point at wording held nowhere but git.
+ *
+ * So each entry names the commit whose state of THIS FILE is that version, in full — a pointer
+ * rather than a copy, because the version covers every string here (checkbox, labels, help text,
+ * disclosures, sender identity), and a partial transcription would be worse than none.
+ *
+ *   2026-08-26.v2  →  this file as of commit 22acf7f (the commit immediately before the bump
+ *                     below). Retired 2026-08-29.
+ *   2026-08-29.v3  →  current.
+ *
+ * ⚠ THIS LIST IS NOT A DATE CUTOFF, and an audit query written as though it were will be wrong.
+ * `signup-store.ts` RE-STAMPS `consent_text_version` on resubmit, deliberately — a resubmitting
+ * parent agrees to whatever wording the form showed them at that moment. So a subscriber reads as
+ * v2 until they next touch the form, whenever that is, and "everyone before 2026-08-29 is v2" is
+ * false. The retirement dates above say when a version stopped being ISSUED, not when it stopped
+ * appearing on rows.
+ *   Recorded here rather than only beside the upsert that does it: the person who needs this is
+ *   resolving "what did this subscriber agree to", and that question is asked at this list.
+ *
+ * >>> BUMPING THIS? ADD THE OUTGOING VERSION TO THE LIST ABOVE IN THE SAME COMMIT. <<<
  */
-export const CONSENT_TEXT_VERSION = '2026-08-26.v2';
+export const CONSENT_TEXT_VERSION = '2026-08-29.v3';
 
 /** What the page is, in one line, above the fields. */
 export const FORM_HEADING = 'Get weekend activity picks by text';
@@ -191,7 +216,14 @@ export const OUT_OF_AREA_NOTICE =
 /** Field labels + helper text, kept beside the consent copy so the whole form reads as one voice. */
 export const FIELD_COPY = {
   phoneLabel: 'Mobile number',
-  phoneHelp: 'Canadian mobile number. This is the only way we identify you — no account, no password.',
+  // NOT "Canadian": normalizePhoneE164 accepts any valid NANP number by design, and said so in
+  // its own comment while this line claimed otherwise. Corrected 2026-08-29 alongside the error
+  // message (22acf7f) — this was the more prominent half of the same false claim, since every
+  // visitor reads the help text and only a failing visitor sees the error.
+  //   THIS CHANGE IS WHY CONSENT_TEXT_VERSION MOVED: this file's own rule counts help text around
+  //   the consent act as wording a subscriber agrees to.
+  phoneHelp:
+    'A 10-digit mobile number. This is the only way we identify you — no account, no password.',
   postalLabel: 'Postal code',
   postalHelp: 'Used to find activities near you. We store the postal code, never a precise location.',
   childrenLabel: 'How old are your kids?',

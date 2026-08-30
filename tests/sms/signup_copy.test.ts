@@ -10,7 +10,7 @@
 // submission, which makes the carrier-facing lines load-bearing too.
 import { describe, expect, it } from 'vitest';
 import { isGsm7, nonGsm7Characters } from '@/lib/sms/message';
-import { PREFS_STATUS_PENDING, SUBMITTED_BODY } from '@/lib/sms/consent-copy';
+import { FIELD_COPY, PREFS_STATUS_PENDING, SUBMITTED_BODY } from '@/lib/sms/consent-copy';
 import {
   PREFS_UNKNOWN_TOKEN_BODY,
   CARRIER_DISCLOSURES,
@@ -287,7 +287,14 @@ describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approve
     // different versions who agreed to identical wording — a false statement in an audit column,
     // not extra safety. See this file's own header for the narrowed rule and PRD v3.9 for the
     // precedent. Pinned so the reasoning is checked rather than remembered.
-    expect(CONSENT_TEXT_VERSION).toBe('2026-08-26.v2');
+    //
+    // ⚠ RE-PINNED 2026-08-29 to v3, and NOT because SUBMITTED_BODY moved it — it still does not.
+    // The version moved for an unrelated, legitimate reason: FIELD_COPY.phoneHelp dropped a false
+    // "Canadian" claim, and help text around the consent act DOES move the version by this file's
+    // rule. This assertion failing was the guard working exactly as intended — a bump has to come
+    // here and be justified, which is why it is pinned to a literal rather than read from the
+    // constant it is checking.
+    expect(CONSENT_TEXT_VERSION).toBe('2026-08-29.v3');
     expect(CONSENT_CHECKBOX_TEXT).not.toContain('texted us before'); // the consent text is untouched
   });
 });
@@ -387,5 +394,29 @@ describe('the resubmission warning (post-launch item 1)', () => {
     // demonstrably not GSM-7 clean.
     expect(SUBMITTED_BODY.startsWith('KIDS FUN:')).toBe(false);
     expect(isGsm7(SUBMITTED_BODY)).toBe(false);
+  });
+});
+
+describe('the phone help text makes no claim the code does not check', () => {
+  // The second and more prominent half of the false claim fixed in 22acf7f: every visitor reads
+  // the field help, and only a visitor who typed something wrong ever sees the error message.
+  // This is the change that moved CONSENT_TEXT_VERSION to v3.
+
+  it('🔴 does not say "Canadian"', () => {
+    expect(FIELD_COPY.phoneHelp).not.toMatch(/canadian/i);
+  });
+
+  it('still says what to type, and why we ask for it at all', () => {
+    // Dropping the false claim must not drop the useful part: the shape a parent needs, and the
+    // reason a product with no account asks for a phone number.
+    expect(FIELD_COPY.phoneHelp).toContain('10-digit');
+    expect(FIELD_COPY.phoneHelp).toMatch(/no account/i);
+  });
+
+  it('agrees with the error message that rejects a bad number', () => {
+    // Both now describe the same check. If either is ever made nationality-aware, the other has to
+    // move with it — and a version bump comes with that, since this string is consent-act copy.
+    expect(FIELD_COPY.phoneHelp.toLowerCase()).not.toContain('canad');
+    expect(FIELD_COPY.phoneHelp).toContain('10-digit');
   });
 });
