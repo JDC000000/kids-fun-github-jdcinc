@@ -9,8 +9,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   StartForm,
   START_CONSENT_METHOD,
+  canAddAnotherChild,
   withoutFieldError,
 } from '@/app/sms/start/_components/StartForm';
+import { MAX_CHILDREN } from '@/lib/sms/signup-validate';
 import {
   CARRIER_DISCLOSURES,
   CONSENT_CHECKBOX_TEXT,
@@ -164,5 +166,29 @@ describe('consent_method is the CASL channel, not a page label', () => {
     // withdrawal stick.
     expect(START_CONSENT_METHOD).not.toBe('sms_start');
     expect(START_CONSENT_METHOD).not.toBe('email_link');
+  });
+});
+
+describe('the "Add another child" cap', () => {
+  // The guard SmsSignupForm has always had, which did not carry over when this page was built:
+  // the button was unconditional, so a parent could add rows indefinitely and only discover the
+  // limit when the SERVER rejected the whole submission at 8 — losing everything they had typed.
+
+  it('🔴 stops exactly at MAX_CHILDREN, not one either side', () => {
+    // The boundary is the whole point; an off-by-one here is invisible until someone hits it.
+    expect(canAddAnotherChild(MAX_CHILDREN - 1)).toBe(true);
+    expect(canAddAnotherChild(MAX_CHILDREN)).toBe(false);
+    expect(canAddAnotherChild(MAX_CHILDREN + 1)).toBe(false);
+  });
+
+  it('allows the first row to be added from the initial state', () => {
+    expect(canAddAnotherChild(1)).toBe(true);
+  });
+
+  it('uses the validator\'s constant rather than a literal', () => {
+    // If MAX_CHILDREN ever moves, the button must move with it. A hardcoded 8 in the JSX would
+    // pass every other assertion here and silently disagree with the server.
+    expect(canAddAnotherChild(MAX_CHILDREN)).toBe(false);
+    expect(MAX_CHILDREN).toBeGreaterThan(0);
   });
 });

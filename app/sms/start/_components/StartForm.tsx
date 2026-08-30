@@ -30,7 +30,7 @@ import {
   SUPPORT_PHONE_HREF,
 } from '@/lib/sms/consent-copy';
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
-import { parseSmsSignupBody, type SmsSignupField } from '@/lib/sms/signup-validate';
+import { MAX_CHILDREN, parseSmsSignupBody, type SmsSignupField } from '@/lib/sms/signup-validate';
 import { sparseAreaNoticeFor } from '@/lib/sms/sparse-areas';
 import type { CoveredRegionId } from '@/lib/geo/postal-fsa';
 
@@ -91,6 +91,19 @@ export function withoutFieldError(
  * Exported and asserted in tests/sms/start_page.test.tsx, because a comment is not an invariant.
  */
 export const START_CONSENT_METHOD = 'web_form' as const;
+
+/**
+ * Whether another child row may be added.
+ *
+ * A one-line predicate with its own export, for the same reason START_CONSENT_METHOD has one: the
+ * decision was previously a bare comparison inside JSX, where no test could reach it. The original
+ * form's identical cap is UNTESTED at the UI layer for exactly that reason — only the server-side
+ * limit in signup-validate.ts is covered — so there was nothing to mirror here, and asserting the
+ * boundary directly is the cheapest way to make this one real rather than merely present.
+ */
+export function canAddAnotherChild(count: number): boolean {
+  return count < MAX_CHILDREN;
+}
 
 export function StartForm({ sparseRegionIds }: StartFormProps) {
   const [postal, setPostal] = useState('');
@@ -242,16 +255,23 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
             )}
           </div>
         ))}
-        <button
-          type="button"
-          className="kf-start__add"
-          onClick={() => {
-            setChildren((rows) => [...rows, newChildRow()]);
-            clearError('children');
-          }}
-        >
-          Add another child
-        </button>
+        {/* Capped at MAX_CHILDREN, the same guard SmsSignupForm has had since it was built. This
+            did NOT carry over when this page was written, so the button was unconditional and a
+            parent could add rows indefinitely before the SERVER rejected them at 8 — losing
+            everything they had typed to an error they were given no way to anticipate. Reusing the
+            same constant rather than a literal 8: the limit is the validator's to define. */}
+        {canAddAnotherChild(children.length) && (
+          <button
+            type="button"
+            className="kf-start__add"
+            onClick={() => {
+              setChildren((rows) => [...rows, newChildRow()]);
+              clearError('children');
+            }}
+          >
+            Add another child
+          </button>
+        )}
         {err('children', 'kf-start-children-err')}
       </fieldset>
 
