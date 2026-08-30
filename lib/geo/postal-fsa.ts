@@ -55,7 +55,10 @@ export const FSA_REGION: Readonly<Record<string, CoveredRegionId>> = {
   V6A: 'van', V6B: 'van', V6C: 'van', V6E: 'van', V6G: 'van', V6H: 'van', V6J: 'van',
   V6K: 'van', V6L: 'van', V6M: 'van', V6N: 'van', V6P: 'van', V6R: 'van', V6S: 'van',
   V6T: 'van', V6Z: 'van',
-  // Burnaby.
+  // Burnaby. V3N is Edmonds / Big Bend in the south, and it is the ONLY Burnaby FSA that does not
+  // start V5 — which is exactly why it was missed here. A real V3N resident was refused signup by
+  // a message that named Burnaby as covered (found in live testing, 2026-08-29).
+  V3N: 'bby',
   V5A: 'bby', V5B: 'bby', V5C: 'bby', V5E: 'bby', V5G: 'bby', V5H: 'bby', V5J: 'bby',
   // Richmond (incl. Steveston / east Richmond V7A–V7E).
   V6V: 'rmd', V6W: 'rmd', V6X: 'rmd', V6Y: 'rmd',

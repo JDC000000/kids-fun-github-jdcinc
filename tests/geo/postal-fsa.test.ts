@@ -80,3 +80,28 @@ describe('fsaGeocoder (self-contained, backend-independent)', () => {
     expect(fsaGeocoder.geocodePostal('garbage')).toBeNull();
   });
 });
+
+describe('Burnaby coverage is complete, including the FSA that breaks the pattern', () => {
+  // Found in live testing (2026-08-29): a real V3N resident was refused signup by a message that
+  // named Burnaby as a covered municipality. V3N is Edmonds / Big Bend in south Burnaby, and it is
+  // the ONLY Burnaby FSA that does not start with V5 — which is precisely why a map built by
+  // pattern rather than by list missed it.
+
+  it('🔴 maps V3N to Burnaby', () => {
+    expect(FSA_REGION.V3N).toBe('bby');
+    expect(regionIdForPostal('V3N 1A1')).toBe('bby');
+  });
+
+  it('still maps every V5 Burnaby FSA', () => {
+    for (const fsa of ['V5A', 'V5B', 'V5C', 'V5E', 'V5G', 'V5H', 'V5J']) {
+      expect(FSA_REGION[fsa], fsa).toBe('bby');
+    }
+  });
+
+  it('does not accidentally claim its New Westminster neighbours', () => {
+    // V3L and V3M are New Westminster, not Burnaby. Adding V3N by hand is exactly the moment
+    // someone could reach for the neighbouring codes too.
+    expect(FSA_REGION.V3L).toBeUndefined();
+    expect(FSA_REGION.V3M).toBeUndefined();
+  });
+});
