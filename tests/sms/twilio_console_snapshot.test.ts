@@ -54,3 +54,33 @@ describe('the Twilio console HELP reply', () => {
     expect(TWILIO_CONSOLE_RECHECK_TRIGGERS.join(' ')).toMatch(/toll-free verification/i);
   });
 });
+
+describe('the recheck triggers cover a NEW KIND of message, not just a changed string', () => {
+  // Added 2026-08-30. The original four all assume the product keeps sending the one kind of
+  // message it was registered for — they fire on the support number changing, an unexpected HELP
+  // reply, the TFV submission itself, and the launch checklist. None fires when the product starts
+  // sending something it has never sent before.
+  //
+  // That gap surfaced while investigating whether a launch-notification waitlist would fall outside
+  // the toll-free registration: it would be the first message ever sent to somebody who never
+  // opted into the weekly picks, and nothing here would have prompted anyone to look at the filing.
+
+  it('🔴 includes a trigger for a new message type', () => {
+    expect(TWILIO_CONSOLE_RECHECK_TRIGGERS.join(' ')).toMatch(/new kind of message/i);
+  });
+
+  it('keeps the four original triggers — this was an addition, not a rewrite', () => {
+    // Asserted individually so that "tidying" the list later cannot quietly drop one. Each of these
+    // was put there for a reason that still holds.
+    const joined = TWILIO_CONSOLE_RECHECK_TRIGGERS.join(' ');
+    for (const original of [
+      'before the Toll-Free Verification submission',
+      'when the support number changes',
+      'when a subscriber reports an unexpected HELP reply',
+      'at each launch-checklist pass',
+    ]) {
+      expect(TWILIO_CONSOLE_RECHECK_TRIGGERS, original).toContain(original);
+    }
+    expect(joined).toMatch(/toll-free verification/i);
+  });
+});

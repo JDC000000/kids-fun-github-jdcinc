@@ -39,6 +39,12 @@ export const TWILIO_CONSOLE_RECHECK_TRIGGERS = [
   'when the support number changes',
   'when a subscriber reports an unexpected HELP reply',
   'at each launch-checklist pass',
+  // Added 2026-08-30. The four above all assume the product keeps sending the ONE kind of message
+  // it was registered for. Nothing prompted a re-check when that stops being true — and the
+  // waitlist under discussion would be exactly that: the first message this product has ever sent
+  // to somebody who never opted into the weekly picks. The console and the filing describe a use
+  // case, not just a HELP string, so a new message type is a reason to look at both.
+  'when the product starts sending a new kind of message',
 ] as const;
 
 /**
