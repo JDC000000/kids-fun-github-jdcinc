@@ -101,7 +101,10 @@
    * <html>. It was previously an @import in this file that NEVER LOADED — see layout.tsx for why.
    * The rest of the stack is unchanged and still does the work if the font fails. */
   --kf-font-ui: var(--kf-font-manrope), 'Avenir Next', 'Segoe UI', Arial, sans-serif;
-  --kf-font-display: 'Fraunces', Georgia, serif; /* optional display alt (D1) — not the default */
+  /* Fraunces now comes from next/font (app/layout.tsx), self-hosted. It was declared here from the
+   * start and NEVER FETCHED by anything — six admin headings have been rendering in Georgia, the
+   * next family in this stack, since they were written. Georgia stays as the fallback. */
+  --kf-font-display: var(--kf-font-fraunces), Georgia, serif; /* optional display alt (D1) */
   --kf-font-feature: 'tnum' 1, 'lnum' 1; /* D2: tabular lining numerals for data */
 
   /* ── Radius ── */

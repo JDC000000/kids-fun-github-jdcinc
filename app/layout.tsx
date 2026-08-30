@@ -1,7 +1,7 @@
 // Canonical design tokens first, so every stylesheet below (and every
 // components/ui primitive) resolves against one --kf-* source of truth.
 import './design-tokens.css';
-import { Manrope } from 'next/font/google';
+import { Fraunces, Manrope } from 'next/font/google';
 import './preview/preview.css';
 import type { ReactNode } from 'react';
 import { SiteNav } from './_components/SiteNav';
@@ -41,6 +41,32 @@ const manrope = Manrope({
   display: 'swap',
 });
 
+/**
+ * ═══ FRAUNCES HAD THE SAME BUG AS MANROPE, BY A DIFFERENT MECHANISM ═══
+ * `--kf-font-display` has declared `'Fraunces', Georgia, serif` all along, and six headings across
+ * three admin surfaces consume it — but Fraunces was never fetched by anything. No @font-face, no
+ * @import, no next/font entry. Manrope at least HAD an @import (in an illegal position); this one
+ * had no source at all.
+ *
+ * It went unnoticed for the same reason Manrope did, and more completely: the declared stack falls
+ * through to Georgia, and Fraunces and Georgia are both serifs. The intent degraded to something
+ * stylistically adjacent rather than obviously wrong — which is precisely why a font that never
+ * loads can survive indefinitely.
+ *
+ * WEIGHT 700 ONLY, because that is the only weight any consumer asks for — every usage is
+ * `font: 700 …`. Loading the rest would be shipping bytes nothing renders.
+ *
+ * Admin-only and low-stakes, unlike Manrope: no consumer-facing surface uses this token, and no
+ * consent or compliance copy is rendered in it. Self-hosted like Manrope, so it needs no CSP change
+ * — style-src and font-src stay 'self'.
+ */
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  weight: ['700'],
+  variable: '--kf-font-fraunces',
+  display: 'swap',
+});
+
 export const metadata = {
   title: 'KIDS FUN',
   description: 'Find kids activities across Metro Vancouver.',
@@ -48,7 +74,7 @@ export const metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={manrope.variable}>
+    <html lang="en" className={`${manrope.variable} ${fraunces.variable}`}>
       <body>
         <BareChromeGate>
           <SiteNav />
