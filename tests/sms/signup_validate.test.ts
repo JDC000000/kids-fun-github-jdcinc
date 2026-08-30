@@ -280,3 +280,41 @@ describe('parseSmsSignupBody', () => {
     }
   });
 });
+
+describe('the phone error message says only what the check actually verifies', () => {
+  // It used to read "a 10-digit CANADIAN mobile number", asserting a nationality check
+  // normalizePhoneE164 deliberately does not perform — see its comment for why an area-code table
+  // was rejected (it goes stale on every CRTC overlay, and the postal code is the real geographic
+  // gate). Live testing surfaced the mismatch by signing up a real US number.
+  //
+  // The fix was to stop making the claim, not to start enforcing it. These assertions exist so the
+  // message and the behaviour cannot drift apart again silently in either direction.
+
+  function phoneError(raw: unknown): string | undefined {
+    const parsed = parseSmsSignupBody(valid({ phone: raw }), { now: new Date() });
+    if (parsed.ok) return undefined;
+    return parsed.errors.find((e) => e.field === 'phone')?.message;
+  }
+
+  it('🔴 does not claim to check that the number is Canadian', () => {
+    expect(phoneError('123')).toBe('that does not look like a 10-digit mobile number');
+    expect(phoneError('123')).not.toMatch(/canadian/i);
+  });
+
+  it('🔴 and the behaviour still matches the claim — a US number is ACCEPTED', () => {
+    // The other half of the same invariant. If someone later adds nationality filtering without
+    // restoring the wording, this fails and points at the message that would need to change with
+    // it. A US area code on a Metro Vancouver postal code is a plausible local parent, which is
+    // the case the Operator decided to keep serving.
+    const parsed = parseSmsSignupBody(valid({ phone: '212 555 0123' }), { now: new Date() });
+    expect(parsed.ok).toBe(true);
+  });
+
+  it('still rejects the typos a parent can actually see and fix', () => {
+    // Correcting the copy must not have loosened the shape check that catches a dropped digit or
+    // an area code starting with 0 or 1.
+    for (const bad of ['604555012', '064 555 0123', '604 155 0123', '']) {
+      expect(phoneError(bad), bad).toBeTruthy();
+    }
+  });
+});

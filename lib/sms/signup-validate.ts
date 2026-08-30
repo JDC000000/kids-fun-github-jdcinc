@@ -122,6 +122,13 @@ export type SmsSignupField = 'phone' | 'postal' | 'children' | 'interests' | 'co
  * one of five Metro Vancouver municipalities — a US number attached to a V6B postal code is a
  * problem the toll-free number's own delivery will surface, not one to solve with a lookup table.
  *
+ * ⚠ THE ERROR MESSAGE USED TO CONTRADICT THIS COMMENT. It said "a 10-digit CANADIAN mobile
+ * number", asserting a check this function had deliberately chosen not to perform — so the form
+ * claimed a guarantee it did not provide, on a product under Twilio TFV review. Corrected
+ * 2026-08-29 by fixing the CLAIM, not by building the area-code table this comment argues against.
+ * The two must be kept in agreement: if the behaviour here ever does become nationality-aware, the
+ * message is the other half of that change.
+ *
  * The output shape is chosen to satisfy migration 0034's CHECK (`^\+[1-9][0-9]{7,14}$`)
  * by construction, which tests/sms/signup_validate.test.ts asserts directly against that regex.
  */
@@ -382,7 +389,12 @@ export function parseSmsSignupBody(raw: unknown, options: ParseOptions): SmsSign
     phoneNumber = normalizePhoneE164(raw.phone);
     if (!phoneNumber) {
       errors.push({
-        message: 'that does not look like a 10-digit Canadian mobile number',
+        // NOT "Canadian" — the check above deliberately does not verify nationality, and this
+        // message used to claim it did. Corrected 2026-08-29 after live testing accepted a US
+        // number: the mismatch was real, and the fix was to stop making the claim rather than to
+        // start enforcing it. See normalizePhoneE164's comment for why the area-code table that
+        // would have been needed was rejected, and why the postal code is the real geographic gate.
+        message: 'that does not look like a 10-digit mobile number',
         field: 'phone',
       });
     }
