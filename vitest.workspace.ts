@@ -141,6 +141,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/sms/preferences_weekly-db.test.ts',
   'tests/sms/click_through-db.test.ts',
   'tests/sms/waitlist_store-db.test.ts',
+  'tests/sms/inbound_stop_unchanged-db.test.ts',
   'tests/search/postgres-repository.test.ts',
   'tests/snapshot/catalogue-shape.test.ts',
   'tests/snapshot/policy-schema-guard.test.ts',
