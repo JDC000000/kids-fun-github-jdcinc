@@ -61,6 +61,7 @@ import {
   renderUnknownKeywordMessage,
 } from '@/lib/sms/message';
 import { sendWelcomeText } from '@/lib/sms/welcome';
+import { markWaitlistUnsubscribed } from '@/lib/sms/waitlist-store';
 import { withObservedRoute } from '@/lib/observability/route-handler';
 
 export const dynamic = 'force-dynamic';
@@ -232,8 +233,22 @@ async function dispatch(
   switch (keyword) {
     case 'join':
       return { result: await confirmAndWelcome(from, dryRun), reply: null };
-    case 'stop':
-      return { result: await mirrorCarrierStop(from, { dryRun }), reply: null };
+    case 'stop': {
+      const result = await mirrorCarrierStop(from, { dryRun });
+      // ── ADDITIVE, AND DELIBERATELY AFTER ────────────────────────────────────────────────
+      // The subscriber transition above is untouched: same call, same options, same result
+      // returned. This only ALSO records the opt-out against any area-waitlist rows for the
+      // number, which nothing did before — the notification promises "Reply STOP to opt out"
+      // and that was previously honoured only by Twilio's carrier-layer block.
+      //
+      // It runs even when the transition reports `no_such_subscriber`, because that is exactly
+      // the waitlist-only case: those numbers have no sms_consent row at all.
+      //
+      // `markWaitlistUnsubscribed` never throws, by construction. A waitlist write failing must
+      // not take down the handler whose real job is a subscriber's CASL opt-out.
+      await markWaitlistUnsubscribed(from, { dryRun });
+      return { result, reply: null };
+    }
     case 'start': {
       const result = await mirrorCarrierStart(from, { dryRun });
       // Built on every path so a broken template fails in a dry run, dropped when sending is off.

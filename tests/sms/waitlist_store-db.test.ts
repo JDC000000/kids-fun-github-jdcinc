@@ -8,7 +8,7 @@
 // IS a safe cleanup key here.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { query } from '@/lib/db/client';
-import { addToWaitlist } from '@/lib/sms/waitlist-store';
+import { addToWaitlist, markWaitlistUnsubscribed } from '@/lib/sms/waitlist-store';
 import { loadWaitingFor } from '@/lib/sms/waitlist-notify';
 import { WAITLIST_CONSENT_VERSION } from '@/lib/sms/waitlist-copy';
 
@@ -151,5 +151,75 @@ describe('loadWaitingFor', () => {
     expect(ids).toContain(w.id);
     expect(ids).not.toContain(n.id); // already had its one message
     expect(ids).not.toContain(g.id); // opted out
+  });
+});
+
+describe('markWaitlistUnsubscribed — making "Reply STOP" actually true', () => {
+  it('marks every waiting row for the number, across all areas', async () => {
+    // One number can wait on several areas, so a partial opt-out would leave some armed.
+    const phone = nextPhone();
+    const a = await addToWaitlist({ phoneNumber: phone, regionChipId: 'wvan', areaFsa: null });
+    const b = await addToWaitlist({ phoneNumber: phone, regionChipId: null, areaFsa: 'V3S' });
+
+    const r = await markWaitlistUnsubscribed(phone, { dryRun: false });
+    expect(r.outcome).toBe('marked');
+    expect(r.rows).toBe(2);
+
+    for (const id of [a.id, b.id]) {
+      const [row] = await query<Record<string, unknown>>(
+        `SELECT unsubscribed_at FROM sms_area_waitlist WHERE id = $1`,
+        [id]
+      );
+      expect(row.unsubscribed_at).not.toBeNull();
+    }
+  });
+
+  it('🔴 an unsubscribed row is no longer selected for notification', async () => {
+    // The whole point: not just recording the opt-out, but honouring it at the send.
+    const phone = nextPhone();
+    const area = 'V9Y';
+    const w = await addToWaitlist({ phoneNumber: phone, regionChipId: null, areaFsa: area });
+    expect((await loadWaitingFor(area)).map((x) => x.id)).toContain(w.id);
+
+    await markWaitlistUnsubscribed(phone, { dryRun: false });
+    expect((await loadWaitingFor(area)).map((x) => x.id)).not.toContain(w.id);
+  });
+
+  it('writes NOTHING on a dry run', async () => {
+    const phone = nextPhone();
+    const w = await addToWaitlist({ phoneNumber: phone, regionChipId: 'bby', areaFsa: null });
+    const r = await markWaitlistUnsubscribed(phone, { dryRun: true });
+    expect(r.outcome).toBe('dry_run');
+
+    const [row] = await query<Record<string, unknown>>(
+      `SELECT unsubscribed_at FROM sms_area_waitlist WHERE id = $1`,
+      [w.id]
+    );
+    expect(row.unsubscribed_at).toBeNull();
+  });
+
+  it('does not move a date that already means something', async () => {
+    // Re-stamping an existing unsubscribed_at would overwrite when they actually opted out.
+    const phone = nextPhone();
+    const w = await addToWaitlist({ phoneNumber: phone, regionChipId: 'rmd', areaFsa: null });
+    await markWaitlistUnsubscribed(phone, { dryRun: false });
+    const [{ unsubscribed_at: first }] = await query<{ unsubscribed_at: Date }>(
+      `SELECT unsubscribed_at FROM sms_area_waitlist WHERE id = $1`,
+      [w.id]
+    );
+
+    const second = await markWaitlistUnsubscribed(phone, { dryRun: false });
+    expect(second.outcome).toBe('none'); // nothing left to mark
+    const [{ unsubscribed_at: after }] = await query<{ unsubscribed_at: Date }>(
+      `SELECT unsubscribed_at FROM sms_area_waitlist WHERE id = $1`,
+      [w.id]
+    );
+    expect(new Date(after).getTime()).toBe(new Date(first).getTime());
+  });
+
+  it('is a no-op, not an error, for a number with no waitlist rows', async () => {
+    const r = await markWaitlistUnsubscribed(nextPhone(), { dryRun: false });
+    expect(r.outcome).toBe('none');
+    expect(r.rows).toBe(0);
   });
 });
