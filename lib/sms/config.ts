@@ -7,6 +7,10 @@
 // Env vars (mirror these into .env.example — NAMES ONLY, never values):
 //   SMS_SENDING_ENABLED      — "true" to permit REAL sends and REAL inbound state changes;
 //                              anything else forces dry-run. Default FALSE, deliberately.
+//   SMS_WAITLIST_NOTIFICATIONS_ENABLED
+//                            — "true" to permit dispatching the ONE area-waitlist notification.
+//                              Default FALSE. SEPARATE from SMS_SENDING_ENABLED on purpose — see
+//                              waitlistNotificationsEnabled().
 //   SMS_SIGNUP_ENABLED       — "true" to expose the public signup form and its API route at all.
 //                              Default FALSE. Separate from SMS_SENDING_ENABLED on purpose —
 //                              see smsSignupEnabled().
@@ -35,6 +39,27 @@
 function env(name: string): string | undefined {
   const v = process.env[name];
   return v && v.trim() !== '' ? v.trim() : undefined;
+}
+
+/**
+ * Whether the AREA-WAITLIST notification may actually be dispatched.
+ *
+ * ═══ A THIRD FLAG, AND DELIBERATELY NOT `SMS_SENDING_ENABLED` ═══
+ * Jon authorised BUILDING the waitlist and separately withheld authority to SEND from it: the
+ * Operator does a Twilio console and filing recheck before the first one goes out, because this is
+ * the first message this product has ever sent to somebody who never opted into the weekly picks
+ * (see TWILIO_CONSOLE_RECHECK_TRIGGERS' fifth entry, which exists for exactly this).
+ *
+ * Reusing `SMS_SENDING_ENABLED` would have collapsed that distinction: the weekly-picks flag is
+ * already true in production, so this message type would have gone live the moment the code
+ * merged — which is precisely the outcome the instruction was written to prevent. A shared flag
+ * cannot express "sending is on, and this one thing is still held".
+ *
+ * DEFAULT FALSE, like every other gate here, and it is the ONLY thing that may permit a waitlist
+ * dispatch. Nothing reads `smsSendingEnabled()` on that path.
+ */
+export function waitlistNotificationsEnabled(): boolean {
+  return env('SMS_WAITLIST_NOTIFICATIONS_ENABLED') === 'true';
 }
 
 /**
