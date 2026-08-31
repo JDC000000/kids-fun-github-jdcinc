@@ -60,16 +60,39 @@ export function composeWaitlistNotifications(
   }));
 }
 
-/** Who is still waiting for an area, and has not opted out. */
+/**
+ * Who is still waiting for an area, and has not opted out.
+ *
+ * ═══ THE sms_consent CHECK IS DEFENCE IN DEPTH, NOT THE OPT-OUT MECHANISM ═══
+ * The real fix is in the inbound STOP handler, which stamps `unsubscribed_at` on these rows
+ * (4fd316c). This clause exists because that write can fail SILENTLY: `markWaitlistUnsubscribed`
+ * deliberately never throws, so that a waitlist problem cannot take down a subscriber's CASL
+ * opt-out. The trade is that a failed waitlist write leaves no trace — and this is what catches it.
+ *
+ * It also covers rows created BEFORE that fix existed, which nothing retroactively marked.
+ *
+ * ⚠ IT IS NOT A SUBSTITUTE FOR THE STAMP. This suppresses the SEND; it does not make the record
+ * true. A row still reading "waiting" for somebody who has stopped is wrong even if we never text
+ * them, and the stamp is what fixes that.
+ *
+ * ⚠ ONE KNOWN HOLE, stated rather than implied by "defence in depth": migration 0034's purge NULLs
+ * `sms_consent.phone_number` 30 days after a stop, so a long-since-purged stopper no longer matches
+ * this join. Twilio's carrier-level block still covers them; this clause does not.
+ */
 export async function loadWaitingFor(areaKey: string): Promise<WaitlistRecipient[]> {
   return query<WaitlistRecipient>(
     `SELECT id, phone_number AS "phoneNumber", region_chip_id AS "regionChipId",
             area_fsa AS "areaFsa"
-       FROM sms_area_waitlist
-      WHERE coalesce(region_chip_id, area_fsa) = $1
-        AND notified_at IS NULL
-        AND unsubscribed_at IS NULL
-      ORDER BY created_at`,
+       FROM sms_area_waitlist w
+      WHERE coalesce(w.region_chip_id, w.area_fsa) = $1
+        AND w.notified_at IS NULL
+        AND w.unsubscribed_at IS NULL
+        AND NOT EXISTS (
+              SELECT 1 FROM sms_consent c
+               WHERE c.phone_number = w.phone_number
+                 AND c.status = 'stopped'
+            )
+      ORDER BY w.created_at`,
     [areaKey]
   );
 }
