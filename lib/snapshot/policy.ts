@@ -243,6 +243,10 @@ export const SNAPSHOT_TABLES: readonly TablePolicy[] = [
     key: 'id',
     columns: {
       id: ID('activity_occurrence.id'),
+      // 0037's compact alias for THIS row — bigint GENERATED ALWAYS AS IDENTITY, so it is
+      // database-issued and carries nothing a person supplied. Same shape as `id` above and
+      // classified the same way; it exists only to keep an SMS short link short.
+      short_ref: ID('activity_occurrence.short_ref'),
       series_id: ID('activity_series.id'),
       activity_name: { action: 'redact_title', why: 'Scraped listing title; FTS weight A. Title-strength redaction — the broad prose heuristic would eat legitimate title words.' },
       source_title: { action: 'redact_title', why: 'The SAME scraped title before worker/core/title.ts stripped its packaging (0032). Same provenance and therefore the same risk as activity_name, so the same title-strength redaction — scrubbing it more weakly would hand back, verbatim, whatever the redactor removed from activity_name one column over.' },
