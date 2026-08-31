@@ -192,3 +192,24 @@ describe('the "Add another child" cap', () => {
     expect(MAX_CHILDREN).toBeGreaterThan(0);
   });
 });
+
+describe('the area waitlist is offered only when there is an area problem', () => {
+  // renderToStaticMarkup gives the INITIAL state: postal is empty, which classifies as `unknown`.
+  // That is the case worth pinning here — the panel must not greet somebody who has typed nothing.
+  // The three-way classification itself is covered in tests/sms/area_coverage.test.ts, and the
+  // rendered behaviour for each state was verified in a browser against a real build.
+
+  it('🔴 shows NO waitlist panel before a postal code is typed', () => {
+    expect(html).not.toContain('name="waitlistConsent"');
+    expect(text).not.toContain('Text me when you reach my area');
+  });
+
+  it('shows the ordinary signup in full, since nothing says otherwise yet', () => {
+    // The out-of-area branch hides ages, interests and the signup button. On first render none of
+    // that has happened, so their presence is what proves the gate defaults to "offer the normal
+    // thing" rather than to the waitlist.
+    for (const name of ['postal', 'childAge', 'interests', 'phone', 'consent']) {
+      expect(html, name).toContain(`name="${name}"`);
+    }
+  });
+});

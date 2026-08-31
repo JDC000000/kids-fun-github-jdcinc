@@ -32,6 +32,16 @@ import {
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
 import { MAX_CHILDREN, parseSmsSignupBody, type SmsSignupField } from '@/lib/sms/signup-validate';
 import { sparseAreaNoticeFor } from '@/lib/sms/sparse-areas';
+import { classifyPostalCoverage, offersWaitlist } from '@/lib/sms/area-coverage';
+import {
+  WAITLIST_CONSENT_TEXT,
+  WAITLIST_DONE_BODY,
+  WAITLIST_DONE_HEADING,
+  WAITLIST_OUT_OF_AREA_CTA,
+  WAITLIST_SPARSE_CTA,
+  WAITLIST_SUBMIT,
+} from '@/lib/sms/waitlist-copy';
+import { OUT_OF_AREA_NOTICE } from '@/lib/sms/consent-copy';
 import type { CoveredRegionId } from '@/lib/geo/postal-fsa';
 
 interface SignupFieldError {
@@ -114,6 +124,10 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
   const [errors, setErrors] = useState<SignupFieldError[]>([]);
+  const [waitlistConsent, setWaitlistConsent] = useState(false); // UNCHECKED — express consent.
+  const [waitlistSending, setWaitlistSending] = useState(false);
+  const [waitlistDone, setWaitlistDone] = useState(false);
+  const [waitlistError, setWaitlistError] = useState<string | null>(null);
 
   const errorFor = (f: SmsSignupField) => errors.find((e) => e.field === f);
   const generalError = errors.find((e) => !e.field);
@@ -126,6 +140,47 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
     () => sparseAreaNoticeFor(postal, sparseRegionIds),
     [postal, sparseRegionIds]
   );
+
+  /**
+   * Three-way coverage, recomputed as they type. This is what makes the answer arrive DURING typing
+   * rather than after a submit-and-reject — Jon: "very upfront with anybody where we don't have
+   * data in their area. Tell them ASAP when they try and sign up."
+   */
+  const coverage = useMemo(
+    () => classifyPostalCoverage(postal, sparseRegionIds),
+    [postal, sparseRegionIds]
+  );
+  const showWaitlist = offersWaitlist(coverage);
+  /**
+   * OUT OF AREA HAS NO ORDINARY PATH, so the form stops offering one. Leaving the ages, interests
+   * and signup button on screen would invite somebody to fill in a form we already know we will
+   * reject — which is the dead end Jon asked to remove, not a smaller version of it.
+   * A SPARSE area keeps everything: thin is not empty, and the waitlist there is an alternative.
+   */
+  const waitlistOnly = coverage.kind === 'out_of_area';
+
+  async function submitWaitlist() {
+    if (waitlistSending) return;
+    setWaitlistError(null);
+    setWaitlistSending(true);
+    try {
+      const res = await fetch('/api/sms/waitlist', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone, postal, consent: waitlistConsent }),
+      });
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !data?.ok) {
+        setWaitlistSending(false);
+        setWaitlistError(data?.error ?? `That didn't work (${res.status}).`);
+        return;
+      }
+      setWaitlistDone(true);
+    } catch {
+      setWaitlistSending(false);
+      setWaitlistError('Network error — please try again.');
+    }
+  }
 
   const body = () => ({
     phone,
@@ -173,6 +228,15 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
     }
   }
 
+  if (waitlistDone) {
+    return (
+      <div className="kf-start__done" role="status">
+        <h2 className="kf-start__done-heading">{WAITLIST_DONE_HEADING}</h2>
+        <p>{WAITLIST_DONE_BODY}</p>
+      </div>
+    );
+  }
+
   if (done) {
     return (
       <div className="kf-start__done" role="status">
@@ -218,6 +282,9 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
         </p>
       )}
 
+      {/* Hidden when out of area: see `waitlistOnly`. Asking for a child's age to support a
+          signup we already know we will reject would be collecting data for nothing. */}
+      {!waitlistOnly && (
       <fieldset className="kf-start__fieldset">
         <legend className="kf-start__label">{FIELD_COPY.childrenLabel}</legend>
         {children.map((child, i) => (
@@ -274,7 +341,9 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
         )}
         {err('children', 'kf-start-children-err')}
       </fieldset>
+      )}
 
+      {!waitlistOnly && (
       <fieldset className="kf-start__fieldset">
         <legend className="kf-start__label">{FIELD_COPY.interestsLabel}</legend>
         <div className="kf-start__interests">
@@ -300,6 +369,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
         </div>
         {err('interests', 'kf-start-interests-err')}
       </fieldset>
+      )}
 
       <label className="kf-start__label" htmlFor="kf-start-phone">
         {FIELD_COPY.phoneLabel}
@@ -321,12 +391,61 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
       />
       {err('phone', 'kf-start-phone-err')}
 
+      {/* ═══ THE AREA WAITLIST ═══
+          Appears only for the two classifications that have one. For a SPARSE area it sits below a
+          full, working signup form — thin is not empty, and Jon's ruling was that the waitlist is an
+          alternative there, not a replacement. For OUT OF AREA it is the only thing on the page,
+          because there is no ordinary path to offer.
+
+          It reuses the phone and postal already typed rather than asking again: a second copy of
+          either would be a second chance to disagree with the first. */}
+      {showWaitlist && (
+        <div className="kf-start__waitlist">
+          {waitlistOnly && <p className="kf-start__notice">{OUT_OF_AREA_NOTICE}</p>}
+          <p className="kf-start__waitlist-cta">
+            {waitlistOnly ? WAITLIST_OUT_OF_AREA_CTA : WAITLIST_SPARSE_CTA}
+          </p>
+
+          {/* Its OWN consent, separate from the signup checkbox above and never a substitute for
+              it. Ticking this agrees to one message about one area — not to the weekly text. */}
+          <label className="kf-start__consent">
+            <input
+              type="checkbox"
+              name="waitlistConsent"
+              checked={waitlistConsent}
+              onChange={(e) => {
+                setWaitlistConsent(e.target.checked);
+                setWaitlistError(null);
+              }}
+            />
+            <span>{WAITLIST_CONSENT_TEXT}</span>
+          </label>
+
+          {waitlistError && (
+            <p className="kf-start__error" role="alert">
+              {waitlistError}
+            </p>
+          )}
+
+          <button
+            type="button"
+            className="kf-start__submit kf-start__submit--secondary"
+            disabled={waitlistSending}
+            onClick={submitWaitlist}
+          >
+            {waitlistSending ? 'Saving…' : WAITLIST_SUBMIT}
+          </button>
+        </div>
+      )}
+
       {/* ═══ THE CONSENT SENTENCE IS SHARED, VERBATIM, WITH /sms/signup ═══
           Not condensed, not reworded, not summarised. The layout around it is simplified; the
           sentence a parent agrees to is byte-identical to the other form's, which is what lets one
           CONSENT_TEXT_VERSION stay true for both pages and keeps a consent row unambiguous about
           which wording it refers to. Rewriting it here would have needed a version bump and a way
           to tell two wordings apart in the audit trail. */}
+      {!waitlistOnly && (
+        <>
       <label className="kf-start__consent">
         <input
           type="checkbox"
@@ -351,6 +470,8 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
       <button type="submit" className="kf-start__submit" disabled={sending}>
         {sending ? 'Signing you up…' : 'Start my weekly texts'}
       </button>
+        </>
+      )}
 
       {/* CASL/PIPEDA: sender identification and the carrier disclosures. Condensed in PRESENTATION
           — small type, one block — but every required statement is present and unaltered, from the

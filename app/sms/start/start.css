@@ -190,3 +190,42 @@
   font-size: 1.375rem;
   margin: 0 0 var(--kf-space-3);
 }
+
+/* ── THE AREA WAITLIST ────────────────────────────────────────────────────────────────────
+ * Visually set apart from the signup fields above it, because it is a DIFFERENT offer with a
+ * different consent — not another field in the same form. On a sparse-area page both are on
+ * screen at once, and a parent needs to see at a glance that ticking one is not ticking the other.
+ */
+.kf-start__waitlist {
+  margin-top: var(--kf-space-4);
+  padding: var(--kf-space-4);
+  border: 1px solid var(--kf-hairline);
+  border-radius: var(--kf-r-card);
+  background: var(--kf-canvas);
+  display: flex;
+  flex-direction: column;
+  gap: var(--kf-space-2);
+}
+
+.kf-start__waitlist-cta {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+/* The waitlist's own consent sits inside the panel, so it does not inherit the top border the
+ * signup consent uses to separate itself from the fields above. */
+.kf-start__waitlist .kf-start__consent {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* Secondary weight: on a sparse-area page the ordinary signup is still the primary action, and
+ * two identical buttons would make the alternative look like the recommendation. */
+.kf-start__submit--secondary {
+  margin-top: var(--kf-space-2);
+  background: transparent;
+  color: var(--kf-anchor);
+  border: 1px solid var(--kf-anchor);
+}
