@@ -130,11 +130,45 @@ export const WHAT_HAPPENS_NEXT =
  * The support contact and mailing address that CASL §1.4 requires are not in THIS list because
  * they are sender identification rather than carrier disclosure. See SENDER_IDENTITY.
  */
+/**
+ * The frequency statement, pulled out under its own name because it is the ONE line in this list
+ * that is not true on every surface that shows the list. It describes the weekly SUBSCRIPTION.
+ * Someone who is only being offered the area waitlist is not signing up for that and will receive
+ * a single notification, if we ever reach their area at all. See `carrierDisclosuresFor`.
+ */
+export const MESSAGE_FREQUENCY_DISCLOSURE =
+  'Message frequency: 1 message per week, plus a one-time confirmation message.';
+
 export const CARRIER_DISCLOSURES: readonly string[] = [
-  'Message frequency: 1 message per week, plus a one-time confirmation message.',
+  MESSAGE_FREQUENCY_DISCLOSURE,
   'Message and data rates may apply.',
   'Reply STOP at any time to unsubscribe. Reply HELP for help.',
 ];
+
+/**
+ * THE DISCLOSURES THAT APPLY on a surface only offering the area waitlist (Jon, 2026-08-31).
+ *
+ * Removes the frequency line and NOTHING ELSE. That precision is the whole point of this function
+ * existing rather than the caller wrapping the block in a condition:
+ *
+ *   - 'Message and data rates may apply.'  is still true — the waitlist notification is still SMS.
+ *   - 'Reply STOP ... Reply HELP ...'      is still true, and on the waitlist state of /sms/start
+ *                                          it is the ONLY place the page says how to opt out.
+ *
+ * Suppressing the whole block to hide one wrong sentence would therefore take the opt-out
+ * instruction off the exact screen where somebody is handing over their number — and would quietly
+ * undo the STOP handling that was added for waitlist rows specifically. One line is wrong here;
+ * one line comes out.
+ *
+ * NO `CONSENT_TEXT_VERSION` BUMP accompanies this. That constant records which wording a stored
+ * `sms_consent` row agreed to, and this state never creates one: it writes an `sms_area_waitlist`
+ * row stamped with `WAITLIST_CONSENT_VERSION` instead. Bumping it would re-version every real
+ * subscriber's consent to describe a screen they never saw.
+ */
+export function carrierDisclosuresFor(waitlistOnly: boolean): readonly string[] {
+  if (!waitlistOnly) return CARRIER_DISCLOSURES;
+  return CARRIER_DISCLOSURES.filter((line) => line !== MESSAGE_FREQUENCY_DISCLOSURE);
+}
 
 /**
  * THE SUPPORT CONTACT, AND THE ONE PLACE THE NUMBER IS WRITTEN DOWN.

@@ -19,7 +19,7 @@
 import { type FormEvent, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  CARRIER_DISCLOSURES,
+  carrierDisclosuresFor,
   CONSENT_CHECKBOX_TEXT,
   FIELD_COPY,
   SENDER_IDENTITY,
@@ -490,7 +490,10 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
           <a href={SUPPORT_PHONE_HREF}>{SENDER_IDENTITY.supportPhone}</a>
           {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[1]}
         </p>
-        <p>{CARRIER_DISCLOSURES.join(' ')}</p>
+        {/* Frequency line suppressed when the only offer on screen is the waitlist: it
+            describes the weekly subscription, which this state is not offering. The rates and
+            STOP/HELP lines stay — see `carrierDisclosuresFor`. */}
+        <p>{carrierDisclosuresFor(waitlistOnly).join(' ')}</p>
         <p>
           <Link href="/terms">Terms</Link> · <Link href="/privacy">Privacy</Link>
         </p>

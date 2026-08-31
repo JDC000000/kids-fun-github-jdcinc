@@ -16,7 +16,9 @@ import { MAX_CHILDREN } from '@/lib/sms/signup-validate';
 import {
   CARRIER_DISCLOSURES,
   CONSENT_CHECKBOX_TEXT,
+  MESSAGE_FREQUENCY_DISCLOSURE,
   SENDER_IDENTITY,
+  carrierDisclosuresFor,
 } from '@/lib/sms/consent-copy';
 import { START_CTA, START_HEADING } from '@/app/sms/start/copy';
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
@@ -211,5 +213,33 @@ describe('the area waitlist is offered only when there is an area problem', () =
     for (const name of ['postal', 'childAge', 'interests', 'phone', 'consent']) {
       expect(html, name).toContain(`name="${name}"`);
     }
+  });
+});
+
+describe('the waitlist-only state drops the frequency line, and only that line', () => {
+  // Jon, 2026-08-31: on the out-of-area state the weekly-frequency sentence is simply false — that
+  // visitor is not being offered a subscription. It goes. The other two disclosures do not.
+  const waitlist = carrierDisclosuresFor(true);
+
+  it('suppresses the frequency disclosure', () => {
+    expect(waitlist).not.toContain(MESSAGE_FREQUENCY_DISCLOSURE);
+  });
+
+  it('🔴 KEEPS the STOP/HELP instruction — the only opt-out text on that screen', () => {
+    // The trap this test exists to catch. The obvious way to hide one wrong sentence is to wrap
+    // the whole <p> in `!waitlistOnly`, which also deletes this line — taking the opt-out
+    // instruction off the exact screen where someone is handing over their phone number, and
+    // silently undoing the waitlist STOP handling added in 4fd316c. A block-level gate returns
+    // an empty list here and fails.
+    expect(waitlist.some((l) => l.includes('Reply STOP') && l.includes('Reply HELP'))).toBe(true);
+  });
+
+  it('keeps the rates disclosure — a waitlist notification is still an SMS', () => {
+    expect(waitlist).toContain('Message and data rates may apply.');
+  });
+
+  it('removes exactly one line, and leaves the ordinary state untouched', () => {
+    expect(waitlist).toHaveLength(CARRIER_DISCLOSURES.length - 1);
+    expect(carrierDisclosuresFor(false)).toEqual(CARRIER_DISCLOSURES);
   });
 });
