@@ -489,6 +489,41 @@ export const PREFS_SAVING = 'Saving...';
 export const PREFS_SAVED = 'Saved — your next Friday text will use these.';
 
 export const PREFS_UNSUBSCRIBE_HEADING = 'Stop the texts';
+
+/**
+ * ⚠ THIS SENTENCE PROMISES A JOB THAT, AS OF 2026-09-01, HAS NO IMPLEMENTATION IN THIS REPO.
+ *
+ * "Everything we store about you is deleted 30 days later" describes the 30-day post-stop purge:
+ * an UPDATE-to-NULL over `sms_consent`'s four personal columns for rows whose `stopped_at` is
+ * older than 30 days. The SCHEMA is built for it — nullable personal columns, and
+ * `idx_sms_consent_stopped_at` whose own comment calls it "the 30-day post-stop purge sweep".
+ *
+ * The job is not missing by oversight. 0034's header says so out loud, lines 54-55:
+ *   "(The purge JOB itself is out of scope for this migration — the schema just has to make it
+ *    expressible, which is what stopped_at and these nullables do.)"
+ *
+ * WHAT IS ACTUALLY WRONG IS THE HANDOFF. That deferral was never closed, and this consumer-facing
+ * sentence went live promising the behaviour in the meantime. Searched 2026-09-01 and found no
+ * implementation: nothing NULLs those columns outside tests and the EXPLICIT user-initiated delete
+ * (`applyPreferencesChange`, which does work); `PURGEABLE_TABLES` is ['analytics_event',
+ * 'correction_report'] and `sms_consent` has no `retained_until` so the generic purge cannot target
+ * it; `global_job_schedule` seeds only 'corrections_retention'; the retention run routes and
+ * worker/core cover corrections and analytics only.
+ *
+ * NOT PROVEN FALSE, AND THE DIFFERENCE MATTERS. This is an absence claim about a repo, not about
+ * production. 0012 enables pg_cron, so a schedule added through the Supabase dashboard would not
+ * appear in any migration and is invisible from here. ONE QUERY SETTLES IT:
+ *     SELECT jobname, schedule, command FROM cron.job;
+ * If that returns an sms purge, delete this comment. If it does not, this sentence is telling a
+ * person something untrue about their own personal data, and that is a PIPEDA question rather than
+ * a backlog item.
+ *
+ * The 90-day never-confirmed purge (a row DELETE, per 0034 lines 56-59, indexed by
+ * `idx_sms_consent_pending_since`) appears equally unbuilt and has the same status.
+ *
+ * Recorded HERE, beside the promise, rather than only in a ticket: this finding was raised three
+ * times through relays and dropped three times. The sentence is the thing that has to carry it.
+ */
 export const PREFS_UNSUBSCRIBE_BODY =
   'You’ll stop getting activities straight away. Everything we store about you is deleted ' +
   '30 days later.';
