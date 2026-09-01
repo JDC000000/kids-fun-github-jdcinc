@@ -232,3 +232,53 @@ describe('🔴 the engagement series does not go back to correlated subqueries',
     expect(code).toMatch(/GROUPS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING/);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// TIE SEMANTICS, AS A PERMANENT TEST RATHER THAN AN EXPLORATORY CHECK.
+//
+// dc55d1a claimed byte-identical output against a fixture containing 110,653 timestamp ties. That
+// check was real but EXPLORATORY — it was never committed, so nothing stopped a later edit from
+// quietly breaking the behaviour it verified. The structural guard above only pins the SPELLING
+// (`GROUPS BETWEEN 1 FOLLOWING`); it cannot tell you the spelling still does the right thing.
+//
+// These two cases pin the BEHAVIOUR directly, and they are the whole reason GROUPS was chosen:
+// the original predicate was `f.created_at > e.created_at` — STRICTLY later. A tie must NOT count.
+// Ties are not hypothetical: created_at defaults to now(), identical for every row written inside
+// one transaction.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe.skipIf(!hasDb)('engagement: a tie is not "later"', () => {
+  const S = `tietest-${Date.now()}`;
+  const AT = `date_trunc('day', now()) + interval '6 hours'`;
+
+  afterAll(async () => {
+    await query(`DELETE FROM analytics_event WHERE user_or_session = $1`, [S]);
+  });
+
+  async function engagedToday(): Promise<number> {
+    const { getOperatingPeriodCounts } = await import('../../lib/analytics/operating');
+    const rows = await getOperatingPeriodCounts('day', 1);
+    return rows[rows.length - 1].engagedSearches;
+  }
+
+  it('🔴 an engagement event at the SAME timestamp does not count as engagement', async () => {
+    const before = await engagedToday();
+    // search and listing_viewed at the EXACT same instant — the original's `>` excludes this.
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, ${AT}), ('listing_viewed', $1, ${AT})`,
+      [S]
+    );
+    expect(await engagedToday()).toBe(before);
+  });
+
+  it('🔴 a genuinely later engagement event, inside the window, DOES count', async () => {
+    const before = await engagedToday();
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('listing_viewed', $1, ${AT} + interval '60 seconds')`,
+      [S]
+    );
+    // The same search now has a strictly-later engagement within SEARCH_OUTCOME_WINDOW_MINUTES.
+    expect(await engagedToday()).toBe(before + 1);
+  });
+});
