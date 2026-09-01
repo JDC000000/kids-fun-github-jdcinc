@@ -8,6 +8,9 @@ import styles from './Button.module.css';
  * Brand spec (Workbook V2 §7 "Button and chip states"):
  *   primary   = Leaf fill + Forest-ink text (the one action colour, D10)
  *   secondary = white/surface fill + neutral border + ink text
+ *   outline   = transparent + Leaf BORDER + ink text — the one action colour used as an
+ *               outline rather than a fill, so a secondary action reads as on-brand and
+ *               clearly interactive without becoming a second primary on the same screen
  *   ghost     = transparent, ink text (low-emphasis inline action)
  *   danger    = red-brown fill + white text for destructive actions
  *               (e.g. account deletion) — factual, not alarming (Workbook V2 §3)
@@ -24,7 +27,7 @@ import styles from './Button.module.css';
  * control, so a matched link+button pair (e.g. "Open" + "Delete") can both adopt
  * the primitive without a full 48px CTA blowing up the row height.
  */
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
 export type ButtonSize = 'md' | 'sm';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

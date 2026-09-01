@@ -56,7 +56,9 @@
  *   2026-08-26.v2  →  this file as of commit 22acf7f (the commit immediately before the bump
  *                     below). Retired 2026-08-29.
  *   2026-08-29.v3  →  the copywriter rewrite below replaced it. Retired 2026-09-01.
- *   2026-09-01.v4  →  current.
+ *   2026-09-01.v4  →  the max-children notice below was added to the signup form. Retired
+ *                     2026-09-01.
+ *   2026-09-01.v5  →  current.
  *
  * ⚠ THIS LIST IS NOT A DATE CUTOFF, and an audit query written as though it were will be wrong.
  * `signup-store.ts` RE-STAMPS `consent_text_version` on resubmit, deliberately — a resubmitting
@@ -69,7 +71,7 @@
  *
  * >>> BUMPING THIS? ADD THE OUTGOING VERSION TO THE LIST ABOVE IN THE SAME COMMIT. <<<
  */
-export const CONSENT_TEXT_VERSION = '2026-09-01.v4';
+export const CONSENT_TEXT_VERSION = '2026-09-01.v5';
 
 /** What the page is, in one line, above the fields. */
 export const FORM_HEADING = 'Get kids’ weekend activities by text';
@@ -338,6 +340,22 @@ export const FIELD_COPY = {
   submit: 'Text me kids’ activities',
   submitting: 'Signing up…',
 } as const;
+
+/**
+ * Shown IN PLACE OF the "+ Add a child" button once the cap is reached, on both the signup form
+ * and the preferences page.
+ *
+ * The button already disappeared at the cap; nothing explained why, so the control simply vanished
+ * mid-task. This says what happened.
+ *
+ * TAKES THE LIMIT AS AN ARGUMENT rather than importing MAX_CHILDREN, for two reasons: this module
+ * is deliberately dependency-free pure data (see the file header), and a hardcoded "8" here would
+ * be a second source of truth that stops matching the validator the day anyone changes it. The
+ * caller passes the real constant.
+ */
+export function maxChildrenNotice(max: number): string {
+  return `You’ve reached the max — ${max} kids.`;
+}
 
 /** What the page says once the signup has been accepted. */
 export const SUBMITTED_HEADING = 'Check your phone';

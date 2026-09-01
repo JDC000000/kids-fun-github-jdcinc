@@ -273,3 +273,11 @@ describe('Chip', () => {
     expect(html).not.toContain('data-selected'); // an action chip is not a selected state
   });
 });
+
+describe('the outline variant (2026-09-01)', () => {
+  it('renders as its own variant, not as secondary', () => {
+    const html = renderToStaticMarkup(<Button variant="outline">+ Add a child</Button>);
+    expect(html).toContain('data-variant="outline"');
+    expect(html).not.toContain('data-variant="secondary"');
+  });
+});

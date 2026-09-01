@@ -41,6 +41,26 @@
   border-color: var(--kf-park-moss);
 }
 
+/* outline — the action colour as a BORDER rather than a fill, for a secondary action that
+ * should still read as on-brand (e.g. "+ Add a child" beside a filled primary submit).
+ *
+ * COLOUR IS --kf-ink, NOT --kf-forest-ink, and that is the whole reason this comment exists.
+ * design-tokens.css:22 — raw palette tokens are FIXED and never flip. --kf-forest-ink is #102316
+ * and so is --kf-dark-primary, the dark-mode canvas: transparent background + fixed dark text
+ * would render this button at 1.00:1 in dark mode. Invisible, not merely low-contrast.
+ * --kf-ink RESOLVES TO --kf-forest-ink in light mode, so the light appearance is exactly the
+ * specified one, and flips with the canvas — the same pairing .secondary and .ghost rely on.
+ *   light 15.41:1 (canvas) / 15.08:1 (hover) · dark 14.77:1 / 10.33:1 — AA either way. */
+.outline {
+  background: transparent;
+  border-color: var(--kf-leaf);
+  color: var(--kf-ink);
+}
+.outline:hover {
+  background: var(--kf-surface-subtle); /* flips in dark mode → stays AA vs --kf-ink */
+  border-color: var(--kf-leaf-hover);
+}
+
 /* ghost — low-emphasis inline action. */
 .ghost {
   background: transparent;

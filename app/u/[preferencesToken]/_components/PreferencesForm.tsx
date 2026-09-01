@@ -36,8 +36,7 @@ import {
   PREFS_UNSUBSCRIBE,
   PREFS_UNSUBSCRIBE_BODY,
   PREFS_UNSUBSCRIBE_HEADING,
-  PREFS_UNSUBSCRIBED,
-} from '@/lib/sms/consent-copy';
+  PREFS_UNSUBSCRIBED, maxChildrenNotice } from '@/lib/sms/consent-copy';
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
 import { MAX_CHILDREN, parseProfileFields, type SmsSignupField } from '@/lib/sms/signup-validate';
 import type { PreferencesView } from '@/lib/sms/preferences';
@@ -194,14 +193,16 @@ export function PreferencesForm({ token, view, editable }: PreferencesFormProps)
                   )}
                 </div>
               ))}
-              {children.length < MAX_CHILDREN && (
+              {children.length < MAX_CHILDREN ? (
                 <Button
                   type="button"
-                  variant="secondary"
+                  variant="outline"
                   onClick={() => setChildren((rows) => [...rows, newChildRow()])}
                 >
                   {FIELD_COPY.addChild}
                 </Button>
+              ) : (
+                <p className="kf-prefs__help">{maxChildrenNotice(MAX_CHILDREN)}</p>
               )}
               {errFor('children')}
             </fieldset>

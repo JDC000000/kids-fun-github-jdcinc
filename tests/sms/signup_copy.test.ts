@@ -10,7 +10,13 @@
 // submission, which makes the carrier-facing lines load-bearing too.
 import { describe, expect, it } from 'vitest';
 import { isGsm7, nonGsm7Characters } from '@/lib/sms/message';
-import { FIELD_COPY, PREFS_STATUS_PENDING, SUBMITTED_BODY } from '@/lib/sms/consent-copy';
+import {
+  FIELD_COPY,
+  PREFS_STATUS_PENDING,
+  SUBMITTED_BODY,
+  maxChildrenNotice,
+} from '@/lib/sms/consent-copy';
+import { MAX_CHILDREN } from '@/lib/sms/signup-validate';
 import {
   PREFS_UNKNOWN_TOKEN_BODY,
   CARRIER_DISCLOSURES,
@@ -296,7 +302,7 @@ describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approve
     // rule. This assertion failing was the guard working exactly as intended — a bump has to come
     // here and be justified, which is why it is pinned to a literal rather than read from the
     // constant it is checking.
-    expect(CONSENT_TEXT_VERSION).toBe('2026-09-01.v4');
+    expect(CONSENT_TEXT_VERSION).toBe('2026-09-01.v5');
     expect(CONSENT_CHECKBOX_TEXT).not.toContain('texted us before'); // the consent text is untouched
   });
 });
@@ -439,5 +445,20 @@ describe('the phone help text makes no claim the code does not check', () => {
     // move with it — and a version bump comes with that, since this string is consent-act copy.
     expect(FIELD_COPY.phoneHelp.toLowerCase()).not.toContain('canad');
     expect(FIELD_COPY.phoneHelp).toContain('10-digit');
+  });
+});
+
+describe('the max-children notice (2026-09-01)', () => {
+  it('🔴 interpolates the real limit and never hardcodes it', () => {
+    // The button vanishing at the cap with no explanation read as the form breaking. This is the
+    // sentence that replaced the silence — and it must track MAX_CHILDREN rather than restate it,
+    // because a literal here stops matching the validator the day anyone changes the limit.
+    expect(maxChildrenNotice(MAX_CHILDREN)).toContain(String(MAX_CHILDREN));
+    expect(maxChildrenNotice(3)).toContain('3');
+    expect(maxChildrenNotice(3)).not.toContain(String(MAX_CHILDREN));
+  });
+
+  it('names the limit as a limit, not as an error', () => {
+    expect(maxChildrenNotice(MAX_CHILDREN)).toMatch(/reached the max/i);
   });
 });

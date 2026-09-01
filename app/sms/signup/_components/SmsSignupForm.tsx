@@ -29,7 +29,7 @@
 
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input } from '@/components/ui';
-import { FIELD_COPY, CONSENT_CHECKBOX_TEXT, PREFERENCES_LINK_LABEL, SUBMITTED_BODY, SUBMITTED_HEADING, WHAT_HAPPENS_NEXT } from '@/lib/sms/consent-copy';
+import { FIELD_COPY, CONSENT_CHECKBOX_TEXT, PREFERENCES_LINK_LABEL, SUBMITTED_BODY, SUBMITTED_HEADING, WHAT_HAPPENS_NEXT, maxChildrenNotice } from '@/lib/sms/consent-copy';
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
 import {
   MAX_CHILDREN,
@@ -376,14 +376,18 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
             )}
           </div>
         ))}
-        {children.length < MAX_CHILDREN && (
+        {children.length < MAX_CHILDREN ? (
           <Button
             type="button"
-            variant="secondary"
+            variant="outline"
             onClick={() => editChildren((rows) => [...rows, newChildRow()])}
           >
             {FIELD_COPY.addChild}
           </Button>
+        ) : (
+          // The button used to just vanish at the cap, which reads as the form breaking rather
+          // than a limit being reached. MAX_CHILDREN is interpolated, never a literal.
+          <p className="kf-sms-signup__help">{maxChildrenNotice(MAX_CHILDREN)}</p>
         )}
         {errFor('children')}
       </fieldset>
