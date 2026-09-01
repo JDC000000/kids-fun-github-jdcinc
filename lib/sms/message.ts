@@ -369,7 +369,7 @@ export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessag
  * The reply to an inbound text we do not recognise (webhook `unknown` branch).
  *
  *     KIDS FUN: We text weekly kid activity picks. Reply JOIN to confirm, HELP for info, or STOP
- *     to end. Not signed up? kidsfun.ca/sms/signup
+ *     to end. Not signed up? kidsfun.ca/sms/start
  *
  * ── IT SAYS WHAT WE ARE, ADDED IN ROUND 21 — AND SOMETHING HAD TO GO ────────────────────
  * V1 testing found the reply told a stranger what to TYPE without ever saying what they would be

@@ -125,7 +125,7 @@ export default async function PreferencesPage({
           <h1 className="kf-prefs__heading">{PREFS_UNKNOWN_TOKEN_HEADING}</h1>
           <p className="kf-prefs__intro">{PREFS_UNKNOWN_TOKEN_BODY}</p>
           <p className="kf-prefs__legal">
-            <a href="/sms/signup">Sign up for weekly picks</a>
+            <a href="/sms/start">Sign up for weekly picks</a>
           </p>
         </div>
       </main>

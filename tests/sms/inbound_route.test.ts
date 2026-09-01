@@ -1,4 +1,9 @@
-// tests/sms/inbound_route.test.ts — POST /api/sms/inbound, the Twilio inbound webhook.
+// tests/sms/inbound_route.test.ts
+//
+// NOTE (2026-09-01): the signup URL in these fixtures is /sms/start, not /sms/signup. signupUrl()
+// was retargeted when /sms/start became the primary landing page — /sms/signup still 308s there,
+// but a link WE compose into an SMS body should not spend a redirect hop. These assertions are
+// unchanged in intent: the reply must carry the signup link the product actually builds. — POST /api/sms/inbound, the Twilio inbound webhook.
 //
 // THIS ROUTE HAD NO TEST FILE AT ALL until round 13. Round 1 built its payload cap, its
 // fail-closed signature check and its graceful handling of a signed-but-malformed body, and none
@@ -31,7 +36,7 @@ import { renderUnknownKeywordMessage, assertGsm7Safe, estimateSegments } from '@
 // Stage A made the consent seams real: they now issue actual SQL through lib/db/client. This file
 // tests decisions and wiring, not persistence, so the db seam is mocked to an empty result — which
 // restores exactly the "finds nothing" world these tests were written against, honestly and
-// without a connection. The real seams are covered in tests/sms/signup_persistence-db.test.ts,
+// without a connection. The real seams are covered in tests/sms/start_persistence-db.test.ts,
 // which runs in the `db` lane. That split is the convention vitest.workspace.ts documents.
 vi.mock('@/lib/db/client', () => ({
   query: async () => [],
@@ -71,7 +76,7 @@ async function xml(res: Response): Promise<string> {
   return res.text();
 }
 
-const EXPECTED_REPLY = renderUnknownKeywordMessage('https://kidsfun.example/sms/signup').body;
+const EXPECTED_REPLY = renderUnknownKeywordMessage('https://kidsfun.example/sms/start').body;
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -87,7 +92,7 @@ describe('the unknown-keyword reply (copy)', () => {
     // previously-unknown or previously-stopped number may be a canned carrier-level auto-reply
     // rather than a route into our app, and that it must be configured and verified against a
     // real toll-free number before launch. We do not print a keyword we cannot promise works.
-    const body = renderUnknownKeywordMessage('https://kidsfun.example/sms/signup').body;
+    const body = renderUnknownKeywordMessage('https://kidsfun.example/sms/start').body;
     expect(body).toContain('Reply JOIN');
     expect(body).toContain('HELP');
     expect(body).toContain('STOP');
@@ -98,7 +103,7 @@ describe('the unknown-keyword reply (copy)', () => {
     // Somebody who texts us cold has no sms_consent row: if they reply JOIN the transition
     // answers `no_such_subscriber` and the webhook says nothing at all. The link is the only
     // thing in this message that works for a person who has never signed up.
-    expect(EXPECTED_REPLY).toContain('https://kidsfun.example/sms/signup');
+    expect(EXPECTED_REPLY).toContain('https://kidsfun.example/sms/start');
   });
 
   it('passes the GSM-7 guard and fits one segment at the REAL production URL', () => {
@@ -108,13 +113,17 @@ describe('the unknown-keyword reply (copy)', () => {
     // `kidsfun.ca`; production is `kidsfunapp.ca`, three characters longer. That difference is
     // small and it is exactly the kind of thing that turns a 1-segment message into a 2-segment
     // one, so the assertion now names the real host.
-    const live = renderUnknownKeywordMessage('https://kidsfunapp.ca/sms/signup');
+    const live = renderUnknownKeywordMessage('https://kidsfunapp.ca/sms/start');
     expect(live.encoding).toBe('GSM-7');
-    expect(live.characters).toBe(152);
+    // 151, not 152: /sms/start is one character shorter than /sms/signup. Pinned EXACTLY
+    // rather than as '<= 160' — the point of this assertion is that a copy change has to
+    // come and move the number on purpose, which is how the budget stays visible.
+    expect(live.characters).toBe(151);
     expect(live.segments).toBe(1);
-    expect(160 - live.characters).toBe(8);
+    // 9 characters of headroom now, up from 8 — the /sms/start retarget bought one back.
+    expect(160 - live.characters).toBe(9);
     // The shorter apex domain also fits, with more room, if it is ever used instead.
-    expect(renderUnknownKeywordMessage('https://kidsfun.ca/sms/signup').segments).toBe(1);
+    expect(renderUnknownKeywordMessage('https://kidsfun.ca/sms/start').segments).toBe(1);
   });
 
   it('⚠ NO LONGER says what KIDS FUN is inline — Jon chose the acknowledgement instead', () => {
@@ -147,7 +156,7 @@ describe('the unknown-keyword reply (copy)', () => {
     // Either is defensible; having both is not available.
     const withBoth =
       "KIDS FUN: We text weekly kid activity picks. Sorry, we didn't catch that - reply JOIN to " +
-      'confirm, HELP for info, or STOP to end. Not signed up? https://kidsfun.ca/sms/signup';
+      'confirm, HELP for info, or STOP to end. Not signed up? https://kidsfun.ca/sms/start';
     expect(estimateSegments(withBoth).segments).toBe(2);
   });
 
@@ -368,14 +377,14 @@ describe('escapeXml', () => {
 // START — one door, three answers (PRD §2.1 door 2)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const INVITE = renderStartSignupInviteMessage('https://kidsfun.example/sms/signup').body;
+const INVITE = renderStartSignupInviteMessage('https://kidsfun.example/sms/start').body;
 const CONFIRM_AGAIN = renderConfirmRequestMessage(null).body;
 
 describe('startReplyFor — the three-way mapping', () => {
   it('no_such_subscriber gets the signup link — this IS door 2', () => {
     vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.example');
     expect(startReplyFor('no_such_subscriber')).toBe(INVITE);
-    expect(startReplyFor('no_such_subscriber')).toContain('https://kidsfun.example/sms/signup');
+    expect(startReplyFor('no_such_subscriber')).toContain('https://kidsfun.example/sms/start');
   });
 
   it('awaiting_confirmation gets the confirmation request AGAIN, not new copy', () => {
@@ -405,9 +414,10 @@ describe('startReplyFor — the three-way mapping', () => {
 
   it('the two replies it does send are GSM-7 safe and one segment each', () => {
     vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.ca');
-    const invite = renderStartSignupInviteMessage('https://kidsfun.ca/sms/signup');
+    const invite = renderStartSignupInviteMessage('https://kidsfun.ca/sms/start');
     assertGsm7Safe(invite.body);
-    expect(invite.characters).toBe(127);
+    // 126 after the /sms/start retarget, same reasoning as the unknown-keyword pin above.
+    expect(invite.characters).toBe(126);
     expect(invite.segments).toBe(1);
     const again = renderConfirmRequestMessage(null);
     assertGsm7Safe(again.body);
@@ -427,7 +437,7 @@ describe('startReplyFor — the three-way mapping', () => {
     // "Where do I sign up" must not have two different answers depending on which word the
     // person happened to text. Both messages are built from the same clause.
     vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.example');
-    const clause = 'Not signed up? https://kidsfun.example/sms/signup';
+    const clause = 'Not signed up? https://kidsfun.example/sms/start';
     expect(INVITE).toContain(clause);
     expect(EXPECTED_REPLY).toContain(clause);
   });

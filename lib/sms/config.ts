@@ -226,7 +226,14 @@ export function shortLinkUrl(token: string): string {
  * with no subscription somewhere to go.
  */
 export function signupUrl(): string {
-  return `${siteUrl()}/sms/signup`;
+  // POINTS AT /sms/start, NOT /sms/signup, and that is deliberate rather than a rename artefact.
+  // /sms/signup 308s here (next.config.mjs), so the old path would still work — but this URL is
+  // composed BY US and pasted into outbound SMS bodies (the unknown-keyword reply, the
+  // STOP-then-restart invite, and the waitlist notification). A link we write ourselves should not
+  // spend a redirect hop on a phone with one bar, and tests/sms/site_url.test.ts calls these
+  // builders "what actually appear in a message" for exactly that reason.
+  // Also one character shorter, which is free segment budget in a GSM-7 body.
+  return `${siteUrl()}/sms/start`;
 }
 
 /**

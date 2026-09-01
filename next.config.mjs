@@ -37,6 +37,37 @@ const nextConfig = {
    * Verified against a real `next start` response, not assumed — see tests/sms/preferences.test.ts
    * for the assertion on this configuration and the round-17 notes for the live check.
    */
+  /**
+   * /sms/signup → /sms/start, permanently (Jon, 2026-09-01).
+   *
+   * /sms/start is the primary landing page now. This keeps every QR code, bookmark and shared
+   * link that already points at /sms/signup landing somewhere live instead of at a page being
+   * retired under them.
+   *
+   * PERMANENT = 308, which preserves the request METHOD as well as the body — unlike 301/302,
+   * which browsers historically downgrade to GET. Nothing POSTs to this path today, but a
+   * permanent redirect outlives the assumption that nothing ever will.
+   *
+   * QUERY STRINGS RIDE ALONG AUTOMATICALLY. Next carries them for a redirect with no `:path*`
+   * wildcard, so ?utm_source=... survives the hop and attribution is not silently dropped.
+   *
+   * ⚠ BUILD-TIME, NOT RUNTIME. Like headers() below, this is baked into
+   * .next/routes-manifest.json when the app is built — a restart does not pick it up. Verifying
+   * this in a running deployment means a REDEPLOY, not a bounce.
+   *
+   * WHY THE CONFIG AND NOT redirect() INSIDE THE PAGE: this fires before the route renders, so a
+   * retired page costs nothing to serve. The one behavioural nuance, stated rather than hidden:
+   * app/sms/signup/page.tsx gated itself with `if (!smsSignupEnabled()) notFound()`, and that gate
+   * is now unreachable — a request arrives at /sms/start instead, which applies THE SAME gate
+   * (app/sms/start/page.tsx:36) and 404s identically. The end state matches; only the hop is new.
+   *
+   * SELF-CONTROLLED REFERENCES DO NOT RELY ON THIS. signupUrl() and the preferences fallback link
+   * point straight at /sms/start. This redirect is for links we do not control and cannot edit.
+   */
+  async redirects() {
+    return [{ source: '/sms/signup', destination: '/sms/start', permanent: true }];
+  },
+
   async headers() {
     /*
      * ── SHARED TRANSPORT HARDENING, APPLIED TO BOTH SMS-FACING PAGES ─────────────────────────
