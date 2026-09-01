@@ -39,7 +39,28 @@ to match production in **size and in shape** — #3 got size right on the second
 wrong — and a guard has to test the property you need rather than the category you happened to think
 of.
 
+## The pattern-break worth keeping too
+
+Not everything that session went this way, and the exception is instructive. The
+"stale statistics after index creation" hypothesis was **killed cleanly by measurement**: run
+`ANALYZE analytics_event`, re-time the queries, observe no material change (1186 → 1186 ms), done.
+No paraphrase, no ambiguity, no lingering "probably not it".
+
+That is what the good case looks like, and it is worth being able to recognise: a hypothesis stated
+precisely enough that one measurement can end it. The five failures below all share the opposite
+property — each was stated in a way that *sounded* checkable while the thing actually checked was
+something else.
+
 ## Related
 
 `docs/migration-drift.md` — the same theme in a different register: a migration file existing in the
 repo and the object existing in the database are two different facts.
+
+**Project document: _"Process lesson: paraphrase-vs-actual-thing verification failures
+(2026-09-01)"_** (KIDS FUN project docs) covers the same five instances as a session narrative,
+with the collaboration context this file deliberately leaves out.
+
+⚠ **Two records of "descriptions drift from the things they describe" can themselves drift apart.**
+They are kept separate on purpose — this file is indexed to source paths that move with the code,
+the project document is a narrative that does not — so **update whichever matches what changed, and
+do not silently let one become the stale copy of the other.**
