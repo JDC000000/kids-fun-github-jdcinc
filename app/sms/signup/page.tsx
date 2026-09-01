@@ -110,9 +110,29 @@ export default async function SmsSignupPage() {
             address can never be right in one place and stale in the other. */}
         {/*
           COLLAPSED, NOT REMOVED (Jon, 2026-09-01). Every required statement is still on the page
-          and still in the DOM — a <details> that is closed has its contents in the document, so a
-          compliance reviewer's screenshot, a screen reader and Ctrl-F all still reach them. This
-          is a presentation change, not a disclosure change.
+          and still in the DOM, so view-source, `curl` and archive tooling reach all of it.
+
+          ⚠ CORRECTION (2026-09-01, same day): this comment previously also claimed "a compliance
+          reviewer's screenshot ... still reach[es] them". THAT IS FALSE, and it is the one claim
+          that mattered here. A closed <details> does not RENDER its contents — a screenshot of
+          this page captures the words "Legal & support info" and none of the carrier disclosures,
+          sender identity, or terms/privacy links behind them. (Find-in-page is browser-dependent;
+          screen readers announce the summary and mark the rest collapsed. Only the DOM claim was
+          ever safe.)
+
+          WHY THAT IS NOT A COSMETIC ERROR ON THIS PAGE SPECIFICALLY: lib/sms/consent-copy.ts:35
+          states this form's purpose — "a screenshot of this form is intended as the opt-in
+          evidence for the Twilio Canadian Toll-Free Verification submission ... a reviewer reads
+          the actual pixels." Collapsing the disclosures removes them from exactly the artefact
+          this page exists to produce. The correct rule was already written 40 lines below, on the
+          version stamp: "What it does NOT survive is a purely visual screenshot."
+
+          OPEN QUESTION, NOT SILENTLY RESOLVED HERE: whether this page remains the submitted
+          opt-in URL at all is under review (there is a proposal to make /sms/start primary and
+          308 this route to it). /sms/start renders the SAME footer expanded, so that change would
+          resolve this by itself. Adding `open` here, or reverting the collapse, would partly undo
+          a decision Jon took deliberately — so it is deliberately NOT done unilaterally. If this
+          page stays the Twilio artefact, this <details> needs `open` or removing.
 
           NATIVE <details>, deliberately: no JavaScript, so this page stays a Server Component and
           the whole footer works with JS disabled. A custom toggle would have cost both.
