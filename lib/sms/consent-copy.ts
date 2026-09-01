@@ -58,7 +58,9 @@
  *   2026-08-29.v3  →  the copywriter rewrite below replaced it. Retired 2026-09-01.
  *   2026-09-01.v4  →  the max-children notice below was added to the signup form. Retired
  *                     2026-09-01.
- *   2026-09-01.v5  →  current.
+ *   2026-09-01.v5  →  the max-children notice was added to the signup form. Retired
+ *                     2026-09-01, when the consent checkbox itself was corrected.
+ *   2026-09-01.v6  →  current.
  *
  * ⚠ THIS LIST IS NOT A DATE CUTOFF, and an audit query written as though it were will be wrong.
  * `signup-store.ts` RE-STAMPS `consent_text_version` on resubmit, deliberately — a resubmitting
@@ -71,7 +73,7 @@
  *
  * >>> BUMPING THIS? ADD THE OUTGOING VERSION TO THE LIST ABOVE IN THE SAME COMMIT. <<<
  */
-export const CONSENT_TEXT_VERSION = '2026-09-01.v5';
+export const CONSENT_TEXT_VERSION = '2026-09-01.v6';
 
 /** What the page is, in one line, above the fields. */
 export const FORM_HEADING = 'Get kids’ weekend activities by text';
@@ -96,27 +98,42 @@ export const FORM_INTRO =
  *   4. WHERE to see, change or delete it — the preferences page, linked.
  */
 /*
- * ═══ HELD, NOT APPLIED — awaiting a ruling (2026-09-01) ═══
- * Jon approved a rewritten consent sentence in the copywriter draft. Every other string from that
- * draft is applied in this commit; this one is not, because it drops the word "only":
+ * ═══ PROVENANCE: NOT THE COPYWRITER-DRAFT PATTERN THE OTHER ELEVEN STRINGS CARRY ═══
+ * Recorded the way ACTIVITY_GONE_BODY's block below records its own, and for the same reason —
+ * "the author typed this" and "the author delegated this and pre-approved it" carry different
+ * weight for anyone deciding later whether they may touch it, and a comment that blurs them
+ * misdescribes the sentence for years.
  *
- *   approved:  '…and kids’ approximate ages to choose those activities — never sold or shared…'
- *   current:   '…and use them ONLY TO choose the activities in that weekly text…'
+ * The other eleven strings from the 2026-09-01 copywriter rewrite are Jon-approved copywriter
+ * drafts. THIS ONE IS NOT, and saying "Jon approved the copywriter draft" here would be false:
  *
- * PRD §1.3 relies on that purpose-EXCLUSIVITY to justify ONE checkbox rather than separately
- * bundled consents, and tests/sms/signup_copy.test.ts:47 pins it with that reasoning written out.
- * Applying the draft verbatim would have meant deleting a guard that exists to protect a specific
- * compliance argument — which is a product-owner decision, not a copy edit.
+ *   1. The copywriter's draft read '…and kids’ approximate ages TO CHOOSE those activities…',
+ *      which drops the word "only". PRD §1.3 leans on that purpose-EXCLUSIVITY to justify ONE
+ *      checkbox rather than separately bundled consents, and tests/sms/signup_copy.test.ts pins
+ *      it with that reasoning spelled out. So the draft was HELD rather than applied — deleting
+ *      a guard that protects a compliance argument is a product-owner decision, not a copy edit.
+ *   2. The implementer proposed '…to choose ONLY those activities…'. That was WRONG, and the
+ *      near-miss is worth keeping: it contains the word "only" and reads as a fix, but it scopes
+ *      "only" to WHICH ACTIVITIES rather than to the DATA'S PURPOSE — a different guarantee, and
+ *      not the one §1.3 needs. It also fails /only to/ outright. A reviewer skimming for "does it
+ *      say only?" would have passed it.
+ *   3. The OPERATOR wrote the sentence below. Jon approved it directly.
  *
- * Proposed resolution, one word, preserving the new voice: '…to choose ONLY those activities…'.
- * Not applied unilaterally. See the report attached to this commit.
+ * ⇒ Operator-authored, Jon-approved, recorded as his — the same mechanism as the Q5
+ *   STOP-recovery sentence and ACTIVITY_GONE_BODY, which is why this is that documented pattern's
+ *   second use rather than a third pattern. It is NOT the copywriter's wording.
+ *
+ * THE FOUR §1.3 DISCLOSURES ARE STILL ALL PRESENT — do not delete one to shorten the sentence:
+ *   1. WHAT is collected — phone number, postal code, kids' approximate ages.
+ *   2. WHY, and ONLY why — "using them only to choose those activities".
+ *   3. That it is NEVER shared with advertisers or anyone else.
+ *   4. WHERE to see, change or delete it — the preferences page, named.
  */
 export const CONSENT_CHECKBOX_TEXT =
-  'Yes, text me weekly activity picks. I agree that KIDS FUN can store my phone number, my ' +
-  'postal code and my children’s approximate ages, and use them only to choose the activities ' +
-  'in that weekly text. This information is never sold or shared with advertisers or any other ' +
-  'third party. I can see, change or delete everything stored about me at any time from my ' +
-  'preferences page, which is linked in every message.';
+  'Yes, text me activities for my kids. I agree KIDS FUN can store my phone number, postal ' +
+  'code and kids’ approximate ages, using them only to choose those activities — never sold ' +
+  'or shared with advertisers or anyone else. I can view, change or delete this anytime on my ' +
+  'preferences page (linked in every message).';
 
 /** Where clause 4's "preferences page" points. Linked from the checkbox label itself. */
 export const PREFERENCES_LINK_LABEL = 'preferences page';

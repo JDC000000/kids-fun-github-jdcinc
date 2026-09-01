@@ -43,24 +43,34 @@ describe('the consent checkbox wording (PRD §1.3)', () => {
   it('names WHAT is collected — all three items', () => {
     expect(CONSENT_CHECKBOX_TEXT).toMatch(/phone number/i);
     expect(CONSENT_CHECKBOX_TEXT).toMatch(/postal code/i);
-    expect(CONSENT_CHECKBOX_TEXT).toMatch(/children’s approximate ages/i);
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/kids’ approximate ages/i);
   });
 
   it('names WHY, and scopes the use to that one purpose', () => {
-    expect(CONSENT_CHECKBOX_TEXT).toMatch(/weekly/i);
-    // "use them only to" is the purpose-specificity PRD §1.3 relies on to justify ONE checkbox
-    // rather than separately bundled consents. Losing the word "only" loses that argument.
+    // THE LOAD-BEARING ONE. "using them only to choose" is the purpose-specificity PRD §1.3
+    // relies on to justify ONE checkbox rather than separately bundled consents.
+    //
+    // /only to/ IS NOT A KEYWORD MATCH — it constrains GRAMMATICAL ATTACHMENT, and that is why it
+    // is written this way. The copywriter draft dropped "only" entirely; a proposed fix then read
+    // "to choose ONLY those activities", which contains the word and still fails here, correctly:
+    // it scopes "only" to WHICH ACTIVITIES rather than to the DATA'S PURPOSE. Different guarantee,
+    // and not the one §1.3 needs. Anyone "fixing" a failure here by loosening this regex to
+    // /only/ would reintroduce exactly that near-miss.
     expect(CONSENT_CHECKBOX_TEXT).toMatch(/only to/i);
+    // NOT /weekly/ any more: the frequency claim moved out of the checkbox and into the carrier
+    // disclosures (MESSAGE_FREQUENCY_DISCLOSURE), where it is stated once and filtered per surface
+    // by carrierDisclosuresFor(). Asserting it here would pin a duplicate that no longer exists.
   });
 
   it('states it is never sold or shared with advertisers or third parties', () => {
     expect(CONSENT_CHECKBOX_TEXT).toMatch(/never sold or shared/i);
     expect(CONSENT_CHECKBOX_TEXT).toMatch(/advertiser/i);
-    expect(CONSENT_CHECKBOX_TEXT).toMatch(/third party/i);
+    // 'anyone else' replaced 'any other third party' — BROADER, so the clause is stronger.
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/anyone else/i);
   });
 
   it('names WHERE to see, change or delete it', () => {
-    expect(CONSENT_CHECKBOX_TEXT).toMatch(/see, change or delete/i);
+    expect(CONSENT_CHECKBOX_TEXT).toMatch(/view, change or delete/i);
     expect(CONSENT_CHECKBOX_TEXT).toContain(PREFERENCES_LINK_LABEL);
   });
 
@@ -302,7 +312,7 @@ describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approve
     // rule. This assertion failing was the guard working exactly as intended — a bump has to come
     // here and be justified, which is why it is pinned to a literal rather than read from the
     // constant it is checking.
-    expect(CONSENT_TEXT_VERSION).toBe('2026-09-01.v5');
+    expect(CONSENT_TEXT_VERSION).toBe('2026-09-01.v6');
     expect(CONSENT_CHECKBOX_TEXT).not.toContain('texted us before'); // the consent text is untouched
   });
 });
