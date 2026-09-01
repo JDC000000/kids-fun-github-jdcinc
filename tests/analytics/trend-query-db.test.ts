@@ -9,7 +9,7 @@
 // whatever else exists.
 import { afterAll, describe, expect, it } from 'vitest';
 import { getActivityTrend } from '../../lib/analytics/trends';
-import { closePool, query, queryWithTimeout } from '../../lib/db/client';
+import { QueryTimeoutError, closePool, query, queryWithTimeout } from '../../lib/db/client';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const MARKER = `trendtest-${Date.now()}`;
@@ -81,6 +81,32 @@ describe.skipIf(!hasDb)('queryWithTimeout', () => {
     // The gap this closes: an abandoned HTTP request used to leave the scan running to completion
     // on production Postgres — two orphaned backends had to be killed by hand during this incident.
     await expect(queryWithTimeout(`SELECT pg_sleep(5)`, undefined, 150)).rejects.toThrow();
+  });
+
+  it('🔴 the cancellation SAYS it was a timeout, and names the limit', async () => {
+    // A timeout changes the symptom of the thing it guards. When the trend query's ceiling shipped,
+    // /admin/product-health stopped hanging and started returning a 500 at ~8.4s — the guard
+    // working, but the new symptom read as a NEW bug, and the only clue it was ours was that 8.4s
+    // happened to match an 8000ms constant someone had to remember. A bare Postgres 57014 does not
+    // say who set the limit or what it was. This does.
+    let caught: unknown;
+    try {
+      await queryWithTimeout(`SELECT pg_sleep(5)`, undefined, 150);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(QueryTimeoutError);
+    expect((caught as QueryTimeoutError).timeoutMs).toBe(150);
+    expect(String((caught as Error).message)).toContain('150ms');
+    expect(String((caught as Error).message)).toContain('statement_timeout');
+    // The original pg error survives for anything that wants its fields.
+    expect((caught as Error).cause).toBeDefined();
+  });
+
+  it('does NOT relabel an ordinary query failure as a timeout', async () => {
+    // 57014 is the only code attributed. A syntax error must stay a syntax error.
+    await expect(queryWithTimeout(`SELECT * FROM no_such_table_xyz`, undefined, 5_000))
+      .rejects.not.toBeInstanceOf(QueryTimeoutError);
   });
 
   it('🔴 does NOT leak statement_timeout onto the pooled connection', async () => {

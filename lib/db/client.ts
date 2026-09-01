@@ -48,6 +48,34 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
  * On expiry Postgres raises 57014 (`query_canceled`) and THIS THROWS. That is deliberate: the
  * caller gets a real error to handle rather than a silently empty result.
  */
+/**
+ * Thrown when a query opted into a timeout and exceeded it.
+ *
+ * ═══ WHY THIS EXISTS RATHER THAN LETTING 57014 THROUGH ═══
+ * A timeout CHANGES THE SYMPTOM of the thing it is guarding, and that turned out to matter. When
+ * the trend query's ceiling shipped, /admin/product-health stopped hanging and started returning a
+ * 500 in ~8.4s. That is the guard working — an unbounded hang became a handleable error — but the
+ * new symptom read like a NEW bug rather than the old one still unfixed, and the number that
+ * identified it (8.4s ≈ the 8000ms ceiling) was only recognisable to someone who happened to
+ * remember the constant.
+ *
+ * Postgres raises a bare `57014 query_canceled` with no hint that WE set the limit or what it was.
+ * So the error now says so. `cause` keeps the original for anything that wants the pg fields.
+ */
+export class QueryTimeoutError extends Error {
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number, cause: unknown) {
+    super(
+      `query exceeded its ${timeoutMs}ms statement_timeout and was cancelled by Postgres (57014). ` +
+        `This limit is set per-query by queryWithTimeout() — see the caller's timeout constant. ` +
+        `The query did not fail; it was stopped for running too long.`,
+      { cause }
+    );
+    this.name = 'QueryTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export async function queryWithTimeout<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: unknown[] | undefined,
@@ -66,6 +94,12 @@ export async function queryWithTimeout<T extends QueryResultRow = QueryResultRow
       await client.query('ROLLBACK');
     } catch {
       // The connection may already be unusable; the original error is the one worth raising.
+    }
+    // 57014 = query_canceled. Only OUR timeout can cancel inside this function, so attributing it
+    // is safe here — and naming the limit is what stops a cancellation reading as an unrelated
+    // database failure to whoever sees the 500.
+    if ((err as { code?: unknown } | null)?.code === '57014') {
+      throw new QueryTimeoutError(ms, err);
     }
     throw err;
   } finally {
