@@ -241,11 +241,33 @@ const PERIODS_CTE = `
 /**
  * Per-period engagement/search/account counters.
  *
- * The per-event outcome flags (`engaged`, `recovered`) are computed in an `ev` CTE
- * rather than inside an aggregate FILTER — a correlated sub-select is not portable
- * inside FILTER, and pre-computing once per row is also cheaper than re-evaluating
- * it per aggregate. The CTE is bounded to the plotted window, so the scan never
- * covers the whole table.
+ * ═══ REWRITTEN 2026-09-01: WINDOW FUNCTIONS, NOT CORRELATED SUBQUERIES ═══
+ * `engaged` and `recovered` used to be two EXISTS subqueries evaluated PER ROW against
+ * analytics_event, matched on user_or_session — a column with no index at all. At production's
+ * real shape (~1.19M events concentrated inside 30 days) that did not complete in TEN MINUTES.
+ * With an index on (user_or_session, created_at) it was still 20.9s. This form is 7.1s, and the
+ * index is still required — measured, all three:
+ *
+ *     correlated EXISTS, no index      > 600 s (abandoned)
+ *     correlated EXISTS, + index        20.9 s
+ *     this form,         + index         7.1 s
+ *
+ * ⚠ RAISING work_mem DOES NOT HELP — tested at 64MB and 256MB, no material change. The sorts do
+ * spill, but they are not the dominant cost, so do not reach for that lever here.
+ *
+ * ═══ `GROUPS BETWEEN 1 FOLLOWING` IS LOAD-BEARING, NOT A STYLISTIC CHOICE ═══
+ * The original required `f.created_at > e.created_at` — STRICTLY later. A `ROWS` frame would order
+ * ties arbitrarily and a `RANGE` frame includes peers, so both would silently miscount whenever two
+ * events of one session share a timestamp. That is not hypothetical: `created_at` defaults to
+ * `now()`, which is identical for every row written in the same transaction.
+ * `GROUPS BETWEEN 1 FOLLOWING` skips the whole peer group, which is exactly `> e.created_at`.
+ * Verified byte-identical against the old query on a fixture containing 110,653 tie groups.
+ *
+ * ═══ AND THE PERIOD JOIN IS AGGREGATED FIRST ═══
+ * Joining every event to `periods` produced 1.19M rows that then had to be sorted by bucket, with
+ * `count(DISTINCT user_or_session)` on top — the same sort-spill shape fixed in lib/analytics/kpi.ts.
+ * Bucketing with date_trunc, aggregating, and joining the 30 period rows to that result avoids both.
+ * Distinct actors are counted by grouping first, then counting, for the same reason.
  *
  * The outcome look-ahead deliberately crosses the bucket boundary: a search is
  * attributed to the period it happened in, and we then look forward in real time for
@@ -262,72 +284,108 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
     bounds AS (
       SELECT min(pstart) AS lo, max(pstart) + $2::interval AS hi FROM periods
     ),
-    ev AS (
+    scanned AS (
       SELECT
         e.id,
         e.created_at,
         e.event_type,
-        (e.user_or_session IS NOT NULL AND e.user_or_session <> '') AS has_actor,
         e.user_or_session,
+        (e.user_or_session IS NOT NULL AND e.user_or_session <> '') AS has_actor,
         (e.result_summary_json ? 'total')                          AS has_total,
         ((e.result_summary_json ->> 'total') = '0')                AS zero_result,
         ((e.result_summary_json ->> 'broadened') = 'true')         AS broadened,
-        (
-          e.event_type = 'search_performed'
-          AND e.user_or_session IS NOT NULL AND e.user_or_session <> ''
-          AND EXISTS (
-            SELECT 1 FROM analytics_event f
-            WHERE f.user_or_session = e.user_or_session
-              AND f.event_type IN ('listing_viewed', 'outbound_source_click')
-              AND f.created_at >  e.created_at
-              AND f.created_at <= e.created_at + ($4::int * interval '1 minute')
-          )
-        ) AS engaged,
-        (
-          e.event_type = 'search_performed'
-          AND e.user_or_session IS NOT NULL AND e.user_or_session <> ''
-          AND EXISTS (
-            SELECT 1 FROM analytics_event r
-            WHERE r.user_or_session = e.user_or_session
-              AND r.event_type = 'search_performed'
-              AND r.created_at >  e.created_at
-              AND r.created_at <= e.created_at + ($4::int * interval '1 minute')
-              AND r.result_summary_json ? 'total'
-              AND (r.result_summary_json ->> 'total') <> '0'
-          )
-        ) AS recovered
+        min(e.created_at) FILTER (
+          WHERE e.event_type IN ('listing_viewed', 'outbound_source_click')
+        ) OVER w AS next_engage_at,
+        min(e.created_at) FILTER (
+          WHERE e.event_type = 'search_performed'
+            AND (e.result_summary_json ? 'total')
+            AND (e.result_summary_json ->> 'total') <> '0'
+        ) OVER w AS next_recover_at
       FROM analytics_event e, bounds b
       WHERE e.created_at >= b.lo AND e.created_at < b.hi
+      WINDOW w AS (
+        PARTITION BY e.user_or_session
+        ORDER BY e.created_at
+        GROUPS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING
+      )
+    ),
+    ev AS (
+      SELECT
+        date_trunc($1::text, s.created_at) AS pstart,
+        s.id, s.event_type, s.user_or_session, s.has_actor, s.has_total, s.zero_result, s.broadened,
+        (
+          s.event_type = 'search_performed' AND s.has_actor
+          AND s.next_engage_at IS NOT NULL
+          AND s.next_engage_at <= s.created_at + ($4::int * interval '1 minute')
+        ) AS engaged,
+        (
+          s.event_type = 'search_performed' AND s.has_actor
+          AND s.next_recover_at IS NOT NULL
+          AND s.next_recover_at <= s.created_at + ($4::int * interval '1 minute')
+        ) AS recovered
+      FROM scanned s
+    ),
+    counted AS (
+      SELECT
+        pstart,
+        count(id)::int AS events,
+        count(id) FILTER (WHERE event_type = 'search_performed')::int AS searches,
+        count(id) FILTER (WHERE event_type = 'search_performed' AND has_total)::int
+          AS searches_with_results,
+        count(id) FILTER (WHERE event_type = 'search_performed' AND has_total AND zero_result)::int
+          AS zero_result_searches,
+        count(id) FILTER (WHERE event_type = 'search_performed' AND broadened)::int
+          AS broadened_searches,
+        count(id) FILTER (WHERE event_type = 'search_performed' AND has_actor)::int
+          AS attributable_searches,
+        count(id) FILTER (WHERE engaged)::int AS engaged_searches,
+        count(id) FILTER (
+          WHERE event_type = 'search_performed' AND has_total AND zero_result AND has_actor
+        )::int AS attributable_zero_result_searches,
+        count(id) FILTER (WHERE recovered AND has_total AND zero_result)::int
+          AS recovered_zero_result_searches,
+        count(id) FILTER (WHERE event_type = 'listing_viewed')::int AS listing_views,
+        count(id) FILTER (WHERE event_type = 'outbound_source_click')::int AS outbound_clicks,
+        count(id) FILTER (WHERE event_type = 'saved_search_created')::int AS saved_searches,
+        count(id) FILTER (WHERE event_type = 'account_signed_in')::int AS sign_in_events
+      FROM ev
+      GROUP BY pstart
+    ),
+    actor_counts AS (
+      SELECT pstart, count(*)::int AS active_actors
+      FROM (SELECT DISTINCT pstart, user_or_session FROM ev WHERE has_actor) d
+      GROUP BY pstart
+    ),
+    signed_in_counts AS (
+      SELECT pstart, count(*)::int AS signed_in_actors
+      FROM (
+        SELECT DISTINCT pstart, user_or_session
+        FROM ev WHERE has_actor AND event_type = 'account_signed_in'
+      ) d
+      GROUP BY pstart
     )
     SELECT
       to_char(p.pstart, 'YYYY-MM-DD') AS period_start,
-      count(e.id)::int AS events,
-      count(DISTINCT e.user_or_session) FILTER (WHERE e.has_actor)::int AS active_actors,
-      count(e.id) FILTER (WHERE e.event_type = 'search_performed')::int AS searches,
-      count(e.id) FILTER (WHERE e.event_type = 'search_performed' AND e.has_total)::int
-        AS searches_with_results,
-      count(e.id) FILTER (WHERE e.event_type = 'search_performed' AND e.has_total AND e.zero_result)::int
-        AS zero_result_searches,
-      count(e.id) FILTER (WHERE e.event_type = 'search_performed' AND e.broadened)::int
-        AS broadened_searches,
-      count(e.id) FILTER (WHERE e.event_type = 'search_performed' AND e.has_actor)::int
-        AS attributable_searches,
-      count(e.id) FILTER (WHERE e.engaged)::int AS engaged_searches,
-      count(e.id) FILTER (
-        WHERE e.event_type = 'search_performed' AND e.has_total AND e.zero_result AND e.has_actor
-      )::int AS attributable_zero_result_searches,
-      count(e.id) FILTER (WHERE e.recovered AND e.has_total AND e.zero_result)::int
-        AS recovered_zero_result_searches,
-      count(e.id) FILTER (WHERE e.event_type = 'listing_viewed')::int AS listing_views,
-      count(e.id) FILTER (WHERE e.event_type = 'outbound_source_click')::int AS outbound_clicks,
-      count(e.id) FILTER (WHERE e.event_type = 'saved_search_created')::int AS saved_searches,
-      count(e.id) FILTER (WHERE e.event_type = 'account_signed_in')::int AS sign_in_events,
-      count(DISTINCT e.user_or_session) FILTER (
-        WHERE e.event_type = 'account_signed_in' AND e.has_actor
-      )::int AS signed_in_actors
+      COALESCE(c.events, 0) AS events,
+      COALESCE(a.active_actors, 0) AS active_actors,
+      COALESCE(c.searches, 0) AS searches,
+      COALESCE(c.searches_with_results, 0) AS searches_with_results,
+      COALESCE(c.zero_result_searches, 0) AS zero_result_searches,
+      COALESCE(c.broadened_searches, 0) AS broadened_searches,
+      COALESCE(c.attributable_searches, 0) AS attributable_searches,
+      COALESCE(c.engaged_searches, 0) AS engaged_searches,
+      COALESCE(c.attributable_zero_result_searches, 0) AS attributable_zero_result_searches,
+      COALESCE(c.recovered_zero_result_searches, 0) AS recovered_zero_result_searches,
+      COALESCE(c.listing_views, 0) AS listing_views,
+      COALESCE(c.outbound_clicks, 0) AS outbound_clicks,
+      COALESCE(c.saved_searches, 0) AS saved_searches,
+      COALESCE(c.sign_in_events, 0) AS sign_in_events,
+      COALESCE(si.signed_in_actors, 0) AS signed_in_actors
     FROM periods p
-    LEFT JOIN ev e ON e.created_at >= p.pstart AND e.created_at < p.pstart + $2::interval
-    GROUP BY p.pstart
+    LEFT JOIN counted c ON c.pstart = p.pstart
+    LEFT JOIN actor_counts a ON a.pstart = p.pstart
+    LEFT JOIN signed_in_counts si ON si.pstart = p.pstart
     ORDER BY p.pstart
     `,
     [grain, grainInterval(grain), periods, SEARCH_OUTCOME_WINDOW_MINUTES]

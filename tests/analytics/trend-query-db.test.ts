@@ -212,3 +212,23 @@ describe('🔴 the anti-pattern does not come back', () => {
     expect(code).not.toMatch(/count\(DISTINCT\s+user_or_session\)\s*FILTER/i);
   });
 });
+
+describe('🔴 the engagement series does not go back to correlated subqueries', () => {
+  // getEngagementSeries ran two EXISTS subqueries PER ROW against analytics_event, matched on
+  // user_or_session. At production's shape that did not finish in ten minutes. The window-function
+  // form is byte-identical (verified across all 16 columns x 30 periods, on a fixture containing
+  // 110,653 timestamp ties) and runs in ~7s with idx_analytics_event_actor_created.
+  const raw = require('node:fs').readFileSync('lib/analytics/operating.ts', 'utf8') as string;
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*(\/\/|--).*$/gm, '');
+
+  it('no EXISTS correlated on user_or_session remains', () => {
+    expect(code).not.toMatch(/EXISTS\s*\(\s*SELECT[\s\S]{0,200}?user_or_session\s*=\s*e\.user_or_session/i);
+  });
+
+  it('🔴 keeps the GROUPS frame, which is what makes the rewrite exact', () => {
+    // ROWS would order ties arbitrarily; RANGE would include peers. Only GROUPS reproduces the
+    // original's strict `f.created_at > e.created_at` when two events share a timestamp — and
+    // created_at defaults to now(), which is identical for every row in one transaction.
+    expect(code).toMatch(/GROUPS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING/);
+  });
+});

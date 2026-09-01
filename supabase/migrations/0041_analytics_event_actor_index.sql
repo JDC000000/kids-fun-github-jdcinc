@@ -1,0 +1,34 @@
+-- 0041_analytics_event_actor_index.sql — the index the engagement series needs.
+--
+-- lib/analytics/operating.ts's getEngagementSeries partitions analytics_event by user_or_session
+-- to decide, per search, whether the same session engaged or recovered within
+-- SEARCH_OUTCOME_WINDOW_MINUTES. Before 2026-09-01 it did that with two correlated EXISTS
+-- subqueries per row; user_or_session had NO index of any kind, so each was a full scan.
+--
+-- MEASURED at production's real shape (~1.19M events concentrated inside 30 days):
+--
+--     correlated EXISTS, no index    > 600 s   (abandoned, never completed)
+--     correlated EXISTS, this index    20.9 s
+--     window-function rewrite, no idx   -- not measured separately; the rewrite still sorts by
+--                                          (user_or_session, created_at) and wants this order
+--     window-function rewrite + index    7.1 s
+--
+-- BOTH HALVES ARE REQUIRED, and this file is only half. The query rewrite lands in the same
+-- change; neither alone gets /admin/operating to a working page. Same shape as 0040, where an
+-- index alone left the trends query at 36s.
+--
+-- (user_or_session, created_at) rather than (user_or_session): the leading column serves the
+-- PARTITION BY, and the trailing one serves the ORDER BY inside each partition, so the window can
+-- be fed in order rather than sorted from scratch.
+--
+-- NOT a covering index. Tested on the sibling 0040 case: INCLUDE bought 3% for 46MB there, and the
+-- planner here is bounded by the partition sort rather than heap fetches.
+--
+-- Plain CREATE INDEX, matching every other index in this repo. It takes a brief write lock on
+-- analytics_event; those writes are fire-and-forget telemetry and a few seconds of queueing costs
+-- nothing user-visible.
+CREATE INDEX IF NOT EXISTS idx_analytics_event_actor_created
+  ON analytics_event (user_or_session, created_at);
+
+-- ── rollback ────────────────────────────────────────────────────────────────
+--   DROP INDEX IF EXISTS idx_analytics_event_actor_created;
