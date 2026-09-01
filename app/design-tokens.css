@@ -62,7 +62,24 @@
   --kf-neutral-900: #222621;
   --kf-neutral-1000: #0e110e;
 
-  /* Dark palette (kids-fun.json dark_*) — fixed values used by dark roles below. */
+  /* Dark palette (kids-fun.json dark_*) — fixed values used by dark roles below.
+   *
+   * ⚠ THESE ARE THE SAME HEXES AS THREE BRAND TOKENS ABOVE, BY DESIGN — the dark surfaces ARE
+   * brand colours, reused in inverted roles:
+   *     --kf-dark-primary   #102316  ==  --kf-forest-ink
+   *     --kf-dark-secondary #183b24  ==  --kf-evergreen
+   *     --kf-dark-text      #f7f2e8  ==  --kf-warm-paper
+   *
+   * CONSEQUENCE, AND IT HAS ALREADY BITTEN ONCE: a RAW palette token used as a text colour on a
+   * transparent or flipping surface can land on its own hex in the other mode. `color:
+   * var(--kf-forest-ink)` over `background: transparent` renders at 1.00:1 in dark mode —
+   * invisible, and invisible to a light-mode review too, since the token name and the intent both
+   * read correctly. See components/ui/Button.module.css `.outline`.
+   *
+   * THE RULE: text on any surface that flips must use a SEMANTIC token (--kf-ink, --kf-ink-secondary)
+   * which flips with it. Raw palette tokens are safe only against a background that is equally
+   * fixed — which is why `.primary` can pair --kf-forest-ink with a --kf-leaf fill and be correct.
+   * Nothing enforces this; a lint rule would, and does not exist yet. */
   --kf-dark-primary: #102316;
   --kf-dark-secondary: #183b24;
   --kf-dark-elevated: #223f30;
