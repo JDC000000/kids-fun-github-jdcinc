@@ -181,14 +181,29 @@ describe('worker image closure — the Dockerfile ships everything the worker im
     expect(missing).toEqual([]);
   });
 
-  it('the shared app surface is exactly lib/corrections + lib/db, and no wider', () => {
+  it('the shared app surface is exactly lib/corrections + lib/db + lib/retention, and no wider', () => {
     // Not a style rule. Every lib/ directory the worker reaches is app code that now has to
     // compile under the worker's Node-only tsconfig and run under bare node in a container.
     // Growing this set is a real architectural decision; it should be a deliberate edit here.
+    //
+    // lib/retention JOINED IT on 2026-09-01 with the sms_retention job, and this assertion is
+    // the deliberate edit. It holds the shared kill-switch parser (extracted from
+    // lib/corrections/retention-config.ts rather than copied — F1 happened because that one
+    // rule was implemented twice) and the sms_consent purge itself.
+    //
+    // WHY THAT PURGE IS NOT IN lib/sms: worker/Dockerfile copies whole directories on purpose,
+    // and lib/sms is full of Next-coupled, '@/'-aliased modules that would neither compile
+    // under worker/tsconfig.json nor belong in the image. A two-file COPY out of lib/sms would
+    // have passed THIS test — it checks closure ⊆ COPY, not the reverse — while breaking the
+    // Dockerfile's own stated whole-directory rule. Living in lib/retention satisfies both.
     const libDirs = [...closure.files]
       .filter((f) => f.startsWith('lib/'))
       .map((f) => f.split('/').slice(0, 2).join('/'));
-    expect([...new Set(libDirs)].sort()).toEqual(['lib/corrections', 'lib/db']);
+    expect([...new Set(libDirs)].sort()).toEqual([
+      'lib/corrections',
+      'lib/db',
+      'lib/retention',
+    ]);
   });
 
   it("no '@/' path alias anywhere in the closure — tsc emits it verbatim and node cannot resolve it", () => {

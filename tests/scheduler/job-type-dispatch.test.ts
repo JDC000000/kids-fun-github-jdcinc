@@ -136,15 +136,21 @@ describe('job_type dispatch — the registry', () => {
     // A drift guard: dropping a handler, or quietly adding one, is visible here. If you are
     // adding a job type on purpose, add it to this list in the same commit.
     //
-    // BEING IN THIS LIST IS A CAPABILITY, NOT AN ENABLEMENT. Both global types are
-    // dispatchable as soon as the worker image ships; neither is SCHEDULED, because their
-    // global_job_schedule rows ship `enabled = false` (migrations 0028 and 0029). The two
-    // facts are asserted in different places on purpose — this one is about the worker,
+    // BEING IN THIS LIST IS A CAPABILITY, NOT AN ENABLEMENT. All three global types are
+    // dispatchable as soon as the worker image ships; none is SCHEDULED, because their
+    // global_job_schedule rows ship `enabled = false` (migrations 0028, 0029 and 0039). The
+    // two facts are asserted in different places on purpose — this one is about the worker,
     // the disabled-row assertions in tests/scheduler/global-jobs-db.test.ts are about the
     // database.
+    //
+    // sms_retention added 2026-09-01. It enforces the two windows migration 0034 describes and
+    // indexes but whose job it explicitly deferred — a deferral that was never closed while /u/
+    // went live promising "deleted 30 days later". Confirmed against production: cron.job had
+    // ZERO rows. Shipping it disabled is the same posture as the other two, not extra caution.
     expect([...buildJobHandlerRegistry(pool, 'staging').keys()].sort()).toEqual([
       'corrections_retention',
       'ingest',
+      'sms_retention',
       'stale_occurrence_flip',
     ]);
   });

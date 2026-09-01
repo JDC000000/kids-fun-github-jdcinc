@@ -1,0 +1,58 @@
+-- 0039_sms_retention_schedule.sql — schedule the sms_consent retention job.
+--
+-- ── WHY THIS EXISTS, AND WHY IT DID NOT ALREADY ─────────────────────────────
+-- Migration 0034 designed both retention rules, shipped both indexes to serve them
+-- (idx_sms_consent_stopped_at, idx_sms_consent_pending_since), made the personal columns
+-- nullable specifically so the 30-day erasure could happen in place — and then said, in its own
+-- header at lines 54-55:
+--
+--     (The purge JOB itself is out of scope for this migration — the schema just has to make it
+--      expressible, which is what stopped_at and these nullables do.)
+--
+-- That was honest and correct at the time. The deferral was never closed. Meanwhile /u/ went
+-- live telling people "everything we store about you is deleted 30 days later", and on
+-- 2026-09-01 a production check settled what the repo could only suggest:
+--
+--     SELECT jobname, schedule, command FROM cron.job;   ->  ZERO ROWS
+--
+-- Nothing purged anything. Every artifact — the schema, the indexes, the code comments
+-- describing the purge in the present tense — agreed with every other artifact, and none of them
+-- agreed with production. This row, plus worker/core/sms-retention.ts, is the correction.
+--
+-- ── TWO OPERATIONS, ONE JOB ─────────────────────────────────────────────────
+-- The handler runs both of 0034's rules: the 30-day post-stop UPDATE that nulls four personal
+-- columns while KEEPING the row (sms_send_log's CASL audit trail must keep pointing at a
+-- subscription that demonstrably existed), and the 90-day DELETE of signups that never
+-- confirmed (no commercial message was ever sent, so there is no audit trail to preserve —
+-- which is why 0035/0036 reference sms_consent with ON DELETE SET NULL rather than CASCADE).
+--
+-- ── SHIPPED DISABLED, exactly as 0028 ships corrections_retention ───────────
+-- "Registering a type is a capability, not an enablement" (worker/core/job-handlers.ts).
+-- Arming this is a separate, deliberate, reversible act taken by an operator who has reviewed a
+-- dry run against real data. Note the kill-switch below is INDEPENDENT of this flag and defaults
+-- to purging when unset — see lib/retention/sms-config.ts for why that default was chosen rather
+-- than inherited: a job that runs and silently purges nothing would reproduce the exact bug this
+-- migration exists to fix.
+INSERT INTO global_job_schedule (job_type, cadence, enabled, next_run_at)
+VALUES ('sms_retention', interval '1 day', false, now())
+ON CONFLICT (job_type) DO NOTHING;
+
+-- ── operator notes ───────────────────────────────────────────────────────────
+-- OBSERVE FIRST (recommended before arming): pause the purge, then enable the schedule, and
+-- read the worker log's "effective mode" line and the two count lines.
+--   fly secrets set SMS_RETENTION_DRY_RUN=true    -- any of true/t/yes/y/on/1
+--
+-- ENABLE the schedule (a deliberate act, reversible by flipping it back):
+--   UPDATE global_job_schedule SET enabled = true WHERE job_type = 'sms_retention';
+--
+-- GO LIVE for real — remove the kill-switch (unset means purge; see lib/retention/sms-config.ts):
+--   fly secrets unset SMS_RETENTION_DRY_RUN
+--
+-- RESET a tripped breaker (explicit recovery; there is no automatic path):
+--   UPDATE global_job_schedule
+--      SET breaker_tripped_at = NULL, breaker_reason = NULL, consecutive_failures = 0
+--    WHERE job_type = 'sms_retention';
+--   -- equivalently: worker/core/global-job-schedule.ts resetGlobalJobBreaker()
+
+-- ── rollback ────────────────────────────────────────────────────────────────
+--   DELETE FROM global_job_schedule WHERE job_type = 'sms_retention';

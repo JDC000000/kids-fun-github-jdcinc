@@ -18,6 +18,7 @@
 // throws UnknownJobTypeError, so the existing queue machinery retries and then dead-letters
 // it with a message that names the offending job_type and lists what IS registered.
 import type { Pool } from 'pg';
+import { SMS_RETENTION_JOB_TYPE, makeSmsRetentionJobHandler } from './sms-retention';
 import type { Job } from './queue';
 import { makeTermsGatedIngestJobHandler } from './source-runner';
 import type { Environment } from './terms-gate';
@@ -88,6 +89,7 @@ export function buildJobHandlerRegistry(
     [INGEST_JOB_TYPE, makeTermsGatedIngestJobHandler(pool, environment)],
     [CORRECTIONS_RETENTION_JOB_TYPE, makeCorrectionsRetentionJobHandler()],
     [STALE_OCCURRENCE_FLIP_JOB_TYPE, makeStaleOccurrenceFlipJobHandler(pool)],
+    [SMS_RETENTION_JOB_TYPE, makeSmsRetentionJobHandler()],
   ]);
 }
 

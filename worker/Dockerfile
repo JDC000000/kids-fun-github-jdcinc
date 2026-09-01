@@ -43,11 +43,15 @@ COPY worker/scheduler ./worker/scheduler
 COPY worker/health ./worker/health
 # The ONLY app code the worker shares. Kept to whole directories rather than individual
 # files so a refactor inside them cannot silently drop a file the image needs; kept to
-# these TWO directories so the shared surface stays visible and reviewable.
+# these THREE directories so the shared surface stays visible and reviewable.
 # tests/scheduler/worker-image-closure.test.ts fails if the worker's module closure ever
 # reaches outside the paths copied here.
 COPY lib/corrections ./lib/corrections
 COPY lib/db ./lib/db
+# The retention machinery both jobs share: the kill-switch parser (extracted, not copied --
+# F1 exists because that one rule was implemented twice), plus the sms_consent purge and its
+# windows. A whole directory, like the two above, for the same stated reason.
+COPY lib/retention ./lib/retention
 WORKDIR /app/worker
 RUN npm run build
 
