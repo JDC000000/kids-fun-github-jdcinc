@@ -18,11 +18,13 @@
 // Nothing here puts a number in an error either: a failure on this page must be diagnosable from
 // the subscriber id, because ids are safe to send to Sentry and numbers are not.
 import { headers } from 'next/headers';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { formatTimestampUtc } from '@/lib/admin/format';
+import { adminHref } from './_lib/href';
 import {
   getSmsSubscribers,
   summariseSubscribers,
@@ -99,7 +101,11 @@ export default async function AdminSmsSubscribersPage({
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id}>
-                  <td>{row.shortRef}</td>
+                  <td>
+                    <Link href={adminHref(`/admin/sms-subscribers/${row.id}`, searchParams)}>
+                      {row.shortRef}
+                    </Link>
+                  </td>
                   <td>
                     {row.purged ? <span className="adm-hint">purged</span> : row.phoneNumber}
                   </td>
@@ -116,14 +122,8 @@ export default async function AdminSmsSubscribersPage({
         )}
       </div>
 
-      {/* NO DRILL-DOWN LINK YET, DELIBERATELY. Page 2 (per-subscriber send history) is on hold
-          pending the Operator's ruling on whether it shows subscriber_id-linked history only or
-          also the phone_hash-keyed history that survives a purge. Linking to a route that does
-          not exist would 404 an admin mid-task, and the link needs to carry ?token= forward
-          anyway — see app/admin/operating/trends.tsx:234, which drops it and 404s a token-authed
-          admin today. Both land together when the ruling arrives. */}
       <p className="adm-foot">
-        Per-subscriber send history is a separate page, pending an audit-completeness ruling.
+        The reference number links to that subscriber’s full send history.
       </p>
     </main>
   );
