@@ -114,16 +114,26 @@ describe('compliance survived the simplification', () => {
   });
 });
 
-describe('the page is chrome-free, and only this page is', () => {
+describe('the chrome-free pages are the two conversion pages, and only those', () => {
   it('suppresses the site chrome on /sms/start', () => {
     expect(hidesSiteChrome('/sms/start')).toBe(true);
   });
 
-  it('🔴 leaves /sms/signup alone — its nav is PRD §2.1 door 2, not an oversight', () => {
-    // SiteNav.tsx: "a parent who lands on the signup form from a QR code should still be able to
-    // reach the catalogue." This page being bare is a decision about THIS page. If someone later
-    // widens the prefix list to all of /sms, that reasoning dies silently — so it fails here first.
-    expect(hidesSiteChrome('/sms/signup')).toBe(false);
+  it('suppresses it on /sms/signup too — Jon reversed the earlier ruling on 2026-09-01', () => {
+    // THIS ASSERTION USED TO EXPECT `false`, citing SiteNav.tsx: "a parent who lands on the signup
+    // form from a QR code should still be able to reach the catalogue." That was a real
+    // Jon-approved decision, not an oversight, and it stood until Jon reweighed catalogue-
+    // reachability against conversion focus and ruled the nav friction here too. Flipped
+    // deliberately, with both source comments rewritten to match — not deleted as an obstacle.
+    expect(hidesSiteChrome('/sms/signup')).toBe(true);
+  });
+
+  it('🔴 does NOT widen to all of /sms — the pin the old assertion really existed to hold', () => {
+    // The original test's stated fear was someone collapsing this to a bare '/sms' prefix and
+    // silently taking the chrome off every SMS page. Jon's reversal names ONE more page; it does
+    // not license that. So the fear outlives the assertion that carried it, and moves here.
+    expect(hidesSiteChrome('/sms')).toBe(false);
+    expect(hidesSiteChrome('/sms/preferences')).toBe(false);
     expect(hidesSiteChrome('/search')).toBe(false);
     expect(hidesSiteChrome('/')).toBe(false);
   });

@@ -108,9 +108,17 @@ export function SiteNav() {
           The route list lives in lib/sms/surfaces.ts rather than here, so the SMS product's own
           map of itself stays with the SMS product. This file only asks the question.
 
-          The rest of the bar stays: a parent who lands on the signup form from a QR code should
-          still be able to reach the catalogue. It is the ACCOUNT touchpoint that does not belong,
-          not the navigation.
+          WHERE THIS STILL APPLIES: /activity/…, /search and /u/… — pages a person browses or
+          manages something on. The rest of the bar stays there, and only the account touchpoint
+          goes.
+
+          SUPERSEDED FOR THE TWO SIGNUP PAGES (Jon, 2026-09-01). This comment used to read "the
+          rest of the bar stays: a parent who lands on the signup form from a QR code should still
+          be able to reach the catalogue. It is the ACCOUNT touchpoint that does not belong, not
+          the navigation." That was true of /sms/signup until Jon reweighed it against conversion
+          focus and ruled the nav friction there too. /sms/signup and /sms/start now render with no
+          chrome at all via BARE_CHROME_PREFIXES, so on those two routes this component never
+          renders and the question below is moot rather than answered differently.
         */}
         {!hidesAccountNav(pathname) && <AccountNav />}
       </div>

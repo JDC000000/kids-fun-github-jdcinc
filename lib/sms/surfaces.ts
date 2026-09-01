@@ -91,19 +91,31 @@ export const ACCOUNT_NAV_HIDDEN_PREFIXES = [
  * child-profile bar. A THIRD question again, and deliberately a third list.
  *
  * ═══ WHY THIS IS NOT SIMPLY "SMS SURFACES" ═══
- * `/sms/signup` is an SMS surface and KEEPS its nav, for a documented reason: SiteNav.tsx says
- * *"a parent who lands on the signup form from a QR code should still be able to reach the
- * catalogue. It is the ACCOUNT touchpoint that does not belong, not the navigation."* That
- * implements PRD §2.1's door 2, and it is untouched.
+ * `/sms/start` was first: a single-purpose landing page whose entire job is one conversion —
+ * Jon's brief, "One goal... Minimal info, minimal friction." Nav links are friction there by
+ * definition.
  *
- * `/sms/start` is a different product decision, not a correction of that one. It is a single-
- * purpose landing page whose entire job is one conversion — Jon's brief: "One goal... Minimal
- * info, minimal friction." Nav links are friction there by definition, and the Operator ruled it
- * nav-free explicitly rather than by omission.
- *   ⇒ So both pages are right, and they differ because they are for different things. Anyone
- *     tempted to unify these lists should read that as the reason not to.
+ * `/sms/signup` JOINED IT on 2026-09-01 (Jon), and this REVERSES an earlier Jon-approved ruling
+ * that is worth stating plainly rather than quietly deleting. The old reasoning, which lived here
+ * and in SiteNav.tsx, was: *"a parent who lands on the signup form from a QR code should still be
+ * able to reach the catalogue. It is the ACCOUNT touchpoint that does not belong, not the
+ * navigation."* Jon has now ruled the other way — /sms/signup is a landing/conversion page and the
+ * nav is friction on it too, the same judgement already made for /sms/start.
+ *   ⇒ The earlier ruling was not wrong on its own terms; it weighed catalogue-reachability above
+ *     conversion focus. Jon reweighed it. Both comments were updated rather than removed so the
+ *     next reader can see this was decided twice, not overlooked once.
+ *
+ * WHAT DID NOT CHANGE: this is still not "all SMS surfaces". `/u/…`, `/activity/…` and `/search`
+ * remain fully chromed — they are places a person browses or manages something, not single-
+ * conversion pages. Anyone tempted to collapse this into SMS_SURFACE_PREFIXES should read that as
+ * the reason not to.
+ *
+ * COMPLIANCE NOTE, checked before this page was added: suppressing chrome also removes SiteFooter,
+ * which carries the /privacy and /terms links. Both signup surfaces render their OWN copies in
+ * page (see app/sms/signup/page.tsx and StartForm's legal block), so neither loses a required
+ * link by going bare. A future page added to this list needs the same check.
  */
-export const BARE_CHROME_PREFIXES = ['/sms/start'] as const;
+export const BARE_CHROME_PREFIXES = ['/sms/start', '/sms/signup'] as const;
 
 /** Should the whole site chrome be suppressed on this path? */
 export function hidesSiteChrome(pathname: string | null | undefined): boolean {
