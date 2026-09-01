@@ -510,13 +510,16 @@ export const PREFS_UNSUBSCRIBE_HEADING = 'Stop the texts';
  * it; `global_job_schedule` seeds only 'corrections_retention'; the retention run routes and
  * worker/core cover corrections and analytics only.
  *
- * NOT PROVEN FALSE, AND THE DIFFERENCE MATTERS. This is an absence claim about a repo, not about
- * production. 0012 enables pg_cron, so a schedule added through the Supabase dashboard would not
- * appear in any migration and is invisible from here. ONE QUERY SETTLES IT:
- *     SELECT jobname, schedule, command FROM cron.job;
- * If that returns an sms purge, delete this comment. If it does not, this sentence is telling a
- * person something untrue about their own personal data, and that is a PIPEDA question rather than
- * a backlog item.
+ * ⚠ CONFIRMED AGAINST PRODUCTION 2026-09-01. This started as an absence claim about the repo,
+ * which would have been survivable — 0012 enables pg_cron, so a schedule added via the Supabase
+ * dashboard appears in no migration and is invisible from here. The Operator ran it:
+ *     SELECT jobname, schedule, command FROM cron.job;   →  ZERO ROWS
+ * There is no scheduled purge in production. So this is no longer "we cannot find the job"; it is
+ * "the job does not exist", and this sentence is currently telling a person something untrue about
+ * their own personal data. That is a PIPEDA question, not a backlog item, and it is live.
+ *
+ * DO NOT DELETE THIS COMMENT ON THE STRENGTH OF THE SCHEMA OR THE INDEX LOOKING RIGHT — they look
+ * right now and did throughout. Delete it when a purge actually runs, and not before.
  *
  * The 90-day never-confirmed purge (a row DELETE, per 0034 lines 56-59, indexed by
  * `idx_sms_consent_pending_since`) appears equally unbuilt and has the same status.
