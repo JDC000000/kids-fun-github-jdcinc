@@ -78,6 +78,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/admin/manual-listing-db.test.ts',
   'tests/admin/operating-db.test.ts',
   'tests/admin/qa-queue-db.test.ts',
+  'tests/admin/sms-subscribers-db.test.ts',
   'tests/admin/qa-queue-dedup-db.test.ts',
   'tests/admin/qa-queue-paging-db.test.ts',
   'tests/admin/source-crud-db.test.ts',
