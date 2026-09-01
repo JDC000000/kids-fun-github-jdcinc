@@ -94,4 +94,30 @@ describe.skipIf(!hasDb)('queryWithTimeout', () => {
     await query(`SELECT pg_sleep(0.4)`);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(350);
   });
+
+  it('🔴 does NOT leak after a SUCCESSFUL call — the COMMIT path, where SET and SET LOCAL diverge', async () => {
+    // ═══ WHY THIS TEST EXISTS SEPARATELY FROM THE ONE ABOVE ═══
+    // The test above cannot tell `SET LOCAL` from a plain `SET`, and I claimed it could. Its first
+    // call TIMES OUT, so it exits through ROLLBACK — and Postgres undoes a plain `SET` on ROLLBACK
+    // exactly as it undoes `SET LOCAL`. Verified directly:
+    //
+    //     BEGIN; SET statement_timeout=150; ROLLBACK;        SHOW -> 0        (indistinguishable)
+    //     BEGIN; SET statement_timeout=150; COMMIT;          SHOW -> 150ms    (LEAKS)
+    //     BEGIN; SET LOCAL statement_timeout=150; COMMIT;    SHOW -> 0        (safe)
+    //
+    // So the two spellings only diverge on COMMIT — the path a query takes when it SUCCEEDS, which
+    // is every ordinary call. This test drives that path: a fast query under a timeout it never
+    // hits, reaching COMMIT, after which a plain `SET` would persist on the pooled connection and
+    // start cancelling whatever unrelated caller picks it up next — including the worker's
+    // retention batches, which share this pool.
+    await queryWithTimeout(`SELECT 1`, undefined, 150);
+
+    // Sampled across several checkouts because the pool hands out whichever connection is free;
+    // a leak on any one of them is a leak. `SHOW` reports the session value directly, so this does
+    // not depend on timing.
+    for (let i = 0; i < 12; i += 1) {
+      const [row] = await query<{ statement_timeout: string }>(`SHOW statement_timeout`);
+      expect(row.statement_timeout, `checkout ${i}`).toBe('0');
+    }
+  });
 });
