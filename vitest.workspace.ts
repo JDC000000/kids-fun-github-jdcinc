@@ -67,6 +67,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/account_data_export.test.ts',
   'tests/account_deletion.test.ts',
   'tests/adapters/venue.test.ts',
+  'tests/analytics/trend-query-db.test.ts',
   'tests/admin/audit-db.test.ts',
   'tests/admin/audit-tx-db.test.ts',
   'tests/admin/corrections-resolve-db.test.ts',

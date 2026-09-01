@@ -1,0 +1,36 @@
+-- 0040_analytics_event_created_at_index.sql — make the admin trend queries survivable.
+--
+-- ── THE INCIDENT ────────────────────────────────────────────────────────────
+-- /admin/operating and /admin/product-health hung indefinitely in production (>55s, no response).
+-- Both call getActivityTrend (lib/analytics/trends.ts) and nothing else admin-side does, which is
+-- why the other three admin pages were fine. The query was caught live in pg_stat_activity blocked
+-- on wait_event=DataFileRead — genuine disk I/O, not a lock.
+--
+-- ── WHY THIS INDEX DID NOT ALREADY EXIST, AND WHY IT IS NOT THE WHOLE FIX ───
+-- 0006 gave analytics_event (event_type, created_at DESC) and (retained_until). The trend query
+-- filters created_at by range with NO event_type predicate, so the leading column makes that index
+-- unusable for it and every subquery fell back to a sequential scan of ~1.19M rows / 533MB.
+--
+-- BUT AN INDEX ALONE WAS MEASURED AND IS NOT SUFFICIENT. Against a production-shaped fixture
+-- (1.18M rows, 6.5k sessions, ~1.0 days per session — the real cardinalities, queried from prod):
+--
+--     current query, no index                          70.5 s
+--     current query + this index                       36.1 s     <- still a hang
+--     rewritten query, no index                        16.6 s
+--     rewritten query + this index                      1.5 s     <- shipped
+--
+-- The rewrite (one GROUP BY over the window, everything derived from a ~6k-row intermediate
+-- instead of 120 correlated scans) is the other half and lands in the same change. Neither half
+-- alone gets there; this file is only useful together with that.
+--
+-- A COVERING VARIANT WAS TESTED AND REJECTED: (created_at) INCLUDE (user_or_session) came in at
+-- 5.68s vs 5.84s on the two-CTE shape — a 3% gain for 46MB — and made no difference at all once
+-- the single-scan rewrite landed. Plain (created_at) is what earns its size here.
+--
+-- Plain CREATE INDEX, matching every other index in this repo (no migration uses CONCURRENTLY).
+-- It takes a brief write lock on analytics_event; analytics writes are fire-and-forget telemetry
+-- and a few seconds of queueing costs nothing user-visible.
+CREATE INDEX IF NOT EXISTS idx_analytics_event_created_at ON analytics_event (created_at);
+
+-- ── rollback ────────────────────────────────────────────────────────────────
+--   DROP INDEX IF EXISTS idx_analytics_event_created_at;

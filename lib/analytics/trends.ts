@@ -24,12 +24,24 @@
 // behind an em-dash would be a worse bug than the one being fixed. Only days whose
 // bucket CLOSED at or before the first recorded event are suppressed. See
 // lib/analytics/prehistory.ts for the shared rule.
-import { query } from '@/lib/db/client';
+import { queryWithTimeout } from '@/lib/db/client';
 import { WAU_WINDOW_DAYS, MAU_WINDOW_DAYS } from './kpi';
 import { anchorMsFromIso, isPreHistory } from './prehistory';
 
 /** How many trailing calendar days the trend charts plot by default. */
 export const TREND_WINDOW_DAYS = 30;
+
+/**
+ * Per-query ceiling for the trend read. Set BELOW the serverless function ceiling (~10s on the
+ * current plan, and nothing in the repo raises it) so a pathological run surfaces as a real error
+ * this code can handle, rather than the platform killing the function and leaving Postgres to
+ * finish the scan alone — which is exactly what produced two orphaned backends during this
+ * incident and had to be cleared with pg_terminate_backend by hand.
+ *
+ * Measured cost on production-shaped data is ~1.5s, so this is ~5x headroom and should only ever
+ * fire if something has gone wrong again.
+ */
+export const TREND_QUERY_TIMEOUT_MS = 8_000;
 
 /**
  * One day of the trend: the active-user windows *as of that day* + that day's raw volume.
@@ -151,7 +163,7 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
   // Clamp to a sane, bounded window — never let a caller ask for an unbounded scan.
   const windowDays = Number.isFinite(days) ? Math.min(120, Math.max(1, Math.trunc(days))) : TREND_WINDOW_DAYS;
 
-  const rows = await query<{
+  const rows = await queryWithTimeout<{
     date: string;
     dau: number;
     wau: number;
@@ -159,6 +171,38 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
     events: number;
     first_event_at: Date | null;
   }>(
+    /*
+     * ONE PASS OVER THE WINDOW, then everything derived from the result.
+     *
+     * ═══ WHAT THIS REPLACED, AND WHY ═══
+     * This query used to run FIVE correlated subqueries PER DAY — 30 days × (dau, wau, mau,
+     * events) plus a re-evaluated anchor — each filtering analytics_event by a created_at range
+     * with no event_type predicate. That is ~120 scans of the whole table per page load. It hung
+     * /admin/operating and /admin/product-health indefinitely in production (>55s, caught live in
+     * pg_stat_activity on wait_event=DataFileRead).
+     *
+     * `scan` reads the window ONCE and collapses it to (day, session, count). On real data that
+     * intermediate is tiny — production has ~6.5k distinct sessions and averages 1.0 active days
+     * per session, so a 1.19M-row table becomes a ~6k-row relation that the per-day aggregates
+     * below run over for free.
+     *
+     * ═══ MEASURED, on a fixture built to production's ACTUAL cardinalities ═══
+     *     old query, no index                70.5 s
+     *     old query + created_at index       36.1 s
+     *     this query, no index               16.6 s
+     *     this query + created_at index       1.5 s
+     * Both halves are load-bearing; neither alone gets under the serverless ceiling. The index is
+     * migration 0040.
+     *
+     * ⚠ A COVERING INDEX IS NOT NEEDED — tested, 3% on the slower shape and nothing on this one.
+     *
+     * ⚠ THE WINDOW IS ($1-1)+($3-1) DAYS DEEP, NOT $1. MAU for the OLDEST day in the series
+     * reaches back another MAU_WINDOW_DAYS-1 days before it. Narrowing `scan` to $1 days would
+     * silently under-count MAU on the early rows rather than fail.
+     *
+     * NULLIF(user_or_session,'') collapses the old `IS NOT NULL AND <> ''` pair into one value, so
+     * the per-day aggregates below only have to test for NULL.
+     */
     `
     WITH days AS (
       SELECT gs::date AS day
@@ -167,41 +211,33 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
         date_trunc('day', now()),
         interval '1 day'
       ) AS gs
-    )
+    ),
+    scan AS (
+      SELECT date_trunc('day', e.created_at)::date AS d,
+             NULLIF(e.user_or_session, '') AS u,
+             count(*)::int AS n
+        FROM analytics_event e
+       WHERE e.created_at >= date_trunc('day', now())
+                             - ((($1::int - 1) + ($3::int - 1)) * interval '1 day')
+         AND e.created_at <  date_trunc('day', now()) + interval '1 day'
+       GROUP BY 1, 2
+    ),
+    anchor AS (SELECT min(created_at) AS first_event_at FROM analytics_event)
     SELECT
       to_char(d.day, 'YYYY-MM-DD') AS date,
-      (SELECT min(created_at) FROM analytics_event) AS first_event_at,
-      (
-        SELECT count(DISTINCT e.user_or_session)::int
-        FROM analytics_event e
-        WHERE e.user_or_session IS NOT NULL AND e.user_or_session <> ''
-          AND e.created_at >= d.day::timestamptz
-          AND e.created_at <  d.day::timestamptz + interval '1 day'
-      ) AS dau,
-      (
-        SELECT count(DISTINCT e.user_or_session)::int
-        FROM analytics_event e
-        WHERE e.user_or_session IS NOT NULL AND e.user_or_session <> ''
-          AND e.created_at >= d.day::timestamptz - (($2::int - 1) * interval '1 day')
-          AND e.created_at <  d.day::timestamptz + interval '1 day'
-      ) AS wau,
-      (
-        SELECT count(DISTINCT e.user_or_session)::int
-        FROM analytics_event e
-        WHERE e.user_or_session IS NOT NULL AND e.user_or_session <> ''
-          AND e.created_at >= d.day::timestamptz - (($3::int - 1) * interval '1 day')
-          AND e.created_at <  d.day::timestamptz + interval '1 day'
-      ) AS mau,
-      (
-        SELECT count(*)::int
-        FROM analytics_event e
-        WHERE e.created_at >= d.day::timestamptz
-          AND e.created_at <  d.day::timestamptz + interval '1 day'
-      ) AS events
+      (SELECT first_event_at FROM anchor) AS first_event_at,
+      (SELECT count(*)::int FROM scan s
+        WHERE s.u IS NOT NULL AND s.d = d.day) AS dau,
+      (SELECT count(DISTINCT s.u)::int FROM scan s
+        WHERE s.u IS NOT NULL AND s.d <= d.day AND s.d > d.day - $2::int) AS wau,
+      (SELECT count(DISTINCT s.u)::int FROM scan s
+        WHERE s.u IS NOT NULL AND s.d <= d.day AND s.d > d.day - $3::int) AS mau,
+      COALESCE((SELECT sum(s.n)::int FROM scan s WHERE s.d = d.day), 0) AS events
     FROM days d
     ORDER BY d.day
     `,
-    [windowDays, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS]
+    [windowDays, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS],
+    TREND_QUERY_TIMEOUT_MS
   );
 
   // The anchor is the same scalar on every row (a correlated-free sub-select), so any
