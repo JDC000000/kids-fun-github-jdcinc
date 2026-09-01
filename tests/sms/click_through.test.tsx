@@ -1,4 +1,4 @@
-// tests/sms/click_through.test.ts — the weekly short link, from tap to redirect.
+// tests/sms/click_through.test.tsx — the weekly short link, from tap to redirect.
 //
 // Two layers, both here because they answer different questions:
 //   • `resolveClickThrough` — the decision table, with the three database reads injected, so every
