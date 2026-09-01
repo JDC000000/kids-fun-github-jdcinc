@@ -61,6 +61,31 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
  *
  * Postgres raises a bare `57014 query_canceled` with no hint that WE set the limit or what it was.
  * So the error now says so. `cause` keeps the original for anything that wants the pg fields.
+ *
+ * ═══ WHAT ACTUALLY CAUSED THOSE 500s — CORRECTING THIS COMMIT'S OWN ORIGINAL CLAIM ═══
+ * The commit that introduced this class asserted the 500s were "almost certainly the trend query
+ * still exceeding 8s because migration 0040's index has not been applied in production." THAT WAS
+ * WRONG, and it is recorded here because a commit message cannot be edited once pushed.
+ *
+ * Settled by three timestamped checks: the index IS applied, IS present, and IS chosen — an
+ * EXPLAIN plan shows `Index Scan using idx_analytics_event_created_at`, and the trend query runs
+ * 4.36s in ISOLATION, comfortably inside its own 8s budget.
+ *
+ * The real mechanism is CONTENTION, not a missing index. /admin/product-health fires five queries
+ * concurrently against a pool whose max is five (lib/db/pool-config.ts), and two of them were
+ * spilling sorts to disk — getActiveUsers at 6.66s / 68MB and getAccountValue at 10.27s / 237MB.
+ * The trend query was being pushed past its own ceiling by its siblings, then cancelled, then
+ * reported as a 500 that looked like it was about the trend query.
+ *
+ * Both siblings were de-spilled in a later commit (getActiveUsers 6.66s -> ~0.2s, getAccountValue
+ * 10.27s -> ~0.1s), which should remove ~17 seconds of connection-holding from that five-way race.
+ * Whether that alone restores the page is a PREDICTION, not a settled fact — if it still times out,
+ * the pool size and per-query work_mem are the open design space.
+ *
+ * The lesson worth keeping is narrower than "diagnose better": A TIMEOUT NAMES THE QUERY IT
+ * CANCELLED, NOT THE QUERY THAT CAUSED THE DELAY. This error says which limit fired; it cannot say
+ * whose fault it was, and reading the cancelled query as the culprit is exactly the mistake the
+ * original commit message made.
  */
 export class QueryTimeoutError extends Error {
   readonly timeoutMs: number;
