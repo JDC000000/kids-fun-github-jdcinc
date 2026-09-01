@@ -25,12 +25,47 @@ in the same document — the specifics are what make them recognisable next time
 |---|---|---|---|
 | 1 | Consent copy — `lib/sms/consent-copy.ts` | *"…to choose **only** those activities"*, proposed as a fix for a draft that dropped "only" | It contained the word and scoped it to the wrong noun — **which activities**, not **the data's purpose**. PRD §1.3 needs the second. |
 | 2 | A regex — `tests/sms/signup_copy.test.ts` | Restating `/only to/` as "must contain the word only" | `/only to/` constrains **grammatical attachment**, not keyword presence. The restatement would have passed instance 1. |
-| 3 | Test fixture — the admin-hang investigation | Synthetic `analytics_event` with sessions recurring across 24.2 days | Real sessions average **1.0 day**. The distortion biased the comparison *toward the wrong conclusion* — "the restructure doesn't help" — which would have blocked the correct fix. |
+| 3 | Test fixture — the admin-hang investigation | A synthetic `analytics_event` standing in for production's | **Four separate dimensions, found one at a time by being wrong** — see below. |
 | 4 | A mutant — `lib/db/client.ts` | Described as "a mutant using bare `SET`" | It also deleted `BEGIN`/`COMMIT`, so it tested "transaction removed" — a **different** regression that the old test did catch. The real one (`SET LOCAL` → `SET`, transaction kept) passed cleanly. See `tests/analytics/trend-query-db.test.ts`. |
 | 5 | A safety check — `tests/sms/inbound_route.test.ts` | Grepping for **import paths** before a whole-file string replace | A comment referencing a test file is neither an import nor a URL. The replace corrupted `signup_persistence-db.test.ts` into a path that does not exist. |
 
 Note that #5 is the guard itself. **A paraphrased check reports success**, which is the worst
 placement available for this failure.
+
+## The fixture, in detail: four axes, none of them obvious in advance
+
+Instance #3 was wrong four times, and each time the wrongness was invisible until a measurement
+disagreed with production. This is the list a synthetic reproduction has to match:
+
+| Axis | How it was wrong | What it cost |
+|---|---|---|
+| **Size** | 200k rows vs production's 1.19M | A false negative — 5.7ms — that made me discard a correct hypothesis. |
+| **Per-entity shape** | Sessions recurring across 24.2 days; real ones average **1.0** | Biased a comparison *toward* "the restructure doesn't help", which would have blocked the right fix. |
+| **Temporal concentration** | Events spread over 70 days; production's sit inside ~30 | Hid a sort spill entirely, then later understated a query's cost by **an order of magnitude** (44.9s measured, >600s real). |
+| **Value width** | 8-character session ids vs production's ~36 | Under-reported a disk spill as 41MB against production's 237MB. *(Inferred, not measured — flagged as such.)* |
+
+Three of the four made things look **better** than reality, which is the dangerous direction: a
+fixture that flatters the code produces confident, wrong all-clears.
+
+There is no reason to think this list is complete.
+
+## Adjacent: the same shape in measurement, not description
+
+Not strictly a paraphrase — worth recording because it is the same *mechanism* one step over, and
+because it nearly cost real time.
+
+**Comparing two query variants across two separate runs.** The old and new spellings of a rewritten
+KPI query returned `dau 299` and `dau 305`, a 2% discrepancy that looked like a correctness bug in
+the rewrite. It was `now()` advancing between the two executions: rows crossed the 1-day window
+boundary in between. Re-run inside a **single transaction**, both returned `293 / 1701 / 6563`
+exactly.
+
+    Rule: compare variants under one clock. Two runs of "the same thing" are not the same thing.
+
+The connection to the rest of this document: *two executions* were standing in for *a controlled
+comparison*, and they differed in the one dimension nobody had thought to hold fixed. Same failure,
+different medium — and had the discrepancy been larger it would have been investigated, while at 2%
+it was small enough to explain away.
 
 ## Why measurement is not immune
 
