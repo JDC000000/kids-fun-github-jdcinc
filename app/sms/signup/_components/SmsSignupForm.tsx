@@ -427,7 +427,7 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
             emphasised IN PLACE rather than moved. Splitting on the phrase and reassembling
             around it is why: this string is what `consent_text_version` stands for, and a
             component that reorders or drops any of it would make that column point at wording
-            no parent ever saw. tests/sms/consent_copy.test.ts asserts the reassembly is lossless.
+            no parent ever saw. tests/sms/signup_copy.test.ts asserts the reassembly is lossless.
 
             It is <strong>, not a link, because the preferences page is token-linked PER
             SUBSCRIBER (PRD §2.4) and therefore has no address until someone is a subscriber. A

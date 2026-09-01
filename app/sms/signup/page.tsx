@@ -5,14 +5,13 @@ import { getServerSearchEngine } from '@/lib/search/server-engine';
 import { smsSendingEnabled, smsSignupEnabled } from '@/lib/sms/config';
 import { SPARSE_FALLBACK_REGION_IDS, sparseRegionIdsFrom } from '@/lib/sms/sparse-areas';
 import {
-  CARRIER_DISCLOSURES,
   CONSENT_TEXT_VERSION,
   FORM_HEADING,
   FORM_INTRO,
+  LEGAL_FOOTER_SUMMARY,
   SENDER_IDENTITY,
-  SENDER_IDENTITY_LEAD,
-  SUPPORT_LINE,
   SUPPORT_PHONE_HREF,
+  legalFooterParts,
 } from '@/lib/sms/consent-copy';
 import { SmsSignupForm } from './_components/SmsSignupForm';
 
@@ -85,6 +84,10 @@ export default async function SmsSignupPage() {
 
   const { ids: sparseRegionIds } = await measureSparseRegionIds();
 
+  // Not a waitlist surface: /sms/signup offers the real weekly subscription, so the frequency
+  // disclosure is true here and stays.
+  const footer = legalFooterParts(false);
+
   return (
     <main className="kf-sms-signup">
       <div className="kf-sms-signup__panel">
@@ -105,33 +108,32 @@ export default async function SmsSignupPage() {
             the legal name, mailing address and support contact did not exist. They exist now.
             Shared from lib/sms/consent-copy.ts with the other surface that needs them, so the
             address can never be right in one place and stale in the other. */}
-        <section className="kf-sms-signup__identity">
-          <p className="kf-sms-signup__identity-lead">{SENDER_IDENTITY_LEAD}</p>
-          <address className="kf-sms-signup__identity-block">
-            {SENDER_IDENTITY.legalName}, operating as {SENDER_IDENTITY.operatingAs}
-            <br />
-            {SENDER_IDENTITY.mailingAddress}
-            <br />
-            {SENDER_IDENTITY.businessRegistration}
-          </address>
-          <p className="kf-sms-signup__identity-support">
-            {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[0]}
+        {/*
+          COLLAPSED, NOT REMOVED (Jon, 2026-09-01). Every required statement is still on the page
+          and still in the DOM — a <details> that is closed has its contents in the document, so a
+          compliance reviewer's screenshot, a screen reader and Ctrl-F all still reach them. This
+          is a presentation change, not a disclosure change.
+
+          NATIVE <details>, deliberately: no JavaScript, so this page stays a Server Component and
+          the whole footer works with JS disabled. A custom toggle would have cost both.
+
+          The number stays a REAL tel: link and Privacy/Terms stay real anchors — see
+          legalFooterParts() for why the footer is composed from structure rather than stored as
+          one flowing string.
+        */}
+        <details className="kf-sms-signup__legal-details">
+          <summary>{LEGAL_FOOTER_SUMMARY}</summary>
+          <p className="kf-sms-signup__legal-body">
+            {footer.identity}{' '}
+            {footer.support.split(SENDER_IDENTITY.supportPhone)[0]}
             <a href={SUPPORT_PHONE_HREF}>{SENDER_IDENTITY.supportPhone}</a>
-            {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[1]}
+            {footer.support.split(SENDER_IDENTITY.supportPhone)[1]}{' '}
+            {footer.disclosures.join(' ')}{' '}
+            <a href="/privacy">Privacy Policy</a>
+            {' · '}
+            <a href="/terms">Terms of Service</a>
           </p>
-        </section>
-
-        <ul className="kf-sms-signup__disclosures">
-          {CARRIER_DISCLOSURES.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-
-        <p className="kf-sms-signup__legal">
-          <a href="/privacy">Privacy Policy</a>
-          {' · '}
-          <a href="/terms">Terms of Service</a>
-        </p>
+        </details>
 
         {/*
           Version stamp. `sms_consent.consent_text_version` records which wording a subscriber

@@ -19,7 +19,7 @@
 import { type FormEvent, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  carrierDisclosuresFor,
+  legalFooterParts,
   CONSENT_CHECKBOX_TEXT,
   FIELD_COPY,
   SENDER_IDENTITY,
@@ -158,6 +158,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
    * A SPARSE area keeps everything: thin is not empty, and the waitlist there is an alternative.
    */
   const waitlistOnly = coverage.kind === 'out_of_area';
+  const footer = legalFooterParts(waitlistOnly);
 
   async function submitWaitlist() {
     if (waitlistSending) return;
@@ -476,26 +477,26 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
       {/* CASL/PIPEDA: sender identification and the carrier disclosures. Condensed in PRESENTATION
           — small type, one block — but every required statement is present and unaltered, from the
           same constants the existing form renders. */}
+      {/* THE SAME FOOTER AS /sms/signup, from the same `legalFooterParts()` — not a second copy
+          of the same facts. Two hand-maintained legal footers is how the mailing address on one
+          surface eventually stops matching the other. The ONLY difference between the surfaces is
+          the argument: `waitlistOnly` drops the weekly-frequency sentence here, because this
+          state is not offering a weekly subscription.
+
+          NOT collapsed behind <details> the way /sms/signup is. That was approved for the signup
+          page specifically, and this page's whole brief is minimal-friction single-purpose — a
+          disclosure widget is chrome. Flagged rather than decided quietly: if the collapse should
+          apply here too, it is a one-line change. */}
       <div className="kf-start__legal">
-        <p className="kf-start__legal-lead">{SENDER_IDENTITY_LEAD}</p>
-        <address className="kf-start__identity">
-          {SENDER_IDENTITY.legalName}, operating as {SENDER_IDENTITY.operatingAs}
-          <br />
-          {SENDER_IDENTITY.mailingAddress}
-          <br />
-          {SENDER_IDENTITY.businessRegistration}
-        </address>
         <p>
-          {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[0]}
+          {footer.identity}{' '}
+          {footer.support.split(SENDER_IDENTITY.supportPhone)[0]}
           <a href={SUPPORT_PHONE_HREF}>{SENDER_IDENTITY.supportPhone}</a>
-          {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[1]}
-        </p>
-        {/* Frequency line suppressed when the only offer on screen is the waitlist: it
-            describes the weekly subscription, which this state is not offering. The rates and
-            STOP/HELP lines stay — see `carrierDisclosuresFor`. */}
-        <p>{carrierDisclosuresFor(waitlistOnly).join(' ')}</p>
-        <p>
-          <Link href="/terms">Terms</Link> · <Link href="/privacy">Privacy</Link>
+          {footer.support.split(SENDER_IDENTITY.supportPhone)[1]}{' '}
+          {footer.disclosures.join(' ')}{' '}
+          <Link href="/privacy">Privacy Policy</Link>
+          {' · '}
+          <Link href="/terms">Terms of Service</Link>
         </p>
       </div>
     </form>

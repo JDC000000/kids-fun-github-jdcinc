@@ -55,7 +55,8 @@
  *
  *   2026-08-26.v2  →  this file as of commit 22acf7f (the commit immediately before the bump
  *                     below). Retired 2026-08-29.
- *   2026-08-29.v3  →  current.
+ *   2026-08-29.v3  →  the copywriter rewrite below replaced it. Retired 2026-09-01.
+ *   2026-09-01.v4  →  current.
  *
  * ⚠ THIS LIST IS NOT A DATE CUTOFF, and an audit query written as though it were will be wrong.
  * `signup-store.ts` RE-STAMPS `consent_text_version` on resubmit, deliberately — a resubmitting
@@ -68,14 +69,14 @@
  *
  * >>> BUMPING THIS? ADD THE OUTGOING VERSION TO THE LIST ABOVE IN THE SAME COMMIT. <<<
  */
-export const CONSENT_TEXT_VERSION = '2026-08-29.v3';
+export const CONSENT_TEXT_VERSION = '2026-09-01.v4';
 
 /** What the page is, in one line, above the fields. */
-export const FORM_HEADING = 'Get weekend activity picks by text';
+export const FORM_HEADING = 'Get kids’ weekend activities by text';
 
 export const FORM_INTRO =
-  'One text a week, Friday afternoon, with 5–10 things to do with your kids that weekend — ' +
-  'near you, and matched to their ages. Free.';
+  'One text every Friday afternoon: 5–10 activities for your kids that weekend, near you and ' +
+  'right for their ages. Free.';
 
 /**
  * THE CONSENT CHECKBOX. Unchecked by default, and the form cannot submit without it (PRD §1.3,
@@ -91,6 +92,22 @@ export const FORM_INTRO =
  *   2. WHY — to text personalised weekend activity picks.
  *   3. That it is NEVER shared with advertisers or third parties.
  *   4. WHERE to see, change or delete it — the preferences page, linked.
+ */
+/*
+ * ═══ HELD, NOT APPLIED — awaiting a ruling (2026-09-01) ═══
+ * Jon approved a rewritten consent sentence in the copywriter draft. Every other string from that
+ * draft is applied in this commit; this one is not, because it drops the word "only":
+ *
+ *   approved:  '…and kids’ approximate ages to choose those activities — never sold or shared…'
+ *   current:   '…and use them ONLY TO choose the activities in that weekly text…'
+ *
+ * PRD §1.3 relies on that purpose-EXCLUSIVITY to justify ONE checkbox rather than separately
+ * bundled consents, and tests/sms/signup_copy.test.ts:47 pins it with that reasoning written out.
+ * Applying the draft verbatim would have meant deleting a guard that exists to protect a specific
+ * compliance argument — which is a product-owner decision, not a copy edit.
+ *
+ * Proposed resolution, one word, preserving the new voice: '…to choose ONLY those activities…'.
+ * Not applied unilaterally. See the report attached to this commit.
  */
 export const CONSENT_CHECKBOX_TEXT =
   'Yes, text me weekly activity picks. I agree that KIDS FUN can store my phone number, my ' +
@@ -108,8 +125,8 @@ export const PREFERENCES_LINK_LABEL = 'preferences page';
  * intercepts YES at the carrier layer before our webhook ever sees it).
  */
 export const WHAT_HAPPENS_NEXT =
-  'We’ll text you once to confirm. Reply JOIN to that message and you’re in — your first picks ' +
-  'arrive the next Friday around 4pm.';
+  'We’ll text you once to confirm. Reply JOIN and you’re in — your first activities land the ' +
+  'next Friday around 4pm.';
 
 /**
  * CARRIER-FACING DISCLOSURES — NOT SPECIFIED BY THE PRD, ADDED HERE ON PURPOSE. FLAGGED.
@@ -137,7 +154,7 @@ export const WHAT_HAPPENS_NEXT =
  * a single notification, if we ever reach their area at all. See `carrierDisclosuresFor`.
  */
 export const MESSAGE_FREQUENCY_DISCLOSURE =
-  'Message frequency: 1 message per week, plus a one-time confirmation message.';
+  '1 message per week, plus a one-time confirmation message.';
 
 export const CARRIER_DISCLOSURES: readonly string[] = [
   MESSAGE_FREQUENCY_DISCLOSURE,
@@ -169,6 +186,52 @@ export function carrierDisclosuresFor(waitlistOnly: boolean): readonly string[] 
   if (!waitlistOnly) return CARRIER_DISCLOSURES;
   return CARRIER_DISCLOSURES.filter((line) => line !== MESSAGE_FREQUENCY_DISCLOSURE);
 }
+
+/**
+ * THE LEGAL FOOTER, AS STRUCTURE RATHER THAN AS A PARAGRAPH (Jon, 2026-09-01).
+ *
+ * Jon approved one flowing block of footer text in place of the old lead-in + address block +
+ * bulleted disclosure list. This returns it as PARTS, and the deliberate choice is that it does
+ * not return a string.
+ *
+ * ═══ WHY NOT ONE STRING, WHICH IS WHAT WAS ASKED FOR ═══
+ * Two things on this page must survive being "one flowing paragraph", and both die the moment the
+ * paragraph becomes a single opaque value:
+ *
+ *   the support number   must stay a real `tel:` link. A parent reading this on the phone they
+ *                        are signing up with taps it. Flattened into prose it is just characters.
+ *   Privacy / Terms      must stay real anchors, for the same reason.
+ *
+ * And a third, structural: `carrierDisclosuresFor` filters the frequency sentence OUT by exact
+ * value for the waitlist surface. A pre-joined string has nothing left to filter, so the waitlist
+ * page would either keep a sentence that is false there or need its own hand-maintained copy —
+ * which is the "quiet divergence between surfaces" this was explicitly asked not to become.
+ *
+ * So the flowing READING is produced by joining these parts with spaces, and the structure that
+ * makes the links and the filter possible stays underneath it. Presentation changed; the data did
+ * not.
+ */
+export interface LegalFooterParts {
+  /** "Sent by …, operating as … — <address>. <registration>." */
+  identity: string;
+  /** Split around `SENDER_IDENTITY.supportPhone` so the caller can wrap it in a tel: anchor. */
+  support: string;
+  /** The carrier disclosures that apply here, already filtered for the surface. */
+  disclosures: readonly string[];
+}
+
+export function legalFooterParts(waitlistOnly: boolean): LegalFooterParts {
+  return {
+    identity:
+      `Sent by ${SENDER_IDENTITY.legalName}, operating as ${SENDER_IDENTITY.operatingAs} — ` +
+      `${SENDER_IDENTITY.mailingAddress}. ${SENDER_IDENTITY.businessRegistration}.`,
+    support: SUPPORT_LINE,
+    disclosures: carrierDisclosuresFor(waitlistOnly),
+  };
+}
+
+/** The summary label for the collapsed footer disclosure. */
+export const LEGAL_FOOTER_SUMMARY = 'Legal & support info';
 
 /**
  * THE SUPPORT CONTACT, AND THE ONE PLACE THE NUMBER IS WRITTEN DOWN.
@@ -223,8 +286,7 @@ export const SENDER_IDENTITY = {
 export const SENDER_IDENTITY_LEAD = 'These messages are sent by:';
 
 /** How to reach a human, stated in the same breath as who is sending. */
-export const SUPPORT_LINE =
-  `Questions? Text us at ${SUPPORT_PHONE_DISPLAY} - the same number your picks come from.`;
+export const SUPPORT_LINE = `Support: ${SUPPORT_PHONE_DISPLAY} (same number texts come from).`;
 
 /**
  * The sparse-municipality warning, shown inline BEFORE submit when the typed postal code lands
@@ -256,23 +318,24 @@ export const FIELD_COPY = {
   // visitor reads the help text and only a failing visitor sees the error.
   //   THIS CHANGE IS WHY CONSENT_TEXT_VERSION MOVED: this file's own rule counts help text around
   //   the consent act as wording a subscriber agrees to.
-  phoneHelp:
-    'A 10-digit mobile number. This is the only way we identify you — no account, no password.',
+  phoneHelp: 'Your 10-digit mobile number — no account or password needed.',
   postalLabel: 'Postal code',
-  postalHelp: 'Used to find activities near you. We store the postal code, never a precise location.',
+  postalHelp:
+    'Finds activities near you. We only store the postal code, never your exact location.',
   childrenLabel: 'How old are your kids?',
   // Reworded in round 21 after V1 testing read it as briefly self-contradictory: "no birthdays"
   // followed immediately by "we store the year they were born" lands as a contradiction until the
   // reader works out that a YEAR is not a BIRTHDAY. Same meaning, same consent posture, same data
   // collected — the sentence now explains before it reassures, instead of the other way round.
   childrenHelp:
-    'Just their age now, in years. We turn that into a birth year so the ages stay right as they ' +
-    'grow up — we never ask for a birthday or a name.',
-  addChild: 'Add another child',
+    'Just their age in years — we convert it to a birth year so it stays right as they grow. ' +
+    'No birthdays or names needed.',
+  addChild: '+ Add a child',
   removeChild: 'Remove',
-  interestsLabel: 'Anything they’re especially into? (optional)',
-  interestsHelp: 'Leave this blank to see everything. We’ll widen it automatically on a quiet weekend.',
-  submit: 'Text me weekly picks',
+  interestsLabel: 'What are your kids into? (optional)',
+  interestsHelp:
+    'Leave blank to see everything — we’ll widen it automatically on a quiet weekend.',
+  submit: 'Text me kids’ activities',
   submitting: 'Signing up…',
 } as const;
 

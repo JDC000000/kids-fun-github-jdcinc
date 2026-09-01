@@ -109,8 +109,10 @@ describe('the CASL / double-opt-in copy (PRD §1.4)', () => {
   it('the support contact is SMS on the SAME number, not an email or a second line', () => {
     // Jon's ruling: a subscriber's whole relationship with this product is over SMS, and an email
     // address would be inventing a channel nobody is watching.
-    expect(SUPPORT_LINE).toMatch(/text us/i);
+    // Reworded 2026-09-01 ('Support: <number> (same number texts come from).'). The RULING is
+    // unchanged and still asserted: one SMS channel, the same number, never an email address.
     expect(SUPPORT_LINE).toMatch(/same number/i);
+    expect(SUPPORT_LINE).toContain(SUPPORT_PHONE_DISPLAY);
     expect(SUPPORT_LINE).not.toMatch(/@/);
   });
 });
@@ -294,7 +296,7 @@ describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approve
     // rule. This assertion failing was the guard working exactly as intended — a bump has to come
     // here and be justified, which is why it is pinned to a literal rather than read from the
     // constant it is checking.
-    expect(CONSENT_TEXT_VERSION).toBe('2026-08-29.v3');
+    expect(CONSENT_TEXT_VERSION).toBe('2026-09-01.v4');
     expect(CONSENT_CHECKBOX_TEXT).not.toContain('texted us before'); // the consent text is untouched
   });
 });

@@ -88,14 +88,16 @@ describe('the fields', () => {
     // "no birthdays, no names... we store the year they were born" as briefly self-contradictory),
     // so this asserts the PROMISE rather than one phrasing of it: whatever the sentence says, it
     // still has to rule out both a birthday and a name.
-    expect(html.toLowerCase()).toContain('never ask for a birthday or a name');
+    // Reworded 2026-09-01 to 'No birthdays or names needed.' Same promise, asserted as the two
+    // things it must still rule out rather than as one phrasing of them.
+    expect(html.toLowerCase()).toContain('no birthdays or names needed');
     // Explains BEFORE it reassures — the birth year is accounted for by the time the promise
     // lands, which is what stopped it reading as a contradiction.
     expect(FIELD_COPY.childrenHelp.indexOf('birth year')).toBeLessThan(
-      FIELD_COPY.childrenHelp.indexOf('never ask')
+      FIELD_COPY.childrenHelp.indexOf('No birthdays')
     );
     // What is COLLECTED is unchanged: an age now, converted to a year. Not a new promise.
-    expect(FIELD_COPY.childrenHelp.toLowerCase()).toContain('age now');
+    expect(FIELD_COPY.childrenHelp.toLowerCase()).toContain('age in years');
   });
 
   it('renders every interest checkbox, all unchecked, and says they are optional', () => {
