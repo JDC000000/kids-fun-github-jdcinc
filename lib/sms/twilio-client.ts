@@ -31,11 +31,69 @@
 import Twilio from 'twilio';
 import type { RenderedMessage } from './message';
 import {
+  missingTwilioConfig,
+  smsSendingEnabled,
   statusCallbackUrl,
   twilioAccountSid,
   twilioAuthToken,
   twilioMessagingServiceSid,
 } from './config';
+import { captureAndFlush } from '@/lib/observability/route-handler';
+
+/**
+ * THE MISSING-CONFIG ALARM, and the incident it exists because of.
+ *
+ * TWILIO_ACCOUNT_SID / AUTH_TOKEN / MESSAGING_SERVICE_SID were absent from production for days.
+ * `dispatchSms` did exactly what it was designed to do — returned `{ outcome: 'failed' }` rather
+ * than throwing, so no parent ever saw a 500 — and every confirm-request send failed silently for
+ * the whole period. It was found by somebody noticing failed rows in sms_send_log.
+ *
+ * FAILING CLOSED WAS NEVER THE BUG. Failing closed WITHOUT SAYING SO was. So this adds the saying
+ * so and changes no behaviour: the same result is returned, and nothing throws.
+ *
+ * ═══ WHY HERE AND NOT IN `assertSendPreconditions` ═══
+ * That guard is the obvious home — it is the same class of bug (flag on, dependency missing) and
+ * it already covers two other secrets. It is the WRONG home, because it runs only on the weekly
+ * path, and the sends that actually failed in this incident were CONFIRM-REQUESTS from signup.
+ * `dispatchSms` is the one function every send of every type funnels through, so it is the only
+ * place a guard covers what actually broke.
+ *
+ * ═══ WHY IT IS NOT A STARTUP CHECK ═══
+ * instrumentation.ts runs per cold start on every lambda, including ones that will never send
+ * anything, and would alarm identically on a preview deploy that legitimately has no Twilio
+ * credentials. Firing where the send is actually attempted means the alarm's existence IS the
+ * evidence that a real message was really lost.
+ *
+ * ═══ ONCE PER CONFIGURATION, NOT ONCE PER MESSAGE, AND NOT A BOOLEAN ═══
+ * A Friday bulk run of five hundred subscribers must not raise five hundred Sentry events. The
+ * flag is keyed on WHICH variables are missing rather than being a `hasAlarmed` boolean — the same
+ * reasoning as `twilioClient`'s cache key directly below: a process whose environment changes
+ * (every test that stubs it) must alarm again for the new state instead of staying silent because
+ * it once alarmed about a different one. No reset hook needed.
+ *
+ * NAMES ONLY. `missingTwilioConfig()` returns variable names and there is no path here that can
+ * reach a credential value, a phone number or a message body — see the file header.
+ */
+let alarmedFor: string | null = null;
+
+async function alarmIfTwilioUnconfigured(): Promise<void> {
+  try {
+    if (!smsSendingEnabled()) return; // a deliberately-unconfigured environment is not an incident
+    const missing = missingTwilioConfig();
+    if (missing.length === 0) return;
+    const key = missing.join(',');
+    if (alarmedFor === key) return;
+    alarmedFor = key;
+    await captureAndFlush(
+      new Error(`SMS_SENDING_ENABLED is true but Twilio is not configured: ${key} unset. Sends are failing silently.`),
+      undefined,
+      { route: 'lib/sms/twilio-client', operation: 'twilio_config_missing' }
+    );
+  } catch {
+    // An alarm that breaks the send path would be worse than the silence it replaces.
+    // `dispatchSms` promises never to throw, and that promise outranks this notification.
+  }
+}
 
 export type DispatchOutcome = 'sent' | 'dry_run' | 'stopped_via_carrier' | 'failed';
 
@@ -162,6 +220,7 @@ export async function dispatchSms(
 
   const client = options.client !== undefined ? options.client : twilioClient();
   if (!client) {
+    await alarmIfTwilioUnconfigured();
     return {
       outcome: 'failed',
       twilioSid: null,
@@ -172,6 +231,7 @@ export async function dispatchSms(
 
   const messagingServiceSid = twilioMessagingServiceSid();
   if (!messagingServiceSid) {
+    await alarmIfTwilioUnconfigured();
     return {
       outcome: 'failed',
       twilioSid: null,

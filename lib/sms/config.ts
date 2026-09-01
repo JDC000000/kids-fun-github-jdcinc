@@ -260,6 +260,26 @@ export function twilioMessagingServiceSid(): string | null {
 }
 
 /**
+ * WHICH of the three required Twilio settings are absent. Empty array = fully configured.
+ *
+ * NAMES ONLY, NEVER VALUES — the return type is the variable names precisely so a caller can put
+ * the result straight into an alert or a log without anyone having to remember that
+ * TWILIO_AUTH_TOKEN is a secret. There is no accessor here that returns a value.
+ *
+ * Asks the three accessors rather than process.env, for the reason assertSendPreconditions gives
+ * about `preferencesSecret()`: the guard should track the functions the send path actually calls,
+ * so a change to what "configured" means moves this with it instead of leaving a check that passes
+ * while the thing it checks fails.
+ */
+export function missingTwilioConfig(): readonly string[] {
+  const missing: string[] = [];
+  if (!twilioAccountSid()) missing.push('TWILIO_ACCOUNT_SID');
+  if (!twilioAuthToken()) missing.push('TWILIO_AUTH_TOKEN');
+  if (!twilioMessagingServiceSid()) missing.push('TWILIO_MESSAGING_SERVICE_SID');
+  return missing;
+}
+
+/**
  * The absolute URL Twilio should POST delivery receipts to, or null if unconfigured.
  *
  * ONE VALUE FOR BOTH SIDES, and that is the point rather than a convenience: `dispatchSms` sends
