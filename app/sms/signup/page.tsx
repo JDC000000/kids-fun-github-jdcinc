@@ -127,12 +127,23 @@ export default async function SmsSignupPage() {
           this page exists to produce. The correct rule was already written 40 lines below, on the
           version stamp: "What it does NOT survive is a purely visual screenshot."
 
-          OPEN QUESTION, NOT SILENTLY RESOLVED HERE: whether this page remains the submitted
-          opt-in URL at all is under review (there is a proposal to make /sms/start primary and
-          308 this route to it). /sms/start renders the SAME footer expanded, so that change would
-          resolve this by itself. Adding `open` here, or reverting the collapse, would partly undo
-          a decision Jon took deliberately — so it is deliberately NOT done unilaterally. If this
-          page stays the Twilio artefact, this <details> needs `open` or removing.
+          RESOLVED 2026-09-01 — `open` IS NOW SET, and the reasoning is worth keeping because the
+          urgency and the defect turned out to be different questions.
+
+          The Operator queried the actual Toll-Free Verification filing: status TWILIO_APPROVED,
+          approved 2026-08-31 — the day BEFORE this collapse shipped. Their evidence artifact is a
+          saved static screenshot, and Twilio does not re-fetch the URL. So no reviewer was ever
+          looking at a degraded page: this was a real live defect that nobody was being burned by.
+          Those are not the same thing, and only the second one was ever urgent.
+
+          Shipped as `open` rather than by reverting the <details>, which keeps Jon's approved
+          presentation (a labelled, collapsible legal block) while restoring what the page is FOR:
+          disclosures that appear in a screenshot. This needed no product sign-off because it
+          restores intent this file already documents twice — here, and on the version stamp below.
+
+          THIS BECOMES MOOT, NOT WRONG, IF /sms/start REPLACES THIS PAGE. That redirect is approved
+          and in progress; /sms/start renders the same footer expanded already. Until it ships,
+          this attribute is what makes the artefact honest.
 
           NATIVE <details>, deliberately: no JavaScript, so this page stays a Server Component and
           the whole footer works with JS disabled. A custom toggle would have cost both.
@@ -141,7 +152,7 @@ export default async function SmsSignupPage() {
           legalFooterParts() for why the footer is composed from structure rather than stored as
           one flowing string.
         */}
-        <details className="kf-sms-signup__legal-details">
+        <details open className="kf-sms-signup__legal-details">
           <summary>{LEGAL_FOOTER_SUMMARY}</summary>
           <p className="kf-sms-signup__legal-body">
             {footer.identity}{' '}

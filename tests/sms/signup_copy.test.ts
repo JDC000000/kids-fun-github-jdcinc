@@ -472,3 +472,20 @@ describe('the max-children notice (2026-09-01)', () => {
     expect(maxChildrenNotice(MAX_CHILDREN)).toMatch(/reached the max/i);
   });
 });
+
+describe('🔴 the legal footer must be VISIBLE, not just present', () => {
+  // Comments stripped first: this file's header discusses <details> at length while explaining why
+  // it must be open, so a naive match finds the prose. Same trap as two other structural tests in
+  // this repo; stripped pre-emptively rather than after a false failure.
+  const raw = require('node:fs').readFileSync('app/sms/signup/page.tsx', 'utf8') as string;
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  it('renders the disclosure block expanded', () => {
+    // A closed <details> does not RENDER its contents, so a screenshot of this page would capture
+    // "Legal & support info" and none of the carrier disclosures, sender identity or terms links
+    // behind it. consent-copy.ts:35 states this form's purpose is being exactly that screenshot
+    // for the Twilio Toll-Free Verification submission — "a reviewer reads the actual pixels".
+    // This shipped collapsed for one day. The guard exists so it cannot happen silently again.
+    expect(code).toMatch(/<details\s+open\b/);
+  });
+});
