@@ -147,3 +147,68 @@ describe.skipIf(!hasDb)('queryWithTimeout', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// The KPI sort-spill fix. Both queries counted distinct actors with count(DISTINCT …) over a
+// window that, in production, contains essentially the whole table — a sort that does not fit
+// work_mem (3.5MB) and spills to disk. getActiveUsers cost 6.66s / 68MB; getAccountValue cost
+// 10.27s / 237MB, which is LARGER despite its FILTER, because FILTER does not narrow what a
+// DISTINCT aggregate sorts.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe.skipIf(!hasDb)('KPI actor counts, after the de-spill rewrite', () => {
+  const M = `kpitest-${Date.now()}`;
+  const seen: string[] = [];
+
+  afterAll(async () => {
+    await query(`DELETE FROM analytics_event WHERE user_or_session = ANY($1::text[])`, [seen]);
+  });
+
+  it('🔴 counts distinct ACTORS, not events, across all three windows', async () => {
+    const { getProductHealthKpis } = await import('../../lib/analytics/kpi');
+    const before = (await getProductHealthKpis()).activeUsers;
+
+    // Three actors, several events each, all inside the DAU window — so every window moves by 3.
+    for (let a = 0; a < 3; a += 1) {
+      const id = `${M}-a${a}`;
+      seen.push(id);
+      await query(
+        `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+         SELECT 'search_performed', $1, now() - interval '1 hour' FROM generate_series(1, 4)`,
+        [id]
+      );
+    }
+
+    const after = (await getProductHealthKpis()).activeUsers;
+    expect(after.dau - before.dau).toBe(3); // actors, not the 12 events
+    expect(after.wau - before.wau).toBe(3);
+    expect(after.mau - before.mau).toBe(3);
+  });
+
+  it('🔴 an actor active twice in one window is still counted once', async () => {
+    // The property the DISTINCT existed for, and the one the max(created_at) rewrite has to keep.
+    const { getProductHealthKpis } = await import('../../lib/analytics/kpi');
+    const before = (await getProductHealthKpis()).activeUsers;
+    const id = `${M}-repeat`;
+    seen.push(id);
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, now() - interval '2 hours'),
+              ('listing_viewed',   $1, now() - interval '1 hour')`,
+      [id]
+    );
+    const after = (await getProductHealthKpis()).activeUsers;
+    expect(after.dau - before.dau).toBe(1);
+  });
+});
+
+describe('🔴 the anti-pattern does not come back', () => {
+  // Structural, comments stripped: the exact spelling that spilled. A future edit reintroducing
+  // count(DISTINCT user_or_session) FILTER(...) over the full window rebuilds the sort this
+  // removed, and would look perfectly reasonable in review.
+  const raw = require('node:fs').readFileSync('lib/analytics/kpi.ts', 'utf8') as string;
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*(\/\/|--).*$/gm, '');
+
+  it('no count(DISTINCT user_or_session) FILTER remains in kpi.ts', () => {
+    expect(code).not.toMatch(/count\(DISTINCT\s+user_or_session\)\s*FILTER/i);
+  });
+});

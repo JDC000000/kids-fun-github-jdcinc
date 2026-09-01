@@ -164,19 +164,41 @@ async function getEngagementCounts(windowDays: number): Promise<EngagementCounts
 }
 
 async function getActiveUsers(): Promise<ActiveUsers> {
-  // One pass over the last MAU_WINDOW_DAYS; the tighter DAU/WAU windows are carved
-  // out with FILTER so we never scan the table three times. Null/blank actor ids
-  // are excluded so a malformed row can't inflate the distinct counts.
+  // One pass over the last MAU_WINDOW_DAYS, reduced to one row per ACTOR before anything is
+  // counted. The tighter DAU/WAU windows are then carved out of that small relation.
+  //
+  // ═══ WHY NOT count(DISTINCT …) FILTER (…), WHICH IS WHAT THIS USED TO BE ═══
+  // `count(DISTINCT x)` needs its input SORTED, and production's MAU window contains essentially
+  // the whole table (~1.19M rows in 30 days). That sort does not fit work_mem (3.5MB in prod) and
+  // spills: `Sort Method: external merge, Disk: ~68MB`, 6.7s for this query alone. Three DISTINCTs
+  // in one statement is one sort, not three — but it is a sort over everything.
+  //
+  // Grouping first turns it into a HashAggregate over 1.19M rows producing ~6.5k actor rows, which
+  // fits in memory comfortably. Measured on a production-shaped fixture: 2680ms -> 222ms, no spill.
+  //
+  // ═══ max(created_at) IS EXACTLY EQUIVALENT, NOT AN APPROXIMATION ═══
+  // An actor belongs in DAU iff it has ANY event inside the DAU window, which is true iff its
+  // LATEST event is inside that window. Same for WAU. Verified by running both spellings inside a
+  // SINGLE transaction and diffing — identical. (Across two transactions they differ by a few
+  // counts, which is `now()` advancing between runs, not a logic difference. That cost me a
+  // confusing half hour; do not re-derive it across separate statements.)
+  //
+  // `now()` is stable within a statement, so the CTE and the outer FILTERs share one clock.
   const rows = await query<{ dau: number; wau: number; mau: number }>(
     `
+    WITH actors AS (
+      SELECT user_or_session, max(created_at) AS last_seen
+        FROM analytics_event
+       WHERE created_at >= now() - ($3::int * interval '1 day')
+         AND user_or_session IS NOT NULL
+         AND user_or_session <> ''
+       GROUP BY user_or_session
+    )
     SELECT
-      count(DISTINCT user_or_session) FILTER (WHERE created_at >= now() - ($1::int * interval '1 day'))::int AS dau,
-      count(DISTINCT user_or_session) FILTER (WHERE created_at >= now() - ($2::int * interval '1 day'))::int AS wau,
-      count(DISTINCT user_or_session)::int AS mau
-    FROM analytics_event
-    WHERE created_at >= now() - ($3::int * interval '1 day')
-      AND user_or_session IS NOT NULL
-      AND user_or_session <> ''
+      count(*) FILTER (WHERE last_seen >= now() - ($1::int * interval '1 day'))::int AS dau,
+      count(*) FILTER (WHERE last_seen >= now() - ($2::int * interval '1 day'))::int AS wau,
+      count(*)::int AS mau
+    FROM actors
     `,
     [DAU_WINDOW_DAYS, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS]
   );
@@ -199,11 +221,29 @@ async function getAccountValue(windowDays: number): Promise<AccountValue> {
           AND (result_summary_json ->> 'optedIn') = 'true'
       )::int AS email_opt_ins,
       count(*) FILTER (WHERE event_type = 'account_signed_in')::int AS sign_in_events,
-      count(DISTINCT user_or_session) FILTER (
-        WHERE event_type = 'account_signed_in'
-          AND user_or_session IS NOT NULL
-          AND user_or_session <> ''
-      )::int AS signed_in_users
+      -- ═══ THE DISTINCT IS A SUBQUERY, AND FILTER WOULD NOT HAVE SAVED IT ═══
+      -- This was count(DISTINCT user_or_session) FILTER (WHERE event_type = 'account_signed_in'),
+      -- and the natural reading — that FILTER narrows what gets sorted — is WRONG. Postgres sorts
+      -- everything the outer WHERE admits and applies FILTER only when counting; the FILTER never
+      -- appears in the scan node, only in the final Aggregate.
+      --
+      -- So it sorted ~1.19M rows to answer a question about ~13k of them, spilling to disk. In
+      -- production that made this the LARGEST contributor to the page timeout: 10.27s, 237MB
+      -- spilled — bigger than getActiveUsers above, not smaller, which is the opposite of what the
+      -- FILTER suggests. Confirmed by EXPLAIN ANALYZE on both.
+      --
+      -- As a subquery the DISTINCT sees only the sign-in rows. Measured: 2655ms -> 98ms.
+      (
+        SELECT count(*)::int
+          FROM (
+            SELECT DISTINCT user_or_session
+              FROM analytics_event
+             WHERE created_at >= now() - ($1::int * interval '1 day')
+               AND event_type = 'account_signed_in'
+               AND user_or_session IS NOT NULL
+               AND user_or_session <> ''
+          ) signed_in
+      ) AS signed_in_users
     FROM analytics_event
     WHERE created_at >= now() - ($1::int * interval '1 day')
     `,
