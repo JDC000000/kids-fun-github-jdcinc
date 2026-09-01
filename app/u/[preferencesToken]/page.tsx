@@ -87,7 +87,9 @@ function statusLine(view: PreferencesView): string {
 function lastWeekLine(view: PreferencesView): string {
   switch (view.lastWeek.kind) {
     case 'weekly':
-      return `${view.lastWeek.picks.length} ${view.lastWeek.picks.length === 1 ? 'pick' : 'picks'}.`;
+      return `${view.lastWeek.picks.length} ${
+        view.lastWeek.picks.length === 1 ? 'activity' : 'activities'
+      }.`;
     case 'empty_week':
       return PREFS_LAST_WEEK_EMPTY;
     case 'pause_notice':
@@ -155,7 +157,7 @@ export default async function PreferencesPage({
                 // "activity unavailable" interstitial instead of a bare 404.
                 // `attributed` is false only when no token could be minted; the link still works.
                 <li key={pick.occurrenceId} data-attributed={pick.attributed}>
-                  <a href={pick.href}>Pick {pick.rank}</a>
+                  <a href={pick.href}>Activity {pick.rank}</a>
                 </li>
               ))}
             </ol>

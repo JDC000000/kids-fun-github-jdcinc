@@ -436,7 +436,7 @@ export const PREFS_HEADING = 'Your KIDS FUN texts';
 
 /** Shown when the subscription is live. */
 export const PREFS_STATUS_ACTIVE =
-  'You are getting weekly picks every Friday afternoon.';
+  'You’re getting kids’ activities every Friday afternoon.';
 
 /**
  * Shown when the subscriber has been auto-paused after three empty weeks.
@@ -446,37 +446,36 @@ export const PREFS_STATUS_ACTIVE =
  * told a different story by the link inside it is how a product stops sounding like one thing.
  */
 export const PREFS_STATUS_PAUSED =
-  'Your texts are paused. We could not find matches near you for a few weeks. ' +
-  'Update your area or interests below and save, and they will start again.';
+  'Your texts are paused — we haven’t found matches near you in a few weeks. ' +
+  'Update your area or interests below and save to start them again.';
 
 /** Shown when they are still waiting to reply JOIN. */
 export const PREFS_STATUS_PENDING =
-  'Almost there. Reply JOIN to our confirmation text and your weekly picks will start.';
+  'Almost there — reply JOIN to our confirmation text and your kids’ activities will start.';
 
 /** Shown once they have unsubscribed. */
-export const PREFS_STATUS_STOPPED =
-  'You have unsubscribed. We are not sending you anything.';
+export const PREFS_STATUS_STOPPED = 'You’ve unsubscribed. We’re not sending you anything.';
 
 /** Shown when the 30-day purge has already run and there is nothing left to show or edit. */
 export const PREFS_PURGED =
-  'Everything we stored about you has been deleted. There is nothing left here to change.';
+  'Everything we stored about you has been deleted — there’s nothing left here to change.';
 
 export const PREFS_LAST_WEEK_HEADING = 'Last Friday';
-export const PREFS_LAST_WEEK_NONE = 'We have not sent you a weekly text yet.';
+export const PREFS_LAST_WEEK_NONE = 'We haven’t sent you a text yet.';
 export const PREFS_LAST_WEEK_EMPTY =
-  'Nothing near you matched last week, so we said so rather than padding the list.';
+  'Nothing near your kids matched last week, so we said so rather than padding the list.';
 
-export const PREFS_EDIT_HEADING = 'What we use to pick';
+export const PREFS_EDIT_HEADING = 'What we use to find your kids’ activities';
 export const PREFS_SAVE = 'Save changes';
 export const PREFS_SAVING = 'Saving...';
-export const PREFS_SAVED = 'Saved. Your next Friday text will use these.';
+export const PREFS_SAVED = 'Saved — your next Friday text will use these.';
 
 export const PREFS_UNSUBSCRIBE_HEADING = 'Stop the texts';
 export const PREFS_UNSUBSCRIBE_BODY =
-  'You will stop getting weekly picks straight away. Everything we store about you is deleted ' +
+  'You’ll stop getting activities straight away. Everything we store about you is deleted ' +
   '30 days later.';
 export const PREFS_UNSUBSCRIBE = 'Unsubscribe';
-export const PREFS_UNSUBSCRIBED = 'Done. You will not get any more texts from us.';
+export const PREFS_UNSUBSCRIBED = 'Done — you won’t get any more texts from us.';
 
 export const PREFS_DELETE_HEADING = 'Delete my data';
 
@@ -489,12 +488,12 @@ export const PREFS_DELETE_HEADING = 'Delete my data';
  * fact that it is a reading of §1.3's intent that needs confirming.
  */
 export const PREFS_DELETE_BODY =
-  'This unsubscribes you and erases your phone number, postal code, children\'s ages and ' +
-  'interests immediately. It cannot be undone - you would have to sign up again from scratch.';
+  'This unsubscribes you and immediately erases your phone number, postal code, kids’ ages and ' +
+  'interests. It can’t be undone — you’d have to sign up again from scratch.';
 export const PREFS_DELETE = 'Delete everything';
 export const PREFS_DELETE_CONFIRM = 'Yes, delete it all';
 export const PREFS_DELETE_CANCEL = 'Cancel';
-export const PREFS_DELETED = 'Deleted. Nothing about you is stored any more.';
+export const PREFS_DELETED = 'Deleted — nothing about you is stored any more.';
 
 /**
  * What an unrecognised token gets.
@@ -504,9 +503,9 @@ export const PREFS_DELETED = 'Deleted. Nothing about you is stored any more.';
  * would tell anyone holding an old link whether that person is still a subscriber. Neither is
  * information we owe, and the second is information about somebody else.
  */
-export const PREFS_UNKNOWN_TOKEN_HEADING = 'This link is not working';
+export const PREFS_UNKNOWN_TOKEN_HEADING = 'This link isn’t working';
 export const PREFS_UNKNOWN_TOKEN_BODY =
-  'It may be incomplete, or it may belong to a subscription that has since been deleted. ' +
+  'It may be incomplete, or belong to a subscription that’s since been deleted. ' +
   'You can sign up again any time. ' +
   // THE INDEPENDENT BACKUP OPT-OUT, added in round 21 after V1 testing. This page is the CASL
   // unsubscribe path, and somebody arriving here has just been told their link does not work —
@@ -514,8 +513,8 @@ export const PREFS_UNKNOWN_TOKEN_BODY =
   // on this link: it is handled at the carrier layer by Twilio's Advanced Opt-Out before our
   // webhook runs. Saying so costs one sentence and removes the one situation where a broken link
   // could look like a trapped subscription.
-  'If you are trying to stop the texts, replying STOP to any message always works, even if this ' +
-  'link does not.';
+  'Trying to stop the texts? Replying STOP to any message always works, even if this ' +
+  'link doesn’t.';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // THE "ACTIVITY GONE" INTERSTITIAL (PRD §8 Q3, Jon-approved 2026-08-26)

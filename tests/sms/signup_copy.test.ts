@@ -318,10 +318,27 @@ describe('the web-page strings that look reusable as SMS copy', () => {
     expect(nonGsm7Characters(SUBMITTED_BODY)).toEqual(['\u2019', '\u2014']);
   });
 
-  it('PREFS_STATUS_PENDING is GSM-7 SAFE — the encoding objection never applied to it', () => {
-    // Pinned in the positive so the wrong reason cannot be re-cited from the round-14 notes.
-    expect(PREFS_STATUS_PENDING).not.toContain('\u2019');
-    expect(isGsm7(PREFS_STATUS_PENDING)).toBe(true);
+  it('PREFS_STATUS_PENDING is no longer GSM-7 — and the round-14 reason is STILL wrong', () => {
+    // ═══ THIS ASSERTION WAS INVERTED ON 2026-09-01, ON PURPOSE ═══
+    // It used to read `not.toContain('\u2019')` + `isGsm7(...) === true`. The copywriter rewrite
+    // Jon approved gives this string an em dash and a curly apostrophe, so both are now false.
+    //
+    // THAT COSTS NOTHING, and the test two below is why: this string is not sendable for reasons
+    // that have nothing to do with encoding (no sender identification, no opt-out, and it points
+    // at a confirmation text that is elsewhere). It is rendered on /u/ and nowhere else —
+    // verified, app/u/[preferencesToken]/page.tsx:74 is its only consumer. GSM-7 is a property of
+    // SMS bodies; this is a web page.
+    //
+    // WHAT THE BLOCK STILL EXISTS TO SAY IS UNCHANGED. Round 14 rejected this string as an SMS
+    // reply because "both contain curly apostrophes", and that reason was wrong AT THE TIME —
+    // it did not contain one. It contains one now, for an unrelated reason, which does not make
+    // the round-14 note retroactively correct. The recollection was still wrong.
+    //
+    // Pinned EXACTLY rather than loosened to "contains something non-GSM-7", for the same reason
+    // the SUBMITTED_BODY assertion above is: anything added here should have to come and change
+    // this line on purpose.
+    expect(isGsm7(PREFS_STATUS_PENDING)).toBe(false);
+    expect(nonGsm7Characters(PREFS_STATUS_PENDING)).toEqual(['\u2014', '\u2019']);
   });
 
   it('neither is sendable anyway, for reasons that hold for both', () => {
@@ -353,7 +370,9 @@ describe('the preferences fallback page (V1 testing, round 21)', () => {
     // Texting STOP never depended on this page: Twilio's Advanced Opt-Out handles it at the
     // carrier layer before our webhook runs. The sentence has to say the backup works EVEN IF
     // this link does not, or it just reads as one more thing to try.
-    expect(PREFS_UNKNOWN_TOKEN_BODY).toMatch(/even if this link does not/i);
+    // Reworded 2026-09-01 ('even if this link doesn’t'). The PROPERTY is what matters and is
+    // unchanged: STOP is framed as working independently of whether the link does.
+    expect(PREFS_UNKNOWN_TOKEN_BODY).toMatch(/even if this link doesn’t/i);
   });
 
   it('still offers the way back in, for the other kind of visitor', () => {
