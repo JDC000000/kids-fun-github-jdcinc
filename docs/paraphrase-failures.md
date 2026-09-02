@@ -180,6 +180,60 @@ precisely enough that one measurement can end it. The five failures below all sh
 property — each was stated in a way that *sounded* checkable while the thing actually checked was
 something else.
 
+## The one underneath all of them: a check that can only return one answer
+
+Every failure in this document is an instance of one thing, and it took a full day of hitting
+it in different costumes to see that. Naming it here so the next person gets it in one read
+instead of seven.
+
+**Two measurements agreeing is only evidence if they could have disagreed.**
+
+From the outside, a bug that reproduces deterministically is indistinguishable from a fact
+that reproduces deterministically. Both are stable, both survive a re-run, and both feel like
+corroboration. Stability is not confirmation — it is only stability.
+
+The instances, all from 2026-09-02, all found by someone asking "could this have come out
+differently?":
+
+| what looked like evidence | why it was worthless |
+|---|---|
+| equality check passed across 30 periods | `retained` was 0 on both sides |
+| byte-identical output, two runs of a preview | same missing env var, same placeholder, every time |
+| mutation testing reported a surviving mutant | the string matched a comment; the SQL was never mutated |
+| a second mutant "survived" | multi-line anchor matched nothing; the mutation never applied |
+| `agent-browser click` returned `✓ Done` | the element was below the fold; the click never landed |
+| a structural guard on the legal footer, green for days | it read a page that 308-redirects and nobody can reach |
+| a fixture proving a rewrite was correct | built for tie-handling; reused to measure timing, which it could not do |
+
+Note what these have in common and what they do NOT. They are not sloppy. Every one was
+produced by a real check, run honestly, that returned a real result. The defect is upstream of
+the result: **the check was incapable of returning the other answer**, so its output carried no
+information regardless of what it said.
+
+### The habit that catches it
+
+Before believing a green, ask what would have to be true for it to come out red, and confirm
+that thing is reachable. Concretely, on this project that has meant:
+
+- **Equality checks**: assert the compared quantity is non-zero on both sides. A sum of 3 across
+  30 periods is technically non-zero and still discriminates nothing.
+- **Mutation tests**: assert the mutation APPLIED before trusting the result. A mutation that
+  does not mutate prints the same green as a guard that works.
+- **Any tool reporting success**: verify the ACTION occurred, not just its consequences. A click
+  counter on the element, not a screenshot afterwards — every downstream signal reads identically
+  whether the click missed or the app is broken.
+- **Structural guards**: check what file they actually read, and whether that file is still
+  reachable. A guard that keeps passing after its subject stops mattering reads as assurance.
+- **Fixtures**: state which question the fixture was built to answer, and refuse to reuse it for
+  a different one. Valid for one question is not valid generally.
+
+### Why this is worth its own section
+
+The individual lessons above are each easy to file as "be careful". They are not the same
+lesson, and "be careful" catches none of them. The operative question is narrow enough to
+actually run: **could this check have produced a different answer?** If no, it is not a check —
+it is a ceremony that terminates in the word "passed".
+
 ## Related
 
 `docs/migration-drift.md` — the same theme in a different register: a migration file existing in the
