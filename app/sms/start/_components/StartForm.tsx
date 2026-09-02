@@ -41,7 +41,7 @@ import {
   WAITLIST_SPARSE_CTA,
   WAITLIST_SUBMIT,
 } from '@/lib/sms/waitlist-copy';
-import { OUT_OF_AREA_NOTICE } from '@/lib/sms/consent-copy';
+import { LEGAL_FOOTER_SUMMARY, OUT_OF_AREA_NOTICE } from '@/lib/sms/consent-copy';
 import type { CoveredRegionId } from '@/lib/geo/postal-fsa';
 
 interface SignupFieldError {
@@ -273,7 +273,11 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
     return (
       <div className="kf-start__done" role="status">
         <h2 className="kf-start__done-heading">{SUBMITTED_HEADING}</h2>
-        <p>{SUBMITTED_BODY}</p>
+        <ul className="kf-start__done-list">
+          {SUBMITTED_BODY.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
       </div>
     );
   }
@@ -514,12 +518,32 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
           the argument: `waitlistOnly` drops the weekly-frequency sentence here, because this
           state is not offering a weekly subscription.
 
-          NOT collapsed behind <details> the way /sms/signup is. That was approved for the signup
-          page specifically, and this page's whole brief is minimal-friction single-purpose — a
-          disclosure widget is chrome. Flagged rather than decided quietly: if the collapse should
-          apply here too, it is a one-line change. */}
+          COLLAPSED (Jon, 2026-09-02): "we agreed to collapse that and NOT show it all". Native
+          <details>, no JS, same as /sms/signup — works with scripting disabled and keeps this a
+          plain server-rendered form. Every required statement stays IN THE DOM either way, so
+          view-source, curl and archive tooling reach all of it whether open or closed.
+
+          ⚠ READ THIS BEFORE SETTING IT BACK TO `open`, OR BEFORE ASSUMING IT IS SAFE.
+          A closed <details> does not RENDER its contents: a screenshot of this page captures the
+          words "Legal & support info" and NONE of the carrier disclosures, sender identity, or
+          terms/privacy links. That is not a cosmetic difference here, because consent-copy.ts
+          states this form's purpose includes being the opt-in evidence screenshot for Twilio's
+          Canadian Toll-Free Verification — "a reviewer reads the actual pixels".
+
+          WHY IT IS NEVERTHELESS SAFE TODAY, AND THE DISTINCTION MATTERS:
+          the concern was live and correct WHILE the TFV filing was pending. It is resolved now
+          because THAT FILING IS APPROVED AND FINAL (TWILIO_APPROVED, 2026-08-31) and its evidence
+          artefact is a saved static screenshot Twilio does not re-fetch. It is NOT resolved
+          because the underlying rule went away. The rule — a compliance screenshot must show the
+          disclosures — is unchanged and still true.
+          SO: IF TWILIO EVER REQUESTS RE-VERIFICATION, THIS DECISION MUST BE REVISITED, and this
+          page is the one that matters, because /sms/signup now 308-redirects here and is
+          unreachable. Do not read the green "<details open>" guard in signup_copy.test.ts as
+          covering this page; it reads app/sms/signup/page.tsx, which no user can reach. */}
       <div className="kf-start__legal">
-        <p>
+        <details className="kf-start__legal-details">
+          <summary>{LEGAL_FOOTER_SUMMARY}</summary>
+          <p>
           {footer.identity}{' '}
           {footer.support.split(SENDER_IDENTITY.supportPhone)[0]}
           <a href={SUPPORT_PHONE_HREF}>{SENDER_IDENTITY.supportPhone}</a>
@@ -528,7 +552,8 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
           <Link href="/privacy">Privacy Policy</Link>
           {' · '}
           <Link href="/terms">Terms of Service</Link>
-        </p>
+          </p>
+        </details>
       </div>
     </form>
   );

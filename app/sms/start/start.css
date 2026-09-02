@@ -229,3 +229,25 @@
   color: var(--kf-anchor);
   border: 1px solid var(--kf-anchor);
 }
+
+/* Collapsed legal block (Jon, 2026-09-02). Native <details> — no JS, works with scripting off.
+   The summary is a real control, so it gets a pointer and a visible focus target rather than
+   inheriting the paragraph styling around it. */
+.kf-start__legal-details > summary {
+  cursor: pointer;
+  color: var(--kf-ink-secondary);
+}
+.kf-start__legal-details > p {
+  margin-top: var(--kf-space-2);
+}
+
+/* Confirmation bullets (Jon, 2026-09-02). A real <ul> so a screen reader announces "list, 4
+   items" and can step through them, rather than one paragraph of run-on sentences. */
+.kf-start__done-list {
+  margin: var(--kf-space-3) 0 0;
+  padding-left: 1.25rem;
+  line-height: 1.5;
+}
+.kf-start__done-list li + li {
+  margin-top: var(--kf-space-2);
+}

@@ -239,7 +239,11 @@ export function SmsSignupForm({ sparseRegionIds }: SmsSignupFormProps) {
     return (
       <div className="kf-sms-signup__done" role="status">
         <h2 className="kf-sms-signup__done-heading">{SUBMITTED_HEADING}</h2>
-        <p>{SUBMITTED_BODY}</p>
+        <ul className="kf-sms-signup__done-list">
+          {SUBMITTED_BODY.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
       </div>
     );
   }

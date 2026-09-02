@@ -273,11 +273,13 @@ describe('the interest checkboxes', () => {
 
 describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approved)", () => {
   it("carries Jon's sentence VERBATIM — do not smooth it", () => {
-    // Asked to choose between options, he wrote the copy: "please make up that sentence and insert
-    // it. Solve that problem. approved". Reproduced exactly, straight apostrophe and all.
+    // SUPERSEDED 2026-09-02. The 2026-08-28 wording was "If you've texted us before and replied
+    // STOP, text START to +1 877-835-7776 first to turn our texts back on, then try again."
+    // Jon approved a bullet-list rewrite ("I APPROVE new copy - make it live") using "SMS" rather
+    // than "text" throughout. Same substance, same unconditional rendering; kept verbatim again
+    // rather than smoothed, which is why this assertion is a literal and not a regex.
     expect(SUBMITTED_BODY).toContain(
-      "If you've texted us before and replied STOP, text START to +1 877-835-7776 first to " +
-        'turn our texts back on, then try again.'
+      'Replied STOP to us before? Reply START to +1 877-835-7776 first, then try again.'
     );
   });
 
@@ -285,7 +287,7 @@ describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approve
     // The signup footer, the preferences footer and the "activity gone" page all derive from
     // SUPPORT_PHONE_E164. A number typed a fourth time is a number that will eventually be four
     // different numbers.
-    expect(SUBMITTED_BODY).toContain(SUPPORT_PHONE_DISPLAY);
+    expect(SUBMITTED_BODY.join(' ')).toContain(SUPPORT_PHONE_DISPLAY);
     expect(SUPPORT_PHONE_DISPLAY.replace(/[^\d+]/g, '')).toBe(SUPPORT_PHONE_E164);
   });
 
@@ -293,10 +295,26 @@ describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approve
     // The security half of the ruling. Showing it only on a 21610 would rebuild, in prose, the
     // exact oracle app/api/sms/signup/route.ts refuses to expose as a field: whether SOMEBODY
     // ELSE'S number is opted out. A `const string` cannot be conditional; that is the point.
-    expect(typeof SUBMITTED_BODY).toBe('string');
+    // Now an array rather than a string, so "cannot be conditional" has to be asserted rather
+    // than inherited from the type: a constant list of literals, every item present for every
+    // reader. The count is pinned because the failure mode this guards against is an item being
+    // dropped or made conditional, and four-becomes-three is exactly what that looks like.
+    expect(Array.isArray(SUBMITTED_BODY)).toBe(true);
+    expect(SUBMITTED_BODY).toHaveLength(4);
+    for (const item of SUBMITTED_BODY) expect(typeof item).toBe('string');
     // And it still says the two things every reader needs, not only the opted-out one.
-    expect(SUBMITTED_BODY).toContain('Reply JOIN to confirm');
-    expect(SUBMITTED_BODY).toContain('check the number and try again');
+    const joined = SUBMITTED_BODY.join(' ');
+    expect(joined).toContain('reply JOIN to confirm');
+    expect(joined).toContain('Double-check your number and try again');
+  });
+
+  it('🔴 says SMS, never "text" — the substitution had to reach the VERBS too', () => {
+    // Jon, 2026-09-02: "use SMS not Text". The trap is that the old copy used "text" as a noun
+    // AND a verb — "text START to ...", "turn our texts back on" — so a find-and-replace on the
+    // noun alone leaves the verbs behind and the instruction half-applied across four bullets.
+    // Word-boundary matched: "Double-check" and similar must not trip it.
+    for (const item of SUBMITTED_BODY) expect(item, item).not.toMatch(/\btexts?\b/i);
+    expect(SUBMITTED_BODY.join(' ')).toContain('SMS');
   });
 
   it('does NOT move CONSENT_TEXT_VERSION — it is not wording anyone agreed to', () => {
@@ -325,13 +343,21 @@ describe('the web-page strings that look reusable as SMS copy', () => {
   // assertions replace the recollection.
 
   it('SUBMITTED_BODY really would cost double — a curly apostrophe AND an em dash', () => {
-    expect(SUBMITTED_BODY).toContain('We\u2019ve');
-    expect(isGsm7(SUBMITTED_BODY)).toBe(false);
+    // SUBMITTED_BODY became `readonly string[]` when Jon approved it as a bullet list. These
+    // checks are about the copy AS A WHOLE — whether it could be sent as one SMS — so they run
+    // against the joined text. `toContain` on the array would test for an element exactly equal
+    // to 'We’ve', which is not the question and would pass vacuously if it ever matched.
+    const joined = SUBMITTED_BODY.join(' ');
+    expect(joined).toContain('We\u2019ve');
+    expect(isGsm7(joined)).toBe(false);
     // STILL PINNED EXACTLY, not loosened to "contains something non-GSM-7". The em dash arrived
     // with the resubmission sentence (2026-08-28) and this assertion is what made that visible
     // rather than silent, which is the entire job of pinning a set instead of a count. Anything
     // added here should have to come and change this line on purpose.
-    expect(nonGsm7Characters(SUBMITTED_BODY)).toEqual(['\u2019', '\u2014']);
+    // RE-DERIVED against the new bullets, not carried across. It lands on the same two
+    // characters, but for different reasons than before: the apostrophe is now in "We’ve sent"
+    // in item 1 and the em dash appears TWICE (items 1 and 4) where it used to appear once.
+    expect(nonGsm7Characters(joined)).toEqual(['\u2019', '\u2014']);
   });
 
   it('PREFS_STATUS_PENDING is no longer GSM-7 — and the round-14 reason is STILL wrong', () => {
@@ -360,9 +386,12 @@ describe('the web-page strings that look reusable as SMS copy', () => {
   it('neither is sendable anyway, for reasons that hold for both', () => {
     // The real objection, and a better one: PRD §1.4 requires sender identification on every
     // outbound message, and a commercial message needs a free opt-out. These are page copy.
+    // SUBMITTED_BODY is an array now, so it is joined to keep it in this shared loop rather than
+    // splitting the loop up — the property being checked ("this blob is not a sendable message")
+    // is about the whole copy either way.
     for (const [name, copy] of [
       ['PREFS_STATUS_PENDING', PREFS_STATUS_PENDING],
-      ['SUBMITTED_BODY', SUBMITTED_BODY],
+      ['SUBMITTED_BODY', SUBMITTED_BODY.join(' ')],
     ] as const) {
       expect(copy.startsWith('KIDS FUN:'), name).toBe(false);
       expect(copy, name).not.toMatch(/reply stop/i);
@@ -403,19 +432,38 @@ describe('the resubmission warning (post-launch item 1)', () => {
   // they reply JOIN. Nothing said so, which made a working product look like a broken one.
 
   it('tells a resubmitter the status resets AND what to do about it', () => {
-    expect(SUBMITTED_BODY).toContain('resubmitting will reset your status to pending');
+    // Rewritten 2026-09-02 with the rest of the list; same fact, same unconditional rendering.
+    expect(SUBMITTED_BODY).toContain(
+      'Already signed up with this number? Resubmitting resets you to pending \u2014 reply JOIN ' +
+        'again to keep your picks coming.'
+    );
     // The remedy matters more than the warning: a warning with no action is just bad news.
-    expect(SUBMITTED_BODY).toContain('reply JOIN again');
+    expect(SUBMITTED_BODY.join(' ')).toContain('reply JOIN again');
   });
 
-  it('🔴 is UNCONDITIONAL — one string, so it CANNOT become an oracle', () => {
-    // The security property, asserted structurally rather than trusted to review. Because the
-    // sentence is part of a single exported constant with no interpolation of subscriber state,
-    // there is no branch anywhere that could show it only to numbers it actually happened to —
-    // which would let the form answer "is SOMEONE ELSE'S number already active?".
-    expect(typeof SUBMITTED_BODY).toBe('string');
-    // No placeholder survived into the shipped string.
-    expect(SUBMITTED_BODY).not.toMatch(/\$\{|\[\[|%s|undefined|\bnull\b/);
+  it('🔴 is UNCONDITIONAL — a fixed list, so it CANNOT become an oracle', () => {
+    // The security property, asserted structurally rather than trusted to review. It used to rest
+    // on the type: one exported string with no subscriber state interpolated cannot be shown
+    // selectively. THAT ARGUMENT DIED WITH THE ARRAY — a list is exactly the shape someone
+    // filters, and `.filter(...)` in a component would leak the same fact the API refuses to:
+    // "is SOMEONE ELSE'S number already active?", readable off which bullets appeared.
+    //
+    // So the property is now pinned where it can actually break: a fixed length, and no consumer
+    // narrowing it on the way to the DOM.
+    expect(SUBMITTED_BODY).toHaveLength(4);
+    for (const consumer of [
+      'app/sms/start/_components/StartForm.tsx',
+      'app/sms/signup/_components/SmsSignupForm.tsx',
+    ]) {
+      const code = (require('node:fs').readFileSync(consumer, 'utf8') as string)
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      const usage = code.slice(code.indexOf('SUBMITTED_BODY.'), code.indexOf('SUBMITTED_BODY.') + 120);
+      expect(usage, consumer).toContain('SUBMITTED_BODY.map');
+      expect(usage, consumer).not.toMatch(/SUBMITTED_BODY\.(filter|slice)\b/);
+    }
+    // No placeholder survived into the shipped copy.
+    expect(SUBMITTED_BODY.join(' ')).not.toMatch(/\$\{|\[\[|%s|undefined|\bnull\b/);
   });
 
   it('does NOT mention the discarded preferences — Jon scoped it to the status reset', () => {
@@ -423,14 +471,16 @@ describe('the resubmission warning (post-launch item 1)', () => {
     // is the loss with a remedy attached, and a second one with no remedy would only make the
     // sentence longer and vaguer. If this ever needs to change it is a scope decision, not copy
     // polish, so it fails here first.
-    expect(SUBMITTED_BODY).not.toMatch(/preference|interests|replaced|overwrit/i);
+    expect(SUBMITTED_BODY.join(' ')).not.toMatch(/preference|interests|replaced|overwrit/i);
   });
 
   it('is not accidentally sendable as a text', () => {
     // Same guard the rest of this file applies to page copy: no sender ID, no opt-out, and now
     // demonstrably not GSM-7 clean.
-    expect(SUBMITTED_BODY.startsWith('KIDS FUN:')).toBe(false);
-    expect(isGsm7(SUBMITTED_BODY)).toBe(false);
+    // NO item may open with the sender prefix — checking only the first would miss a bullet
+    // reordering, which is exactly the kind of edit a copy rewrite makes.
+    for (const item of SUBMITTED_BODY) expect(item.startsWith('KIDS FUN:')).toBe(false);
+    expect(isGsm7(SUBMITTED_BODY.join(' '))).toBe(false);
   });
 });
 
@@ -473,19 +523,49 @@ describe('the max-children notice (2026-09-01)', () => {
   });
 });
 
-describe('🔴 the legal footer must be VISIBLE, not just present', () => {
-  // Comments stripped first: this file's header discusses <details> at length while explaining why
-  // it must be open, so a naive match finds the prose. Same trap as two other structural tests in
-  // this repo; stripped pre-emptively rather than after a false failure.
-  const raw = require('node:fs').readFileSync('app/sms/signup/page.tsx', 'utf8') as string;
-  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+describe('🔴 the legal footer: what each page does, and which one anyone can actually reach', () => {
+  // ⚠ THIS GUARD WAS PROTECTING A PAGE NO USER CAN REACH.
+  // It asserted <details open> on app/sms/signup/page.tsx for a compliance reason — a closed
+  // <details> does not RENDER its contents, so a screenshot captures "Legal & support info" and
+  // none of the disclosures behind it. That reasoning is still correct. But /sms/signup now
+  // 308-redirects to /sms/start, so this test has been green while saying nothing whatsoever
+  // about the only signup form a user or a reviewer can load. A guard that keeps passing after
+  // its subject stops being reachable is worse than no guard: it reads as assurance.
+  //
+  // Comments stripped first: both files discuss <details> at length while explaining themselves,
+  // so a naive match finds the prose. Same trap as two other structural tests in this repo.
+  const strip = (f: string) =>
+    (require('node:fs').readFileSync(f, 'utf8') as string)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+  const redirected = strip('app/sms/signup/page.tsx');
+  const live = strip('app/sms/start/_components/StartForm.tsx');
+  const liveRaw = require('node:fs').readFileSync(
+    'app/sms/start/_components/StartForm.tsx',
+    'utf8'
+  ) as string;
 
-  it('renders the disclosure block expanded', () => {
-    // A closed <details> does not RENDER its contents, so a screenshot of this page would capture
-    // "Legal & support info" and none of the carrier disclosures, sender identity or terms links
-    // behind it. consent-copy.ts:35 states this form's purpose is being exactly that screenshot
-    // for the Twilio Toll-Free Verification submission — "a reviewer reads the actual pixels".
-    // This shipped collapsed for one day. The guard exists so it cannot happen silently again.
-    expect(code).toMatch(/<details\s+open\b/);
+  it('the REDIRECTED page keeps its expanded block — pattern reference only, reachable by nobody', () => {
+    expect(redirected).toMatch(/<details\s+open\b/);
+  });
+
+  it('🔴 the LIVE page collapses it, per Jon 2026-09-02 — and still has every statement in the DOM', () => {
+    // Closed is the product decision. What must not change silently is that collapsing hid the
+    // words visually and NOT structurally: curl, view-source and archive tooling still reach them.
+    expect(live).toMatch(/<details\s+className="kf-start__legal-details"/);
+    expect(live).not.toMatch(/<details\s+open\b/);
+    for (const required of ['footer.identity', 'footer.disclosures', '/privacy', '/terms']) {
+      expect(live).toContain(required);
+    }
+  });
+
+  it('🔴 the live page carries the re-verification caveat, so the next reader cannot miss it', () => {
+    // The tripwire that actually matters. The collapse is safe ONLY because the TFV filing is
+    // approved and final and its artefact is a static screenshot Twilio does not re-fetch — not
+    // because "a compliance screenshot must show the disclosures" stopped being true. If someone
+    // tidies that reasoning out of the file, the next person to face a re-verification request
+    // has no way to discover that this page is the one that would be screenshotted.
+    expect(liveRaw).toMatch(/RE-VERIFICATION/i);
+    expect(liveRaw).toMatch(/TWILIO_APPROVED/);
   });
 });

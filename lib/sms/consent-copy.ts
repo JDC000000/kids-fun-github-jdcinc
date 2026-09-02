@@ -417,45 +417,49 @@ export const SUBMITTED_HEADING = 'Check your phone';
  * change in either direction if anyone wants them to match, and there is no encoding cost either
  * way on a web page.
  */
-export const SUBMITTED_BODY =
-  'We’ve sent you one text. Reply JOIN to confirm, and your first picks arrive Friday around ' +
-  '4pm. If it does not arrive in a few minutes, check the number and try again. ' +
-  `If you've texted us before and replied STOP, text START to ${SUPPORT_PHONE_DISPLAY} first to ` +
-  'turn our texts back on, then try again. ' +
-  /*
-   * ── THE RESUBMISSION WARNING (Jon, 2026-08-28, post-launch item 1) ──────────────────────
-   * An ACTIVE subscriber who signs up again is reset to `pending` and silently stops receiving
-   * texts until they reply JOIN. Nothing told them, so the fix reads as a product that just
-   * quietly stopped working.
-   *
-   * ═══ UNCONDITIONAL, AND FOR THE SAME REASON AS THE STOP-RECOVERY SENTENCE ABOVE ═══
-   * `createPendingSubscriber` now returns `wasActive` and `preferencesReplaced`, so the obvious
-   * implementation is to show this only to subscribers it actually happened to. That is exactly
-   * the oracle the sentence above refuses to build: this route deliberately never reveals a
-   * number's prior state to an unauthenticated caller, because the form would then answer
-   * "is SOMEONE ELSE'S number already active?" for anyone who typed it. A conditional paragraph
-   * leaks the same fact as a conditional JSON field and is harder to notice.
-   *   So it is written to be true and useful for everyone, and costs a first-time signup one
-   *   sentence. The store-layer flags stay — they are correct and useful for diagnostics — but
-   *   NOTHING in this response may branch on them.
-   *
-   * ═══ SCOPE: THE STATUS RESET ONLY ═══
-   * Jon's ruling. A resubmission ALSO replaces saved preferences, and that is deliberately not
-   * mentioned: the status reset is the one with an action attached ("reply JOIN"), and a second
-   * loss with no remedy would only make the sentence longer and vaguer.
-   *
-   * ═══ NO CONSENT_TEXT_VERSION BUMP ═══
-   * Checked against this file's own rule rather than assumed, because that rule is loud enough
-   * to invite a reflexive bump. Line 24: the version does NOT move for SUBMITTED_BODY. It
-   * answers "which wording did this subscriber AGREE TO", and this is shown AFTER submission, so
-   * it cannot be part of what was agreed to.
-   *
-   * NOT SMS COPY, so the em dash costs nothing here. It does mean this string now contains TWO
-   * non-GSM-7 characters rather than one; signup_copy.test.ts pins that set exactly, and was
-   * updated deliberately rather than loosened.
-   */
-  "If you've already signed up with this number, resubmitting will reset your status to " +
-  'pending \u2014 reply JOIN again to keep your weekly picks going.';
+/**
+ * ═══ AN ARRAY, NOT A STRING — AND EVERY ITEM RENDERS FOR EVERYONE ═══
+ * Jon approved this as a bullet list (2026-09-02). It is `readonly string[]` so each bullet is a
+ * real <li>, which a screen reader announces as "list, 4 items" and can navigate item by item;
+ * one <p> with visual bullet characters would read as a single run-on paragraph.
+ *
+ * ⚠ ALL FOUR ITEMS ARE UNCONDITIONAL. THIS IS A SECURITY PROPERTY, NOT A COPY CHOICE.
+ * Items 3 and 4 describe states — "you replied STOP before", "this number is already signed up" —
+ * that the store layer CAN determine (`createPendingSubscriber` returns `wasActive` and
+ * `preferencesReplaced`). Rendering either one conditionally would rebuild exactly the oracle
+ * app/api/sms/signup/route.ts deliberately refuses to expose: anyone could type a stranger's
+ * number and read its prior state off which bullets appeared. A conditional bullet leaks the same
+ * fact as a conditional JSON field and is far easier to ship without noticing.
+ *   So every item is written to be true and useful for everyone, and costs a first-time signup
+ *   three lines it does not need. The store flags stay — correct and useful for diagnostics — but
+ *   NOTHING here may branch on them. Restructuring this as a list did not change that.
+ *
+ * ═══ SCOPE OF ITEM 4: THE STATUS RESET ONLY ═══
+ * Jon's earlier ruling, carried forward. A resubmission ALSO replaces saved preferences, and that
+ * is deliberately not mentioned: the status reset is the one with an action attached ("reply
+ * JOIN"), and a second loss with no remedy only makes the line longer and vaguer.
+ *
+ * ═══ NO CONSENT_TEXT_VERSION BUMP ═══
+ * Checked against this file's own rule rather than assumed, because that rule is loud enough to
+ * invite a reflexive bump. Line 24: the version does NOT move for SUBMITTED_BODY. It answers
+ * "which wording did this subscriber AGREE TO", and this is shown AFTER submission, so it cannot
+ * be part of what was agreed to. Restructuring it changes nothing about that.
+ *
+ * ═══ "SMS", NOT "TEXT" (Jon, 2026-09-02) ═══
+ * Applied across every item, not just the first — the old wording used "text" as both noun and
+ * verb ("text START to ...", "turn our texts back on"), so the substitution had to reach the verb
+ * forms too, which now read "reply". There is no remaining occurrence of "text" in this constant.
+ *
+ * NOT SMS COPY, so the punctuation costs nothing on the wire. It does mean these strings carry
+ * non-GSM-7 characters; signup_copy.test.ts pins that set exactly, re-derived against this
+ * wording rather than carried over.
+ */
+export const SUBMITTED_BODY: readonly string[] = [
+  'We\u2019ve sent you one SMS \u2014 reply JOIN to confirm. Your first picks arrive Friday around 4pm.',
+  'Nothing after a few minutes? Double-check your number and try again.',
+  `Replied STOP to us before? Reply START to ${SUPPORT_PHONE_DISPLAY} first, then try again.`,
+  'Already signed up with this number? Resubmitting resets you to pending \u2014 reply JOIN again to keep your picks coming.',
+];
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // THE PREFERENCES / HUB PAGE (PRD §2.4)
