@@ -225,20 +225,28 @@ describe('🔴 the engagement series does not go back to correlated subqueries',
     expect(code).not.toMatch(/EXISTS\s*\(\s*SELECT[\s\S]{0,200}?user_or_session\s*=\s*e\.user_or_session/i);
   });
 
-  it('🔴 keeps EXCLUDE GROUP, which is what makes the frame exact', () => {
-    // The tie-safety primitive. A plain ROWS frame orders ties arbitrarily; a plain RANGE frame
-    // includes peers. EXCLUDE GROUP drops the whole peer group, reproducing the original's strict
-    // `f.created_at > e.created_at` — and created_at defaults to now(), identical for every row
-    // written in one transaction, so ties are real.
+  it('🔴 the frame cannot degrade to O(n^2) — neither unbounded, nor bounded-but-shrinking', () => {
+    // THIS GUARD HAS NOW BEEN WRONG TWICE, BOTH TIMES BY PINNING A SPELLING.
+    // v1 pinned `GROUPS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING`. v2 replaced it with
+    // `EXCLUDE GROUP` and its own comment said the guard "now pins the property rather than the
+    // one spelling that first achieved it" -- then pinned EXCLUDE GROUP, which is also just a
+    // spelling. Both versions passed while the query was too slow to serve a page.
     //
-    // This assertion previously pinned `GROUPS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING`, which
-    // was also correct but UNBOUNDED — min() over a frame that shrinks from the left cannot be
-    // maintained incrementally, so it recomputed per row and the WindowAgg alone cost 32.9s at
-    // 1.19M rows. The bounded RANGE form is 255ms for the same computation. Correct and unusably
-    // slow is still a defect; the guard now pins the property (tie exclusion) rather than the one
-    // spelling that first achieved it.
-    expect(code).toMatch(/EXCLUDE GROUP/);
-    expect(code).not.toMatch(/UNBOUNDED FOLLOWING/); // the O(n^2) shape must not come back
+    // Tie exclusion is pinned BEHAVIOURALLY below and does not need a regex. What a regex CAN
+    // pin is the shape that made both previous forms quadratic, so that is all this asserts:
+    //
+    //   UNBOUNDED FOLLOWING           -- dc55d1a. Frame shrinks from the left; min() has no
+    //                                    inverse, so every row rescans. 32.9s in WindowAgg alone.
+    //   RANGE ... CURRENT ROW AND     -- 091d1a8. Bounded, but the bound is only reached if the
+    //   <n> FOLLOWING                    session is sparser than the window. Production has 2,758
+    //                                    sessions with >100 events inside <30 min, so for those
+    //                                    the frame runs to the end of the session anyway: still
+    //                                    O(n^2), and it took the page to a hard 60s timeout.
+    //
+    // The surviving form sorts DESC so the frame only ever GROWS, which is maintainable in one
+    // comparison per row and is what makes cost independent of session density.
+    expect(code).not.toMatch(/UNBOUNDED FOLLOWING/);
+    expect(code).not.toMatch(/RANGE\s+BETWEEN\s+CURRENT ROW\s+AND[\s\S]{0,80}?FOLLOWING/i);
   });
 });
 
@@ -260,7 +268,10 @@ describe.skipIf(!hasDb)('engagement: a tie is not "later"', () => {
   const AT = `date_trunc('day', now()) + interval '6 hours'`;
 
   afterAll(async () => {
-    await query(`DELETE FROM analytics_event WHERE user_or_session = $1`, [S]);
+    // LIKE, not `=`: the edge case below uses a sibling session id. Cleanup also must not sit
+    // after an assertion — a failing expect() aborts the test and the rows survive into the next
+    // suite, which is how `tietest` rows were found still in the table after a mutation run.
+    await query(`DELETE FROM analytics_event WHERE user_or_session LIKE $1`, [`${S}%`]);
   });
 
   async function engagedToday(): Promise<number> {
@@ -278,6 +289,22 @@ describe.skipIf(!hasDb)('engagement: a tie is not "later"', () => {
       [S]
     );
     expect(await engagedToday()).toBe(before);
+  });
+
+  it('🔴 an engagement event at EXACTLY the window edge counts — the bound is inclusive', async () => {
+    // Added because a mutation survived: changing `<=` to `<` on the engage bound broke nothing.
+    // Every engagement test used +60s, far inside the window, so the two spellings were
+    // indistinguishable. The recover path had an edge case and the engage path did not — the same
+    // asymmetry that let a near-vacuous recover check pass earlier. Both bounds are now pinned.
+    const S2 = `${S}-edge`;
+    const before = await engagedToday();
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, ${AT}),
+              ('listing_viewed',   $1, ${AT} + interval '30 minutes')`,
+      [S2]
+    );
+    expect(await engagedToday()).toBe(before + 1);
   });
 
   it('🔴 a genuinely later engagement event, inside the window, DOES count', async () => {
@@ -338,5 +365,149 @@ describe.skipIf(!hasDb)('getOpsSeries counts each row once', () => {
     const after = (await getOperatingOpsPeriods('day', 1)).at(-1)!;
     expect(after.correctionsOpened - before.correctionsOpened).toBe(3);
     expect(after.correctionsResolved - before.correctionsResolved).toBe(3);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE RECOVER PATH, WHICH HAD NO BOUNDARY COVERAGE UNTIL NOW.
+//
+// getEngagementSeries computes TWO look-aheads over the same window: `engaged` and `recovered`.
+// Every previous verification exercised only `engaged`. When the frame was rewritten a third
+// time, the first identity check ran on a fixture where recovered summed to 3 across 30 periods
+// — technically non-zero, so it did not read as vacuous, but nowhere near enough to discriminate
+// anything. Both aggregates changed; only one was actually being tested.
+//
+// These pin the recover boundary per-case, at the exact edges where an off-by-one in the bound
+// or a lost tie-exclusion would show up.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe.skipIf(!hasDb)('engagement: the recover window bound is exact and tie-safe', () => {
+  const S = `rectest-${Date.now()}`;
+  const AT = `date_trunc('day', now()) + interval '6 hours'`;
+
+  afterAll(async () => {
+    await query(`DELETE FROM analytics_event WHERE user_or_session LIKE $1`, [`${S}%`]);
+  });
+
+  async function recoveredToday(): Promise<number> {
+    const { getOperatingPeriodCounts } = await import('../../lib/analytics/operating');
+    const rows = await getOperatingPeriodCounts('day', 1);
+    return rows[rows.length - 1].recoveredZeroResultSearches;
+  }
+
+  async function zeroThen(tag: string, offset: string | null): Promise<void> {
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at, result_summary_json)
+       VALUES ('search_performed', $1, ${AT}, '{"total":"0"}'::jsonb)`,
+      [`${S}-${tag}`]
+    );
+    if (offset !== null) {
+      await query(
+        `INSERT INTO analytics_event (event_type, user_or_session, created_at, result_summary_json)
+         VALUES ('search_performed', $1, ${AT} + interval '${offset}', '{"total":"5"}'::jsonb)`,
+        [`${S}-${tag}`]
+      );
+    }
+  }
+
+  it('🔴 a re-search at EXACTLY the window edge counts as recovery', async () => {
+    // SEARCH_OUTCOME_WINDOW_MINUTES is 30 and the bound is inclusive. `<` instead of `<=` here.
+    const before = await recoveredToday();
+    await zeroThen('edge', '30 minutes');
+    expect(await recoveredToday()).toBe(before + 1);
+  });
+
+  it('🔴 a re-search past the window does NOT count', async () => {
+    const before = await recoveredToday();
+    await zeroThen('outside', '40 minutes');
+    expect(await recoveredToday()).toBe(before);
+  });
+
+  it('🔴 a successful search at the SAME instant is not "later" and does not count', async () => {
+    // Same tie rule as engagement: created_at defaults to now(), so a zero-result search and a
+    // successful one written in one transaction share a timestamp. Recovery means strictly later.
+    const before = await recoveredToday();
+    await zeroThen('tie', '0 minutes');
+    expect(await recoveredToday()).toBe(before);
+  });
+
+  it('🔴 a zero-result search followed only by another zero-result is not recovered', async () => {
+    const before = await recoveredToday();
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at, result_summary_json)
+       VALUES ('search_performed', $1, ${AT}, '{"total":"0"}'::jsonb),
+              ('search_performed', $1, ${AT} + interval '5 minutes', '{"total":"0"}'::jsonb)`,
+      [`${S}-none`]
+    );
+    expect(await recoveredToday()).toBe(before);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// SESSION DENSITY, THE AXIS THAT CAUSED THE OUTAGE.
+//
+// 091d1a8 was verified as correct and measured as fast, and still took /admin/operating to a hard
+// 60s timeout. Both checks were run on fixtures whose sessions were SPARSE relative to the 30-min
+// outcome window. Production is not uniformly sparse: ~2,758 sessions carry >100 events inside
+// <30 minutes. For those, a frame bounded at 30 minutes never reaches its bound before the
+// partition ends, so it stays quadratic while every sparse session gets faster.
+//
+// A wall-clock threshold would be machine-dependent and flaky. This compares the SAME event count
+// arranged two ways, which is self-calibrating: under a growing frame both are linear and the
+// ratio is ~1; under any shrinking frame the dense arrangement blows up.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe.skipIf(!hasDb)('engagement: cost does not depend on session density', () => {
+  const S = `dens-${Date.now()}`;
+  const N = 4000;
+
+  afterAll(async () => {
+    await query(`DELETE FROM analytics_event WHERE user_or_session LIKE $1`, [`${S}%`]);
+  });
+
+  // The frame is EXTRACTED FROM operating.ts RATHER THAN RESTATED HERE. A copy of the good SQL
+  // would pass this test forever regardless of what the shipped query does — it would assert that
+  // a growing frame is fast, which is not in doubt, instead of that the query USES one. Reading
+  // the real WINDOW clause means a regression in operating.ts changes what this test times.
+  const engagementFrame = (() => {
+    const src = require('node:fs').readFileSync('lib/analytics/operating.ts', 'utf8') as string;
+    const m = src.match(/WINDOW w AS \(([\s\S]*?)\n\s*\)/);
+    if (!m) throw new Error('could not find WINDOW w in operating.ts — test needs updating');
+    return m[1].replace(/\$4::int/g, '30').replace(/\be\./g, '');
+  })();
+
+  async function timeWindowOver(like: string): Promise<number> {
+    const t = Date.now();
+    await query(
+      `SELECT count(*) FROM (
+         SELECT count(*) FILTER (WHERE event_type = 'listing_viewed') OVER w AS n
+         FROM analytics_event WHERE user_or_session LIKE $1
+         WINDOW w AS (${engagementFrame})) x`,
+      [like]
+    );
+    return Date.now() - t;
+  }
+
+  it('🔴 N events packed into one 10-minute session cost about the same as N spread over 20 days', async () => {
+    // dense: every event inside the outcome window, so a bounded frame gains nothing
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       SELECT CASE WHEN g % 3 = 0 THEN 'listing_viewed' ELSE 'search_performed' END,
+              $1, date_trunc('day', now()) + interval '3 hours' + (g * interval '0.15 seconds')
+       FROM generate_series(1, $2::int) g`,
+      [`${S}-dense`, N]
+    );
+    // sparse: same session, same event count, spread far wider than the window
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       SELECT CASE WHEN g % 3 = 0 THEN 'listing_viewed' ELSE 'search_performed' END,
+              $1, date_trunc('day', now()) - interval '20 days' + (g * interval '7 minutes')
+       FROM generate_series(1, $2::int) g`,
+      [`${S}-sparse`, N]
+    );
+
+    const dense = await timeWindowOver(`${S}-dense`);
+    const sparse = await timeWindowOver(`${S}-sparse`);
+    // Generous: the point is to catch quadratic blow-up (which is orders of magnitude), not to
+    // police small constant factors on a shared machine.
+    expect(dense).toBeLessThan(Math.max(sparse, 50) * 10);
   });
 });

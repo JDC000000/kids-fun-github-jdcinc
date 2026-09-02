@@ -241,27 +241,50 @@ const PERIODS_CTE = `
 /**
  * Per-period engagement/search/account counters.
  *
- * ═══ REWRITTEN 2026-09-01: WINDOW FUNCTIONS, NOT CORRELATED SUBQUERIES ═══
- * `engaged` and `recovered` used to be two EXISTS subqueries evaluated PER ROW against
- * analytics_event, matched on user_or_session — a column with no index at all. At production's
- * real shape (~1.19M events concentrated inside 30 days) that did not complete in TEN MINUTES.
- * With an index on (user_or_session, created_at) it was still 20.9s. This form is 7.1s, and the
- * index is still required — measured, all three:
+ * ═══ THE FRAME MUST GROW, NOT SHRINK (2026-09-02, third rewrite) ═══
+ * `engaged`/`recovered` began as two EXISTS subqueries evaluated per row against a
+ * user_or_session column with no index: >600s, abandoned. Two rewrites followed, and the
+ * SECOND ONE CAUSED A PRODUCTION OUTAGE. The history matters more than the destination:
  *
- *     correlated EXISTS, no index      > 600 s (abandoned)
- *     correlated EXISTS, + index        20.9 s
- *     this form,         + index         7.1 s
+ *   dc55d1a  min() over an UNBOUNDED FOLLOWING frame. Reported at 7.1s. That number was
+ *            WRONG -- measured on a fixture built to test tie handling, not timing. The real
+ *            figure was 35.9s, slower than the 18.3s EXISTS version it replaced.
+ *   091d1a8  bounded the frame: RANGE ... 30 min FOLLOWING EXCLUDE GROUP. Correct, and fast
+ *            on ordinary traffic -- but it took /admin/operating to a hard 60s timeout.
+ *   this     ORDER BY created_at DESC + GROUPS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING.
  *
- * ⚠ RAISING work_mem DOES NOT HELP — tested at 64MB and 256MB, no material change. The sorts do
- * spill, but they are not the dominant cost, so do not reach for that lever here.
+ * WHY THE BOUNDED FRAME STILL BLEW UP. A time bound only helps if the bound is reached before
+ * the partition ends. Production has ~2,758 sessions carrying >100 events inside <30 minutes
+ * (max 628, p99 601) -- scripted traffic, not people. In a session denser than the outcome
+ * window, every row's frame runs to nearly the end of that session, so the per-session cost is
+ * O(n^2) no matter how cheap the bound makes the sparse ~97%. The average session got faster
+ * while the page got slower.
  *
- * ═══ `GROUPS BETWEEN 1 FOLLOWING` IS LOAD-BEARING, NOT A STYLISTIC CHOICE ═══
- * The original required `f.created_at > e.created_at` — STRICTLY later. A `ROWS` frame would order
- * ties arbitrarily and a `RANGE` frame includes peers, so both would silently miscount whenever two
- * events of one session share a timestamp. That is not hypothetical: `created_at` defaults to
- * `now()`, which is identical for every row written in the same transaction.
- * `GROUPS BETWEEN 1 FOLLOWING` skips the whole peer group, which is exactly `> e.created_at`.
- * Verified byte-identical against the old query on a fixture containing 110,653 tie groups.
+ * WHY THIS FORM IS DIFFERENT, AND IT IS NOT THE `min()`. Both dc55d1a and this use `min()`.
+ * What changed is the DIRECTION THE FRAME MOVES. A frame that shrinks from the left forces a
+ * rescan per row, because `min()` has no inverse -- you cannot un-see the value you dropped.
+ * Reversing the sort turns the same set of rows into a frame that only ever GROWS, and `min()`
+ * over a growing frame is one comparison per row. In DESC order, `GROUPS ... 1 PRECEDING` means
+ * "every row strictly later in time", which is the `> e.created_at` the original EXISTS wanted,
+ * and skipping the whole peer group is what keeps ties out -- `created_at` defaults to `now()`,
+ * so every row written in one transaction shares a timestamp. Cost is then independent of
+ * session density, which is the property the previous two forms both lacked.
+ *
+ * Measured on ONE fixture holding production's real shape (2.25M events, 2,758 sessions with
+ * >100 events in <30 min). Cross-fixture numbers are NOT comparable and are deliberately not
+ * tabled together here -- that confusion is what produced the false 7.1s above:
+ *
+ *     091d1a8, bounded RANGE frame     103.5 s      (production: HTTP 000, 60s timeout)
+ *     this form, growing frame          15.4 s
+ *
+ * Byte-identical to 091d1a8 across all 30 periods on that fixture, with both paths carrying
+ * real volume (1,336,247 engaged / 59,405 recovered) -- an equality check where either side
+ * reads zero proves nothing. Boundary and tie cases are pinned per-case in
+ * tests/analytics/trend-query-db.test.ts: +30min exactly counts, +40min does not, and a
+ * same-instant follow-up does not.
+ *
+ * ⚠ RAISING work_mem DOES NOT HELP -- tested at 64MB and 256MB, no material change. The sorts
+ * do spill, but they are not the dominant cost, so do not reach for that lever here.
  *
  * ═══ AND THE PERIOD JOIN IS AGGREGATED FIRST ═══
  * Joining every event to `periods` produced 1.19M rows that then had to be sorted by bucket, with
@@ -294,29 +317,38 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
         (e.result_summary_json ? 'total')                          AS has_total,
         ((e.result_summary_json ->> 'total') = '0')                AS zero_result,
         ((e.result_summary_json ->> 'broadened') = 'true')         AS broadened,
-        count(*) FILTER (
+        min(e.created_at) FILTER (
           WHERE e.event_type IN ('listing_viewed', 'outbound_source_click')
-        ) OVER w AS engage_followups,
-        count(*) FILTER (
+        ) OVER w AS next_engage_at,
+        min(e.created_at) FILTER (
           WHERE e.event_type = 'search_performed'
             AND (e.result_summary_json ? 'total')
             AND (e.result_summary_json ->> 'total') <> '0'
-        ) OVER w AS recover_followups
+        ) OVER w AS next_recover_at
       FROM analytics_event e, bounds b
       WHERE e.created_at >= b.lo AND e.created_at < b.hi
       WINDOW w AS (
         PARTITION BY e.user_or_session
-        ORDER BY e.created_at
-        RANGE BETWEEN CURRENT ROW AND ($4::int * interval '1 minute') FOLLOWING
-        EXCLUDE GROUP
+        ORDER BY e.created_at DESC
+        GROUPS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
       )
     ),
+    -- The IS NOT NULL checks below are REDUNDANT and deliberately kept. A NULL next_*_at makes
+    -- the comparison NULL, the conjunction not-true, and count(*) FILTER skips not-true rows,
+    -- so removing them changes no output. Mutation testing flags this as a surviving mutant; it is
+    -- an equivalent mutant, not a coverage gap, and no test can be written to catch it. Kept
+    -- because "no follow-up exists" is the common case here and saying so explicitly is cheaper
+    -- to read than re-deriving three-valued logic at the call site.
     ev AS (
       SELECT
         date_trunc($1::text, s.created_at) AS pstart,
         s.id, s.event_type, s.user_or_session, s.has_actor, s.has_total, s.zero_result, s.broadened,
-        (s.event_type = 'search_performed' AND s.has_actor AND s.engage_followups > 0) AS engaged,
-        (s.event_type = 'search_performed' AND s.has_actor AND s.recover_followups > 0) AS recovered
+        (s.event_type = 'search_performed' AND s.has_actor
+          AND s.next_engage_at IS NOT NULL
+          AND s.next_engage_at <= s.created_at + ($4::int * interval '1 minute')) AS engaged,
+        (s.event_type = 'search_performed' AND s.has_actor
+          AND s.next_recover_at IS NOT NULL
+          AND s.next_recover_at <= s.created_at + ($4::int * interval '1 minute')) AS recovered
       FROM scanned s
     ),
     counted AS (
