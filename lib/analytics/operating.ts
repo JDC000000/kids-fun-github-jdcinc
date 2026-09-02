@@ -447,63 +447,84 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
  * size, and the correct answer rather than an approximation. If the table ever grows
  * past the point where this is comfortable, the fix is a covering index on
  * (user_or_session, created_at) — noted in docs/kpi-cadence.md, not pre-built here.
+ *
+ * ═══ AGGREGATE ONCE, THEN JOIN 30 ROWS (2026-09-02) ═══
+ * prior_actors and retained_actors were correlated scalar subqueries evaluated PER PERIOD,
+ * and retained_actors carried a nested EXISTS inside that — so the event table was read
+ * roughly 60 times per page load, twice per period, each read followed by a sort to satisfy
+ * count(DISTINCT). `active` and `activated` compounded it by range-joining `periods` to
+ * analytics_event and de-duplicating afterwards with DISTINCT, the same shape fixed in
+ * getOpsSeries. Measured at 1.17M events / 50k actors:
+ *
+ *     before   2,292,271 shared buffer hits, spilled to temp    day 3.74 s / month 5.76 s
+ *     after       ~48,000 shared buffer hits                    day 1.63 s / month 1.76 s
+ *
+ * Everything now derives from one pre-aggregated (period, actor, activated) relation. Prior
+ * and retained fall out of joining that relation to itself one period apart, which is also
+ * why `bounds.lo` reaches one period BEFORE the first period: the earliest bucket needs a
+ * comparison period that is outside the requested window. Dropping that offset leaves the
+ * first period's retention reading 0 rather than missing, so it is pinned by a test.
+ *
+ * Verified by symmetric difference against the previous query inside a single REPEATABLE
+ * READ snapshot, on both grains — 0 differing rows. The snapshot matters: an earlier
+ * side-by-side run disagreed on one cell, and re-running showed the table had changed
+ * between the two queries rather than the queries disagreeing.
  */
 async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promise<LifecycleRow[]> {
   return query<LifecycleRow>(
     `
     WITH ${PERIODS_CTE},
+    bounds AS (
+      SELECT min(pstart) - $2::interval AS lo, max(pstart) + $2::interval AS hi FROM periods
+    ),
+    seen AS (
+      SELECT
+        date_trunc($1::text, e.created_at)          AS pstart,
+        e.user_or_session                           AS actor,
+        bool_or(e.event_type = ANY($4::text[]))     AS activated
+      FROM analytics_event e, bounds b
+      WHERE e.created_at >= b.lo AND e.created_at < b.hi
+        AND e.user_or_session IS NOT NULL AND e.user_or_session <> ''
+      GROUP BY 1, 2
+    ),
     actor_first AS (
       SELECT user_or_session AS actor, min(created_at) AS first_at
       FROM analytics_event
       WHERE user_or_session IS NOT NULL AND user_or_session <> ''
       GROUP BY user_or_session
     ),
-    active AS (
-      SELECT DISTINCT p.pstart, e.user_or_session AS actor
+    carryover AS (
+      SELECT
+        p.pstart,
+        count(*)::int                                          AS prior_actors,
+        count(*) FILTER (WHERE cur.actor IS NOT NULL)::int      AS retained_actors
       FROM periods p
-      JOIN analytics_event e
-        ON e.created_at >= p.pstart AND e.created_at < p.pstart + $2::interval
-      WHERE e.user_or_session IS NOT NULL AND e.user_or_session <> ''
+      JOIN seen prev      ON prev.pstart = p.pstart - $2::interval
+      LEFT JOIN seen cur  ON cur.pstart = p.pstart AND cur.actor = prev.actor
+      GROUP BY p.pstart
     ),
-    activated AS (
-      SELECT DISTINCT p.pstart, e.user_or_session AS actor
+    per_actor AS (
+      SELECT
+        p.pstart,
+        count(s.actor) FILTER (WHERE af.first_at >= p.pstart)::int AS new_actors,
+        count(s.actor) FILTER (WHERE af.first_at >= p.pstart AND s.activated)::int
+          AS activated_new_actors,
+        count(s.actor) FILTER (WHERE af.first_at < p.pstart)::int  AS returning_actors
       FROM periods p
-      JOIN analytics_event e
-        ON e.created_at >= p.pstart AND e.created_at < p.pstart + $2::interval
-      WHERE e.user_or_session IS NOT NULL AND e.user_or_session <> ''
-        AND e.event_type = ANY($4::text[])
+      LEFT JOIN seen s         ON s.pstart = p.pstart
+      LEFT JOIN actor_first af ON af.actor = s.actor
+      GROUP BY p.pstart
     )
     SELECT
-      to_char(p.pstart, 'YYYY-MM-DD') AS period_start,
-      count(a.actor) FILTER (WHERE af.first_at >= p.pstart)::int AS new_actors,
-      count(a.actor) FILTER (WHERE af.first_at >= p.pstart AND act.actor IS NOT NULL)::int
-        AS activated_new_actors,
-      count(a.actor) FILTER (WHERE af.first_at < p.pstart)::int AS returning_actors,
-      (
-        SELECT count(DISTINCT prev.user_or_session)::int
-        FROM analytics_event prev
-        WHERE prev.user_or_session IS NOT NULL AND prev.user_or_session <> ''
-          AND prev.created_at >= p.pstart - $2::interval
-          AND prev.created_at <  p.pstart
-      ) AS prior_actors,
-      (
-        SELECT count(DISTINCT prev.user_or_session)::int
-        FROM analytics_event prev
-        WHERE prev.user_or_session IS NOT NULL AND prev.user_or_session <> ''
-          AND prev.created_at >= p.pstart - $2::interval
-          AND prev.created_at <  p.pstart
-          AND EXISTS (
-            SELECT 1 FROM analytics_event cur
-            WHERE cur.user_or_session = prev.user_or_session
-              AND cur.created_at >= p.pstart
-              AND cur.created_at <  p.pstart + $2::interval
-          )
-      ) AS retained_actors
+      to_char(p.pstart, 'YYYY-MM-DD')       AS period_start,
+      pa.new_actors,
+      pa.activated_new_actors,
+      pa.returning_actors,
+      coalesce(c.prior_actors, 0)::int      AS prior_actors,
+      coalesce(c.retained_actors, 0)::int   AS retained_actors
     FROM periods p
-    LEFT JOIN active a    ON a.pstart = p.pstart
-    LEFT JOIN actor_first af ON af.actor = a.actor
-    LEFT JOIN activated act  ON act.pstart = p.pstart AND act.actor = a.actor
-    GROUP BY p.pstart
+    JOIN per_actor pa     ON pa.pstart = p.pstart
+    LEFT JOIN carryover c ON c.pstart = p.pstart
     ORDER BY p.pstart
     `,
     [grain, grainInterval(grain), periods, [...ACTIVATION_EVENT_TYPES]]

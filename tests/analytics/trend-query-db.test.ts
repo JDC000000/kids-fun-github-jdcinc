@@ -511,3 +511,147 @@ describe.skipIf(!hasDb)('engagement: cost does not depend on session density', (
     expect(dense).toBeLessThan(Math.max(sparse, 50) * 10);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// getLifecycleSeries: the table was read once per period, not once.
+//
+// prior_actors and retained_actors were correlated scalar subqueries evaluated PER PERIOD, and
+// retained_actors carried a nested EXISTS inside that. At 1.17M events the query touched
+// 2,292,271 shared buffers and spilled; the same computation off one pre-aggregated (period,
+// actor) relation touches ~48k and does not. Same shape as the getOpsSeries and kpi.ts fixes:
+// aggregate first, then join 30 small rows.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('🔴 getLifecycleSeries reads the event table once, not once per period', () => {
+  const raw = require('node:fs').readFileSync('lib/analytics/operating.ts', 'utf8') as string;
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*(\/\/|--).*$/gm, '');
+  const fn = code.slice(
+    code.indexOf('async function getLifecycleSeries'),
+    code.indexOf('async function getEmailOptInSeries')
+  );
+
+  it('has no correlated subquery re-reading analytics_event per period', () => {
+    // The tell is analytics_event appearing inside a scalar subquery correlated on p.pstart.
+    expect(fn).not.toMatch(/SELECT count\(DISTINCT[\s\S]{0,400}?FROM analytics_event[\s\S]{0,400}?p\.pstart/i);
+    expect(fn).not.toMatch(/EXISTS\s*\(\s*SELECT[\s\S]{0,300}?FROM analytics_event/i);
+  });
+
+  it('joins periods to pre-aggregated relations, never to the event table directly', () => {
+    // `JOIN analytics_event ON e.created_at >= p.pstart AND ...` is the range join that made the
+    // planner materialise one row per (period, event) before de-duplicating with DISTINCT.
+    expect(fn).not.toMatch(/JOIN\s+analytics_event[\s\S]{0,120}?p\.pstart/i);
+    expect(fn).not.toMatch(/SELECT DISTINCT p\.pstart/i);
+  });
+});
+
+describe.skipIf(!hasDb)('lifecycle: new vs returning, prior vs retained', () => {
+  const S = `lc-${Date.now()}`;
+  const TODAY = `date_trunc('day', now()) + interval '7 hours'`;
+  const YDAY = `date_trunc('day', now()) - interval '1 day' + interval '7 hours'`;
+
+  afterAll(async () => {
+    await query(`DELETE FROM analytics_event WHERE user_or_session LIKE $1`, [`${S}%`]);
+  });
+
+  async function today() {
+    const { getOperatingPeriodCounts } = await import('../../lib/analytics/operating');
+    const rows = await getOperatingPeriodCounts('day', 2);
+    return rows[rows.length - 1];
+  }
+
+  it('🔴 an actor whose first-ever event is today is NEW, not returning', async () => {
+    const b = await today();
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, ${TODAY})`,
+      [`${S}-fresh`]
+    );
+    const a = await today();
+    expect(a.newActors - b.newActors).toBe(1);
+    expect(a.returningActors - b.returningActors).toBe(0);
+  });
+
+  it('🔴 an actor with history OUTSIDE the window is RETURNING, not new', async () => {
+    // Pins that first-seen is computed over all history, not just the 30-day window. If the
+    // actor_first scan is ever bounded to the window as an optimisation, this actor would be
+    // misread as new — which would silently inflate the new-actor count.
+    const b = await today();
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, now() - interval '200 days'),
+              ('search_performed', $1, ${TODAY})`,
+      [`${S}-old`]
+    );
+    const a = await today();
+    expect(a.returningActors - b.returningActors).toBe(1);
+    expect(a.newActors - b.newActors).toBe(0);
+  });
+
+  it('🔴 active yesterday AND today counts as both prior and retained', async () => {
+    const b = await today();
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, ${YDAY}), ('search_performed', $1, ${TODAY})`,
+      [`${S}-both`]
+    );
+    const a = await today();
+    expect(a.priorActors - b.priorActors).toBe(1);
+    expect(a.retainedActors - b.retainedActors).toBe(1);
+  });
+
+  it('🔴 active yesterday but NOT today is prior and NOT retained — the churn case', async () => {
+    // The asymmetry that makes retention meaningful. If prior and retained move together for
+    // every actor the rate is pinned at 100% and the metric says nothing.
+    const b = await today();
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, ${YDAY})`,
+      [`${S}-churn`]
+    );
+    const a = await today();
+    expect(a.priorActors - b.priorActors).toBe(1);
+    expect(a.retainedActors - b.retainedActors).toBe(0);
+  });
+
+  it('🔴 the FIRST period has prior/retained too — its comparison period sits outside the window', async () => {
+    // Added because a mutation survived: narrowing the pre-aggregated relation to start at the
+    // first period (rather than one period earlier) left every assertion above passing, because
+    // they all read the LAST period. The first period's prior and retained would silently read 0
+    // and the earliest point on the retention chart would be wrong, not missing — the failure
+    // mode that is hardest to notice on a graph.
+    const { getOperatingPeriodCounts } = await import('../../lib/analytics/operating');
+    const first = async () => (await getOperatingPeriodCounts('day', 3))[0];
+    const b = await first();
+    // 3 periods => first period is 2 days ago; its comparison period is 3 days ago, which is
+    // outside the requested window entirely.
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, date_trunc('day', now()) - interval '3 days' + interval '7 hours'),
+              ('search_performed', $1, date_trunc('day', now()) - interval '2 days' + interval '7 hours')`,
+      [`${S}-firstp`]
+    );
+    const a = await first();
+    expect(a.priorActors - b.priorActors).toBe(1);
+    expect(a.retainedActors - b.retainedActors).toBe(1);
+  });
+
+  it('🔴 a new actor counts as activated only with an activation event', async () => {
+    const b = await today();
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, ${TODAY})`,
+      [`${S}-noact`]
+    );
+    const mid = await today();
+    expect(mid.newActors - b.newActors).toBe(1);
+    expect(mid.activatedNewActors - b.activatedNewActors).toBe(0);
+
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ('search_performed', $1, ${TODAY}), ('listing_viewed', $1, ${TODAY})`,
+      [`${S}-act`]
+    );
+    const a = await today();
+    expect(a.newActors - mid.newActors).toBe(1);
+    expect(a.activatedNewActors - mid.activatedNewActors).toBe(1);
+  });
+});
