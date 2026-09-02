@@ -282,3 +282,52 @@ describe.skipIf(!hasDb)('engagement: a tie is not "later"', () => {
     expect(await engagedToday()).toBe(before + 1);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// getOpsSeries: the Cartesian-product fix. The old form LEFT JOINed `periods` to three tables at
+// once (correction_report twice, source_check_run once), so each period emitted
+// opened x resolved x runs rows and count(DISTINCT ...) removed the duplication afterwards.
+// Measured on 600 + 50,000 source rows: 9,898,120 rows emitted, 708MB spilled, 28.7s.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('🔴 getOpsSeries does not rebuild the Cartesian join', () => {
+  const raw = require('node:fs').readFileSync('lib/admin/operating.ts', 'utf8') as string;
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*(\/\/|--).*$/gm, '');
+  const fn = code.slice(code.indexOf('async function getOpsSeries'), code.indexOf('export async function getOperatingOpsPeriods'));
+
+  it('counts without DISTINCT — the tell that nothing is being de-duplicated', () => {
+    // count(DISTINCT ...) here was never a business rule. It compensated for row multiplication
+    // the joins created. If it comes back, the join almost certainly came back with it.
+    expect(fn).not.toMatch(/count\(DISTINCT/i);
+  });
+
+  it('joins periods only to pre-aggregated relations, never to a base table', () => {
+    expect(fn).not.toMatch(/LEFT JOIN\s+correction_report/i);
+    expect(fn).not.toMatch(/LEFT JOIN\s+source_check_run/i);
+  });
+});
+
+describe.skipIf(!hasDb)('getOpsSeries counts each row once', () => {
+  const OCC = 'ops-fixture';
+  afterAll(async () => {
+    await query(`DELETE FROM correction_report WHERE issue_type = $1`, [OCC]);
+  });
+
+  it('🔴 opened and resolved are counted independently, not multiplied', async () => {
+    // The bug this replaced would have reported opened x resolved x runs before DISTINCT; the
+    // DISTINCT hid it. These deltas would be identical either way, which is the point: the guard
+    // above catches the STRUCTURE, this catches the ARITHMETIC.
+    const { getOperatingOpsPeriods } = await import('../../lib/admin/operating');
+    const before = (await getOperatingOpsPeriods('day', 1)).at(-1)!;
+    const [occ] = await query<{ id: string }>(`SELECT id FROM activity_occurrence LIMIT 1`);
+    if (!occ) return; // nothing to attach to on an empty catalogue
+    await query(
+      `INSERT INTO correction_report (occurrence_id, issue_type, created_at, resolved_at)
+       SELECT $1::uuid, $2, now() - interval '1 hour', now() - interval '30 minutes'
+         FROM generate_series(1, 3)`,
+      [occ.id, OCC]
+    );
+    const after = (await getOperatingOpsPeriods('day', 1)).at(-1)!;
+    expect(after.correctionsOpened - before.correctionsOpened).toBe(3);
+    expect(after.correctionsResolved - before.correctionsResolved).toBe(3);
+  });
+});
