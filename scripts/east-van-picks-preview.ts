@@ -35,12 +35,32 @@ async function main(): Promise<void> {
   const year = now.getFullYear();
   const birthYears = AGES.map((a) => year - a);
 
-  if (!process.env.SMS_SHORT_LINK_SECRET) {
-    process.env.SMS_SHORT_LINK_SECRET = 'preview-only-not-the-real-secret';
-    console.log('⚠ SMS_SHORT_LINK_SECRET was unset. A placeholder was used, so the /s/ links');
-    console.log('  below are STRUCTURALLY correct but will not resolve. Everything else is real.');
-    console.log('');
+  // ═══ REFUSES TO RUN WITHOUT THE REAL SECRET. THIS COST A REAL INCIDENT. ═══
+  // The first version substituted a placeholder and printed one warning line at the top. Both
+  // production runs took that path, and the warning was cropped when the message bodies were
+  // relayed onward — so content went to Jon with links that could not resolve.
+  //
+  // AND THE FAILURE IS QUIET, WHICH IS WHY A WARNING WAS NEVER ENOUGH. A token minted with the
+  // wrong secret fails its HMAC check, and lib/sms/click-through.ts sends a failed token to
+  // FALLBACK_DESTINATION — '/search'. So a tapped link does not 404. It lands on a plausible page
+  // and reads as "the product sent me the wrong activity" rather than "this was a preview".
+  //
+  // A caveat that has to survive a copy-paste to be true is not a safeguard. Refusing is.
+  const placeholderAllowed = process.env.PREVIEW_ALLOW_FAKE_LINKS === 'true';
+  const usingPlaceholder = !process.env.SMS_SHORT_LINK_SECRET;
+  if (usingPlaceholder && !placeholderAllowed) {
+    console.error('REFUSING TO RUN: SMS_SHORT_LINK_SECRET is not set.');
+    console.error('');
+    console.error('Every /s/ link would be minted against a placeholder. Such links do NOT 404 —');
+    console.error("they fail the HMAC check and redirect to '/search', which looks like a broken");
+    console.error('product rather than a preview artifact. That has already happened once.');
+    console.error('');
+    console.error('  set SMS_SHORT_LINK_SECRET to preview real, tappable links, or');
+    console.error('  set PREVIEW_ALLOW_FAKE_LINKS=true to proceed with every message body');
+    console.error('  individually stamped as having unusable links.');
+    process.exit(1);
   }
+  if (usingPlaceholder) process.env.SMS_SHORT_LINK_SECRET = 'preview-only-not-the-real-secret';
 
   const deps = await loadWeeklySmsDeps();
 
@@ -77,6 +97,12 @@ async function main(): Promise<void> {
     }
     console.log(`segments: ${plan.message.segments}   characters: ${plan.message.body.length}`);
     console.log('─'.repeat(72));
+    // The stamp goes with EVERY body, not once in a header. The header version was cropped in a
+    // relay and the caveat did not reach the person who read the content.
+    if (usingPlaceholder) {
+      console.log('⚠ LINKS BELOW ARE NOT REAL — minted with a placeholder secret. Do not tap;');
+      console.log('  they redirect to /search rather than failing visibly.');
+    }
     console.log(plan.message.body);
     console.log('');
   }
