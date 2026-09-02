@@ -47,7 +47,35 @@ disagreed with production. This is the list a synthetic reproduction has to matc
 Three of the four made things look **better** than reality, which is the dangerous direction: a
 fixture that flatters the code produces confident, wrong all-clears.
 
-There is no reason to think this list is complete.
+There is no reason to think this list is complete — and it wasn't. A fifth arrived later, and it is
+a different KIND of mistake from the four above.
+
+### The fifth is not about matching production at all
+
+The four above are all "the fixture didn't resemble production closely enough", and each is fixable
+in principle by building a better fixture. This one isn't:
+
+> **One fixture was used to answer two different questions, and it was only valid for one of them.**
+
+A fixture was built with deliberate timestamp ties — 110,653 tie groups — because ties were the
+correctness risk in a window-function rewrite, and a fixture without them could not exercise the
+edge case at all. **It was exactly right for that question.**
+
+The same run was then used to measure performance, and reported at **7.1s**. The real figure on
+realistic data was **35.9s** — slower than the code being replaced. **The very property that made
+ties exercisable (few distinct timestamps per session) also made the `GROUPS` window frame cheap to
+evaluate**, because such a frame advances once per peer group rather than once per row.
+
+So the fixture was simultaneously the right instrument for correctness and a broken instrument for
+timing, on the same data, in the same run. No amount of making it "more realistic" resolves that —
+realism for the tie question and realism for the timing question point in **opposite** directions.
+
+    Rule: a fixture is built to answer a question, not to be realistic in general.
+          Before reusing one for a second question, ask what property you engineered
+          into it, and whether that property is load-bearing for the new question too.
+
+This is the only entry here that was caught by turning someone else's diagnostic technique
+(`pg_stat_activity` sampling) on one's own delivery rather than on the code under investigation.
 
 ## Adjacent: the same shape in measurement, not description
 
