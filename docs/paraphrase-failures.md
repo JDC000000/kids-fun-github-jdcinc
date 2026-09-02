@@ -75,7 +75,15 @@ realism for the tie question and realism for the timing question point in **oppo
           into it, and whether that property is load-bearing for the new question too.
 
 This is the only entry here that was caught by turning someone else's diagnostic technique
-(`pg_stat_activity` sampling) on one's own delivery rather than on the code under investigation.
+(`pg_stat_activity` sampling) on one's own delivery rather than on the code under investigation —
+diagnostic tool and target were the same person.
+
+**That is weaker evidence than it sounds, and worth stating precisely.** It was caught, but only
+*after it shipped and was reported as a success*. A reviewer running the same profile against a
+realistic fixture would have caught it before it landed. So this entry shows self-review can find a
+mistake nobody else has noticed yet; it does not show self-review is a substitute for the other
+kind. The order matters: every other entry here was caught before or during delivery, and this one
+was not.
 
 ## Adjacent: the same shape in measurement, not description
 
