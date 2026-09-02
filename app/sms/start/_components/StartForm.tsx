@@ -16,7 +16,7 @@
 // tel number" — rather than the existing form's phone-first order. That also preserves his earlier
 // ruling that the coverage check fires BEFORE consent: postal is first, the consent box is last, so
 // an out-of-area parent is told so before being asked to agree to anything.
-import { type FormEvent, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   legalFooterParts,
@@ -124,10 +124,36 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
   const [errors, setErrors] = useState<SignupFieldError[]>([]);
+  // Bumped ONLY by a submit attempt that produced errors. The focus effect below keys on this
+  // rather than on `errors` itself, because clearFieldError() also calls setErrors as the parent
+  // types — keying on `errors` would yank focus out of the field they are currently fixing.
+  const [errorSeq, setErrorSeq] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
   const [waitlistConsent, setWaitlistConsent] = useState(false); // UNCHECKED — express consent.
   const [waitlistSending, setWaitlistSending] = useState(false);
   const [waitlistDone, setWaitlistDone] = useState(false);
   const [waitlistError, setWaitlistError] = useState<string | null>(null);
+
+  // ═══ MOVE FOCUS TO THE FIRST PROBLEM ON A FAILED SUBMIT ═══
+  // role="alert" already ANNOUNCES the messages, so this is not about whether a screen-reader
+  // user is told. It is about what happens next: without this, focus stays on the submit button
+  // and both keyboard and screen-reader users have to hunt back up the form to find which field
+  // to fix. Sighted mouse users get this for free by looking; nobody else does.
+  //
+  // Prefers a real invalid CONTROL so focus lands somewhere you can immediately type. Falls back
+  // to the message itself, which matters for the interests error: it is the one field with no
+  // aria-invalid control to land on, so without the fallback that error would announce and then
+  // strand focus. Both error paragraphs carry tabIndex={-1} to be programmatically focusable
+  // without entering the tab order.
+  useEffect(() => {
+    if (errorSeq === 0) return;
+    const form = formRef.current;
+    if (!form) return;
+    const target =
+      form.querySelector<HTMLElement>('[aria-invalid="true"]') ??
+      form.querySelector<HTMLElement>('.kf-start__error');
+    target?.focus();
+  }, [errorSeq]);
 
   const errorFor = (f: SmsSignupField) => errors.find((e) => e.field === f);
   const generalError = errors.find((e) => !e.field);
@@ -174,12 +200,14 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
       if (!res.ok || !data?.ok) {
         setWaitlistSending(false);
         setWaitlistError(data?.error ?? `That didn't work (${res.status}).`);
+        setErrorSeq((n) => n + 1);
         return;
       }
       setWaitlistDone(true);
     } catch {
       setWaitlistSending(false);
       setWaitlistError('Network error — please try again.');
+      setErrorSeq((n) => n + 1);
     }
   }
 
@@ -199,6 +227,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
     const parsed = parseSmsSignupBody(body(), { now: new Date() });
     if (!parsed.ok) {
       setErrors(parsed.errors);
+      setErrorSeq((n) => n + 1);
       return;
     }
     setSending(true);
@@ -220,12 +249,14 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
             ? data.errors
             : [{ message: data?.error ?? `Couldn’t sign you up (${res.status}).`, field: data?.field }]
         );
+        setErrorSeq((n) => n + 1);
         return;
       }
       setDone(true);
     } catch {
       setSending(false);
       setErrors([{ message: 'Network error — please try again.' }]);
+      setErrorSeq((n) => n + 1);
     }
   }
 
@@ -251,14 +282,14 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
     const found = errorFor(field);
     if (!found) return null;
     return (
-      <p className="kf-start__error" id={id} role="alert">
+      <p className="kf-start__error" id={id} role="alert" tabIndex={-1}>
         {found.message}
       </p>
     );
   };
 
   return (
-    <form className="kf-start__form" onSubmit={submit} noValidate>
+    <form className="kf-start__form" onSubmit={submit} noValidate ref={formRef}>
       <label className="kf-start__label" htmlFor="kf-start-postal">
         {FIELD_COPY.postalLabel}
       </label>
@@ -423,7 +454,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
           </label>
 
           {waitlistError && (
-            <p className="kf-start__error" role="alert">
+            <p className="kf-start__error" role="alert" tabIndex={-1}>
               {waitlistError}
             </p>
           )}
@@ -463,7 +494,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
       {err('consent', 'kf-start-consent-err')}
 
       {generalError && (
-        <p className="kf-start__error" role="alert">
+        <p className="kf-start__error" role="alert" tabIndex={-1}>
           {generalError.message}
         </p>
       )}

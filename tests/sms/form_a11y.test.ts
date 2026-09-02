@@ -63,3 +63,60 @@ describe('fieldA11y', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// FOCUS MANAGEMENT ON A FAILED SUBMIT (/sms/start)
+//
+// role="alert" already announces the messages, so the gap this closes is not "are they told" but
+// "what happens next": without it focus stays on the submit button and a keyboard or screen-reader
+// user has to hunt back up the form for the field to fix.
+//
+// WHAT THIS FILE CAN AND CANNOT GUARD, stated plainly. vitest runs `node` here with no DOM, so the
+// behaviour itself — focus actually landing on #kf-start-postal — CANNOT be asserted in this lane;
+// the header comment above says the same about aria-invalid. It was verified manually in a real
+// browser against a production build:
+//   submit empty            -> document.activeElement === #kf-start-postal, 4 alerts rendered
+//   type into phone after   -> activeElement STAYS #kf-start-phone, phone error clears (4 -> 3)
+//   submit again            -> focus returns to #kf-start-postal
+// What IS guarded below is the one design property whose loss would be silent and would make the
+// feature actively worse than not having it.
+describe('start form: focus moves to the first problem, and only on submit', () => {
+  const src = require('node:fs').readFileSync(
+    'app/sms/start/_components/StartForm.tsx',
+    'utf8'
+  ) as string;
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const effect = code.slice(code.indexOf('useEffect('), code.indexOf('const errorFor'));
+
+  it('🔴 the focus effect does NOT key on `errors` — that would steal focus mid-typing', () => {
+    // THE REGRESSION THIS EXISTS FOR. clearFieldError() calls setErrors as the parent types, so an
+    // effect keyed on `errors` re-runs on every keystroke that fixes a field and yanks focus back
+    // to the first invalid control — out of the field they are currently in. That is worse than no
+    // focus management at all, and it would pass every other check: the errors still render, the
+    // announcements still fire, and the initial focus still lands correctly.
+    expect(effect).toMatch(/\}, \[errorSeq\]\)/);
+    expect(effect).not.toMatch(/\}, \[errors\]\)/);
+  });
+
+  it('🔴 the sequence is bumped on every path that sets errors from a submit', () => {
+    // Three: local validation failure, a non-ok API response, and a network throw. Miss one and
+    // focus silently stops moving for that class of failure only — the network case is the easiest
+    // to forget and the hardest to notice, since it needs a failing request to observe.
+    // Five: three on the main form (local validation, non-ok response, network throw) and two on
+    // the waitlist form, which lives INSIDE the same <form> and so is reached by the same effect.
+    // The waitlist path was found by this test failing — it has the identical gap and would have
+    // left the page half-fixed, with no way for a later reader to tell whether that was a decision
+    // or an oversight.
+    const submit = code.slice(code.indexOf('async function submitWaitlist'), code.indexOf('if (waitlistDone)'));
+    expect(submit.match(/setErrorSeq\(/g) ?? []).toHaveLength(5);
+  });
+
+  it('🔴 both error paragraphs are programmatically focusable', () => {
+    // The interests error has no aria-invalid control to land on, so the message itself is the
+    // fallback target; tabIndex={-1} makes it focusable without putting it in the tab order.
+    // Without this the fallback silently does nothing.
+    const paras = code.match(/className="kf-start__error"[^>]*role="alert"[^>]*/g) ?? [];
+    expect(paras.length).toBeGreaterThanOrEqual(2);
+    for (const p of paras) expect(p).toMatch(/tabIndex=\{-1\}/);
+  });
+});
