@@ -95,6 +95,38 @@ comparison*, and they differed in the one dimension nobody had thought to hold f
 different medium — and had the discrepancy been larger it would have been investigated, while at 2%
 it was small enough to explain away.
 
+## Adjacent: verifying the wrong property entirely
+
+The five above are descriptions drifting from things. This one is different again, and no axis in
+this document would have caught it.
+
+**A window-function rewrite was verified correct three separate ways** — byte-identical output
+across 16 columns and 30 periods, tie semantics pinned by committed behavioural tests, a structural
+guard against the frame being weakened. **Nobody ever asked what it cost.** It was 37.7s, against
+18.3s for the correlated-subquery version it replaced. The optimisation roughly doubled the cost of
+the thing it optimised, and every check that ran came back green, because every check that ran was
+about correctness.
+
+    Rule: "verified" is not a property. Verified FOR WHAT is the property.
+          Correct and unusably slow is still a defect, and a correctness suite
+          will never say so.
+
+### The mechanism, because it is not obvious and it generalises
+
+    GROUPS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING   -- 32.9s at 1.19M rows
+    RANGE BETWEEN CURRENT ROW AND <window> FOLLOWING
+      EXCLUDE GROUP                                      --   255ms, same answer
+
+**An unbounded frame that shrinks from the left cannot be maintained incrementally.** Postgres can
+add rows to a running aggregate cheaply; it cannot generally remove them. So a frame whose start
+advances while its end stays at the partition boundary forces recomputation per row — roughly O(n²)
+within each partition. A bounded frame does not.
+
+**The cost model for window functions bifurcates on boundedness**, and that split is invisible
+unless the frame is profiled separately from what it computes. `EXPLAIN` attributes the whole cost
+to one `WindowAgg` node; it does not tell you the frame shape is the reason. Two spellings that look
+equally reasonable, produce identical output, and differ by more than two orders of magnitude.
+
 ## Why measurement is not immune
 
 Instances 3 and 5 are the ones worth re-reading. Both *looked* like verification. A reproduction has
