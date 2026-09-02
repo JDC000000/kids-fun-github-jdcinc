@@ -135,6 +135,32 @@ unless the frame is profiled separately from what it computes. `EXPLAIN` attribu
 to one `WindowAgg` node; it does not tell you the frame shape is the reason. Two spellings that look
 equally reasonable, produce identical output, and differ by more than two orders of magnitude.
 
+## Adjacent: two true readings that disagree
+
+Three times in one session, two people reported different values for the same thing and neither was
+wrong:
+
+| What disagreed | Why both readings were true |
+|---|---|
+| An untracked scratch file breaking `tsc` | It exists only between a probe writing it and the same command deleting it — minutes, for a long DB probe. |
+| `analytics_event` row count, 90 vs 75 | DB tests insert marker rows and remove them in `afterAll`. Any count taken between reads high **by construction**. |
+| The deployed commit hash | A rollout was in progress. One curl caught the old hash, one caught the new, five seconds apart. |
+
+    Rule: when two people sample a mutating system at different times, the disagreement
+          IS the signal. Re-read; do not defend either number.
+
+Each of these could have become a dispute about who measured carelessly. None did, for one reason:
+the readings were reported as observations with a timestamp attached rather than as settled facts.
+*"90 rows, all UUID-shaped, disclosed rather than claimed restored"* reconciles in seconds.
+*"The database is clean"* does not.
+
+**The deploy case is the one worth remembering**, because there the naive reconciliation is also
+wrong: comparing the deployed hash to your own commit only answers the question when nothing has
+shipped since you last looked. `git merge-base --is-ancestor <commit> <deployed>` answers *"is my
+change live"* directly, and it stays correct across a rollout. Likewise, `unpushed: N` says nothing
+whatsoever about what production is running — the same distinction as a migration file existing in
+the repo versus the index existing in the database.
+
 ## Why measurement is not immune
 
 Instances 3 and 5 are the ones worth re-reading. Both *looked* like verification. A reproduction has
