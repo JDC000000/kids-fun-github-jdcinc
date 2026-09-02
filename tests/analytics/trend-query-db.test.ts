@@ -225,11 +225,20 @@ describe('🔴 the engagement series does not go back to correlated subqueries',
     expect(code).not.toMatch(/EXISTS\s*\(\s*SELECT[\s\S]{0,200}?user_or_session\s*=\s*e\.user_or_session/i);
   });
 
-  it('🔴 keeps the GROUPS frame, which is what makes the rewrite exact', () => {
-    // ROWS would order ties arbitrarily; RANGE would include peers. Only GROUPS reproduces the
-    // original's strict `f.created_at > e.created_at` when two events share a timestamp — and
-    // created_at defaults to now(), which is identical for every row in one transaction.
-    expect(code).toMatch(/GROUPS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING/);
+  it('🔴 keeps EXCLUDE GROUP, which is what makes the frame exact', () => {
+    // The tie-safety primitive. A plain ROWS frame orders ties arbitrarily; a plain RANGE frame
+    // includes peers. EXCLUDE GROUP drops the whole peer group, reproducing the original's strict
+    // `f.created_at > e.created_at` — and created_at defaults to now(), identical for every row
+    // written in one transaction, so ties are real.
+    //
+    // This assertion previously pinned `GROUPS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING`, which
+    // was also correct but UNBOUNDED — min() over a frame that shrinks from the left cannot be
+    // maintained incrementally, so it recomputed per row and the WindowAgg alone cost 32.9s at
+    // 1.19M rows. The bounded RANGE form is 255ms for the same computation. Correct and unusably
+    // slow is still a defect; the guard now pins the property (tie exclusion) rather than the one
+    // spelling that first achieved it.
+    expect(code).toMatch(/EXCLUDE GROUP/);
+    expect(code).not.toMatch(/UNBOUNDED FOLLOWING/); // the O(n^2) shape must not come back
   });
 });
 
