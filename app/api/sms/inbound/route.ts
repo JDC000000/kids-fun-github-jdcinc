@@ -391,15 +391,27 @@ export function startReplyFor(outcome: TransitionOutcome): string | null {
  * needs `rp` set to `rt` or `all`. The risk is real but narrower than "any slow response is
  * retried", and which of those is true is an Operator console setting.
  *
- * IF A REPLAY DOES HAPPEN, THE GUARD ABOVE IS ONLY HALF THE PROTECTION, and this is the part
- * worth knowing: a SEQUENTIAL replay is safe, because the second `confirmSubscriber` reads
- * `active` and returns `already_in_state`, which sends nothing. A CONCURRENT one is not —
- * `applyConsentChange`'s documented UPDATE is `WHERE id = $1` with NO status predicate, so two
- * in-flight passes can both read `pending`, both write, and both report `applied`. Two welcome
- * texts. Its sibling writes (`applyEmptyWeekState`, `markStoppedViaCarrier`) both carry a status
- * guard in their own TODOs; JOIN's does not.
+ * IF A REPLAY DOES HAPPEN, BOTH SHAPES ARE NOW SAFE — and this paragraph used to say the
+ * opposite, so read it carefully if you remember the old version.
+ *   • A SEQUENTIAL replay: the second `confirmSubscriber` reads `active` and returns
+ *     `already_in_state`, which sends nothing.
+ *   • A CONCURRENT replay: `applyConsentChange` carries the compare-and-set
+ *     (`WHERE id = $1 AND status = $2`) and returns `no_match` when it affects zero rows;
+ *     `applyConsentTransition` maps that to `already_in_state` with `change: null`; and
+ *     `shouldSendWelcome` below fires only on `applied`. So the loser of the race sends nothing.
  *
- * NOT FIXED HERE, because the honest fix is not a line in this file:
+ * ⚠ THIS COMMENT WAS STALE AND MISLED A LATER REVIEW INTO SCHEDULING THE FIX A SECOND TIME.
+ * It described the hazard as open and named the status predicate as the "cheapest real fix,
+ * flagged for a decision". That predicate LANDED in 67105fe, after this note was written in
+ * b38a8ff, and nobody came back to this paragraph. Anyone reading only this file would have
+ * concluded the product had a live double-send exposure that it does not have. Corrected
+ * 2026-09-03. The real SQL is pinned against a live database by "REFUSES the second of two
+ * concurrent JOINs — one welcome, not two" in tests/sms/signup_persistence-db.test.ts, and the
+ * transition layer's handling of `no_match` by the concurrency block in
+ * tests/sms/consent_transitions.test.ts.
+ *
+ * SEPARATELY, AND STILL OPEN: why the welcome send is still AWAITED inline rather than deferred
+ * until after the response. This is about the retry budget above, not about double writes:
  *   • `after()` — Next's supported "work after the response" primitive — DOES NOT EXIST in this
  *     repo's Next 14.2.35. Verified two ways: it is absent from `next/server`'s exports, and
  *     Next's own docs record `unstable_after` arriving in 15.0.0-rc and stabilising in 15.1.0.
@@ -410,10 +422,9 @@ export function startReplyFor(outcome: TransitionOutcome): string | null {
  *   • `waitUntil` from `@vercel/functions` is the primitive `after()` wraps, and would work — but
  *     it is not a dependency here and adding it couples this route to one platform.
  *   • A queue is real infrastructure and out of scope for a draft branch.
- * The cheapest real fix is the status predicate on JOIN's UPDATE, which makes the DOUBLE SEND
- * impossible rather than unlikely — but it needs `applyChange` to report rows-affected so the
- * transition can answer `already_in_state` when it matched none, and that is a change to a stub's
- * contract. Flagged for a decision in the round-17 notes rather than guessed at here.
+ * So the send stays inline until one of those becomes available. That is a LATENCY question —
+ * how long Twilio waits for this webhook — and no longer a correctness one: a replay that does
+ * get through cannot produce a second welcome, per the compare-and-set above.
  */
 export async function confirmAndWelcome(
   from: string,
