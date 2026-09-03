@@ -197,9 +197,46 @@ export function smsCronSecret(): string | null {
  */
 export const SITE_URL_DEV_FALLBACK = 'http://localhost:3000';
 
+/**
+ * The one origin real subscriber links may point at.
+ *
+ * A LITERAL, NOT AN ENV VAR — the whole point of the check below is that the env var is the thing
+ * being validated. Changing the production domain should be a reviewed code change, not a
+ * dashboard edit that silently repoints every link in every text.
+ */
+export const PRODUCTION_ORIGIN = 'https://kidsfunapp.ca';
+
 export function siteUrl(): string {
   const configured = env('NEXT_PUBLIC_SITE_URL');
-  if (configured) return configured.replace(/\/+$/, '');
+  if (configured) {
+    const normalised = configured.replace(/\/+$/, '');
+    /*
+     * ═══ A NON-BLANK VALUE IS NOT A CORRECT VALUE ═══
+     * The guard below this one only ever asked "is NEXT_PUBLIC_SITE_URL set". It shipped, and a
+     * WRONG-BUT-SET value then went to production anyway: every weekly link rendered against
+     * kids-fun-psi.vercel.app instead of the live domain. That was fixed by correcting the value,
+     * which left this hole exactly as it was — the next mistyped host would pass identically.
+     *
+     * So when we are actually sending to real people, the value must BE the production origin.
+     * Nothing about "present and plausible" is enough: a vercel.app or staging host produces
+     * links that resolve, render, and are wrong, which is strictly worse than links that fail —
+     * a parent tapping an unsubscribe link on a preview deploy gets a page that appears to work.
+     *
+     * Same gating as the guard below (smsSendingEnabled, not NODE_ENV) and the same reasoning:
+     * the condition that matters is "are these links about to reach a real person". With sending
+     * off, any origin is fine and local development is untouched.
+     */
+    if (smsSendingEnabled() && normalised !== PRODUCTION_ORIGIN) {
+      throw new Error(
+        `NEXT_PUBLIC_SITE_URL is "${normalised}" while SMS_SENDING_ENABLED is true. Refusing to ` +
+          `build links against anything but ${PRODUCTION_ORIGIN}: every short link, signup link ` +
+          'and preferences link in a real text would point at the wrong host — including the ' +
+          'CASL unsubscribe path, which would resolve, look correct, and not be the live site. ' +
+          'A wrong-but-working link is harder to notice than a broken one.'
+      );
+    }
+    return normalised;
+  }
 
   /*
    * ═══ FAIL LOUDLY RATHER THAN SEND LINKS TO LOCALHOST ═══

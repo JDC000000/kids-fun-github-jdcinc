@@ -29,7 +29,7 @@ import {
 } from './separate';
 
 const DEFAULT_EVENTS_LIMIT = 25;
-const USER_AGENT = 'KidsFunBot/0.1 (+https://kids-fun-staging-jdci-nc.vercel.app; contact: jon@crhq.ai)';
+const USER_AGENT = 'KidsFunBot/0.1 (+https://kidsfunapp.ca; contact: jon@crhq.ai)';
 
 /** One fetched (or synthesised) venue page carrying schema.org data. */
 interface VenuePayload {

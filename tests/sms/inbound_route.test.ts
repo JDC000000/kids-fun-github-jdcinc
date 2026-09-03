@@ -46,14 +46,14 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 
-const URL = 'https://kidsfun.example/api/sms/inbound';
+const URL = 'https://kidsfunapp.ca/api/sms/inbound';
 const TOKEN = 'test-auth-token';
 const FROM = '+16045550123';
 
 function configure({ sending = false }: { sending?: boolean } = {}) {
   vi.stubEnv('TWILIO_AUTH_TOKEN', TOKEN);
   vi.stubEnv('SMS_WEBHOOK_PUBLIC_URL', URL);
-  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.example');
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfunapp.ca');
   if (sending) vi.stubEnv('SMS_SENDING_ENABLED', 'true');
 }
 
@@ -76,7 +76,7 @@ async function xml(res: Response): Promise<string> {
   return res.text();
 }
 
-const EXPECTED_REPLY = renderUnknownKeywordMessage('https://kidsfun.example/sms/start').body;
+const EXPECTED_REPLY = renderUnknownKeywordMessage('https://kidsfunapp.ca/sms/start').body;
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -92,7 +92,7 @@ describe('the unknown-keyword reply (copy)', () => {
     // previously-unknown or previously-stopped number may be a canned carrier-level auto-reply
     // rather than a route into our app, and that it must be configured and verified against a
     // real toll-free number before launch. We do not print a keyword we cannot promise works.
-    const body = renderUnknownKeywordMessage('https://kidsfun.example/sms/start').body;
+    const body = renderUnknownKeywordMessage('https://kidsfunapp.ca/sms/start').body;
     expect(body).toContain('Reply JOIN');
     expect(body).toContain('HELP');
     expect(body).toContain('STOP');
@@ -103,7 +103,7 @@ describe('the unknown-keyword reply (copy)', () => {
     // Somebody who texts us cold has no sms_consent row: if they reply JOIN the transition
     // answers `no_such_subscriber` and the webhook says nothing at all. The link is the only
     // thing in this message that works for a person who has never signed up.
-    expect(EXPECTED_REPLY).toContain('https://kidsfun.example/sms/start');
+    expect(EXPECTED_REPLY).toContain('https://kidsfunapp.ca/sms/start');
   });
 
   it('passes the GSM-7 guard and fits one segment at the REAL production URL', () => {
@@ -377,14 +377,14 @@ describe('escapeXml', () => {
 // START — one door, three answers (PRD §2.1 door 2)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const INVITE = renderStartSignupInviteMessage('https://kidsfun.example/sms/start').body;
+const INVITE = renderStartSignupInviteMessage('https://kidsfunapp.ca/sms/start').body;
 const CONFIRM_AGAIN = renderConfirmRequestMessage(null).body;
 
 describe('startReplyFor — the three-way mapping', () => {
   it('no_such_subscriber gets the signup link — this IS door 2', () => {
-    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.example');
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfunapp.ca');
     expect(startReplyFor('no_such_subscriber')).toBe(INVITE);
-    expect(startReplyFor('no_such_subscriber')).toContain('https://kidsfun.example/sms/start');
+    expect(startReplyFor('no_such_subscriber')).toContain('https://kidsfunapp.ca/sms/start');
   });
 
   it('awaiting_confirmation gets the confirmation request AGAIN, not new copy', () => {
@@ -413,7 +413,7 @@ describe('startReplyFor — the three-way mapping', () => {
   });
 
   it('the two replies it does send are GSM-7 safe and one segment each', () => {
-    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.ca');
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfunapp.ca');
     const invite = renderStartSignupInviteMessage('https://kidsfun.ca/sms/start');
     assertGsm7Safe(invite.body);
     // 126 after the /sms/start retarget, same reasoning as the unknown-keyword pin above.
@@ -436,8 +436,8 @@ describe('startReplyFor — the three-way mapping', () => {
   it('shares ONE signup clause with the unknown-keyword reply', () => {
     // "Where do I sign up" must not have two different answers depending on which word the
     // person happened to text. Both messages are built from the same clause.
-    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfun.example');
-    const clause = 'Not signed up? https://kidsfun.example/sms/start';
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfunapp.ca');
+    const clause = 'Not signed up? https://kidsfunapp.ca/sms/start';
     expect(INVITE).toContain(clause);
     expect(EXPECTED_REPLY).toContain(clause);
   });

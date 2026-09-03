@@ -31,7 +31,7 @@ import {
 import type { TagMode } from '@/lib/audit/tags';
 import type { Candidate } from '@/lib/audit/types';
 
-const DEFAULT_BASE_URL = 'https://kids-fun-psi.vercel.app';
+const DEFAULT_BASE_URL = 'https://kidsfunapp.ca';
 
 interface Args {
   baseUrl: string;

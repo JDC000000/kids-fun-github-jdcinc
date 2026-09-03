@@ -86,3 +86,39 @@ describe('every digest URL inherits the guard', () => {
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// A WRONG ORIGIN IS NOT A MISSING ONE — the same hardening as the SMS lane (2026-09-03).
+//
+// This guard used to ask only "is NEXT_PUBLIC_SITE_URL set". The QA audit flagged that hole in
+// lib/sms/config.ts; lib/email/config.ts had it identically, reads the SAME variable, and builds
+// the email unsubscribe link. Fixing only the SMS lane would have closed the finding and left the
+// bug one file over.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('siteUrl (email lane) rejects a wrong-but-set origin', () => {
+  it('🔴 REJECTS the vercel.app mirror — the value that actually shipped', () => {
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kids-fun-psi.vercel.app');
+    vi.stubEnv('WEEKLY_EMAIL_ENABLED', 'true');
+    expect(() => siteUrl()).toThrow(/kids-fun-psi\.vercel\.app/);
+  });
+
+  it('🔴 REJECTS staging and localhost while sending is on', () => {
+    vi.stubEnv('WEEKLY_EMAIL_ENABLED', 'true');
+    for (const bad of ['https://kids-fun-staging-jdci-nc.vercel.app', 'http://localhost:3000']) {
+      vi.stubEnv('NEXT_PUBLIC_SITE_URL', bad);
+      expect(() => siteUrl(), bad).toThrow();
+    }
+  });
+
+  it('accepts the production origin, trailing slash and all', () => {
+    vi.stubEnv('WEEKLY_EMAIL_ENABLED', 'true');
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfunapp.ca/');
+    expect(siteUrl()).toBe('https://kidsfunapp.ca');
+  });
+
+  it('🔴 leaves local development alone when sending is OFF', () => {
+    vi.stubEnv('WEEKLY_EMAIL_ENABLED', 'false');
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'http://127.0.0.1:3007');
+    expect(siteUrl()).toBe('http://127.0.0.1:3007');
+  });
+});

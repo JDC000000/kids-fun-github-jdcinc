@@ -17,6 +17,8 @@
 //                                       forces dry-run (payload built, never dispatched).
 
 /** Default From used when EMAIL_FROM is unset (dev/preview only; real sends require a verified domain). */
+import { PRODUCTION_ORIGIN } from '@/lib/sms/config';
+
 const DEFAULT_FROM = 'KIDS FUN <onboarding@resend.dev>';
 
 /**
@@ -62,7 +64,32 @@ function env(name: string): string | undefined {
  */
 export function siteUrl(): string {
   const configured = env('NEXT_PUBLIC_SITE_URL');
-  if (configured) return configured.replace(/\/+$/, '');
+  if (configured) {
+    const normalised = configured.replace(/\/+$/, '');
+    /*
+     * ═══ THE SAME HOLE THE SMS LANE HAD, IN THE SAME VARIABLE ═══
+     * This guard used to ask only "is NEXT_PUBLIC_SITE_URL set". A wrong-but-set value passed
+     * silently — and that is not hypothetical: it shipped, with production pointed at the
+     * vercel.app mirror, so every outbound link rendered against the wrong host. It was fixed by
+     * correcting the VALUE, which left this check exactly as permissive as before.
+     *
+     * BOTH LANES READ THE SAME VARIABLE, so a repointed origin breaks emails and texts together.
+     * Hardening only lib/sms/config.ts would have closed the audit item and left the identical
+     * bug here, in the file that builds the email unsubscribe link.
+     *
+     * PRODUCTION_ORIGIN is imported rather than restated: two hand-maintained copies of the live
+     * domain is how the two lanes eventually disagree about what production is.
+     */
+    if (sendingEnabled() && normalised !== PRODUCTION_ORIGIN) {
+      throw new Error(
+        `NEXT_PUBLIC_SITE_URL is "${normalised}" while email sending is enabled. Refusing to ` +
+          `build links against anything but ${PRODUCTION_ORIGIN}: every link in a real digest ` +
+          'would point at the wrong host — including the unsubscribe link, which would resolve, ' +
+          'look correct, and not be the live site.'
+      );
+    }
+    return normalised;
+  }
   if (sendingEnabled()) {
     throw new Error(
       'NEXT_PUBLIC_SITE_URL is unset or blank while WEEKLY_EMAIL_ENABLED is true. Refusing to ' +

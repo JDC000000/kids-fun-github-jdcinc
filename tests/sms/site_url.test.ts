@@ -10,6 +10,7 @@
 // Nothing about that is visible from a log or a green test run, so the guard is asserted here.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  PRODUCTION_ORIGIN,
   SITE_URL_DEV_FALLBACK,
   siteUrl,
   shortLinkUrl,
@@ -95,4 +96,66 @@ describe('every link builder inherits the guard', () => {
       expect(build()).toMatch(/^https:\/\/kidsfunapp\.ca\//);
     });
   }
+});
+
+describe('siteUrl() when SMS sending is ENABLED', () => {
+  it('accepts the production origin', () => {
+    process.env.SMS_SENDING_ENABLED = 'true';
+    process.env.NEXT_PUBLIC_SITE_URL = PRODUCTION_ORIGIN;
+    expect(siteUrl()).toBe(PRODUCTION_ORIGIN);
+  });
+
+  it('accepts it with a trailing slash, which is the same origin', () => {
+    process.env.SMS_SENDING_ENABLED = 'true';
+    process.env.NEXT_PUBLIC_SITE_URL = `${PRODUCTION_ORIGIN}/`;
+    expect(siteUrl()).toBe(PRODUCTION_ORIGIN);
+  });
+
+  it('🔴 REJECTS the vercel.app mirror — the exact value that shipped', () => {
+    process.env.SMS_SENDING_ENABLED = 'true';
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://kids-fun-psi.vercel.app';
+    expect(() => siteUrl()).toThrow(/kids-fun-psi\.vercel\.app/);
+  });
+
+  it('🔴 REJECTS a staging host and localhost', () => {
+    process.env.SMS_SENDING_ENABLED = 'true';
+    for (const bad of [
+      'https://kids-fun-staging-jdci-nc.vercel.app',
+      'http://localhost:3000',
+      'http://127.0.0.1:3007',
+      'https://kidsfunapp.ca.evil.example',
+    ]) {
+      process.env.NEXT_PUBLIC_SITE_URL = bad;
+      expect(() => siteUrl(), bad).toThrow();
+    }
+  });
+
+  it('the message names the offending value, so the fix is obvious from the log', () => {
+    process.env.SMS_SENDING_ENABLED = 'true';
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://wrong.example';
+    expect(() => siteUrl()).toThrow(/https:\/\/wrong\.example/);
+    expect(() => siteUrl()).toThrow(new RegExp(PRODUCTION_ORIGIN.replace(/[.]/g, '\\.')));
+  });
+
+  it('🔴 still rejects unset — the original guard is not weakened', () => {
+    process.env.SMS_SENDING_ENABLED = 'true';
+    delete process.env.NEXT_PUBLIC_SITE_URL;
+    expect(() => siteUrl()).toThrow(/unset or blank/);
+  });
+});
+
+describe('siteUrl() when SMS sending is DISABLED', () => {
+  it('🔴 allows any origin — local development and the test lanes must keep working', () => {
+    // The guard is gated on "are these links about to reach a real person", not on NODE_ENV.
+    // With sending off, a localhost origin is correct and wanted.
+    process.env.SMS_SENDING_ENABLED = 'false';
+    process.env.NEXT_PUBLIC_SITE_URL = 'http://127.0.0.1:3007';
+    expect(siteUrl()).toBe('http://127.0.0.1:3007');
+  });
+
+  it('falls back to the dev default when unset', () => {
+    process.env.SMS_SENDING_ENABLED = 'false';
+    delete process.env.NEXT_PUBLIC_SITE_URL;
+    expect(siteUrl()).toMatch(/localhost/);
+  });
 });
