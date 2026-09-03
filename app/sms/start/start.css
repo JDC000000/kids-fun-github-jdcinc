@@ -251,3 +251,11 @@
 .kf-start__done-list li + li {
   margin-top: var(--kf-space-2);
 }
+
+/* The cap notice (user-testing rec #4). role="status" not role="alert": reaching the limit is
+   normal, not an error, and an assertive announcement would read as something going wrong. */
+.kf-start__max-children {
+  margin: var(--kf-space-2) 0 0;
+  color: var(--kf-ink-secondary);
+  font-size: 0.875rem;
+}

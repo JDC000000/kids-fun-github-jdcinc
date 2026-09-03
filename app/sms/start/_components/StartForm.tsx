@@ -41,7 +41,7 @@ import {
   WAITLIST_SPARSE_CTA,
   WAITLIST_SUBMIT,
 } from '@/lib/sms/waitlist-copy';
-import { LEGAL_FOOTER_SUMMARY, OUT_OF_AREA_NOTICE } from '@/lib/sms/consent-copy';
+import { LEGAL_FOOTER_SUMMARY, OUT_OF_AREA_NOTICE, maxChildrenNotice } from '@/lib/sms/consent-copy';
 import type { CoveredRegionId } from '@/lib/geo/postal-fsa';
 
 interface SignupFieldError {
@@ -363,6 +363,18 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
             parent could add rows indefinitely before the SERVER rejected them at 8 — losing
             everything they had typed to an error they were given no way to anticipate. Reusing the
             same constant rather than a literal 8: the limit is the validator's to define. */}
+        {/* AND WHEN THE CAP IS REACHED, SAY SO (user testing rec #4, 2026-09-02).
+            The guard above hides the button at MAX_CHILDREN. On its own that is a control
+            silently disappearing: a parent with eight kids clicks "add another", the button
+            vanishes mid-interaction, and nothing says why or that the limit is normal rather
+            than an error. /sms/signup already rendered this exact notice at the cap; like the
+            cap guard itself (see the comment above), it did not carry over when this page was
+            written. Same constant, same copy function, so the two surfaces cannot drift. */}
+        {!canAddAnotherChild(children.length) && (
+          <p className="kf-start__help kf-start__max-children" role="status">
+            {maxChildrenNotice(MAX_CHILDREN)}
+          </p>
+        )}
         {canAddAnotherChild(children.length) && (
           <button
             type="button"

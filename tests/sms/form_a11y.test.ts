@@ -120,3 +120,36 @@ describe('start form: focus moves to the first problem, and only on submit', () 
     for (const p of paras) expect(p).toMatch(/tabIndex=\{-1\}/);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE CHILD-COUNT CAP SAYS SO (user-testing rec #4, 2026-09-02).
+// Hiding the "add another child" button at MAX_CHILDREN is correct and, alone, is a control
+// vanishing mid-interaction with no explanation. /sms/signup already rendered this notice; like
+// the cap guard itself, it did not carry over when /sms/start was written.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('start form: reaching the child cap is explained, not just enforced', () => {
+  const code = (require('node:fs').readFileSync('app/sms/start/_components/StartForm.tsx', 'utf8') as string)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  it('🔴 renders the notice on the NEGATED guard, so it appears exactly when the button does not', () => {
+    // The pair is the point: `canAddAnotherChild` shows the button, `!canAddAnotherChild` shows
+    // the notice. If these ever drift apart there is a state with neither — which is the defect
+    // this fixes — or one with both, which is incoherent.
+    expect(code).toMatch(/\{!canAddAnotherChild\(children\.length\) && \(/);
+    expect(code).toMatch(/\{canAddAnotherChild\(children\.length\) && \(/);
+    expect(code).toMatch(/maxChildrenNotice\(MAX_CHILDREN\)/);
+  });
+
+  it('🔴 announces it as status, not alert — a limit is not an error', () => {
+    const block = code.slice(code.indexOf('!canAddAnotherChild'), code.indexOf('!canAddAnotherChild') + 220);
+    expect(block).toContain('role="status"');
+    expect(block).not.toContain('role="alert"');
+  });
+
+  it('🔴 takes the number from MAX_CHILDREN, never a literal — the validator owns the limit', () => {
+    // A hardcoded 8 in the copy is how the message eventually says something the server does not
+    // enforce. Same reasoning the cap guard above already records for itself.
+    expect(code).not.toMatch(/maxChildrenNotice\(\s*\d+\s*\)/);
+  });
+});
