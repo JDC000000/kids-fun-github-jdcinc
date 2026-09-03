@@ -85,6 +85,16 @@ export interface ConsentChange {
   subscriberId: string;
   status: ConsentStatus;
   /**
+   * Set `is_test = true` as part of THIS update.
+   *
+   * ═══ ATOMIC WITH THE TRANSITION, DELIBERATELY ═══
+   * The alternative was a second statement after the confirm. That has a window: if the confirm
+   * succeeds and the tagging call then fails, the row is `active` and untagged — which is exactly
+   * the state the production weekly send picks up and texts. One UPDATE has no such window; the
+   * row becomes active and marked in the same instant or not at all.
+   */
+  markTest?: boolean;
+  /**
    * The status this change was DECIDED AGAINST — the value `findByPhone` returned a moment ago.
    *
    * ═══ THIS IS THE COMPARE-AND-SET, AND IT IS WHY THE WRITE IS IDEMPOTENT ═══
@@ -172,6 +182,12 @@ export interface TransitionOptions extends TransitionDeps {
   /** Defaults to !smsSendingEnabled() — a real mutation requires opting in explicitly. */
   dryRun?: boolean;
   now?: Date;
+  /**
+   * The message that triggered this transition arrived at a test handset, so the row it touches
+   * must be marked `is_test`. Passed from the inbound route, which is the only place that knows
+   * Twilio's `To` parameter.
+   */
+  markTest?: boolean;
 }
 
 // ── The two database seams ──────────────────────────────────────────────────────────────
@@ -261,6 +277,11 @@ export const applyConsentChange: ConsentChangeApplier = async (change, now) => {
   }
   if (change.confirm) {
     sets.push('confirmed_timestamp = $' + (params.push(now) + 0));
+  }
+  // Only ever set to true, never cleared. A row that once belonged to a test handset stays marked:
+  // clearing it would be a path by which a test row silently becomes eligible for a real send.
+  if (change.markTest) {
+    sets.push('is_test = true');
   }
 
   // ── THE COMPARE-AND-SET ──
@@ -432,24 +453,31 @@ async function runTransition(
     };
   }
 
+  // Carried onto the change so the flag lands in the SAME UPDATE as the status transition.
+  // Applied here rather than inside `decide*` because those are pure functions of the ROW, and
+  // "which of our numbers did this arrive at" is a fact about the message, not the subscriber.
+  const change: ConsentChange = options.markTest
+    ? { ...decision.change, markTest: true }
+    : decision.change;
+
   if (dryRun) {
     return {
       outcome: 'dry_run',
       phoneNumber,
       subscriberId: decision.subscriberId,
-      change: decision.change,
+      change,
     };
   }
 
   let written: ConsentWriteOutcome;
   try {
-    written = await applyChange(decision.change, now);
+    written = await applyChange(change, now);
   } catch (err) {
     return {
       outcome: 'error',
       phoneNumber,
       subscriberId: decision.subscriberId,
-      change: decision.change,
+      change,
       error: `write failed: ${(err as Error)?.message ?? 'unknown error'}`,
     };
   }

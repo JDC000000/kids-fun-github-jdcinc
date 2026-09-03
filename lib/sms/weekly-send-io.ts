@@ -182,6 +182,7 @@ export async function loadActiveSubscribers(limit?: number): Promise<ActiveSubsc
             consecutive_empty_weeks, preferences_token, consent_text_version
        FROM sms_consent
       WHERE status = 'active'
+        AND is_test = false
         AND phone_number IS NOT NULL
       ORDER BY id
       ${typeof limit === 'number' && limit > 0 ? 'LIMIT $1' : ''}`,

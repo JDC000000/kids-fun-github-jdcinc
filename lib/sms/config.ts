@@ -129,6 +129,42 @@ export function stagingReplyBodyAllowed(): boolean {
  * One combined flag could not express that, and the alternative — turning on real sending to
  * take a screenshot — is not a thing anyone should have to do.
  */
+/**
+ * Our own numbers that are TEST handsets, E.164, comma-separated in SMS_TEST_NUMBERS.
+ *
+ * ═══ THIS IS ABOUT `To`, NOT `From` ═══
+ * It answers "which of OUR numbers did this message arrive at", never "who sent it". Keying on
+ * the sender would be both wrong and dangerous: a real parent texting the test number would be
+ * marked real, and anyone could aim traffic at a number we do not control.
+ *
+ * UNSET MEANS NO TEST NUMBERS, which is the safe default in the direction that matters: with
+ * nothing configured, nothing is ever marked as test, so nothing is ever silently excluded from
+ * the Friday send. The failure mode of a typo here is a test handset receiving a real text —
+ * visible and recoverable — rather than a real subscriber quietly never being texted again.
+ */
+export function smsTestNumbers(): readonly string[] {
+  const raw = env('SMS_TEST_NUMBERS');
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((n) => digitsOf(n))
+    .filter((n) => n.length > 0);
+}
+
+/** Digits only, so +1 778-404-7122 and +17784047122 compare equal. */
+function digitsOf(raw: string): string {
+  return raw.replace(/\D/g, '');
+}
+
+/**
+ * Did this inbound message arrive at a test handset? `to` is Twilio's `To` webhook parameter.
+ */
+export function isTestDestination(to: string | null | undefined): boolean {
+  const digits = digitsOf(to ?? '');
+  if (digits.length === 0) return false;
+  return smsTestNumbers().includes(digits);
+}
+
 export function smsSignupEnabled(): boolean {
   return env('SMS_SIGNUP_ENABLED') === 'true';
 }

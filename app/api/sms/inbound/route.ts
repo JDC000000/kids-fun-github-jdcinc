@@ -40,6 +40,7 @@ import {
   twilioAuthToken,
   webhookPublicUrl,
 } from '@/lib/sms/config';
+import { isTestDestination } from '@/lib/sms/config';
 import { classifyInboundKeyword, type InboundKeyword } from '@/lib/sms/keywords';
 import { verifyTwilioSignature } from '@/lib/sms/twilio-signature';
 import {
@@ -141,7 +142,13 @@ async function smsInboundPost(request: Request): Promise<NextResponse> {
 
   // 4. Now the payload can be trusted enough to read.
   const from = (params.get('From') ?? '').trim();
+  const to = (params.get('To') ?? '').trim();
   const body = params.get('Body');
+  // ═══ WHICH OF OUR NUMBERS DID THIS ARRIVE AT? ═══
+  // `To`, never `From`. The sender is whoever texted us and is not ours to trust; `To` is one of
+  // our own provisioned numbers. A row confirmed by a JOIN that landed on a test handset's number
+  // is marked is_test, and loadActiveSubscribers() then cannot hand it to the Friday send.
+  const markTest = isTestDestination(to);
   const keyword = classifyInboundKeyword(body);
 
   if (!from) {
@@ -155,7 +162,7 @@ async function smsInboundPost(request: Request): Promise<NextResponse> {
   //    route does not send a wrong email, it rewrites someone's consent record.
   const dryRun = !smsSendingEnabled();
 
-  const { reply } = await dispatch(keyword, from, dryRun);
+  const { reply } = await dispatch(keyword, from, dryRun, markTest);
 
   // 6. Always TwiML, always 200 once verified. A transition failure is OUR problem to alert on
   //    (withObservedRoute + the structured result), not something to report to Twilio as a
@@ -228,11 +235,12 @@ interface InboundDispatch {
 async function dispatch(
   keyword: InboundKeyword,
   from: string,
-  dryRun: boolean
+  dryRun: boolean,
+  markTest: boolean
 ): Promise<InboundDispatch> {
   switch (keyword) {
     case 'join':
-      return { result: await confirmAndWelcome(from, dryRun), reply: null };
+      return { result: await confirmAndWelcome(from, dryRun, {}, markTest), reply: null };
     case 'stop': {
       const result = await mirrorCarrierStop(from, { dryRun });
       // ── ADDITIVE, AND DELIBERATELY AFTER ────────────────────────────────────────────────
@@ -410,11 +418,12 @@ export function startReplyFor(outcome: TransitionOutcome): string | null {
 export async function confirmAndWelcome(
   from: string,
   dryRun: boolean,
-  deps: ConfirmAndWelcomeDeps = {}
+  deps: ConfirmAndWelcomeDeps = {},
+  markTest = false
 ): Promise<TransitionResult> {
   const confirm = deps.confirm ?? confirmSubscriber;
   const welcome = deps.welcome ?? sendWelcomeText;
-  const result = await confirm(from, { dryRun });
+  const result = await confirm(from, { dryRun, markTest });
   if (shouldSendWelcome(result)) {
     await welcome(result.subscriberId!, { dryRun });
   }
