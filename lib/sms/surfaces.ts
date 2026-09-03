@@ -115,7 +115,21 @@ export const ACCOUNT_NAV_HIDDEN_PREFIXES = [
  * page (see app/sms/signup/page.tsx and StartForm's legal block), so neither loses a required
  * link by going bare. A future page added to this list needs the same check.
  */
-export const BARE_CHROME_PREFIXES = ['/sms/start', '/sms/signup'] as const;
+/**
+ * ═══ /u WAS ADDED 2026-09-03, AND THE EXCLUSION ABOVE WAS RIGHT UNTIL IT WAS ═══
+ * The comment above says /u/... stays chromed because it is "a place a person manages something,
+ * not a single-conversion page". Jon overruled that for presentation reasons; the reasoning was
+ * sound and is left standing rather than deleted, because it is the argument anyone proposing to
+ * add /search or /activity should still have to answer.
+ *
+ * THE COMPLIANCE CHECK THE COMMENT DEMANDS, ACTUALLY PERFORMED. Going bare removes SiteFooter and
+ * with it the site-wide /privacy and /terms links. app/u/[preferencesToken] has TWO return
+ * branches. The "found" state already rendered its own copies. The NOT-FOUND state did not — it
+ * had only a signup link, and would have been left with no path to either document. Those links
+ * were added to that branch in the same change as this line, not as a follow-up, and a test now
+ * asserts BOTH branches carry them independently of any layout.
+ */
+export const BARE_CHROME_PREFIXES = ['/sms/start', '/sms/signup', '/u'] as const;
 
 /** Should the whole site chrome be suppressed on this path? */
 export function hidesSiteChrome(pathname: string | null | undefined): boolean {

@@ -4,7 +4,7 @@
 // account and offering one invites a data relationship the product deliberately does not need
 // (Jon: "let's emphasize capturing the least amount of data we need to provide value").
 import { describe, expect, it } from 'vitest';
-import { isSmsSurface, hidesAccountNav, SMS_SURFACE_PREFIXES } from '@/lib/sms/surfaces';
+import { isSmsSurface, hidesAccountNav, hidesSiteChrome, SMS_SURFACE_PREFIXES } from '@/lib/sms/surfaces';
 
 describe('isSmsSurface', () => {
   it('matches every anonymous SMS page', () => {
@@ -99,5 +99,54 @@ describe('hidesAccountNav — a DIFFERENT question from isSmsSurface', () => {
   it('isSmsSurface still means what its name says — /activity is NOT an SMS surface', () => {
     expect(isSmsSurface('/activity/abc')).toBe(false);
     expect(hidesAccountNav('/activity/abc')).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// /u GOES BARE (Jon, 2026-09-03) — AND THE COMPLIANCE CHECK THAT HAD TO COME WITH IT.
+//
+// surfaces.ts's own comment requires that any page added to BARE_CHROME_PREFIXES be checked for
+// this: suppressing chrome removes SiteFooter, which is where the site-wide /privacy and /terms
+// links live. app/u/[preferencesToken] has TWO return branches. The "found" state always rendered
+// its own copies. The NOT-FOUND state did not, and adding /u without fixing it would have left a
+// person holding a dead token with no route to either document — on the page this project calls
+// "the CASL unsubscribe path and the PIPEDA access/correction mechanism", i.e. exactly the page
+// someone exercising those rights lands on.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('🔴 /u renders bare, and neither branch loses its legal links', () => {
+  const page = require('node:fs').readFileSync(
+    'app/u/[preferencesToken]/page.tsx',
+    'utf8'
+  ) as string;
+  const code = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  it('the preferences hub suppresses site chrome', () => {
+    expect(hidesSiteChrome('/u/abc123')).toBe(true);
+    expect(hidesSiteChrome('/u')).toBe(true);
+  });
+
+  it('🔴 the NOT-FOUND branch carries /privacy and /terms itself', () => {
+    // The branch that had neither. Sliced explicitly rather than searching the whole file, because
+    // the found branch's links would satisfy a naive whole-file match and hide exactly this gap.
+    const notFound = code.slice(
+      code.indexOf("resolution.outcome !== 'found'"),
+      code.indexOf('const { view } = resolution')
+    );
+    expect(notFound).toContain('href="/privacy"');
+    expect(notFound).toContain('href="/terms"');
+  });
+
+  it('🔴 the FOUND branch still carries them too', () => {
+    const found = code.slice(code.indexOf('const { view } = resolution'));
+    expect(found).toContain('href="/privacy"');
+    expect(found).toContain('href="/terms"');
+  });
+
+  it('does not quietly bare-chrome the browsing surfaces', () => {
+    // surfaces.ts argues /search and /activity stay chromed because they are places a person
+    // browses, not single-conversion pages. Jon overruled that for /u specifically; this pins
+    // that the exception did not widen.
+    expect(hidesSiteChrome('/search')).toBe(false);
+    expect(hidesSiteChrome('/activity/abc')).toBe(false);
   });
 });

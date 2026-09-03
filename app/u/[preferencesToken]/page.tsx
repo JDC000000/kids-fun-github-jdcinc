@@ -127,6 +127,20 @@ export default async function PreferencesPage({
           <p className="kf-prefs__legal">
             <a href="/sms/start">Sign up for weekly picks</a>
           </p>
+          {/* ═══ THIS BRANCH CARRIES ITS OWN /privacy AND /terms, AND MUST ═══
+              Added 2026-09-03, together with adding /u to BARE_CHROME_PREFIXES — not after it.
+              Suppressing site chrome removes SiteFooter, which is where these two links came from
+              on this branch. The "found" state below has always rendered its own copies, so it
+              survives going bare; THIS branch did not, and would have lost its only path to them.
+              That matters here more than on most pages: this file's own header calls it "the CASL
+              unsubscribe path and the PIPEDA access/correction mechanism", so a person who lands
+              on a dead token is exactly the person who may be trying to exercise those rights.
+              Identical markup to the found branch on purpose, so the two cannot drift. */}
+          <p className="kf-prefs__legal">
+            <a href="/privacy">Privacy Policy</a>
+            {' · '}
+            <a href="/terms">Terms of Service</a>
+          </p>
         </div>
       </main>
     );
