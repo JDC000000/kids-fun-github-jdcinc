@@ -670,8 +670,8 @@ export function addressRepeatsVenueName(address: string | null | undefined, venu
 /**
  * Is this age note an INTERNAL MARKER that must never reach a parent?
  *
- * lib/llm/age-fallback.ts stores `age_notes = 'unresolved: <raw>'` for rows awaiting an LLM
- * backfill. At least one live listing has rendered that prefix straight onto the activity page,
+ * lib/llm/age-fallback.ts stores `age_notes = 'unresolved: <raw>'` (and `'audience: <raw>'`) for
+ * rows awaiting an LLM backfill. age-fallback.ts names both prefixes together; so do we. At least one live listing has rendered that prefix straight onto the activity page,
  * under "Who it's for".
  *
  * GUARDED AT THE DISPLAY LAYER, INDEPENDENT OF THE BACKFILL JOB. Fixing the job would clear the
@@ -679,8 +679,12 @@ export function addressRepeatsVenueName(address: string | null | undefined, venu
  * window before the job runs. This is the belt to that suspenders — the page simply never prints
  * a string that begins with the marker, whatever state the pipeline is in.
  */
+export const INTERNAL_AGE_MARKERS = ['unresolved:', 'audience:'] as const;
+
 export function isInternalAgeMarker(note: string | null | undefined): boolean {
-  return typeof note === 'string' && note.trim().toLowerCase().startsWith('unresolved:');
+  if (typeof note !== 'string') return false;
+  const t = note.trim().toLowerCase();
+  return INTERNAL_AGE_MARKERS.some((m) => t.startsWith(m));
 }
 
 export function isAgeNoteRestatement(note: string | null | undefined, unspecified: boolean): boolean {

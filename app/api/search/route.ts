@@ -29,6 +29,7 @@ import { getPostgresRegionHierarchy } from '@/lib/search/postgres-region-hierarc
 import { SearchEngine, type SearchRequest, type SearchResponse } from '@/lib/search/engine';
 import { getPool } from '@/lib/db/client';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
+import { isInternalAgeMarker } from '@/app/preview/_data/format';
 import { resolvePreciseSavedHomeGeocoder } from '@/lib/geo/saved-home-geocoder';
 import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 import type { Geocoder, OriginRequest } from '@/lib/geo/origin';
@@ -151,8 +152,44 @@ function searchFixtures(searchRequest: SearchRequest, preciseGeocoder: Geocoder 
   return response;
 }
 
+/**
+ * ═══ INTERNAL PIPELINE MARKERS NEVER LEAVE THIS ROUTE ═══
+ * 36.8% of live listings carry `age_notes` beginning 'unresolved:' or 'audience:' — markers
+ * lib/llm/age-fallback.ts writes for rows awaiting an LLM backfill. At least 12 of them carry a
+ * full engineering changelog including a git SHA and an internal document slug, and this route
+ * returned all of it to any unauthenticated caller. Both audits measured the bug without
+ * credentials, which is the clearest possible statement of the exposure.
+ *
+ * STRIPPED HERE, AT THE ONE CHOKE POINT. Every mode — fixture, live and precise-geocoder — ends
+ * up in this function, so guarding it covers all three and cannot be bypassed by a new path. The
+ * display-layer guard in ActivityDetail is the second layer, not the only one: the API leaked
+ * this to callers who never render a page at all.
+ *
+ * DROPPED WHOLE RATHER THAN HAVING THE PREFIX STRIPPED. On an ordinary row the residue is the
+ * raw source wording and would be safe — but on the changelog rows the prefix is the only part
+ * that ISN'T internal. Remove "unresolved:" from the worst example and what remains still reads
+ * "…code fix live in 9f95e31, worker release v24". A marked value is one the pipeline wrote, not
+ * one a source did, so the whole value is treated as internal. When the backfill runs, these rows
+ * get real values and their notes return on their own.
+ *
+ * The response is shallow-copied rather than mutated: the engine's listing objects are shared
+ * with its in-memory caches, and editing them in place would poison every later request.
+ */
+function withoutInternalAgeMarkers(response: SearchResponse): SearchResponse {
+  let touched = false;
+  const results = response.results.map((r) => {
+    const notes = (r.listing as { ageNotes?: string | null }).ageNotes;
+    if (!isInternalAgeMarker(notes)) return r;
+    touched = true;
+    return { ...r, listing: { ...r.listing, ageNotes: null } };
+  });
+  return touched ? { ...response, results } : response;
+}
+
 function json(response: SearchResponse, source: string): NextResponse {
-  return NextResponse.json(response, { headers: { 'x-data-source': source } });
+  return NextResponse.json(withoutInternalAgeMarkers(response), {
+    headers: { 'x-data-source': source },
+  });
 }
 
 /** Honest failure for LIVE database mode: a genuine DB outage returns a 5xx (never a

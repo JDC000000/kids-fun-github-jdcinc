@@ -1,3 +1,4 @@
+import { isInternalAgeMarker } from './format';
 import type { ListingRecord } from '@/lib/search/types';
 import type { FacetCounts } from '@/lib/search/facets';
 import { isRegistrationShaped } from '@/lib/search/filters/registration';
@@ -367,7 +368,20 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     // parking inside", "Quiet room next door for meltdowns") — and the panel will render again the
     // day a source gives us one. It is empty now because we have none, which is the honest state.
     parentNotes: [],
-    ...(l.ageNotes ? { ageNotes: l.ageNotes } : {}),
+    // ═══ AN INTERNAL MARKER NEVER LEAVES THE SERVER ═══
+    // 36.8% of live listings carry age_notes beginning 'unresolved:' or 'audience:' — pipeline
+    // markers from lib/llm/age-fallback.ts that were never meant to be read by anyone outside it.
+    // At least 12 of them carry a full engineering changelog INCLUDING A GIT SHA, and /api/search
+    // returned all of it to any unauthenticated caller. That is how both audits measured this
+    // without credentials.
+    //
+    // DROPPED WHOLE, NOT STRIPPED OF ITS PREFIX. Stripping recovers the raw source wording on an
+    // ordinary row — but on the changelog rows the prefix is the ONLY part that is not internal:
+    // remove "unresolved:" from the worst example and what remains is still
+    // "…code fix live in 9f95e31, worker release v24". A marked value is one the PIPELINE wrote,
+    // not one a source did, so the whole value is treated as internal. Once the backfill runs,
+    // these rows get real values and notes return on their own.
+    ...(l.ageNotes && !isInternalAgeMarker(l.ageNotes) ? { ageNotes: l.ageNotes } : {}),
   };
 }
 
