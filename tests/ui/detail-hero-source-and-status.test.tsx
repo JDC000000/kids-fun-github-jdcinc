@@ -70,6 +70,34 @@ describe('C4 — the Status stat is gone, but the status is not', () => {
   });
 });
 
+describe('heading structure — the activity is the subject, the venue is where it happens', () => {
+  // No test asserted the h1 before this change, which is how the venue came to hold it. These
+  // assert the CONTENT of the h1, not merely that one exists: a structural rule that only checks
+  // for the presence of a tag cannot tell you it is wrapped around the wrong words.
+  it('makes the activity name the h1', () => {
+    expect(render()).toContain('<h1 class="kf-detail__title">Parent &amp; Tot Swim</h1>');
+  });
+
+  it('demotes the venue to plain text, and specifically not to a heading', () => {
+    const html = render();
+    expect(html).toContain('<p class="kf-detail__place">Kitsilano Pool</p>');
+    // An h2 would place the venue level with Overview / Source & freshness, implying it heads
+    // a section of the page. It heads nothing — it is an attribute of the h1.
+    expect(html).not.toContain('<h2 class="kf-detail__place"');
+  });
+
+  it('has exactly one h1', () => {
+    expect((render().match(/<h1[\s>]/g) ?? []).length).toBe(1);
+  });
+
+  it('keeps the h1 consistent with the SEO title, which has always been activity-first', () => {
+    // detail-metadata.ts emits `${activityName} — ${venue}`. The document's own heading now
+    // agrees with the title the page has been shipping to search engines all along.
+    const html = render();
+    expect(html.indexOf('Parent &amp; Tot Swim')).toBeLessThan(html.indexOf('Kitsilano Pool'));
+  });
+});
+
 describe('C1 — the source link appears in the hero as well as the action bar', () => {
   it('renders it twice, pointing at the same place', () => {
     const html = render();
@@ -88,9 +116,23 @@ describe('C1 — the source link appears in the hero as well as the action bar',
     expect(render()).toMatch(/class="kf-detail__source"[^>]*rel="noreferrer noopener"|rel="noreferrer noopener"[^>]*class="kf-detail__source"/);
   });
 
+  // REVERSED 2026-09-03 (Jon). These previously asserted the link was HIDDEN for cancelled and
+  // postponed sessions, to match the action bar's disabled button. The ruling is that a parent
+  // whose session was cancelled is the one who most needs the official page — it is the only
+  // place that can say what replaced it. The bar's disabled button speaks to the ACTION; this
+  // link speaks to the SOURCE.
   for (const status of BLOCKED) {
-    it(`${status}: hidden in the hero, because the action bar deliberately refuses one`, () => {
-      expect(render({ statusState: status })).not.toContain('kf-detail__source');
+    it(`${status}: still offered in the hero, because that is where the answer is`, () => {
+      const html = render({ statusState: status });
+      expect(html).toContain('kf-detail__source');
+      expect(html).toContain('https://vancouver.ca/kits');
+    });
+
+    it(`${status}: the action bar still refuses the booking action`, () => {
+      // Scope guard: item 2 was explicitly the hero link ONLY. If a future change drops the
+      // bar's disabled state, a cancelled session gains a live primary CTA — which is a
+      // different and much worse claim than offering the source.
+      expect(render({ statusState: status })).toContain('not available');
     });
   }
 });

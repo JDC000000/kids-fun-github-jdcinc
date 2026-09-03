@@ -77,8 +77,19 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
       </Link>
 
       <div className="kf-detail__hero">
-        <p className="kf-detail__type">{activity.activityName}</p>
-        <h1 className="kf-detail__title">{activity.venue}</h1>
+        {/* ═══ THE ACTIVITY NAME IS THE H1 (Jon, 2026-09-03) ═══
+            The venue held the h1 and the activity name was an eyebrow above it, which had the
+            page announcing itself as being ABOUT a building. The subject is the session; the
+            venue is where it happens. The page already presented itself this way to search
+            engines — detail-metadata.ts has always emitted "{activityName} — {venue}" — so this
+            aligns the document with the title it was already shipping.
+
+            The venue is PLAIN TEXT, not an h2. An h2 would put it at the same level as Overview
+            and Source & freshness, implying it heads a section of the page; it heads nothing,
+            it is an attribute of the h1. Visual order is unchanged — activity name first, venue
+            directly under it — so only the tag and the weight moved, not the reading order. */}
+        <h1 className="kf-detail__title">{activity.activityName}</h1>
+        <p className="kf-detail__place">{activity.venue}</p>
         {/* Was a hand-rolled copy of formatDistance's string, which meant the card and the
             detail page could drift — and did, both stating a distance that had been invented
             when none was measurable. One formatter, one reading, both surfaces. */}
@@ -124,21 +135,25 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             "who actually says this, and how do I reach them" — which is the same question the
             phone number above it answers, so the two belong side by side.
 
-            It is hidden for cancelled/postponed sessions to match the bar, which deliberately
-            shows a DISABLED "not available" button for those. Offering a live link up here while
-            the bar refuses one is the page contradicting itself. Worth a second look: a parent
-            whose session was cancelled arguably wants the official page MOST, so if you'd rather
-            show it when blocked, that is a one-line change — say the word. */}
-        {!isBlocked && (
-          <a
-            className="kf-detail__source"
-            href={sourceHref}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            {sourceLabel}
-          </a>
-        )}
+            SHOWN FOR CANCELLED AND POSTPONED SESSIONS TOO (Jon, 2026-09-03). This was originally
+            gated on `!isBlocked` to match the action bar, which deliberately renders a DISABLED
+            "not available" button for those two statuses, on the reasoning that a live link above
+            a refusal is the page arguing with itself. Jon has ruled the other way, and the reason
+            is the stronger one: a parent whose session was cancelled is the parent who MOST needs
+            the official page, because it is the only place that can tell them what replaced it or
+            when it returns. The bar's disabled button is about the ACTION (you cannot book this);
+            this link is about the SOURCE (here is who says so). Those are different claims, so
+            the two are not in fact contradicting each other.
+
+            The action bar is deliberately untouched — this change is scoped to the hero link. */}
+        <a
+          className="kf-detail__source"
+          href={sourceHref}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          {sourceLabel}
+        </a>
 
         <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
           <FreshnessStamp activity={activity} />
@@ -192,7 +207,7 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
       {/* Overview renders ONLY when the source actually described the activity. The mapper used
           to substitute "{name} at {venue}." whenever descriptionSnippet was empty, which fired on
           113 of 113 sampled listings across all five sources — so this panel was, in practice,
-          always a restatement of the h1 under a heading promising more. */}
+          always a restatement of the h1 and the venue line under a heading promising more. */}
       {activity.descriptionSnippet && (
         <section className="kf-panel">
           <h2 className="kf-panel__title">Overview</h2>

@@ -349,7 +349,8 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     rainyDay: indoorReading === 'indoor',
     dropIn: tags.has('drop_in'),
     // NO MANUFACTURED SNIPPET. This fallback fired on every one of 113 sampled listings, so the
-    // Overview panel was always "{name} at {venue}." — the h1 and the venue line, restated. The
+    // Overview panel was always "{name} at {venue}." — the h1 and the venue beneath it, restated
+    // (as of 2026-09-03 the activity name is the h1 and the venue is the line under it). The
     // panel is now guarded on this being non-empty, so an absent description shows nothing rather
     // than something that looks like source content and is not.
     descriptionSnippet: l.descriptionSnippet,

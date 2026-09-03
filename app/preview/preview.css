@@ -581,27 +581,37 @@
 .kf-detail__hero {
   padding: 4px 16px 12px;
 }
-/* C5 (Jon, 2026-09-03): 12px was too small for the activity name — the thing a parent came
-   here to read — sitting above a 24px venue title. Now 17px: a real jump, still clearly
-   subordinate to the title rather than at parity with it.
-   The tracking came down with the size going up (0.06em → 0.015em). Letter-spacing on caps is
-   a legibility crutch for SMALL type; at 17px it stops helping and starts stretching long
-   names like "PARENT & TOT SWIM - DROP IN" across two lines. Colour deliberately untouched —
-   the muted ink is what keeps it reading as a kicker at this size. */
-.kf-detail__type {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.015em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-}
+/* HERO TYPOGRAPHY — reordered 2026-09-03 when the activity name became the h1.
+   `.kf-detail__type` (17px uppercase muted kicker) is GONE, not renamed. It existed to dress
+   the activity name as an eyebrow above the venue, and the C5 bump that took it 12px → 17px was
+   a step toward the same end this change reaches properly: the activity name now carries the
+   24px title weight because it is now the title. Re-pointing the old kicker class at the venue
+   would have set a proper noun in muted uppercase — the treatment says "label", and a venue
+   name is not one. */
 .kf-detail__title {
   font-size: 24px;
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.02em;
-  margin: 4px 0 2px;
+  margin: 0 0 2px;
 }
+
+/* The venue, demoted out of the h1 slot but NOT out of the hero — it is still the second thing
+   a parent needs ("which of the four centres with this name"). 17px keeps the prominence the
+   C5 change was reaching for, now spent on the subordinate line where it belongs; secondary
+   ink and sentence case keep it a place name rather than a kicker. */
+.kf-detail__place {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--ink-secondary);
+  margin: 0 0 2px;
+}
+
+/* NAMING WART, called out rather than quietly doubled: `.kf-detail__venue` below is the
+   AREA + DISTANCE line ("Kitsilano · 17 min drive · 4.1 km"), not the venue — it predates this
+   change and is referenced elsewhere, so it is left alone rather than renamed in a commit about
+   heading structure. `.kf-detail__place` is the venue name. Worth a follow-up rename. */
 .kf-detail__venue {
   font-size: 14px;
   color: var(--ink-secondary);

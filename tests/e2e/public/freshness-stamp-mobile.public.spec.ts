@@ -68,7 +68,6 @@ function stampMarkup(sourceName: string): string {
 function buildPage(): string {
   const card = (src: string, i: number) => `
     <a class="kf-card" data-ctx="card" data-src="${src}" data-i="${i}" href="#">
-      <div style="width:72px;height:72px;background:var(--surface-subtle);border-radius:10px" aria-hidden="true"></div>
       <div class="kf-card__body">
         <p class="kf-card__type">Storytime</p>
         <h3 class="kf-card__title">Brighouse Branch</h3>
@@ -77,14 +76,17 @@ function buildPage(): string {
         <span class="kf-card__cta">See details →</span>
       </div>
     </a>`;
+  // HAND-WRITTEN COPY OF THE HERO, rendered against the REAL preview.css. It has drifted from
+  // ActivityDetail twice now (the CategoryTile removal, then the h1 swap), and because this file
+  // builds its own HTML the drift cannot fail a test — it just quietly screenshots a layout the
+  // product no longer has. If you change the hero's structure, change it here too.
   const detail = (src: string, i: number) => `
     <div class="kf-detail">
       <div class="kf-detail__hero">
-        <p class="kf-detail__type">Storytime</p>
-        <h1 class="kf-detail__title">Brighouse Branch</h1>
+        <h1 class="kf-detail__title">Storytime</h1>
+        <p class="kf-detail__place">Brighouse Branch</p>
         <p class="kf-detail__venue">Metro Vancouver · 8 min drive · 3.2 km</p>
         <div data-ctx="detail" data-src="${src}" data-i="${i}" style="margin-top:12px;display:flex;gap:12px;align-items:center">
-          <div style="width:64px;height:64px;background:var(--surface-subtle);border-radius:10px;flex:0 0 auto" aria-hidden="true"></div>
           ${stampMarkup(src)}
         </div>
       </div>

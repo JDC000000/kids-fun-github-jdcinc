@@ -658,7 +658,8 @@ export function formatVenueAddress(raw: string | null | undefined): string | nul
  * Is this address line just repeating the venue name shown directly above it?
  *
  * Seen on 2 of 113 sampled listings: a venue literally named "Granville Street" with the address
- * "Granville St, Vancouver, BC" rendered immediately beneath the h1. Compares only the STREET
+ * "Granville St, Vancouver, BC" rendered immediately beneath the venue name (which held the h1
+ * until 2026-09-03 and is now the plain-text line under it). Compares only the STREET
  * TOKEN — the part before the first comma — because that is the only part that can collide with
  * a venue name, and abbreviation-normalises so "Street" and "St" match.
  */
