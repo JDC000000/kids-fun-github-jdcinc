@@ -37,7 +37,7 @@ export const metadata = {
 // omitted entirely rather than rendering a visible unresolved-placeholder artifact.
 // The orchestrator sets this to the real publish date (e.g. '2026-07-20') at
 // merge/deploy — a one-line change.
-const EFFECTIVE_DATE: string | null = '2026-08-26';
+const EFFECTIVE_DATE: string | null = '2026-09-03';
 
 export default function PrivacyPage() {
   return (
@@ -137,8 +137,8 @@ export default function PrivacyPage() {
           <p>
             <strong>We do not</strong> collect your name, precise location/GPS coordinates, payment
             information, or children&apos;s names. We do not use advertising or third-party tracking
-            pixels. If you sign up for our <strong>weekly text messages</strong>, we collect your
-            children&apos;s <strong>approximate ages</strong> — see &quot;Weekly text messages&quot;
+            pixels. If you sign up for our <strong>weekly SMS messages</strong>, we collect your
+            children&apos;s <strong>approximate ages</strong> — see &quot;Weekly SMS messages&quot;
             below. We do not collect children&apos;s ages anywhere else.
           </p>
 
@@ -154,16 +154,16 @@ export default function PrivacyPage() {
             export. They are <strong>automatically deleted after about 13 months.</strong>
           </p>
 
-          <h2>Weekly text messages (SMS)</h2>
+          <h2>Weekly SMS messages</h2>
           <p>
-            The weekly text is a <strong>separate, optional product</strong> from the website. You can
+            The weekly SMS is a <strong>separate, optional product</strong> from the website. You can
             use KIDS FUN without it, and signing up for it is the only way we ever have your phone
             number.
           </p>
           <p>If you sign up, we collect and store:</p>
           <ul>
             <li>
-              <strong>Your mobile number</strong> — to send the weekly text, and as the only way we
+              <strong>Your mobile number</strong> — to send the weekly SMS, and as the only way we
               identify you. There is no account and no password.
             </li>
             <li>
@@ -182,7 +182,7 @@ export default function PrivacyPage() {
             </li>
           </ul>
           <p>
-            We use this information <strong>only to choose the activities in that weekly text</strong>.
+            We use this information <strong>only to choose the activities in that weekly SMS</strong>.
             We do not use it for anything else.
           </p>
           <p>
@@ -204,7 +204,7 @@ export default function PrivacyPage() {
           <h2>How we use your information</h2>
           <p>
             We use your information only to run and improve KIDS FUN: to sign you in, remember your area
-            and saved searches, send the weekly email or weekly text if you asked for it, keep listings
+            and saved searches, send the weekly email or weekly SMS if you asked for it, keep listings
             accurate, and understand overall usage. <strong>We do not sell your personal information,
             and we do not share it for advertising.</strong>
           </p>
@@ -226,7 +226,7 @@ export default function PrivacyPage() {
               (receives your email address and the email content).
             </li>
             <li>
-              <strong>Twilio</strong> — sends and receives the weekly text messages,{' '}
+              <strong>Twilio</strong> — sends and receives the weekly SMS messages,{' '}
               <strong>only if you signed up for them</strong> (receives your mobile number and the
               message content).
             </li>
@@ -257,20 +257,20 @@ export default function PrivacyPage() {
               <strong>6 months</strong>, after which they are automatically deleted.
             </li>
             <li>
-              <strong>Your text-message details</strong> (mobile number, postal code, children&apos;s
+              <strong>Your SMS details</strong> (mobile number, postal code, children&apos;s
               ages, interests): kept while you are subscribed, and{' '}
               <strong>deleted 30 days after you unsubscribe.</strong> If you use the &quot;delete my
               data&quot; control on your preferences page, they are deleted straight away.
             </li>
             <li>
               <strong>A sign-up that is never confirmed:</strong> if you sign up but never reply JOIN to
-              our confirmation text, everything we collected is <strong>deleted after 90 days.</strong>
+              our confirmation SMS, everything we collected is <strong>deleted after 90 days.</strong>
             </li>
           </ul>
           <p>
-            After your text-message details are deleted we keep a <strong>scrambled, one-way code</strong>{' '}
+            After your SMS details are deleted we keep a <strong>scrambled, one-way code</strong>{' '}
             derived from your mobile number — not the number itself, and not reversible — as the record
-            that we were allowed to text you. Canadian anti-spam law requires us to be able to answer a
+            that we were allowed to send you SMS. Canadian anti-spam law requires us to be able to answer a
             complaint about a message we sent.
           </p>
 
@@ -307,7 +307,7 @@ export default function PrivacyPage() {
               email&apos;s unsubscribe link or your Account page).
             </li>
             <li>
-              <strong>If you subscribe to the weekly text</strong>, all four of these live on your{' '}
+              <strong>If you subscribe to the weekly SMS</strong>, all four of these live on your{' '}
               <strong>preferences page</strong> instead — the link in every message. No login. You can
               see everything we store, change your area, children&apos;s ages and interests,
               unsubscribe, or delete everything.
