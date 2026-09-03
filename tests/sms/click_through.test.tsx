@@ -506,8 +506,14 @@ describe('the interstitial the "gone" outcome redirects to', () => {
     // Asserted against the RENDERED page rather than a copy constant, because that is the only
     // form of this check that means anything — see the note in signup_copy.test.ts about an
     // assertion that claimed this and tested an unrelated string instead.
-    expect(html).toContain(`tel:${SUPPORT_PHONE_E164}`);
+    // sms:, not tel:, since 2026-09-03. The link previously SAID "Text" and dialled — Jon's fix
+    // was that the label and the behaviour should agree, so this now pins both together rather
+    // than just the number's presence. A route to support still exists; only its scheme changed.
+    expect(html).toContain(`sms:${SUPPORT_PHONE_E164}`);
     expect(html).toContain(SUPPORT_PHONE_DISPLAY);
+    // 🔴 The label must not drift back to a word the href no longer honours.
+    expect(html).not.toContain(`tel:${SUPPORT_PHONE_E164}`);
+    expect(html).toMatch(/SMS\s*\+?1/);
   });
 
   it('carries NO identifier — not the occurrence, not the subscriber, not the token', () => {

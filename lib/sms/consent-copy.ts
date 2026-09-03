@@ -277,8 +277,27 @@ export const SUPPORT_PHONE_E164 = '+18778357776';
 /** The same number, as a human reads it. */
 export const SUPPORT_PHONE_DISPLAY = '+1 877-835-7776';
 
-/** `tel:` href for the support number, so a phone can dial or text it from a tap. */
+/** `tel:` href for the support number, so a phone can dial it from a tap. */
 export const SUPPORT_PHONE_HREF = `tel:${SUPPORT_PHONE_E164}`;
+
+/**
+ * `sms:` href for the same number, for links whose LABEL invites a message rather than a call.
+ *
+ * ═══ WHY A SECOND CONSTANT AND NOT A CHANGE TO THE ONE ABOVE ═══
+ * SUPPORT_PHONE_HREF has four call sites. Three render the bare number inside a CASL sender-
+ * identification footer (/u, /sms/start, /sms/signup), where a dialable number is the correct
+ * and expected behaviour. Only app/activity-unavailable invites a message. Repointing the shared
+ * constant would silently convert three phone links into message links to fix one.
+ *
+ * NO CONSENT_TEXT_VERSION BUMP: that version records the wording a subscriber AGREES TO. An href
+ * is not wording and appears in no consent sentence — same reasoning that already applies to
+ * SUPPORT_PHONE_HREF sitting in this file un-versioned.
+ *
+ * `sms:+1...` with the E.164 number is the standard form (RFC 5724). On a device with no SMS
+ * handler the link simply does nothing, which is the documented behaviour and deliberately not
+ * worked around.
+ */
+export const SUPPORT_SMS_HREF = `sms:${SUPPORT_PHONE_E164}`;
 
 /**
  * The CASL sender identification (PRD §1.4), Jon-approved 2026-08-26.

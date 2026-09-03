@@ -4,7 +4,7 @@ import {
   ACTIVITY_GONE_HEADING,
   ACTIVITY_GONE_ONWARD,
   SENDER_IDENTITY,
-  SUPPORT_PHONE_HREF,
+  SUPPORT_SMS_HREF,
 } from '@/lib/sms/consent-copy';
 
 // /activity-unavailable — where a tapped weekly link goes when the token verified but the activity
@@ -51,7 +51,10 @@ export default function ActivityUnavailablePage() {
         {/* "Let us know if you have any other questions" needs somewhere to be let known. Same
             support contact as every other surface, from the same constant. */}
         <p className="kf-gone__support">
-          <a href={SUPPORT_PHONE_HREF}>Text {SENDER_IDENTITY.supportPhone}</a>
+          {/* sms:, not tel: — this link SAID "Text" while dialling (Jon, 2026-09-03). The label
+              and the behaviour now agree. SUPPORT_SMS_HREF rather than the shared
+              SUPPORT_PHONE_HREF, which three CASL footers correctly use for a real phone call. */}
+          <a href={SUPPORT_SMS_HREF}>SMS {SENDER_IDENTITY.supportPhone}</a>
         </p>
 
         <p className="kf-gone__onward">
