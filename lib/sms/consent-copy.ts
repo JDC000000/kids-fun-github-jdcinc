@@ -60,7 +60,11 @@
  *                     2026-09-01.
  *   2026-09-01.v5  →  the max-children notice was added to the signup form. Retired
  *                     2026-09-01, when the consent checkbox itself was corrected.
- *   2026-09-01.v6  →  current.
+ *   2026-09-01.v6  →  this file as of commit e85bf68 (the commit immediately before this
+ *                     bump). Retired 2026-09-03.
+ *   2026-09-03.v7  →  current. Jon's product-wide "always SMS, never text" ruling reached
+ *                     two strings inside this version's scope: the consent checkbox and
+ *                     SUPPORT_LINE.
  *
  * ⚠ THIS LIST IS NOT A DATE CUTOFF, and an audit query written as though it were will be wrong.
  * `signup-store.ts` RE-STAMPS `consent_text_version` on resubmit, deliberately — a resubmitting
@@ -73,7 +77,7 @@
  *
  * >>> BUMPING THIS? ADD THE OUTGOING VERSION TO THE LIST ABOVE IN THE SAME COMMIT. <<<
  */
-export const CONSENT_TEXT_VERSION = '2026-09-01.v6';
+export const CONSENT_TEXT_VERSION = '2026-09-03.v7';
 
 /** What the page is, in one line, above the fields. */
 export const FORM_HEADING = 'Get kids’ weekend activities by text';
@@ -130,7 +134,7 @@ export const FORM_INTRO =
  *   4. WHERE to see, change or delete it — the preferences page, named.
  */
 export const CONSENT_CHECKBOX_TEXT =
-  'Yes, text me activities for my kids. I agree KIDS FUN can store my phone number, postal ' +
+  'Yes, send me activities for my kids by SMS. I agree KIDS FUN can store my phone number, postal ' +
   'code and kids’ approximate ages, using them only to choose those activities — never sold ' +
   'or shared with advertisers or anyone else. I can view, change or delete this anytime on my ' +
   'preferences page (linked in every message).';
@@ -305,7 +309,7 @@ export const SENDER_IDENTITY = {
 export const SENDER_IDENTITY_LEAD = 'These messages are sent by:';
 
 /** How to reach a human, stated in the same breath as who is sending. */
-export const SUPPORT_LINE = `Support: ${SUPPORT_PHONE_DISPLAY} (same number texts come from).`;
+export const SUPPORT_LINE = `Support: ${SUPPORT_PHONE_DISPLAY} (same number the SMS comes from).`;
 
 /**
  * The sparse-municipality warning, shown inline BEFORE submit when the typed postal code lands

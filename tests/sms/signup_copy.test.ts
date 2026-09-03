@@ -330,7 +330,11 @@ describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approve
     // rule. This assertion failing was the guard working exactly as intended — a bump has to come
     // here and be justified, which is why it is pinned to a literal rather than read from the
     // constant it is checking.
-    expect(CONSENT_TEXT_VERSION).toBe('2026-09-01.v6');
+    // ⚠ RE-PINNED 2026-09-03 to v7. Jon's product-wide "always SMS, never text" ruling reached
+    // two strings inside this version's scope — CONSENT_CHECKBOX_TEXT and SUPPORT_LINE — and
+    // wording a subscriber agrees to is exactly what this version records. So the bump is
+    // required, not optional, and this assertion failing was again the guard working.
+    expect(CONSENT_TEXT_VERSION).toBe('2026-09-03.v7');
     expect(CONSENT_CHECKBOX_TEXT).not.toContain('texted us before'); // the consent text is untouched
   });
 });
