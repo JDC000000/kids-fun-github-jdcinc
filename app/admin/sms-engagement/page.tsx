@@ -88,7 +88,12 @@ export default async function AdminSmsEngagementPage({
           No real subscribers yet. Nothing to measure — this page fills in as people sign up.
         </p>
       ) : (
-        <table className="adm-table">
+        // `grid`, not `adm-table`. ADM-TABLE IS DEFINED NOWHERE — console-css.ts styles only
+        // `.grid`, which every other admin table uses — so this table shipped completely
+        // unstyled. Same failure as the `.adm-badge` class I caught before shipping on the
+        // subscriber list: a plausible class name that no stylesheet defines looks correct in
+        // the diff and renders as bare markup.
+        <table className="grid">
           <thead>
             <tr>
               <th>Subscriber</th>

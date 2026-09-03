@@ -139,7 +139,13 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             Status stat both read "Confirmed", side by side, saying the same thing twice under
             two different headings. An absent stat is honest; a duplicated one is noise that
             looks like data. */}
-        {bookingTag(activity.booking) && (
+        {/* AND SUPPRESSED WHEN IT MERELY REPEATS STATUS (Operator, 2026-09-03). The guard above
+            handles the empty-tag case; this handles the second cause found while verifying it —
+            a REAL booking value that happens to read identically to the status label, e.g. both
+            "Bookable now". A visitor cannot see provenance, only that the same word appears
+            twice, so the distinction between "defaulted" and "genuinely equal" is invisible to
+            them and irrelevant to the complaint. */}
+        {bookingTag(activity.booking) && bookingTag(activity.booking) !== meta.label && (
           <Stat label="Booking" value={bookingTag(activity.booking)} />
         )}
         <Stat label="Distance" value={formatDistanceValue(activity)} />

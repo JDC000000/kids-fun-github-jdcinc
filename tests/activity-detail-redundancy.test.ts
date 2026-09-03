@@ -72,3 +72,19 @@ describe('🔴 isAgeNoteRestatement suppresses the echo WITHOUT eating real note
     expect(isAgeNoteRestatement('', true)).toBe(false);
   });
 });
+
+describe('🔴 Booking is suppressed when it merely repeats Status', () => {
+  const detail = (require('node:fs').readFileSync('app/preview/_components/ActivityDetail.tsx', 'utf8') as string)
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('guards on BOTH causes — an empty tag and a tag equal to the status label', () => {
+    // Two separate paths produced the same visible duplication. The first was the '' fallback to
+    // meta.label. The second, found while verifying the first, is a REAL booking value that reads
+    // identically to the status ("Bookable now" on both). A fix for either alone leaves the other.
+    expect(detail).toMatch(/bookingTag\(activity\.booking\) &&\s*bookingTag\(activity\.booking\) !== meta\.label/);
+  });
+
+  it('🔴 does not fall back to meta.label as the VALUE — that was the original bug', () => {
+    expect(detail).not.toMatch(/label="Booking" value=\{bookingTag\(activity\.booking\) \|\| meta\.label\}/);
+  });
+});
