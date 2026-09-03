@@ -16,6 +16,7 @@ import {
   practicalFacts,
   statusMeta,
   telHref,
+  isAgeNoteRestatement,
 } from '../_data/format';
 
 // Activity detail / source page body (Screen 3) — everything to decide and to trust,
@@ -103,10 +104,12 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
         </div>
       </div>
 
-      {/* Honesty block — only when relevant, above booking. */}
+      {/* Honesty block — only when relevant, above booking.
+          Icon removed 2026-09-03 (Jon): remove entirely, not shrink or hide on desktop. It was
+          aria-hidden, so it carried nothing for anyone using a screen reader and only decorated a
+          sentence that already says the thing plainly. */}
       {!isBookable && (
         <div className={`kf-honesty ${isBlocked ? 'kf-honesty--cancelled' : ''}`}>
-          <span aria-hidden="true">{meta.icon}</span>
           <span>{meta.copy}</span>
         </div>
       )}
@@ -129,11 +132,16 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
       {/* Who it's for — age-band clarity + honest sibling read from the source's own age range. */}
       <section className="kf-panel">
         <h2 className="kf-panel__title">Who it&apos;s for</h2>
-        <p className="kf-guide__band">
-          {ages.range} · {ages.band}
-        </p>
+        {/* ═══ THE AGE RANGE IS NOT REPEATED HERE (Jon, 2026-09-03) ═══
+            The top-row stat already states it. This panel used to open "{range} · {band}", so a
+            parent read the same span twice within a screen of each other, and on an all-ages
+            listing the source echo below made it three times. Only the BAND stays — it is the
+            one thing this panel adds that the stat does not. */}
+        <p className="kf-guide__band">{ages.band}</p>
         <p className="kf-guide__fit">{ages.siblingFit}</p>
-        {activity.ageNotes && <p className="kf-guide__note">From the source: {activity.ageNotes}</p>}
+        {activity.ageNotes && !isAgeNoteRestatement(activity.ageNotes, ages.unspecified) && (
+          <p className="kf-guide__note">From the source: {activity.ageNotes}</p>
+        )}
       </section>
 
       {/* Good to know — scannable practical qualities pulled straight from real fields. */}

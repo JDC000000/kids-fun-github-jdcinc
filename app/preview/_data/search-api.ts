@@ -317,7 +317,21 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     rainyDay: indoorReading === 'indoor',
     dropIn: tags.has('drop_in'),
     descriptionSnippet: l.descriptionSnippet || `${l.activityName} at ${l.venueName}.`,
-    parentNotes: [`Source: ${hostLabel(sourceUrl)}`, `Status: ${mapStatus(l.statusState).replaceAll('_', ' ')}`],
+    // ═══ NO MANUFACTURED PARENT NOTES (Jon, 2026-09-03) ═══
+    // This used to emit [`Source: …`, `Status: …`] for EVERY listing, so the "Parent notes" panel
+    // was never empty and never once contained a parent note. Both strings restate the "Source &
+    // freshness" panel immediately below it, so every activity page carried the same two facts
+    // twice under a heading promising something else.
+    //
+    // FIXED HERE RATHER THAN FILTERED IN THE UI, deliberately. ActivityDetail already guards
+    // `parentNotes.length > 0`; the panel was only ever showing because this line guaranteed the
+    // array was non-empty. Filtering these two strings back out downstream would have left the
+    // fiction in the data and made every future consumer re-implement the same exclusion.
+    //
+    // The field stays. It is a real feature — the preview fixtures carry genuine tips ("Stroller
+    // parking inside", "Quiet room next door for meltdowns") — and the panel will render again the
+    // day a source gives us one. It is empty now because we have none, which is the honest state.
+    parentNotes: [],
     ...(l.ageNotes ? { ageNotes: l.ageNotes } : {}),
   };
 }

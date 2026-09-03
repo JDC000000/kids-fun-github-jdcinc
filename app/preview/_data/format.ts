@@ -582,6 +582,30 @@ export function confidenceSentence(confidence: ConfidenceLabel): string {
  * for a parent-readable band label, and states the sibling read honestly from the
  * width of the range (how many bands it spans), never more than the data supports.
  */
+/**
+ * Is this source age-note merely restating "we were given no age limit"?
+ *
+ * ═══ WHY IT REQUIRES BOTH CONDITIONS ═══
+ * Jon's ask was to drop the THIRD restatement of the same all-ages fact without dropping notes
+ * that add real information. Suppressing whenever the range is unspecified would have done the
+ * first and broken the second: "under 5 must be accompanied" is a genuinely useful note that
+ * often appears on a listing with no numeric age bound at all.
+ *
+ * So this suppresses only when the range says nothing AND the note is positively recognised as
+ * saying the same nothing. Anything unrecognised renders — the default is to show a parent what
+ * the source said, and an unfamiliar note is exactly the case where that matters most.
+ *
+ * The tokens below are what sources actually emit for this ("all-ages" arrives verbatim as a
+ * machine token, not prose). Add to the list only for strings that carry no information beyond
+ * the absent range.
+ */
+export function isAgeNoteRestatement(note: string | null | undefined, unspecified: boolean): boolean {
+  if (!unspecified || !note) return false;
+  const normalised = note.trim().toLowerCase().replace(/[\s_-]+/g, ' ');
+  return ['all ages', 'all age', 'any age', 'any ages', 'everyone', 'no age limit', 'no age restriction']
+    .includes(normalised);
+}
+
 export interface AgeGuide {
   /** The plain range, e.g. "Ages 5–9" — same source of truth as the stat row. */
   range: string;
