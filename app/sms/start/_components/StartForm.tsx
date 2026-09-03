@@ -282,6 +282,32 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
     );
   }
 
+  // ═══ BLUR-TIME VALIDATION FOR ONE FIELD (user-testing rec #2/#3, 2026-09-03) ═══
+  // The gap the testing round actually found — once the below-fold click artifact is discounted —
+  // is that nothing tells a parent anything until they press the button. Both fields already
+  // produce correct, announced errors on submit; this moves the first signal earlier.
+  //
+  // IT REUSES parseSmsSignupBody RATHER THAN ADDING A REGEX. A second client-side definition of
+  // "valid phone" is a definition that can drift from the server's, and then the field goes green
+  // for something the API rejects. One validator, asked about one field.
+  //
+  // NEVER ON AN EMPTY FIELD. Tabbing through a form you have not filled in yet is not an error,
+  // and marking it as one turns a keyboard pass down the page into a wall of red.
+  //
+  // AND IT DOES NOT BUMP errorSeq, WHICH IS LOAD-BEARING. That counter drives the focus effect
+  // above. Bumping it here would move focus on every blur — dragging the caret back to the first
+  // invalid field as soon as you left any field, which is far worse than the gap being closed.
+  function validateOnBlur(field: 'phone' | 'postal'): void {
+    const raw = field === 'phone' ? phone : postal;
+    if (raw.trim().length === 0) return;
+    const parsed = parseSmsSignupBody(body(), { now: new Date() });
+    const found = parsed.ok ? undefined : parsed.errors.find((e) => e.field === field);
+    setErrors((cur) => {
+      const without = withoutFieldError(cur, field) as SignupFieldError[];
+      return found ? [...without, found] : without;
+    });
+  }
+
   const err = (field: SmsSignupField, id: string) => {
     const found = errorFor(field);
     if (!found) return null;
@@ -306,6 +332,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
         value={postal}
         aria-invalid={errorFor('postal') ? true : undefined}
         aria-describedby={errorFor('postal') ? 'kf-start-postal-err' : undefined}
+        onBlur={() => validateOnBlur('postal')}
         onChange={(e) => {
           setPostal(e.target.value);
           clearError('postal');
@@ -432,6 +459,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
         value={phone}
         aria-invalid={errorFor('phone') ? true : undefined}
         aria-describedby={errorFor('phone') ? 'kf-start-phone-err' : undefined}
+        onBlur={() => validateOnBlur('phone')}
         onChange={(e) => {
           setPhone(e.target.value);
           clearError('phone');

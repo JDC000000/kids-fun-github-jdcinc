@@ -153,3 +153,45 @@ describe('start form: reaching the child cap is explained, not just enforced', (
     expect(code).not.toMatch(/maxChildrenNotice\(\s*\d+\s*\)/);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// BLUR-TIME VALIDATION (user-testing rec #2/#3, built 2026-09-03).
+// The recommendations claimed no client-side validation existed. It did, and it worked — the
+// reports were an artifact of submit clicks that never landed on a below-fold button. The REAL
+// gap, once that was discounted, is that the first signal arrives only at submit.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+describe('start form: fields report themselves on blur, without nagging or grabbing focus', () => {
+  const raw = require('node:fs').readFileSync('app/sms/start/_components/StartForm.tsx', 'utf8') as string;
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const fn = code.slice(code.indexOf('function validateOnBlur'), code.indexOf('const err = ('));
+
+  it('🔴 does NOT bump errorSeq — blur must not move the caret', () => {
+    // errorSeq drives the focus effect. Bumping it here would drag focus to the first invalid
+    // field every time you left ANY field, which is worse than the gap this closes. This is the
+    // one mistake that would still look correct in a screenshot.
+    expect(fn).not.toMatch(/setErrorSeq/);
+  });
+
+  it('🔴 returns early on an empty field — tabbing through is not an error', () => {
+    expect(fn).toMatch(/if \(raw\.trim\(\)\.length === 0\) return;/);
+  });
+
+  it('🔴 reuses parseSmsSignupBody rather than a second regex', () => {
+    // A client-side pattern is a second definition of "valid", and the day it drifts the field
+    // goes green for something the API rejects. One validator, asked about one field.
+    expect(fn).toMatch(/parseSmsSignupBody\(body\(\)/);
+    expect(fn).not.toMatch(/RegExp|\.test\(|\/\^/);
+  });
+
+  it('🔴 touches only the blurred field, never the whole error set', () => {
+    // setErrors(parsed.errors) here would light up consent and children too, the instant you
+    // left the postal box — reporting problems for fields the parent has not reached yet.
+    expect(fn).toMatch(/withoutFieldError\(cur, field\)/);
+    expect(fn).not.toMatch(/setErrors\(parsed\.errors\)/);
+  });
+
+  it('both fields are actually wired to it', () => {
+    expect(code).toMatch(/onBlur=\{\(\) => validateOnBlur\('postal'\)\}/);
+    expect(code).toMatch(/onBlur=\{\(\) => validateOnBlur\('phone'\)\}/);
+  });
+});
