@@ -129,7 +129,7 @@ describe('the unknown-keyword reply (copy)', () => {
   it('⚠ NO LONGER says what KIDS FUN is inline — Jon chose the acknowledgement instead', () => {
     // ═══ THIS REVERSES A V1 TESTING FINDING, DELIBERATELY, AND THE TRADE IS FORCED ═══
     // V1 found this message told a stranger what to TYPE without saying what they would be
-    // signing up FOR, so round 21 added "We text weekly kid activity picks". PRD v3.11's approved
+    // signing up FOR, so round 21 added "We send weekly kid activity picks". PRD v3.11's approved
     // wording does not contain that clause — it spends the room on the acknowledgement instead.
     //
     // BOTH DO NOT FIT: the two clauses together measure 163 septets at the production URL — two
@@ -139,10 +139,10 @@ describe('the unknown-keyword reply (copy)', () => {
     //
     // WHAT SOFTENS IT: the signup link is still present, so a stranger still has somewhere to go
     // to find out what this is — which was the V1 finding's actual concern.
-    expect(EXPECTED_REPLY).not.toContain('We text weekly kid activity picks');
+    expect(EXPECTED_REPLY).not.toContain('We send weekly kid activity picks');
     // The START invite is UNAFFECTED and still carries the product description, so the clause has
     // not disappeared from the product — only from the message that could not afford both.
-    expect(INVITE).toContain('We text weekly kid activity picks');
+    expect(INVITE).toContain('We send weekly kid activity picks');
   });
 
   it('✅ acknowledges that it did not understand — PRD v3.11, restored', () => {
@@ -155,7 +155,7 @@ describe('the unknown-keyword reply (copy)', () => {
     // The earlier decision dropped this one to keep the product clause; v3.11 goes the other way.
     // Either is defensible; having both is not available.
     const withBoth =
-      "KIDS FUN: We text weekly kid activity picks. Sorry, we didn't catch that - reply JOIN to " +
+      "KIDS FUN: We send weekly kid activity picks. Sorry, we didn't catch that - reply JOIN to " +
       'confirm, HELP for info, or STOP to end. Not signed up? https://kidsfun.ca/sms/start';
     expect(estimateSegments(withBoth).segments).toBe(2);
   });
@@ -416,8 +416,11 @@ describe('startReplyFor — the three-way mapping', () => {
     vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfunapp.ca');
     const invite = renderStartSignupInviteMessage('https://kidsfun.ca/sms/start');
     assertGsm7Safe(invite.body);
-    // 126 after the /sms/start retarget, same reasoning as the unknown-keyword pin above.
-    expect(invite.characters).toBe(126);
+    // 133 after the 2026-09-03 "always SMS, never text" rewording (was 126). Recomputed with the
+    // repo's own segment logic against THE URL THIS TEST PASSES — the count is a function of that
+    // string, so a number derived from any other URL would be wrong here while looking right.
+    // Still one segment: 133 of the 160 GSM-7 budget.
+    expect(invite.characters).toBe(133);
     expect(invite.segments).toBe(1);
     const again = renderConfirmRequestMessage(null);
     assertGsm7Safe(again.body);

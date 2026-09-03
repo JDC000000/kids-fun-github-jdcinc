@@ -398,7 +398,7 @@ describe('the web-page strings that look reusable as SMS copy', () => {
     }
     // And this one points at a different message than itself: correct on a web page, where the
     // confirmation text is elsewhere; wrong sent AS that text.
-    expect(PREFS_STATUS_PENDING).toContain('our confirmation text');
+    expect(PREFS_STATUS_PENDING).toContain('our confirmation SMS');
   });
 });
 

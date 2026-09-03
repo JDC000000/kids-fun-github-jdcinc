@@ -456,7 +456,7 @@ export function renderUnknownKeywordMessage(signupUrl: string | null): RenderedM
  */
 export function renderStartSignupInviteMessage(signupUrl: string): RenderedMessage {
   return render(
-    `${BRAND} We text weekly kid activity picks for Metro Vancouver. ` +
+    `${BRAND} We send weekly kid activity picks for Metro Vancouver by SMS. ` +
       `${signupClause(signupUrl)}\n${STOP_LINE}`
   );
 }
@@ -485,7 +485,7 @@ export function renderEmptyWeekMessage(preferencesUrl: string): RenderedMessage 
  */
 export function renderPauseNoticeMessage(preferencesUrl: string): RenderedMessage {
   return render(
-    `${BRAND} We haven't found matches near you for a few weeks, so we've paused your texts. ` +
+    `${BRAND} We haven't found matches near you for a few weeks, so we've paused your SMS updates. ` +
       `Update your area or interests anytime to restart: ${preferencesUrl}\n${STOP_LINE}`
   );
 }

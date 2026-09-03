@@ -29,7 +29,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = {
   title: 'Fun activities for you and your kids, by SMS — KIDS FUN',
   description:
-    'One text a week with things to do with your kids. Postal code, ages, interests, phone number.',
+    'One SMS a week with things to do with your kids. Postal code, ages, interests, phone number.',
 };
 
 export default async function SmsStartPage() {

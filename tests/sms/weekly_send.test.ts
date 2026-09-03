@@ -275,7 +275,7 @@ describe('the pause notice', () => {
   it('is built from the subscriber alone and points at the same hub link', () => {
     withConfig();
     const message = pauseNoticeFor(subscriber());
-    expect(message.body).toContain("we've paused your texts");
+    expect(message.body).toContain("we've paused your SMS updates");
     expect(message.body).toContain('https://kidsfun.example/u/8fJ2q');
     expect(message.body).toContain('Reply STOP to end');
     expect(message.body).toBe(renderPauseNoticeMessage('https://kidsfun.example/u/8fJ2q').body);
@@ -332,7 +332,7 @@ describe('SMS encoding and segment cost', () => {
     // and is 2 segments now. Pinned so the record stays honest about the finding's actual scope.
     const url = 'https://kidsfun.example/u/8fJ2q';
     const verbatim =
-      `KIDS FUN: We haven't found matches near you for a few weeks, so we've paused your texts. ` +
+      `KIDS FUN: We haven't found matches near you for a few weeks, so we've paused your SMS updates. ` +
       `Update your area or interests anytime to restart: ${url}\nReply STOP to end`;
     const before = estimateSegments(verbatim);
     const after = estimateSegments(renderPauseNoticeMessage(url).body);

@@ -471,7 +471,7 @@ export const SUBMITTED_BODY: readonly string[] = [
 // them — the legal sender name, mailing address and support contact are the same facts on both
 // surfaces, and two hand-written copies would eventually be two different addresses.
 
-export const PREFS_HEADING = 'Your KIDS FUN texts';
+export const PREFS_HEADING = 'Your KIDS FUN SMS';
 
 /** Shown when the subscription is live. */
 export const PREFS_STATUS_ACTIVE =
@@ -485,12 +485,12 @@ export const PREFS_STATUS_ACTIVE =
  * told a different story by the link inside it is how a product stops sounding like one thing.
  */
 export const PREFS_STATUS_PAUSED =
-  'Your texts are paused — we haven’t found matches near you in a few weeks. ' +
+  'Your SMS updates are paused — we haven’t found matches near you in a few weeks. ' +
   'Update your area or interests below and save to start them again.';
 
 /** Shown when they are still waiting to reply JOIN. */
 export const PREFS_STATUS_PENDING =
-  'Almost there — reply JOIN to our confirmation text and your kids’ activities will start.';
+  'Almost there — reply JOIN to our confirmation SMS and your kids’ activities will start.';
 
 /** Shown once they have unsubscribed. */
 export const PREFS_STATUS_STOPPED = 'You’ve unsubscribed. We’re not sending you anything.';
@@ -500,16 +500,16 @@ export const PREFS_PURGED =
   'Everything we stored about you has been deleted — there’s nothing left here to change.';
 
 export const PREFS_LAST_WEEK_HEADING = 'Last Friday';
-export const PREFS_LAST_WEEK_NONE = 'We haven’t sent you a text yet.';
+export const PREFS_LAST_WEEK_NONE = 'We haven’t sent you an SMS yet.';
 export const PREFS_LAST_WEEK_EMPTY =
   'Nothing near your kids matched last week, so we said so rather than padding the list.';
 
 export const PREFS_EDIT_HEADING = 'What we use to find your kids’ activities';
 export const PREFS_SAVE = 'Save changes';
 export const PREFS_SAVING = 'Saving…';
-export const PREFS_SAVED = 'Saved — your next Friday text will use these.';
+export const PREFS_SAVED = 'Saved — your next Friday SMS will use these.';
 
-export const PREFS_UNSUBSCRIBE_HEADING = 'Stop the texts';
+export const PREFS_UNSUBSCRIBE_HEADING = 'Stop the SMS';
 
 /**
  * ⚠ THIS SENTENCE PROMISES A JOB THAT, AS OF 2026-09-01, HAS NO IMPLEMENTATION IN THIS REPO.
@@ -552,7 +552,7 @@ export const PREFS_UNSUBSCRIBE_BODY =
   'You’ll stop getting activities straight away. Everything we store about you is deleted ' +
   '30 days later.';
 export const PREFS_UNSUBSCRIBE = 'Unsubscribe';
-export const PREFS_UNSUBSCRIBED = 'Done — you won’t get any more texts from us.';
+export const PREFS_UNSUBSCRIBED = 'Done — you won’t get any more SMS from us.';
 
 export const PREFS_DELETE_HEADING = 'Delete my data';
 
@@ -590,7 +590,7 @@ export const PREFS_UNKNOWN_TOKEN_BODY =
   // on this link: it is handled at the carrier layer by Twilio's Advanced Opt-Out before our
   // webhook runs. Saying so costs one sentence and removes the one situation where a broken link
   // could look like a trapped subscription.
-  'Trying to stop the texts? Replying STOP to any message always works, even if this ' +
+  'Trying to stop the SMS? Replying STOP to any message always works, even if this ' +
   'link doesn’t.';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════

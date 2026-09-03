@@ -77,7 +77,7 @@ export function parseWaitlistBody(
         // this area properly, so the honest answer is to send them to the ordinary signup rather
         // than park them on a list for something they can have now.
         errors.push({
-          message: 'we already cover your area — you can sign up for the weekly text now',
+          message: 'we already cover your area — you can sign up for the weekly SMS now',
           field: 'postal',
         });
         break;
@@ -90,7 +90,7 @@ export function parseWaitlistBody(
   // Express consent, checked LAST so a parent learns about their area before being asked to agree
   // to anything — the same ordering Jon ruled for the signup form.
   if (body.consent !== true) {
-    errors.push({ message: 'please tick the box so we can text you once', field: 'consent' });
+    errors.push({ message: 'please tick the box so we can send you one SMS', field: 'consent' });
   }
 
   if (errors.length > 0 || !phoneNumber) return { ok: false, errors };

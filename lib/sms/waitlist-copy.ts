@@ -40,11 +40,11 @@ export const WAITLIST_CONSENT_TEXT =
 
 /** Scenario A — a covered municipality we serve thinly. Signup stays available. */
 export const WAITLIST_SPARSE_CTA =
-  'Or we can text you once when your area fills out, instead of signing up now.';
+  'Or we can send you one SMS when your area fills out, instead of signing up now.';
 
 /** Scenario B — no covered municipality at all. This is the only thing on offer. */
 export const WAITLIST_OUT_OF_AREA_CTA =
-  'We can text you once when we reach your area — one message, and nothing until then.';
+  'We can send you one SMS when we reach your area — one message, and nothing until then.';
 
 /**
  * SHORTENED 2026-09-03 (design audit) from 'Text me when you reach my area'. At 375px that
@@ -53,7 +53,7 @@ export const WAITLIST_OUT_OF_AREA_CTA =
  * the page.
  *
  * The action alone is enough because the sentence directly above it already states the offer in
- * full ("Or we can text you once when your area fills out"). Repeating it inside the button was
+ * full ("Or we can send you one SMS when your area fills out"). Repeating it inside the button was
  * what made it long.
  *
  * NOT version-bound: WAITLIST_CONSENT_TEXT is the promise a subscriber agrees to and carries its
@@ -62,7 +62,7 @@ export const WAITLIST_OUT_OF_AREA_CTA =
 export const WAITLIST_SUBMIT = 'Notify me';
 export const WAITLIST_DONE_HEADING = 'We have your number';
 export const WAITLIST_DONE_BODY =
-  'We will text you once when we reach your area. Nothing before then, and nothing else after ' +
+  'We will send you one SMS when we reach your area. Nothing before then, and nothing else after ' +
   'unless you choose to sign up.';
 
 /**
