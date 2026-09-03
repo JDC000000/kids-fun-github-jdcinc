@@ -75,6 +75,14 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             detail page could drift — and did, both stating a distance that had been invented
             when none was measurable. One formatter, one reading, both surfaces. */}
         <p className="kf-detail__venue">{formatDistance(activity)}</p>
+        {/* ═══ THE STREET ADDRESS, IN THE HERO (Jon, 2026-09-03) ═══
+            venue.address is populated on ~100% of live occurrences and had never been SELECTed,
+            so it never left the database. It sits under the venue name because "which of the four
+            community centres with this name" is the question a parent asks before anything else
+            on this page — and until now the only answer was a map link that 99.6% of listings did
+            not have. Plain text, not a link: the map link is separate and already has two homes
+            below, and an address that is also a link invites a tap that opens the same thing. */}
+        {activity.address && <p className="kf-detail__address">{activity.address}</p>}
 
         {/* Venue phone — in the hero, above the fold, on purpose (Jon, 2026-08-01: "make
             those phone numbers prominent and easily available"). Renders only when the

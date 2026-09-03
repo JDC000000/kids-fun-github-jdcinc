@@ -1042,3 +1042,12 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* Street address under the venue name (2026-09-03). Deliberately quieter than the venue name and
+   the distance line: it is the answer to "which one is it", not a headline. */
+.kf-detail__address {
+  margin: 2px 0 0;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  color: var(--kf-ink-secondary, #555);
+}

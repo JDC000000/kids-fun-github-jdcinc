@@ -56,6 +56,11 @@ export interface ListingRecord {
   primaryCategoryKey: string; // weight B
   categoryTags: string[]; // weight B (secondary categories + tags)
   venueName: string; // weight C
+  /**
+   * `venue.address` — the street address, present on ~100% of live occurrences in production and
+   * previously never SELECTed, so it never left the database. Null only where the venue has none.
+   */
+  venueAddress: string | null;
   organisation: string | null; // weight C
   descriptionSnippet: string; // weight D
 

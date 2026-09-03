@@ -13,6 +13,7 @@ export function makeListing(partial: Partial<ListingRecord> & { id?: string }): 
     activityName: partial.activityName ?? 'Activity',
     primaryCategoryKey: partial.primaryCategoryKey ?? 'general',
     categoryTags: partial.categoryTags ?? [],
+    venueAddress: partial.venueAddress ?? null,
     venueName: partial.venueName ?? 'Community Centre',
     organisation: partial.organisation ?? null,
     descriptionSnippet: partial.descriptionSnippet ?? '',

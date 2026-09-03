@@ -6,12 +6,30 @@ import { readIndoorOutdoor } from '@/lib/search/indoor';
 import { formatOpenHoursWindow } from './format';
 import type { Activity, BookingType, Category, ConfidenceLabel, CostStatus, StatusState, TimeOfDay } from './types';
 
+/**
+ * A Google Maps search URL for an address. Used only as a FALLBACK — see the call site.
+ *
+ * A SEARCH, NOT A PIN. We have an address string, not coordinates, so this asks Maps to find it
+ * rather than asserting a location we have not verified. A wrong pin looks authoritative; a search
+ * that lands imprecisely visibly is a search.
+ *
+ * The venue name is included because addresses in this catalogue are municipal-format ("130 East
+ * 23rd Street, North Vancouver, V7L 3E2") and the name disambiguates the several civic buildings
+ * that share one. encodeURIComponent, not manual escaping: these strings contain commas, hashes
+ * and the occasional ampersand.
+ */
+export function mapsUrlForAddress(address: string, venueName?: string | null): string {
+  const query = venueName ? `${venueName}, ${address}` : address;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
 export interface ListingRecordDto {
   id: string;
   activityName: string;
   primaryCategoryKey: string;
   categoryTags?: string[];
   venueName: string;
+  venueAddress?: string | null;
   organisation: string | null;
   descriptionSnippet: string;
   suitabilityTags?: string[];
@@ -287,7 +305,20 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     sourceName: hostLabel(sourceUrl),
     sourceUrl,
     ...(l.bookingUrl ? { bookingUrl: l.bookingUrl } : {}),
-    ...(l.locationUrl ? { locationUrl: l.locationUrl } : {}),
+    ...(l.venueAddress ? { address: l.venueAddress } : {}),
+    // ═══ A MAP LINK FOR ALMOST EVERY LISTING, NOT 0.4% OF THEM ═══
+    // Measured in production: of 11,294 live occurrences, 11,293 have a venue address and only 45
+    // carry the source's own location_url. So 11,248 — 99.6% of everything a parent can land on —
+    // had an address sitting in the database and no way to open a map.
+    //
+    // The source's URL WINS when present: it points at the venue's own page or a pinned location,
+    // which is better than a text search we constructed. The derived link is a fallback, never an
+    // override.
+    ...(l.locationUrl
+      ? { locationUrl: l.locationUrl }
+      : l.venueAddress
+        ? { locationUrl: mapsUrlForAddress(l.venueAddress, l.venueName) }
+        : {}),
     ...(l.venuePhone ? { venuePhone: l.venuePhone } : {}),
     // Carried VERBATIM, null included — the same rule `startIso` above and `distanceKm` already
     // follow. `?? new Date().toISOString()` used to sit here, and it is the second half of the

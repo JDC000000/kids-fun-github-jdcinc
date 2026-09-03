@@ -15,6 +15,7 @@ interface ListingRow {
   primary_category_key: string | null;
   tag_keys: string[] | null;
   venue_name: string | null;
+  venue_address: string | null;
   source_name: string | null;
   series_title: string | null;
   source_authority_tier: string | null;
@@ -106,6 +107,7 @@ function listingSelectSql(): string {
        c.key AS primary_category_key,
        COALESCE(array_remove(array_agg(DISTINCT t.key), NULL), '{}') AS tag_keys,
        v.name AS venue_name,
+       v.address AS venue_address,
        s.name AS source_name,
        ser.canonical_title AS series_title,
        s.authority_tier AS source_authority_tier,
@@ -177,7 +179,7 @@ function visibleOccurrenceWhereSql(): string {
 
 function listingGroupBySql(): string {
   return `GROUP BY
-       o.id, o.series_id, o.activity_name, c.key, v.name, s.name, ser.canonical_title, s.authority_tier,
+       o.id, o.series_id, o.activity_name, c.key, v.name, v.address, s.name, ser.canonical_title, s.authority_tier,
        o.description_snippet, o.start_datetime_utc, o.end_datetime_utc, o.open_hours_state,
        o.cost_status, o.cost_min_cad, o.cost_max_cad, o.source_url, o.booking_url,
        o.location_url, o.registration_required, o.status_state, o.confidence_label, o.last_checked_at,
@@ -231,6 +233,7 @@ function rowToListing(row: ListingRow): ListingRecord {
     registrationRequired: row.registration_required,
     sourceUrl: row.source_url,
     bookingUrl: row.booking_url,
+    venueAddress: row.venue_address,
     locationUrl: row.location_url,
   };
 }

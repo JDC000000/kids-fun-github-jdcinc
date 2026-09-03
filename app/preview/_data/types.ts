@@ -147,6 +147,12 @@ export interface Activity {
   /** Optional external detail fallback while live DB detail pages are not built. */
   detailUrl?: string;
   bookingUrl?: string;
+  /** Street address of the venue, when the source gave one. Rendered under the venue name. */
+  address?: string;
+  /**
+   * A map link. Either the source's own `location_url`, or — when it has none but an address
+   * exists — a maps search derived from that address. See `mapsUrlForAddress`.
+   */
   locationUrl?: string;
   /**
    * The venue's own published phone number (`venue.phone`), verbatim as the source renders
