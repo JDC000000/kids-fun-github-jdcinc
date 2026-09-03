@@ -212,7 +212,15 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
     costStatus: 'known',
     costMinCad: 2,
     costMaxCad: 2,
-    statusState: 'full',
+    // WAS 'full'. When `full` became a hidden status (2026-09-03) this listing left the result
+    // set, and two golden scenarios that count on it as an ordinary second swim result began
+    // failing — "family swim near East Van" dropped to one result and golden coverage to 83.3%.
+    // The capacity marking was incidental here: what these scenarios exercise is relevance
+    // (a swim query returns pools, not the Aquarium), not availability. 'confirmed' is coherent
+    // with the row's own official/recently-checked provenance. The exclusion itself is pinned
+    // directly, over synthesized listings, in tests/search/capacity-exclusion.test.ts — a
+    // catalogue fixture is the wrong place to prove a rule that removes rows from the catalogue.
+    statusState: 'confirmed',
     confidenceLabel: 'official',
     lastCheckedAtUtc: '2026-07-09T00:00:00Z',
     ageBandMatches: ['5-9', '10-14', '15+'],

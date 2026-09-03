@@ -18,15 +18,30 @@ export const STATUS_CLASS: Record<StatusState, StatusClass> = {
   schedule_not_published: 'primary',
   inferred_recurring: 'primary',
   seasonal_active: 'primary',
-  waitlist: 'primary',
-  full: 'primary',
+  // ── CAPACITY: EXCLUDED FROM RESULTS ENTIRELY (Jon, 2026-09-03) ──
+  // A session with no spot left is not an answer to "what can I take my kid to". These were
+  // `primary` on the reasoning that each card wears its own status stamp, so "Full" was honest
+  // in a list — but honest and useful are different tests, and a parent scanning results is
+  // being asked to read past rows they cannot act on.
+  //
+  // NO VISIBLE EFFECT TODAY. Neither value has ever been set on a live occurrence (0 of ~22,318
+  // as of this change): no connector detects capacity yet. This is a guard placed BEFORE the
+  // data arrives, so that whichever connector learns to set it cannot ship full sessions into
+  // results as a side effect.
+  //
+  // Set here rather than as a bespoke filter because this table is the single source of truth:
+  // `HIDDEN_STATUSES` is derived from it and applied by the SQL read model, and `isHidden` runs
+  // over the in-memory pipeline, so one edit closes both. The weekly SMS picks are already
+  // stricter — they take only `CONFIRMED_SECTION_STATUSES` — and are unaffected.
+  waitlist: 'hidden',
+  full: 'hidden',
   postponed: 'primary',
   stale: 'primary', // shown but ranked low (§5A.3)
   // Out-of-window seasonal / low-confidence candidates → separate "expected" section only.
   seasonal_preseason: 'expected',
   seasonal_out_of_season: 'expected',
   manual_candidate: 'expected',
-  // Never surface these to parents.
+  // Never surface these to parents. (`full`/`waitlist` are also hidden — see the note above.)
   cancelled: 'hidden',
   suspended: 'hidden',
   needs_review: 'hidden',

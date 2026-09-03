@@ -38,15 +38,20 @@ describe('the domain and the card agree on which statuses are "confirmed"', () =
   });
 
   it('is strictly narrower than the primary result class, which is the whole reason it exists', () => {
-    // `stale`, `full`, `waitlist`, `postponed`, `not_yet_bookable`, `schedule_not_published`,
-    // `inferred_recurring` and `seasonal_active` are all primary — they belong in a LIST, beside
-    // their own status stamp. None of them may be one of three bare cards on the front door.
+    // `stale`, `postponed`, `not_yet_bookable`, `schedule_not_published`, `inferred_recurring`
+    // and `seasonal_active` are all primary — they belong in a LIST, beside their own status
+    // stamp. None of them may be one of three bare cards on the front door.
+    //
+    // `full` and `waitlist` USED TO BE in this set and were named here. They became hidden on
+    // 2026-09-03 (Jon), so they are no longer primary-but-not-confirmed — they are not primary
+    // at all. The gap this test exists to prove is unchanged and still wide.
     const primaryButNotConfirmed = ALL_STATUSES.filter(
       (s) => STATUS_CLASS[s] === 'primary' && !isConfirmedSection({ statusState: s }),
     );
     expect(primaryButNotConfirmed).toContain('stale');
     expect(primaryButNotConfirmed).toContain('postponed');
-    expect(primaryButNotConfirmed).toContain('full');
+    expect(primaryButNotConfirmed).not.toContain('full');
+    expect(primaryButNotConfirmed).not.toContain('waitlist');
     expect(primaryButNotConfirmed.length).toBeGreaterThan(0);
   });
 });
