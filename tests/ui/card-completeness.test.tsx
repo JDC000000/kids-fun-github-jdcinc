@@ -98,8 +98,10 @@ describe('ResultCard completeness (G-T22-4 / KPI #5)', () => {
     for (const fact of requiredFacts(a)) {
       expect(html, `missing required fact: ${fact}`).toContain(fact);
     }
-    // Category illustration tile is present (decorative; category is also in text).
-    expect(html).toContain('kf-tile');
+    // INVERTED 2026-09-03: the CategoryTile was removed catalogue-wide (Jon). It was decorative
+    // and the category is still stated in text, so no fact left the card — this now guards the
+    // removal (including the 72px grid column the glyph used to occupy) rather than its presence.
+    expect(html).not.toContain('kf-tile');
     // A keyboard-focusable link is the card (a11y: each card a focusable region).
     expect(html).toMatch(/<a[\s>]/);
     // The source-authority badge is gone from the tile.

@@ -296,31 +296,38 @@ export function formatCost(
 }
 
 /**
- * The card's one not-a-number distance read — the sibling of COST_UNKNOWN above, and used for
- * the same reason: a missing measurement is stated, never filled in. Reached whenever the search
- * had no origin to measure from (no near-me coordinates, no saved location — the DEFAULT for an
- * anonymous search) or the venue is un-geocoded. Both are true of "unavailable"; naming a cause
- * ("set your location") would be a guess, and would be wrong for the un-geocoded half.
- */
-const DISTANCE_UNKNOWN = 'Distance unavailable';
-
-/**
- * "Trout Lake · 12 min drive · 4.1 km" — geography as a practical travel radius — or
- * "Trout Lake · Distance unavailable" when there is no measured distance to state.
+ * "Trout Lake · 12 min drive · 4.1 km" — geography as a practical travel radius — or bare
+ * "Trout Lake" when there is no measured distance.
  *
- * The AREA is kept in both readings on purpose. It is the one piece of geography we always
- * hold, it is what the line is for once the number is gone, and keeping it means the meta row
- * neither collapses nor changes height between the two states.
+ * ── SUPERSEDES A DOCUMENTED DECISION (Jon, 2026-09-03) ──
+ * This function used to append "· Distance unavailable" to the area, and the comment here
+ * argued for it: a missing measurement should be STATED, never filled in (the rule COST_UNKNOWN
+ * still follows), and a constant-width row does not jump between states. Jon has overruled that
+ * on the reading it produced, which is the part the old reasoning never weighed: the null case
+ * is not an edge, it is the DEFAULT — an anonymous search has no origin to measure from — so
+ * "Metro Vancouver · Distance unavailable" was the line most visitors saw most of the time, and
+ * it spends the row telling them what we do not know instead of the one thing we do.
+ *
+ * The distinction that makes this different from COST_UNKNOWN: an absent cost is a fact about
+ * THE ACTIVITY that a parent has to act on. An absent distance is a fact about OUR SEARCH — we
+ * did not know where they were standing. It is our gap to be quiet about, not theirs to read.
+ *
+ * The area is still always present, so the line never empties; it just stops apologising.
+ * Both the card and the detail hero render this one string — do not fork it to change one.
  */
 export function formatDistance(activity: Pick<Activity, 'area' | 'driveMinutes' | 'distanceKm'>): string {
-  if (activity.distanceKm == null) return `${activity.area} · ${DISTANCE_UNKNOWN}`;
+  if (activity.distanceKm == null) return activity.area;
   const km = activity.distanceKm.toFixed(1);
   return `${activity.area} · ${activity.driveMinutes} min drive · ${km} km`;
 }
 
 /**
- * The bare distance for the detail page's stat row — "4.1 km", or "Unavailable" under the
- * row's own "Distance" label (which is already the noun, so the label is not repeated).
+ * The bare distance for the detail page's stat row — "4.1 km".
+ *
+ * The null arm still returns "Unavailable", but as of 2026-09-03 the detail page no longer
+ * reaches it: ActivityDetail drops the whole Distance stat when distanceKm is null rather than
+ * rendering a stat that says nothing. The arm is kept because the signature admits null and a
+ * silent `undefined` in a future caller would be worse than a word.
  */
 export function formatDistanceValue(activity: Pick<Activity, 'distanceKm'>): string {
   return activity.distanceKm == null ? 'Unavailable' : `${activity.distanceKm.toFixed(1)} km`;

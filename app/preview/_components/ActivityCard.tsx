@@ -12,7 +12,6 @@
 // on the detail page, one tap away behind this card's own CTA.
 
 import Link from 'next/link';
-import { CategoryTile } from './CategoryTile';
 import { FreshnessStamp } from './FreshnessStamp';
 import {
   REGISTRATION_REQUIRED_TAG,
@@ -109,7 +108,6 @@ export function ActivityCard({ activity }: { activity: Activity }) {
   const statusLabelDuplicatedByTag = Boolean(bookingLabel) && bookingLabel === meta.label;
   const body = (
     <>
-      <CategoryTile category={activity.category} />
       <div className="kf-card__body">
         <p className="kf-card__type">{activity.activityName}</p>
         <h3 className="kf-card__title">{activity.venue}</h3>

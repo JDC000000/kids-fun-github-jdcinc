@@ -335,8 +335,12 @@
 
 /* ── Activity card (the atomic unit) ── */
 .kf-card {
+  /* WAS `grid-template-columns: 72px 1fr` — the first column existed solely to hold the
+     CategoryTile, removed catalogue-wide 2026-09-03. Leaving the two-column rule would have
+     squeezed every search result's text into the 72px slot the glyph used to occupy, which is
+     the kind of breakage that only shows on the page and not in a diff. */
   display: grid;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   padding: 12px;
   margin-bottom: 12px;
@@ -577,10 +581,17 @@
 .kf-detail__hero {
   padding: 4px 16px 12px;
 }
+/* C5 (Jon, 2026-09-03): 12px was too small for the activity name — the thing a parent came
+   here to read — sitting above a 24px venue title. Now 17px: a real jump, still clearly
+   subordinate to the title rather than at parity with it.
+   The tracking came down with the size going up (0.06em → 0.015em). Letter-spacing on caps is
+   a legibility crutch for SMALL type; at 17px it stops helping and starts stretching long
+   names like "PARENT & TOT SWIM - DROP IN" across two lines. Colour deliberately untouched —
+   the muted ink is what keeps it reading as a kicker at this size. */
 .kf-detail__type {
-  font-size: 12px;
+  font-size: 17px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.015em;
   text-transform: uppercase;
   color: var(--ink-muted);
 }
@@ -594,6 +605,27 @@
 .kf-detail__venue {
   font-size: 14px;
   color: var(--ink-secondary);
+}
+
+/* The hero's copy of the source/booking link (C1). Styled as a link, NOT as a second primary
+   button: the sticky bar owns the button treatment, and two filled CTAs on one screen compete
+   for the same tap. 44px min target so it stays thumb-legal.
+
+   Selector is `.kf a.kf-detail__source` (0,2,1) for the SAME reason .kf-btn--primary needs it,
+   documented below: `.kf a { color: inherit; text-decoration: none }` is 0,1,1 and beats a bare
+   class, so a plain `.kf-detail__source` rule would have had BOTH its underline and its colour
+   silently stripped — the link would render as ordinary paragraph text.
+   No colour is set on purpose: inheriting body ink is correct in light AND dark mode with no
+   contrast maths, and the underline is what marks it as a link. */
+.kf a.kf-detail__source {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-top: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* Venue phone — in the hero rather than tucked into the provenance panel, because the

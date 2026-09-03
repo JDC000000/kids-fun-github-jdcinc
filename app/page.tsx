@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import './_components/home.css';
 import { Button, Input } from '@/components/ui';
-import { CategoryTile } from './preview/_components/CategoryTile';
 import {
   QUICK_START_FILTERS,
   destinationHref,
@@ -121,7 +120,6 @@ export default function Home() {
                 {CATEGORIES.map((c) => (
                   <li key={c.key}>
                     <Link className="kf-home__tile" href={destinationHref(c)}>
-                      <CategoryTile category={c.glyph} />
                       <span className="kf-home__tile-text">
                         <span className="kf-home__tile-label">{c.label}</span>
                         <span className="kf-home__tile-caption">{c.caption}</span>

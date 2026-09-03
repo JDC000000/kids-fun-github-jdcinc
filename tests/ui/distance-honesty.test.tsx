@@ -70,9 +70,14 @@ const DRIVE_READING = /\d+\s*min drive/;
 describe('no origin — the default anonymous search', () => {
   const noOrigin = mapSearchItemToActivity({ distanceKm: null, listing: listing() });
 
-  it('states "Distance unavailable" on the card instead of a measured-looking number', () => {
+  // ── REWRITTEN 2026-09-03 (Jon overruled the earlier "state the absence" decision) ──
+  // These assertions used to REQUIRE the string "Distance unavailable" on both surfaces. The
+  // reading is now silence: area alone, no apology. What has NOT changed, and is the part that
+  // must never regress, is that an unmeasured distance never becomes a number.
+  it('says nothing at all about distance on the card, rather than stating the absence', () => {
     const html = card(noOrigin);
-    expect(html).toContain('Distance unavailable');
+    expect(html).not.toContain('Distance unavailable');
+    expect(html).not.toContain('Unavailable');
     expect(html).not.toMatch(KM_READING);
     expect(html).not.toMatch(DRIVE_READING);
   });
@@ -81,12 +86,18 @@ describe('no origin — the default anonymous search', () => {
     expect(card(noOrigin)).toContain('Kitsilano');
   });
 
-  it('states it on the detail hero AND in the stat row — the two places that each had their own copy', () => {
+  it('drops the whole Distance stat on the detail page instead of rendering an empty one', () => {
     const html = detail(noOrigin);
-    expect(html).toContain('Distance unavailable'); // hero venue line
-    expect(html).toContain('Unavailable'); // "Distance" stat, whose label is already the noun
+    expect(html).not.toContain('Distance unavailable'); // hero venue line: area only
+    expect(html).not.toContain('Unavailable');
+    // The STAT ITSELF is gone, not merely its value — otherwise a labelled blank remains.
+    expect(html).not.toContain('Distance');
     expect(html).not.toMatch(KM_READING);
     expect(html).not.toMatch(DRIVE_READING);
+  });
+
+  it('still names the area on the detail hero — the line is quieter, not empty', () => {
+    expect(detail(noOrigin)).toContain('Kitsilano');
   });
 });
 
@@ -97,7 +108,7 @@ describe('un-geocoded venue', () => {
     for (const html of [card(noGeo), detail(noGeo)]) {
       expect(html).not.toContain('0.0 km');
       expect(html).not.toContain('4 min drive');
-      expect(html).toContain('Distance unavailable');
+      expect(html).not.toContain('Distance unavailable');
     }
   });
 });

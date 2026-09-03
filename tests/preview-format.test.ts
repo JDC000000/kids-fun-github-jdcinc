@@ -121,10 +121,15 @@ describe('formatDistance', () => {
     );
   });
 
-  it('states that the distance is unavailable rather than printing a number, when none was measured', () => {
-    expect(formatDistance({ area: 'Steveston', driveMinutes: null, distanceKm: null })).toBe(
-      'Steveston · Distance unavailable',
-    );
+  // Was 'Steveston · Distance unavailable'. Jon overruled that reading on 2026-09-03: the null
+  // case is the DEFAULT (an anonymous search has no origin), so the apology was the line most
+  // visitors saw most often. Area alone now — see the note on formatDistance itself.
+  it('returns the bare area, with no separator and no apology, when none was measured', () => {
+    expect(formatDistance({ area: 'Steveston', driveMinutes: null, distanceKm: null })).toBe('Steveston');
+  });
+
+  it('leaves no orphaned separator behind', () => {
+    expect(formatDistance({ area: 'Steveston', driveMinutes: null, distanceKm: null })).not.toContain('·');
   });
 
   it('never renders "0.0 km" or a drive time for an unmeasured distance', () => {
@@ -134,7 +139,7 @@ describe('formatDistance', () => {
     expect(line).not.toContain('0.0');
   });
 
-  it('keeps the area in BOTH readings, so the meta line never collapses', () => {
+  it('keeps the area in BOTH readings, so the meta line never empties', () => {
     expect(formatDistance({ area: 'Trout Lake', driveMinutes: null, distanceKm: null })).toContain('Trout Lake');
   });
 });
@@ -711,7 +716,7 @@ describe('search API mapping', () => {
     const activity = mapSearchItemToActivity({ distanceKm: null, listing });
     expect(activity.distanceKm).toBeNull();
     expect(activity.driveMinutes).toBeNull();
-    expect(formatDistance(activity)).toBe('Kitsilano · Distance unavailable');
+    expect(formatDistance(activity)).toBe('Kitsilano');
   });
 
   it('reports NO distance — not 0 km — for an un-geocoded venue', () => {

@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { CategoryTile } from './CategoryTile';
 import { FreshnessStamp } from './FreshnessStamp';
 import { ReportWrongInfo } from './ReportWrongInfo';
 import type { Activity } from '../_data/types';
@@ -58,6 +57,12 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   const isBookable = activity.status === 'confirmed' || activity.status === 'bookable_open';
   const isBlocked = activity.status === 'cancelled' || activity.status === 'postponed';
   const bookLabel = bookingTag(activity.booking) || 'View booking page';
+  // C1 (Jon, 2026-09-03): the source/booking link now appears in the HERO as well as the sticky
+  // action bar. Href and label are derived ONCE, here, and rendered twice — the same reason
+  // formatDistance is shared by the card and this page: two hand-written copies of a link are
+  // two things that drift, and the one that drifts is the one nobody re-reads.
+  const sourceHref = activity.bookingUrl ?? activity.sourceUrl;
+  const sourceLabel = activity.bookingUrl ? bookLabel : 'View official source';
   const ages = ageGuide(activity.ageMin, activity.ageMax);
   const facts = practicalFacts(activity);
   // Null for the majority of listings (no source family but ActiveNet publishes a facility
@@ -112,8 +117,30 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
           </div>
         )}
 
+        {/* DUPLICATED, not moved (Jon asked for it "near Call the venue"; duplicate-vs-move was
+            left to me). The sticky bar is the thumb-zone do-action and stays visible the whole
+            way down the page; moving the link up here would trade an always-reachable CTA for
+            one that scrolls away. The hero copy answers a different question than the bar does —
+            "who actually says this, and how do I reach them" — which is the same question the
+            phone number above it answers, so the two belong side by side.
+
+            It is hidden for cancelled/postponed sessions to match the bar, which deliberately
+            shows a DISABLED "not available" button for those. Offering a live link up here while
+            the bar refuses one is the page contradicting itself. Worth a second look: a parent
+            whose session was cancelled arguably wants the official page MOST, so if you'd rather
+            show it when blocked, that is a one-line change — say the word. */}
+        {!isBlocked && (
+          <a
+            className="kf-detail__source"
+            href={sourceHref}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            {sourceLabel}
+          </a>
+        )}
+
         <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
-          <CategoryTile category={activity.category} size={64} />
           <FreshnessStamp activity={activity} />
         </div>
       </div>
@@ -148,8 +175,18 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
         {bookingTag(activity.booking) && bookingTag(activity.booking) !== meta.label && (
           <Stat label="Booking" value={bookingTag(activity.booking)} />
         )}
-        <Stat label="Distance" value={formatDistanceValue(activity)} />
-        <Stat label="Status" value={meta.label} />
+        {/* C2: DROPPED, not defaulted, when nothing was measured — the same rule the Booking
+            stat above already follows. It used to read "Unavailable" under a "Distance" label,
+            which spends a stat slot to tell a parent we have nothing. */}
+        {activity.distanceKm != null && (
+          <Stat label="Distance" value={formatDistanceValue(activity)} />
+        )}
+        {/* C4: the Status stat is GONE (Jon, 2026-09-03), unconditionally. For every status that
+            is not bookable, the honesty block above this row already states the same thing in a
+            full sentence with the reason attached; the stat repeated its label two inches lower
+            under a heading that added nothing. For the bookable ones it read "Confirmed", which
+            is what a listing being on the page already means. See the note in the report about
+            the two statuses where this is a genuine loss. */}
       </div>
 
       {/* Overview renders ONLY when the source actually described the activity. The mapper used
@@ -247,11 +284,11 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
         ) : (
           <a
             className="kf-btn kf-btn--primary"
-            href={activity.bookingUrl ?? activity.sourceUrl}
+            href={sourceHref}
             target="_blank"
             rel="noreferrer noopener"
           >
-            {activity.bookingUrl ? bookLabel : 'View official source'}
+            {sourceLabel}
           </a>
         )}
         {activity.locationUrl && (
