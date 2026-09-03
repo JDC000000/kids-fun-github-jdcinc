@@ -58,8 +58,20 @@ import { PreferencesForm } from './_components/PreferencesForm';
 
 export const dynamic = 'force-dynamic';
 
+// ═══ A NEUTRAL TITLE, BECAUSE THIS FILE HAS TWO BRANCHES (copy audit, 2026-09-03) ═══
+// The title was 'Your KIDS FUN texts' unconditionally, at module level. But the not-found branch
+// renders "This link isn't working" — so someone arriving with a dead or mistyped token saw a tab
+// claiming an active subscription they may not have. On the page whose purpose is unsubscribing
+// and data access, telling a stranger they are subscribed is the wrong error to make.
+//
+// A NEUTRAL TITLE RATHER THAN generateMetadata. Resolving the token in metadata would mean a
+// SECOND lookup per request purely to choose a tab title, and would duplicate the resolution the
+// page already performs — two reads that could disagree, for a string. One honest title that is
+// true on both branches is the cheaper correct answer.
+//
+// robots stays exactly as it was: this page must never be indexed. See the block below.
 export const metadata = {
-  title: 'Your KIDS FUN texts',
+  title: 'KIDS FUN',
   robots: { index: false, follow: false, nocache: true },
 };
 

@@ -57,7 +57,7 @@
   font: inherit;
   padding: 0.7rem 0.75rem;
   border: 1px solid var(--kf-hairline);
-  border-radius: var(--kf-r-input, 8px);
+  border-radius: var(--kf-r-control);
   background: var(--kf-surface);
   color: var(--kf-ink);
   /* 16px minimum: anything smaller makes iOS Safari zoom on focus, which on a one-goal form reads
@@ -122,6 +122,10 @@
 .kf-start__consent input {
   margin-top: 0.2rem;
   flex: 0 0 auto;
+  /* Without this the nine interest checkboxes render as stark unstyled white squares in dark
+     mode. Three other pages each set an accent and disagree with each other (leaf, evergreen,
+     none); --kf-leaf matches the two-page majority and the primary action directly above. */
+  accent-color: var(--kf-leaf);
   width: 1.05rem;
   height: 1.05rem;
 }
@@ -141,10 +145,18 @@
   margin-top: var(--kf-space-4);
   padding: 0.85rem 1rem;
   border: 0;
-  border-radius: var(--kf-r-input, 8px);
-  background: var(--kf-anchor);
-  color: var(--kf-anchor-text);
+  border-radius: var(--kf-r-control);
+  /* ═══ THE PRIMARY ACTION USES THE PRIMARY-ACTION ROLE (design audit, 2026-09-03) ═══
+     This was `--kf-anchor`, the LINK colour. It looked plausible in light mode, which is why it
+     survived — but in dark mode --kf-anchor resolves near-black, so the one button this page
+     exists for rendered as a near-invisible dark rectangle on a dark card. Canonical values are
+     components/ui/Button.module.css .primary: --kf-leaf fill, --kf-forest-ink text. */
+  background: var(--kf-leaf);
+  color: var(--kf-forest-ink);
   cursor: pointer;
+}
+.kf-start__submit:hover:not(:disabled) {
+  background: var(--kf-leaf-hover);
 }
 .kf-start__submit:disabled {
   opacity: 0.65;

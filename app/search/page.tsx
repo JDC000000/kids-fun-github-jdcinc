@@ -127,7 +127,7 @@ async function runSearch(state: SearchState, savedOrigin: SavedOrigin | null): P
 
 function sourceNote(body: SearchApiResponse): string {
   if (body.meta.backend === 'database' && !body.meta.fixtureBacked) {
-    return 'Live staging database — approved public sources only.';
+    return 'Live database — approved public sources only.';
   }
   if (body.meta.fallbackReason) {
     return `Fixture fallback — ${body.meta.fallbackReason}.`;

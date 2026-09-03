@@ -17,6 +17,9 @@ import {
   statusMeta,
   telHref,
   isAgeNoteRestatement,
+  isInternalAgeMarker,
+  formatVenueAddress,
+  addressRepeatsVenueName,
 } from '../_data/format';
 
 // Activity detail / source page body (Screen 3) — everything to decide and to trust,
@@ -82,7 +85,10 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             on this page — and until now the only answer was a map link that 99.6% of listings did
             not have. Plain text, not a link: the map link is separate and already has two homes
             below, and an address that is also a link invites a tap that opens the same thing. */}
-        {activity.address && <p className="kf-detail__address">{activity.address}</p>}
+        {activity.address &&
+          !addressRepeatsVenueName(activity.address, activity.venue) && (
+            <p className="kf-detail__address">{formatVenueAddress(activity.address)}</p>
+          )}
 
         {/* Venue phone — in the hero, above the fold, on purpose (Jon, 2026-08-01: "make
             those phone numbers prominent and easily available"). Renders only when the
@@ -127,15 +133,29 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
         <Stat label="Ages" value={formatAges(activity.ageMin, activity.ageMax)} />
         <Stat label="When" value={`${when.day} · ${when.time}`} />
         <Stat label="Cost" value={formatCost(activity)} />
-        <Stat label="Booking" value={bookingTag(activity.booking) || meta.label} />
+        {/* Booking is DROPPED, not defaulted, when the source states no booking type.
+            bookingTag() returns '' for booking type 'none', and the old `|| meta.label` fallback
+            then printed the Status value — so on 100 of 113 sampled listings this stat and the
+            Status stat both read "Confirmed", side by side, saying the same thing twice under
+            two different headings. An absent stat is honest; a duplicated one is noise that
+            looks like data. */}
+        {bookingTag(activity.booking) && (
+          <Stat label="Booking" value={bookingTag(activity.booking)} />
+        )}
         <Stat label="Distance" value={formatDistanceValue(activity)} />
         <Stat label="Status" value={meta.label} />
       </div>
 
-      <section className="kf-panel">
-        <h2 className="kf-panel__title">Overview</h2>
-        <p>{activity.descriptionSnippet}</p>
-      </section>
+      {/* Overview renders ONLY when the source actually described the activity. The mapper used
+          to substitute "{name} at {venue}." whenever descriptionSnippet was empty, which fired on
+          113 of 113 sampled listings across all five sources — so this panel was, in practice,
+          always a restatement of the h1 under a heading promising more. */}
+      {activity.descriptionSnippet && (
+        <section className="kf-panel">
+          <h2 className="kf-panel__title">Overview</h2>
+          <p>{activity.descriptionSnippet}</p>
+        </section>
+      )}
 
       {/* Who it's for — age-band clarity + honest sibling read from the source's own age range. */}
       <section className="kf-panel">
@@ -147,7 +167,9 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             one thing this panel adds that the stat does not. */}
         <p className="kf-guide__band">{ages.band}</p>
         <p className="kf-guide__fit">{ages.siblingFit}</p>
-        {activity.ageNotes && !isAgeNoteRestatement(activity.ageNotes, ages.unspecified) && (
+        {activity.ageNotes &&
+          !isInternalAgeMarker(activity.ageNotes) &&
+          !isAgeNoteRestatement(activity.ageNotes, ages.unspecified) && (
           <p className="kf-guide__note">From the source: {activity.ageNotes}</p>
         )}
       </section>
@@ -184,15 +206,12 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
           Official source: <b>{activity.sourceName}</b> · {meta.label} · {formatChecked(activity.lastCheckedIso)} ·{' '}
           {confidenceSentence(activity.confidence)}
         </p>
+        {/* The "View official source" and "Open in maps" links that used to sit here were
+            DUPLICATES — same hrefs as the action-bar buttons at the foot of the page, different
+            labels, both rendering on every listing. Removed 2026-09-03 (copy audit); the buttons
+            are the canonical affordance. ReportWrongInfo stays: it is the only thing in this row
+            that appears nowhere else. */}
         <div className="kf-linkrow">
-          <a className="kf-link" href={activity.sourceUrl} target="_blank" rel="noreferrer noopener">
-            ↗ View official source
-          </a>
-          {activity.locationUrl && (
-            <a className="kf-link" href={activity.locationUrl} target="_blank" rel="noreferrer noopener">
-              ⌖ Open in maps
-            </a>
-          )}
           <ReportWrongInfo occurrenceId={occurrenceId} />
         </div>
         {/* NOTE (G-VENUE-3, QA F1): a per-venue open-data licence notice used to render

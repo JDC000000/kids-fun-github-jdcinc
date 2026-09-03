@@ -76,8 +76,16 @@ export function AccountNav() {
 
   return (
     <nav className="kf-account" aria-label="Account">
-      <a className="kf-account__link kf-account__link--primary" href="/auth/signin">
-        Sign in with Google
+      {/* The visible label sheds "with Google" below 768px (see site-nav.css). aria-label carries
+          the full wording regardless, so the accessible name never shrinks with the pixels — a
+          screen reader still hears which provider it is. Split into spans rather than swapped by
+          JS so there is one DOM for both widths and nothing to hydrate. */}
+      <a
+        className="kf-account__link kf-account__link--primary"
+        href="/auth/signin"
+        aria-label="Sign in with Google"
+      >
+        Sign in<span className="kf-account__provider"> with Google</span>
       </a>
     </nav>
   );

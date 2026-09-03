@@ -136,7 +136,12 @@ export default async function CoveragePage() {
 }
 
 const COVERAGE_CSS = `
+  /* font-family is set here AS WELL AS on body in design-tokens.css. Belt and suspenders: this
+     page has no other scoping stylesheet, and it is the page that surfaced the missing body rule
+     in the first place — if that rule is ever scoped away, this one keeps the page out of the
+     browser's default serif. */
   .kf-cov { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px;
+            font-family: var(--kf-font-ui);
             color: var(--kf-ink); background: var(--kf-canvas); min-height: 100vh; box-sizing: border-box; }
   .kf-cov__head h1 { font-size: 24px; margin: 0 0 6px; }
   .kf-cov__sub { margin: 0; color: var(--kf-ink-secondary); max-width: 56ch; }

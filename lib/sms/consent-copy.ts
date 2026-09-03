@@ -506,7 +506,7 @@ export const PREFS_LAST_WEEK_EMPTY =
 
 export const PREFS_EDIT_HEADING = 'What we use to find your kids’ activities';
 export const PREFS_SAVE = 'Save changes';
-export const PREFS_SAVING = 'Saving...';
+export const PREFS_SAVING = 'Saving…';
 export const PREFS_SAVED = 'Saved — your next Friday text will use these.';
 
 export const PREFS_UNSUBSCRIBE_HEADING = 'Stop the texts';

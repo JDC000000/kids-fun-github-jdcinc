@@ -136,3 +136,52 @@
     padding: var(--kf-space-2);
   }
 }
+
+/* ═══ THE DISCLOSURE TABLE STACKS ON A PHONE (design audit, 2026-09-03) ═══
+   At 375px the four-column table overflowed the viewport: text clipped mid-word, horizontal
+   scroll, and the "Required?" column — the one a reader most needs — pushed off-screen entirely.
+   This is the page the SMS consent sentence points at, so it is the last place to make someone
+   scroll sideways to read what we collect.
+
+   Each cell carries data-label with its column heading, so a stacked row still says WHICH field
+   it is answering. The header row is hidden rather than removed: it stays in the accessibility
+   tree for anyone navigating the table semantically, and scope="row"/scope="col" are untouched. */
+@media (max-width: 640px) {
+  .kf-privacy__table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .kf-privacy__table,
+  .kf-privacy__table tbody,
+  .kf-privacy__table tr,
+  .kf-privacy__table th,
+  .kf-privacy__table td {
+    display: block;
+    width: auto;
+  }
+  .kf-privacy__table tr {
+    margin: 0 0 var(--kf-space-4);
+    padding-bottom: var(--kf-space-3);
+    border-bottom: 1px solid var(--kf-hairline);
+  }
+  .kf-privacy__table th[scope='row'] {
+    font-size: 1rem;
+    padding-bottom: var(--kf-space-2);
+  }
+  .kf-privacy__table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--kf-ink-secondary);
+    margin-bottom: 2px;
+  }
+  .kf-privacy__table td {
+    padding: var(--kf-space-2) 0 0;
+  }
+}

@@ -347,7 +347,11 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     // for one, which is why it renders as the absence of a badge rather than a warning.
     rainyDay: indoorReading === 'indoor',
     dropIn: tags.has('drop_in'),
-    descriptionSnippet: l.descriptionSnippet || `${l.activityName} at ${l.venueName}.`,
+    // NO MANUFACTURED SNIPPET. This fallback fired on every one of 113 sampled listings, so the
+    // Overview panel was always "{name} at {venue}." — the h1 and the venue line, restated. The
+    // panel is now guarded on this being non-empty, so an absent description shows nothing rather
+    // than something that looks like source content and is not.
+    descriptionSnippet: l.descriptionSnippet,
     // ═══ NO MANUFACTURED PARENT NOTES (Jon, 2026-09-03) ═══
     // This used to emit [`Source: …`, `Status: …`] for EVERY listing, so the "Parent notes" panel
     // was never empty and never once contained a parent note. Both strings restate the "Source &

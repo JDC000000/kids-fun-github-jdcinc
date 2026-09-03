@@ -126,4 +126,25 @@
   .kf-nav .kf-account__who {
     display: none;
   }
+
+  /* ═══ THE SIGN-IN PILL WAS EATING THE NAV (design audit, 2026-09-03) ═══
+     `.kf-account { flex: 0 0 auto }` meant a ~149px fixed-width text pill never shrank, crushing
+     the nav list to ~73px — five of six destinations scrolled off-screen with nothing to signal
+     the strip scrolled at all. Shedding "with Google" returns ~80px to the list. The full wording
+     stays in aria-label, so nothing is lost to a screen reader; only the pixels shrink. */
+  .kf-account__provider {
+    display: none;
+  }
+  .kf-nav .kf-account__link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* And a fade at the right edge, because the list can still overflow on the narrowest phones and
+     a strip that scrolls with no visual affordance reads as a strip that is simply cut off. */
+  .kf-nav__list {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+  }
 }

@@ -27,7 +27,7 @@ import type { CoveredRegionId } from '@/lib/geo/postal-fsa';
 export const dynamic = 'force-dynamic';
 
 export const metadata = {
-  title: 'Fun activities for you and your kids, by text — KIDS FUN',
+  title: 'Fun activities for you and your kids, by SMS — KIDS FUN',
   description:
     'One text a week with things to do with your kids. Postal code, ages, interests, phone number.',
 };

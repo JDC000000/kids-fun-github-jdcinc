@@ -84,6 +84,11 @@ export const ACCOUNT_NAV_HIDDEN_PREFIXES = [
   ...SMS_SURFACE_PREFIXES,
   '/activity/', // the shared detail page a weekly-text short link resolves to (Jon, 2026-08-28)
   '/search', // Jon overrode the "leave it alone" recommendation knowingly — see above
+  // '/preview/' is where the ruling actually bites. Every activity card in the product —
+  // ActivityCard, ResultsMap, the home page's three-things cards — links to /preview/[id], NOT
+  // /activity/[id]. So the no-sign-in-on-an-activity-page ruling was being enforced on a path
+  // almost nobody takes and defeated on the one everybody does (design audit, 2026-09-03).
+  '/preview/',
 ] as const;
 
 /**

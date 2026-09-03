@@ -210,3 +210,14 @@
     --kf-chart-axis: var(--kf-dark-elevated);
   }
 }
+
+/* ═══ A BODY-LEVEL FONT RULE, WHICH THIS FILE DELIBERATELY LACKED (design audit, 2026-09-03) ═══
+   Every page that carries a scoping class set its own font; /coverage-status has none, so it
+   rendered entirely in the browser's default serif. Setting it here closes the whole class of
+   bug rather than the one page that exposed it — the next unscoped page inherits a correct
+   default instead of reintroducing the same report. */
+body {
+  font-family: var(--kf-font-ui);
+  font-feature-settings: var(--kf-font-feature);
+  color: var(--kf-ink);
+}

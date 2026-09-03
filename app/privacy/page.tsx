@@ -86,50 +86,50 @@ export default function PrivacyPage() {
             <tbody>
               <tr>
                 <th scope="row">Your email address</th>
-                <td>When you sign in with Google</td>
-                <td>
+                <td data-label="When">When you sign in with Google</td>
+                <td data-label="Why we need it">
                   To create and secure your account, and — only if you opt in — to send you the weekly
                   activities email
                 </td>
-                <td>Required to have an account (sign-in is via Google)</td>
+                <td data-label="Required?">Required to have an account (sign-in is via Google)</td>
               </tr>
               <tr>
                 <th scope="row">A home postal code</th>
-                <td>Only if you enter it on your Account page</td>
-                <td>
+                <td data-label="When">Only if you enter it on your Account page</td>
+                <td data-label="Why we need it">
                   To remember your area so we can show &quot;near me&quot; results and, if you opt in,
                   tailor your weekly email to your area
                 </td>
-                <td>Optional — you can leave it blank</td>
+                <td data-label="Required?">Optional — you can leave it blank</td>
               </tr>
               <tr>
                 <th scope="row">Email updates preference</th>
-                <td>
+                <td data-label="When">
                   On your Account page (a checkbox, <strong>off by default</strong>)
                 </td>
-                <td>To know whether you want the occasional weekly email about new activities</td>
-                <td>Optional — off unless you turn it on</td>
+                <td data-label="Why we need it">To know whether you want the occasional weekly email about new activities</td>
+                <td data-label="Required?">Optional — off unless you turn it on</td>
               </tr>
               <tr>
                 <th scope="row">Searches you save</th>
-                <td>Only when you click &quot;Save&quot; on a search</td>
-                <td>To let you re-run a search you chose to keep</td>
-                <td>Optional — only what you explicitly save</td>
+                <td data-label="When">Only when you click &quot;Save&quot; on a search</td>
+                <td data-label="Why we need it">To let you re-run a search you chose to keep</td>
+                <td data-label="Required?">Optional — only what you explicitly save</td>
               </tr>
               <tr>
                 <th scope="row">Anonymous usage events</th>
-                <td>As you use the site</td>
-                <td>
+                <td data-label="When">As you use the site</td>
+                <td data-label="Why we need it">
                   To understand which searches and listings are useful and to improve results — see
                   &quot;Anonymous usage data&quot; below
                 </td>
-                <td>Not tied to your identity</td>
+                <td data-label="Required?">Not tied to your identity</td>
               </tr>
               <tr>
                 <th scope="row">Problem reports</th>
-                <td>If you use &quot;Report wrong info&quot; on a listing</td>
-                <td>To let us find and fix inaccurate activity listings</td>
-                <td>Optional — only if you report something</td>
+                <td data-label="When">If you use &quot;Report wrong info&quot; on a listing</td>
+                <td data-label="Why we need it">To let us find and fix inaccurate activity listings</td>
+                <td data-label="Required?">Optional — only if you report something</td>
               </tr>
             </tbody>
           </table>

@@ -46,7 +46,7 @@ function Section({ title, note, items }: { title: string; note?: string; items: 
 
 function sourceNote(body: SearchResponseDto): string {
   if (body.meta.backend === 'database' && !body.meta.fixtureBacked) {
-    return 'Data source: live staging database — approved public sources only.';
+    return 'Data source: live database — approved public sources only.';
   }
   if (body.meta.fallbackReason) {
     return `Data source: fixture fallback — ${body.meta.fallbackReason}.`;
@@ -77,7 +77,7 @@ export function ResultsShell() {
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : String(err));
-        setDataSourceNote('Data source: unavailable — cards could not load.');
+        setDataSourceNote('Data source: unavailable — activities could not load.');
         setActivities([]);
       })
       .finally(() => {
@@ -248,7 +248,7 @@ export function ResultsShell() {
         {loading ? (
           <div className="kf-empty" aria-live="polite">
             <p className="kf-empty__eyebrow">Loading search…</p>
-            <h2 className="kf-empty__title">Getting today’s cards.</h2>
+            <h2 className="kf-empty__title">Getting today’s activities.</h2>
             <p className="kf-empty__copy">This is using /api/search, with live database rows when available.</p>
           </div>
         ) : error ? (

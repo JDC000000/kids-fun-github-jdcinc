@@ -599,6 +599,90 @@ export function confidenceSentence(confidence: ConfidenceLabel): string {
  * machine token, not prose). Add to the list only for strings that carry no information beyond
  * the absent range.
  */
+/**
+ * Tidy a venue address FOR DISPLAY ONLY.
+ *
+ * ═══ DISPLAY ONLY, AND THAT IS LOAD-BEARING ═══
+ * The maps link is built by mapsUrlForAddress() from the RAW address in the mapper, and has a
+ * passing test pinned to that raw form. Normalising the string before it reaches the link would
+ * change the query we hand Google for every listing in the catalogue, to fix a rendering problem.
+ * So this runs at the render site and nowhere else — `Activity.address` stays exactly as the
+ * source gave it.
+ *
+ * Three fixes, all observed live:
+ *   "V7H2M5"            -> "V7H 2M5"      a 6-character postal code with no space
+ *   "British Columbia"  -> "BC"           spelled out on some sources, abbreviated on others
+ *   ", ,"  " ,"         -> ", "           comma runs left by the two rules above
+ *
+ * DELIBERATELY CONSERVATIVE. It does not reorder tokens, insert a province that was never there,
+ * or try to parse the address into fields. An address we cannot confidently tidy is returned
+ * unchanged — a slightly untidy real address beats a neatly formatted wrong one.
+ */
+export function formatVenueAddress(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let out = raw.trim();
+  if (out.length === 0) return null;
+
+  // "British Columbia" -> "BC", including the "B.C." variant, word-boundary matched so a street
+  // called "British Columbia Way" is not mangled mid-name.
+  // The trailing \b in an earlier version could never match: after a full stop there is no word
+  // boundary, so "B.C." at the end of a string was silently left alone. A lookahead for a
+  // separator or end-of-string is what actually expresses "the province token ends here".
+  out = out
+    .replace(/\bBritish\s+Columbia\b/gi, 'BC')
+    .replace(/\bB\.\s?C\.(?=[\s,]|$)/gi, 'BC');
+
+  // A6A6A6 -> A6A 6A6. Anchored to a token boundary so it cannot split something mid-word.
+  out = out.replace(/\b([A-Za-z]\d[A-Za-z])[ ]?(\d[A-Za-z]\d)\b/g, (_m, a, b) =>
+    `${String(a).toUpperCase()} ${String(b).toUpperCase()}`
+  );
+
+  // Collapse the comma runs the substitutions can leave, and normalise spacing around them.
+  out = out
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/(,\s*){2,}/g, ', ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[,\s]+|[,\s]+$/g, '');
+
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * Is this address line just repeating the venue name shown directly above it?
+ *
+ * Seen on 2 of 113 sampled listings: a venue literally named "Granville Street" with the address
+ * "Granville St, Vancouver, BC" rendered immediately beneath the h1. Compares only the STREET
+ * TOKEN — the part before the first comma — because that is the only part that can collide with
+ * a venue name, and abbreviation-normalises so "Street" and "St" match.
+ */
+export function addressRepeatsVenueName(address: string | null | undefined, venueName: string | null | undefined): boolean {
+  if (!address || !venueName) return false;
+  const norm = (v: string) =>
+    v
+      .toLowerCase()
+      .replace(/\b(street|st|avenue|ave|road|rd|drive|dr|boulevard|blvd|way|place|pl)\b\.?/g, '')
+      .replace(/[^a-z0-9]+/g, '')
+      .trim();
+  const street = norm(address.split(',')[0] ?? '');
+  return street.length > 0 && street === norm(venueName);
+}
+
+/**
+ * Is this age note an INTERNAL MARKER that must never reach a parent?
+ *
+ * lib/llm/age-fallback.ts stores `age_notes = 'unresolved: <raw>'` for rows awaiting an LLM
+ * backfill. At least one live listing has rendered that prefix straight onto the activity page,
+ * under "Who it's for".
+ *
+ * GUARDED AT THE DISPLAY LAYER, INDEPENDENT OF THE BACKFILL JOB. Fixing the job would clear the
+ * existing rows; it would not stop the next un-backfilled row from rendering the same way in the
+ * window before the job runs. This is the belt to that suspenders — the page simply never prints
+ * a string that begins with the marker, whatever state the pipeline is in.
+ */
+export function isInternalAgeMarker(note: string | null | undefined): boolean {
+  return typeof note === 'string' && note.trim().toLowerCase().startsWith('unresolved:');
+}
+
 export function isAgeNoteRestatement(note: string | null | undefined, unspecified: boolean): boolean {
   if (!unspecified || !note) return false;
   const normalised = note.trim().toLowerCase().replace(/[\s_-]+/g, ' ');

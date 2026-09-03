@@ -497,7 +497,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
       )}
 
       <button type="submit" className="kf-start__submit" disabled={sending}>
-        {sending ? 'Signing you up…' : 'Start my weekly texts'}
+        {sending ? 'Signing you up…' : 'Start my weekly SMS'}
       </button>
         </>
       )}
