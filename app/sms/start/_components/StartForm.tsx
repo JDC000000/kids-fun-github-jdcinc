@@ -467,11 +467,54 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
       />
       {err('phone', 'kf-start-phone-err')}
 
+      {/* ═══ THE CONSENT SENTENCE IS SHARED, VERBATIM, WITH /sms/signup ═══
+          Not condensed, not reworded, not summarised. The layout around it is simplified; the
+          sentence a parent agrees to is byte-identical to the other form's, which is what lets one
+          CONSENT_TEXT_VERSION stay true for both pages and keeps a consent row unambiguous about
+          which wording it refers to. Rewriting it here would have needed a version bump and a way
+          to tell two wordings apart in the audit trail. */}
+      {!waitlistOnly && (
+        <>
+      <label className="kf-start__consent">
+        <input
+          type="checkbox"
+          name="consent"
+          checked={consent}
+          aria-invalid={errorFor('consent') ? true : undefined}
+          onChange={(e) => {
+            setConsent(e.target.checked);
+            clearError('consent');
+          }}
+        />
+        <span>{CONSENT_CHECKBOX_TEXT}</span>
+      </label>
+      {err('consent', 'kf-start-consent-err')}
+
+      {generalError && (
+        <p className="kf-start__error" role="alert" tabIndex={-1}>
+          {generalError.message}
+        </p>
+      )}
+
+      <button type="submit" className="kf-start__submit" disabled={sending}>
+        {sending ? 'Signing you up…' : 'Start my weekly texts'}
+      </button>
+        </>
+      )}
+
       {/* ═══ THE AREA WAITLIST ═══
           Appears only for the two classifications that have one. For a SPARSE area it sits below a
           full, working signup form — thin is not empty, and Jon's ruling was that the waitlist is an
           alternative there, not a replacement. For OUT OF AREA it is the only thing on the page,
           because there is no ordinary path to offer.
+
+          ⚠ POSITION IS LOAD-BEARING (Jon, 2026-09-03). This block used to render BEFORE the main
+          consent sentence and its submit button, so on a sparse postal a parent scrolling down met
+          the secondary "join the waitlist" button — fully working, clickable — before reaching the
+          primary one, and its copy opens with "Or …", an alternative offered before the thing it is
+          an alternative to. Moving it here is what makes the sentence above literally true: it now
+          sits below a COMPLETE signup form, submit included, rather than below its fields only.
+          Do not move it back up for visual balance; the ordering is the fix.
 
           It reuses the phone and postal already typed rather than asking again: a second copy of
           either would be a second chance to disagree with the first. */}
@@ -512,41 +555,6 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
             {waitlistSending ? 'Saving…' : WAITLIST_SUBMIT}
           </button>
         </div>
-      )}
-
-      {/* ═══ THE CONSENT SENTENCE IS SHARED, VERBATIM, WITH /sms/signup ═══
-          Not condensed, not reworded, not summarised. The layout around it is simplified; the
-          sentence a parent agrees to is byte-identical to the other form's, which is what lets one
-          CONSENT_TEXT_VERSION stay true for both pages and keeps a consent row unambiguous about
-          which wording it refers to. Rewriting it here would have needed a version bump and a way
-          to tell two wordings apart in the audit trail. */}
-      {!waitlistOnly && (
-        <>
-      <label className="kf-start__consent">
-        <input
-          type="checkbox"
-          name="consent"
-          checked={consent}
-          aria-invalid={errorFor('consent') ? true : undefined}
-          onChange={(e) => {
-            setConsent(e.target.checked);
-            clearError('consent');
-          }}
-        />
-        <span>{CONSENT_CHECKBOX_TEXT}</span>
-      </label>
-      {err('consent', 'kf-start-consent-err')}
-
-      {generalError && (
-        <p className="kf-start__error" role="alert" tabIndex={-1}>
-          {generalError.message}
-        </p>
-      )}
-
-      <button type="submit" className="kf-start__submit" disabled={sending}>
-        {sending ? 'Signing you up…' : 'Start my weekly texts'}
-      </button>
-        </>
       )}
 
       {/* CASL/PIPEDA: sender identification and the carrier disclosures. Condensed in PRESENTATION
