@@ -109,7 +109,14 @@ export default async function AdminSmsSubscribersPage({
                   <td>
                     {row.purged ? <span className="adm-hint">purged</span> : row.phoneNumber}
                   </td>
-                  <td>{row.status}</td>
+                  <td>
+                    {row.status}
+                    {/* MARKED, NOT FILTERED (Operator, 2026-09-03). This list is ground truth —
+                        every row that exists, with the test ones labelled. Filtering them would
+                        make the page silently disagree with the database. The engagement METRICS
+                        surface takes the opposite default and excludes them, deliberately. */}
+                    {row.isTest && <span className="adm-hint"> · test handset</span>}
+                  </td>
                   <td>{row.consentMethod}</td>
                   <td>{formatTimestampUtc(row.consentTimestamp)}</td>
                   <td>{formatTimestampUtc(row.confirmedTimestamp)}</td>

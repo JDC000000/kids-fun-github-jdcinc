@@ -13,6 +13,7 @@ function row(over: Partial<SmsSubscriberListRow> = {}): SmsSubscriberListRow {
     shortRef: '1',
     phoneNumber: '+16045550123',
     purged: false,
+  isTest: false,
     status: 'active',
     consentMethod: 'web_form',
     consentTimestamp: '2026-08-01T00:00:00.000Z',

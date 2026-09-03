@@ -30,6 +30,16 @@ export interface SmsSubscriberListRow {
   phoneNumber: string | null;
   /** True when the personal data has been erased by the 30-day post-stop purge. */
   purged: boolean;
+  /**
+   * Confirmed by a JOIN that arrived at a test handset's number (migration 0042).
+   *
+   * SURFACED, NOT FILTERED — Operator's ruling, 2026-09-03. This list is ground truth: an admin
+   * reading it should see every row that exists, with the test ones marked. Filtering them would
+   * make the page disagree with the database and give no signal it was doing so. A METRIC surface
+   * is the opposite case and defaults to EXCLUDING them — see lib/admin/sms-engagement.ts. Two
+   * surfaces, two different right answers, and the difference is deliberate.
+   */
+  isTest: boolean;
   status: string;
   consentMethod: string;
   consentTimestamp: string | null;
@@ -77,6 +87,7 @@ export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
     phone_number: string | null;
     status: string;
     consent_method: string;
+    is_test: boolean;
     consent_timestamp: Date | null;
     confirmed_timestamp: Date | null;
     consecutive_empty_weeks: number;
@@ -87,6 +98,7 @@ export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
       c.id,
       c.short_ref,
       c.phone_number,
+      c.is_test,
       c.status,
       c.consent_method,
       c.consent_timestamp,
@@ -105,6 +117,7 @@ export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
     shortRef: String(r.short_ref),
     phoneNumber: r.phone_number,
     purged: r.phone_number === null,
+    isTest: r.is_test,
     status: r.status,
     consentMethod: r.consent_method,
     consentTimestamp: toIso(r.consent_timestamp),
@@ -180,12 +193,13 @@ export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberD
     phone_number: string | null;
     status: string;
     consent_method: string;
+    is_test: boolean;
     consent_timestamp: Date | null;
     confirmed_timestamp: Date | null;
     consecutive_empty_weeks: number;
     stopped_at: Date | null;
   }>(
-    `SELECT id, short_ref, phone_number, status, consent_method, consent_timestamp,
+    `SELECT id, short_ref, phone_number, is_test, status, consent_method, consent_timestamp,
             confirmed_timestamp, consecutive_empty_weeks, stopped_at
        FROM sms_consent WHERE id = $1::uuid`,
     [id]
@@ -227,6 +241,7 @@ export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberD
       shortRef: String(row.short_ref),
       phoneNumber: row.phone_number,
       purged: row.phone_number === null,
+      isTest: row.is_test,
       status: row.status,
       consentMethod: row.consent_method,
       consentTimestamp: toIso(row.consent_timestamp),
