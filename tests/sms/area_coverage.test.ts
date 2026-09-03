@@ -78,7 +78,11 @@ describe('waitlist consent is a separate promise from the weekly picks', () => {
     // Jon ruled out a confirmation SMS, so this sentence IS the entire consent record — there is no
     // second act to lean on.
     expect(WAITLIST_CONSENT_TEXT).toMatch(/phone number/i);
-    expect(WAITLIST_CONSENT_TEXT).toMatch(/once/i);
+    // "ONE MESSAGE", however it is phrased. This matched the literal word "once" until the
+    // 2026-09-03 rewording made the opener "Send me one SMS…", at which point the promise still
+    // said exactly the same thing and the assertion no longer did. The property is singularity,
+    // not the adverb — so it now accepts either phrasing rather than pinning one of them.
+    expect(WAITLIST_CONSENT_TEXT).toMatch(/\bonce\b|\bone (SMS|message)\b/i);
     expect(WAITLIST_CONSENT_TEXT).toMatch(/not a signup for the weekly/i);
   });
 });

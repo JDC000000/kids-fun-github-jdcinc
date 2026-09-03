@@ -20,11 +20,14 @@
  * Same discipline as consent-copy.ts's block: an entry per version, naming the commit whose state
  * of this file IS that version, so a stamped row can always be resolved back to what it agreed to.
  *
- *   2026-08-31.v1  →  current (first issue).
+ *   2026-08-31.v1  →  this file as of commit 4d286d3 (the commit immediately before this
+ *                     bump). First issue. Retired 2026-09-03.
+ *   2026-09-03.v2  →  current. Jon's product-wide "always SMS, never text" ruling; the
+ *                     promise names the channel twice and both moved.
  *
  * >>> BUMPING THIS? ADD THE OUTGOING VERSION TO THE LIST ABOVE IN THE SAME COMMIT. <<<
  */
-export const WAITLIST_CONSENT_VERSION = '2026-08-31.v1';
+export const WAITLIST_CONSENT_VERSION = '2026-09-03.v2';
 
 /**
  * The opt-in a parent ticks. Express consent, unchecked by default, single-purpose.
@@ -34,8 +37,8 @@ export const WAITLIST_CONSENT_VERSION = '2026-08-31.v1';
  * a CASL reviewer would ask: what we store, what we will send, and that nothing else follows.
  */
 export const WAITLIST_CONSENT_TEXT =
-  'Text me once if KIDS FUN reaches my area. I agree that KIDS FUN can store my phone number and ' +
-  'my area to send that one message. This is not a signup for the weekly texts, and I will get ' +
+  'Send me one SMS if KIDS FUN reaches my area. I agree that KIDS FUN can store my phone number and ' +
+  'my area to send that one message. This is not a signup for the weekly SMS, and I will get ' +
   'nothing else unless I choose to sign up.';
 
 /** Scenario A — a covered municipality we serve thinly. Signup stays available. */
