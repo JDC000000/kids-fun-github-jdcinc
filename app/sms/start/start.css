@@ -240,6 +240,12 @@
   background: transparent;
   color: var(--kf-anchor);
   border: 1px solid var(--kf-anchor);
+  /* Reads as secondary rather than merely un-filled: lighter weight and slightly tighter padding
+     than the primary above it. Combined with the shortened label this removes the 49% height
+     difference that made the fallback action the largest control on the page. */
+  font-weight: 600;
+  padding: 0.7rem 1rem;
+  font-size: 0.9375rem;
 }
 
 /* Collapsed legal block (Jon, 2026-09-02). Native <details> — no JS, works with scripting off.

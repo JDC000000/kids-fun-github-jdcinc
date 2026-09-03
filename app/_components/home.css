@@ -44,7 +44,12 @@
 /* ── Main column ── */
 .kf-home__main {
   flex: 1;
-  padding: 8px 16px 4px;
+  /* Bottom was 4px. The closing trust sentence sat almost against the viewport edge while every
+     other gap on this page is 22px, so it read as clipped rather than as the end of the page.
+     22px is this file's own large step — see .kf-home__section. Deliberately NOT --kf-space-*:
+     this stylesheet uses raw px throughout (4/6/8/12/14/16/22) and a single tokenised value here
+     would be the only one, which is how a scale quietly ends up with two competing definitions. */
+  padding: 8px 16px 22px;
 }
 .kf-home__section {
   margin-top: 22px;
@@ -189,7 +194,9 @@
  * Small print by design: it is a pointer to something checkable, not a banner asserting
  * we are trustworthy. The link carries the emphasis because the link is the point. */
 .kf-home__evidence {
-  margin: 4px 0 0;
+  /* 4px from the chip above it — the sentence read as attached to the chip rather than as the
+     page's closing line. Same 22px step as everything else here. */
+  margin: 22px 0 0;
   font-size: 13px;
   line-height: 1.5;
   color: var(--ink-secondary);

@@ -232,3 +232,19 @@
 .kf-prefs__identity-support a {
   color: var(--kf-anchor);
 }
+
+/* The recovery action on a dead-token page (design audit, 2026-09-03). Previously shared
+   .kf-prefs__legal with the terms line beneath it, so the only thing a stranded visitor can
+   usefully do looked exactly like fine print. Sized and spaced to read as the action it is,
+   with real separation from the legal line rather than the 4px it inherited. */
+.kf-prefs__recover {
+  margin: var(--kf-space-4) 0 var(--kf-space-5);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+.kf-prefs__recover a {
+  color: var(--kf-anchor);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

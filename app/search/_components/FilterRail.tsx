@@ -350,7 +350,14 @@ export function FilterRail({ state, savedLocation, plan }: FilterRailProps) {
           href={hrefFor(state, { includeRegistration: true })}
           active={state.includeRegistration}
         >
-          Include registration courses
+          {/* "Include registration courses" was 27 characters against 11-20 for every sibling
+              label, and one pixel wider than the rail's content box — which is what put a
+              permanent horizontal scrollbar on the desktop sidebar. Shortened rather than
+              widening the rail, since the label was the outlier, not the container.
+              "registration" is kept and "courses" dropped, not the reverse: this chip toggles
+              `includeRegistration`, so registration is the word carrying the meaning, and a
+              course requires registration by definition. */}
+          Include registration
         </Chip>
       </Group>
     ),

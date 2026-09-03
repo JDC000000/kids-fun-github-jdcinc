@@ -46,7 +46,20 @@ export const WAITLIST_SPARSE_CTA =
 export const WAITLIST_OUT_OF_AREA_CTA =
   'We can text you once when we reach your area — one message, and nothing until then.';
 
-export const WAITLIST_SUBMIT = 'Text me when you reach my area';
+/**
+ * SHORTENED 2026-09-03 (design audit) from 'Text me when you reach my area'. At 375px that
+ * wrapped to two lines, making this SECONDARY button 49% TALLER than the primary submit beside
+ * it — the visual hierarchy read backwards, with the fallback action the most prominent thing on
+ * the page.
+ *
+ * The action alone is enough because the sentence directly above it already states the offer in
+ * full ("Or we can text you once when your area fills out"). Repeating it inside the button was
+ * what made it long.
+ *
+ * NOT version-bound: WAITLIST_CONSENT_TEXT is the promise a subscriber agrees to and carries its
+ * own version; this is a button label and moves freely.
+ */
+export const WAITLIST_SUBMIT = 'Notify me';
 export const WAITLIST_DONE_HEADING = 'We have your number';
 export const WAITLIST_DONE_BODY =
   'We will text you once when we reach your area. Nothing before then, and nothing else after ' +

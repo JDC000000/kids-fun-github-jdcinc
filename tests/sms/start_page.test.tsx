@@ -5,6 +5,7 @@
 // default" is a claim about the first paint specifically, and it is the thing a compliance reviewer
 // looks at hardest.
 import { describe, expect, it } from 'vitest';
+import { WAITLIST_SUBMIT } from '@/lib/sms/waitlist-copy';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   StartForm,
@@ -213,7 +214,11 @@ describe('the area waitlist is offered only when there is an area problem', () =
 
   it('🔴 shows NO waitlist panel before a postal code is typed', () => {
     expect(html).not.toContain('name="waitlistConsent"');
-    expect(text).not.toContain('Text me when you reach my area');
+    // Pinned to the CONSTANT, not to a copy of its text. The literal was left behind when the
+    // label was shortened on 2026-09-03, at which point this line asserted the absence of a
+    // string that existed nowhere in the codebase — a check that could no longer fail whatever
+    // the page rendered.
+    expect(text).not.toContain(WAITLIST_SUBMIT);
   });
 
   it('shows the ordinary signup in full, since nothing says otherwise yet', () => {

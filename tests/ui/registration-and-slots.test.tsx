@@ -86,20 +86,25 @@ describe('the filter control says what it does', () => {
   };
   const isActive = (html: string, label: string) => chipTag(html, label).includes('aria-current="true"');
 
+  // The chip label was shortened from "Include registration courses" on 2026-09-03: it was one
+  // pixel wider than the desktop rail's content box, which put a permanent horizontal scrollbar
+  // on the sidebar. "courses" was dropped rather than "registration" because the GROUP is already
+  // headed "Courses", so the word was repeating its own heading — and "Drop-in only" /
+  // "Include registration" is the cleaner opposition.
   it('shows the exclusion on the page instead of leaving it invisible', () => {
     const html = render(DEFAULT_STATE);
     expect(html).toContain('>Courses<');
     expect(html).toContain('>Drop-in only<');
-    expect(html).toContain('>Include registration courses<');
+    expect(html).toContain('>Include registration<');
   });
 
   it('checkmarks "Drop-in only" by default and follows the state', () => {
     const off = render(DEFAULT_STATE);
     expect(isActive(off, 'Drop-in only')).toBe(true);
-    expect(isActive(off, 'Include registration courses')).toBe(false);
+    expect(isActive(off, 'Include registration')).toBe(false);
 
     const on = render(st({ includeRegistration: true }));
-    expect(isActive(on, 'Include registration courses')).toBe(true);
+    expect(isActive(on, 'Include registration')).toBe(true);
     expect(isActive(on, 'Drop-in only')).toBe(false);
   });
 });

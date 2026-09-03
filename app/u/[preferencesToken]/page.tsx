@@ -136,7 +136,11 @@ export default async function PreferencesPage({
         <div className="kf-prefs__panel">
           <h1 className="kf-prefs__heading">{PREFS_UNKNOWN_TOKEN_HEADING}</h1>
           <p className="kf-prefs__intro">{PREFS_UNKNOWN_TOKEN_BODY}</p>
-          <p className="kf-prefs__legal">
+          {/* THE RECOVERY LINK IS NOT FINE PRINT. It shared kf-prefs__legal with the legal line
+              below, so the one useful action on a dead-token page rendered at 13px muted grey,
+              visually identical to the terms footer. Someone whose link stopped working is
+              exactly the person who needs this to look like a way forward. */}
+          <p className="kf-prefs__recover">
             <a href="/sms/start">Sign up for weekly picks</a>
           </p>
           {/* ═══ THIS BRANCH CARRIES ITS OWN /privacy AND /terms, AND MUST ═══
