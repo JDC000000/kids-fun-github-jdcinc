@@ -6,7 +6,10 @@ import './terms.css';
 // REVIEWED BY A LAWYER AND IS NOT SIGNED OFF BY ANYONE. It was written to give the
 // product terms to point at during beta, not because a reviewed instrument existed.
 //
-// >>> DO NOT DELETE THE VISIBLE "Draft terms — pending legal review" NOTICE. <<<
+// >>> DO NOT DELETE THE VISIBLE DRAFT NOTICE (the .kf-terms__notice block). <<<
+// Its WORDING changed on 2026-09-03 (Jon: replace the first paragraph). This line used to
+// name the old title verbatim, which would have made it a pointer to a string that no
+// longer exists — so it names the block, not the copy.
 // It renders in <main> on purpose. Merging this branch publishes the page to
 // production (the Vercel project auto-deploys production on every push to main), so
 // a real parent reading a real live page is the person who could rely on unreviewed
@@ -62,13 +65,27 @@ export default function TermsPage() {
 
         <main className="kf-terms__prose">
           <div className="kf-terms__notice" role="note">
-            <p className="kf-terms__notice-title">Draft terms — pending legal review</p>
+            {/* WORDING REPLACED 2026-09-03 ON JON'S INSTRUCTION. Only the title and this first
+                paragraph changed; the scope paragraph below is untouched and must stay — see the
+                QA F-3 note in this file's header for why the two are "keep both or neither".
+
+                WHAT THE NEW WORDING DROPS, recorded so nobody later reads it as drift: the old
+                text said these terms "have not yet been reviewed by a lawyer". The replacement
+                does not say that. It still discloses that the terms are a provisional draft, that
+                they may change, that a reader should not rely on them for a decision, and that
+                they should ask us instead — which is the substance the header comment calls "the
+                whole reason publishing this draft is acceptable at all". The explicit
+                no-lawyer-review statement is the one thing gone, and that was the point of the
+                instruction rather than a side effect of it.
+
+                "draft" is retained deliberately: the scope paragraph below and the Privacy
+                section further down both say "this draft status", and those references need an
+                antecedent in this paragraph to resolve against. */}
+            <p className="kf-terms__notice-title">These terms may change</p>
             <p className="kf-terms__notice-body">
-              These terms are a provisional draft. We have published them so that KIDS FUN has terms
-              in place while the service is in beta, but they have not yet been reviewed by a lawyer
-              and we expect them to change — so please do not treat this wording as final. If
-              something here matters to a decision you are making, ask us rather than relying on it,
-              and check back: we will update this page once the reviewed version is ready.
+              These terms are a provisional draft while KIDS FUN is in beta, and may change as the
+              product evolves. If something here matters to a decision you&apos;re making, ask us
+              rather than relying on it, and check back for updates.
             </p>
             <p className="kf-terms__notice-body kf-terms__notice-scope">
               This draft status applies to <strong>these Terms only</strong>. Our Privacy Policy is a
