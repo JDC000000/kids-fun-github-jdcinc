@@ -42,6 +42,7 @@ import {
   WAITLIST_SUBMIT,
 } from '@/lib/sms/waitlist-copy';
 import { LEGAL_FOOTER_SUMMARY, OUT_OF_AREA_NOTICE, maxChildrenNotice } from '@/lib/sms/consent-copy';
+import { parseWaitlistBody } from '@/lib/sms/waitlist-validate';
 import type { CoveredRegionId } from '@/lib/geo/postal-fsa';
 
 interface SignupFieldError {
@@ -189,6 +190,17 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
   async function submitWaitlist() {
     if (waitlistSending) return;
     setWaitlistError(null);
+    /* ═══ VALIDATE BEFORE POSTING, LIKE THE MAIN FORM ALREADY DOES ═══
+       This path had no client-side check at all, so an invalid phone produced up to FOUR message
+       blocks — two of them the same sentence twice: the blur validation had already flagged the
+       field, and the server then returned its own error for the same problem on top. The main
+       form has always parsed first and returned before any fetch; this now does the same, using
+       the validator the API itself runs so the two cannot disagree about what is valid. */
+    const parsed = parseWaitlistBody({ phone, postal, consent: waitlistConsent }, sparseRegionIds);
+    if (!parsed.ok) {
+      setWaitlistError(parsed.errors[0]?.message ?? 'Please check the details above.');
+      return;
+    }
     setWaitlistSending(true);
     try {
       const res = await fetch('/api/sms/waitlist', {
@@ -338,7 +350,15 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
           clearError('postal');
         }}
       />
-      {err('postal', 'kf-start-postal-err')}
+      {/* ═══ THE OUT-OF-AREA SENTENCE IS PRINTED ONCE, NOT TWICE (functional QA, 2026-09-03) ═══
+          signup-validate.ts pushes OUT_OF_AREA_NOTICE as the POSTAL FIELD'S OWN error message, and
+          the waitlist block below renders the same constant whenever waitlistOnly is true — so an
+          out-of-area postal produced the identical paragraph twice, a few centimetres apart.
+          Suppressed here rather than there because the waitlist block is the one that also offers
+          the action; a notice with a way forward beats the same words with none. Every OTHER
+          postal error (malformed, blank) still renders here, because waitlistOnly is false for
+          those — this hides one message in one state, not the field's error slot. */}
+      {!waitlistOnly && err('postal', 'kf-start-postal-err')}
       {sparseNotice && (
         <p className="kf-start__notice" role="note">
           {sparseNotice.copy}

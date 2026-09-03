@@ -105,7 +105,11 @@ export async function getSmsEngagement(
         subscriber_id,
         count(*)                                              AS sends,
         count(*) FILTER (WHERE delivery_status = 'delivered')  AS delivered,
-        count(*) FILTER (WHERE outcome <> 'sent'
+        -- outcome <> sent counted SUCCESSES as failures: 'empty' is a delivered empty-week
+        -- text and 'paused' is a delivered pause notice — both real, both successful, both
+        -- permitted by the CHECK constraint alongside 'sent'. Only 'failed' and
+        -- 'stopped_via_carrier' are actual failures.
+        count(*) FILTER (WHERE outcome IN ('failed', 'stopped_via_carrier')
                             OR delivery_status IN ('failed', 'undelivered')) AS failed,
         -- picks_snapshot is Array<{occurrence_id, rank}> | null; a null snapshot is an
         -- empty-week send, which offered nothing rather than offering an unknown amount.
@@ -113,6 +117,14 @@ export async function getSmsEngagement(
         min(created_at)                                       AS first_send_at,
         max(created_at)                                       AS last_send_at
       FROM sms_send_log
+      -- ═══ ONLY ACTUAL WEEKLY TRAFFIC COUNTS AS A "SEND" ═══
+      -- confirm_request and welcome are signup-flow messages, not weekly picks. Counting them
+      -- made the dashboard read "5 subscribers · 10 sends · 0 picks offered · 0 taps" after five
+      -- test signups and before a single Friday run — which reads as "we sent ten texts and got
+      -- nothing back" when in fact no weekly text had been sent at all. Values verified against
+      -- the sms_send_log CHECK constraint, which permits exactly:
+      --   confirm_request, welcome, weekly, empty_week, pause_notice
+      WHERE send_type IN ('weekly', 'empty_week', 'pause_notice')
       GROUP BY subscriber_id
     ),
     taps AS (
