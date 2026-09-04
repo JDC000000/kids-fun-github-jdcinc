@@ -160,7 +160,49 @@ describe('every surface renders the one shared list', () => {
       SEARCH_SHORTCUTS.free.href,
     ];
     // '/' is the wordmark link, which is not a destination.
-    expect(hrefsIn(navHtml).filter((h) => h !== '/')).toEqual(expected);
+    expect(hrefsIn(navHtml).filter((h) => h !== '/')).toEqual([...expected, ...expected]);
+  });
+
+  // ═══ SiteNav EMITS THE LIST TWICE, AND THAT IS THE POINT OF THIS TEST ═══
+  // Below 768px the inline row is replaced by a compact <details> menu, because six pills
+  // need ~456px and a 390px phone can only show ~200px of them — four destinations were
+  // simply off the end. The row and the menu are BOTH in the HTML; site-nav.css displays
+  // exactly one of them per breakpoint, so a visitor and a screen reader still see one copy.
+  //
+  // The assertion above therefore expects the list twice, which on its own would be a weaker
+  // test than the one it replaced: `[...expected, ...expected]` also matches a nav that
+  // rendered the row twice and no menu. So each container is checked SEPARATELY here, which
+  // is strictly stronger than the single flat comparison ever was — it pins the order, the
+  // encoding AND the retired-exclusion independently on both surfaces, which is the same
+  // drift this file exists to catch, now applied within one component instead of between two.
+  describe('the wide row and the compact menu cannot drift apart', () => {
+    /** Contents of a specific <ul> in the rendered nav. The two lists are siblings, never
+     *  nested, so a non-greedy slice to the next </ul> is exact. */
+    const listNamed = (cls: string): string => {
+      const m = navHtml.match(new RegExp(`<ul class="${cls}">(.*?)</ul>`, 's'));
+      if (!m) throw new Error(`SiteNav no longer renders <ul class="${cls}">`);
+      return m[1];
+    };
+    const expected = [
+      SEARCH_SHORTCUTS.onNow.href,
+      ...live.map(destinationHref),
+      SEARCH_SHORTCUTS.free.href,
+    ];
+
+    it('the ≥768px inline row carries the whole list, in order', () => {
+      expect(hrefsIn(listNamed('kf-nav__list'))).toEqual(expected);
+    });
+
+    it('the <768px compact menu carries the whole list, in the same order', () => {
+      expect(hrefsIn(listNamed('kf-nav__menu'))).toEqual(expected);
+    });
+
+    it('the menu opens without JavaScript — a native <details>/<summary>, not a button', () => {
+      // The bar is server-rendered and works with scripting off (SiteNav's own header note).
+      // A JS-toggled menu would quietly make six destinations unreachable in that mode.
+      expect(navHtml).toMatch(/<details[^>]*class="kf-nav__more"/);
+      expect(navHtml).toMatch(/<summary class="kf-nav__more-toggle"/);
+    });
   });
 
   it('the home tile grid renders exactly the live categories, in the same order', () => {

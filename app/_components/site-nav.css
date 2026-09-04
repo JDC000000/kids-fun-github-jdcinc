@@ -13,6 +13,15 @@
   background: var(--kf-warm-paper);
   border-bottom: 1px solid var(--kf-neutral-200);
   font-family: var(--kf-font-ui);
+  /* Containing block for the compact menu's panel (see .kf-nav__menu).
+     ⚠ `position` WITHOUT `z-index`, deliberately — DO NOT ADD ONE HERE.
+     A z-index on this header would make it a stacking context and lift the WHOLE bar above
+     the page, and this bar is not sticky: /search's `.kf-sbar` and /preview's `.kf-sticky`
+     (both `position: sticky; top: 0; z-index: 20`) pin to the top and slide UNDER this
+     header while the first ~69px is still scrolling past. They have always painted over it,
+     and must go on doing so. `position: relative` with `z-index: auto` creates no stacking
+     context, so those bars still win — only the panel is elevated, and it elevates itself. */
+  position: relative;
 }
 
 .kf-nav__inner {
@@ -48,9 +57,12 @@
   color: var(--kf-forest-ink);
 }
 
-/* ── Destinations. Scrolls rather than wraps on a phone: a wrapping nav would push the
-   whole page down, and this bar's height budget is the thing paying for results above
-   the fold. The scrollbar is hidden (it is a thumb-swipe affordance, not a control). ── */
+/* ── Destinations, ≥768px. Scrolls rather than wraps if a future label pushes the row past
+   the container: a wrapping nav would push the whole page down, and this bar's height budget
+   is the thing paying for results above the fold. The scrollbar is hidden (it is a
+   thumb-swipe affordance, not a control).
+   BELOW 768px THIS ROW IS NOT RENDERED AT ALL — see .kf-nav__more at the foot of this file.
+   Scrolling was the phone strategy until it was measured: 200px of a 456px row at 390px. ── */
 .kf-nav__primary {
   flex: 1 1 auto;
   min-width: 0;
@@ -116,7 +128,114 @@
   min-height: 0;
 }
 
-/* A phone has no room for a session email beside six destinations; the account controls
+/* ── The compact menu (<768px only; .kf-nav__more is display:none above that). ──────────
+   Native <details>, so it opens with no JavaScript. The panel is absolutely positioned, so
+   a CLOSED menu adds NO height to the bar and an OPEN one overlays the page instead of
+   pushing it down — measured at 68.4px in both states, which is exactly what the bar
+   already was. That is what lets this replace the scrolling strip without spending any of
+   the above-the-fold budget the strip was chosen to protect. */
+.kf-nav__more {
+  display: none;
+  flex: 0 0 auto;
+}
+
+.kf-nav__more-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* 44px is the WCAG 2.2 target-size floor, matching the one .kf-account__link already
+     takes below 768px. It costs the bar no height: that same sign-in target had already
+     set the measured mobile bar to 68.4px before this control existed. */
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 9999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--kf-evergreen);
+  cursor: pointer;
+  /* Both spellings: `display: inline-flex` above already suppresses the marker in Blink, but
+     Safari needs the pseudo-element and Firefox honours list-style on the summary box. */
+  list-style: none;
+}
+
+.kf-nav__more-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.kf-nav__more-icon {
+  flex: 0 0 auto;
+}
+
+/* Open state reads as pressed, so the control says which of its two states it is in with
+   more than the panel's presence (the panel can be scrolled past on a short viewport). */
+.kf-nav__more[open] > .kf-nav__more-toggle {
+  background: var(--kf-white);
+  box-shadow: inset 0 0 0 1px var(--kf-neutral-300);
+}
+
+/* ═══ display IS SET EXPLICITLY IN BOTH STATES, ON PURPOSE ═══
+   A closed <details> hides its non-summary children through the UA stylesheet, and the exact
+   mechanism differs by engine and by version (a `display: none` slot in older Blink/WebKit,
+   `content-visibility: hidden` on `::details-content` in newer Chrome). Any `display` value
+   set unconditionally on this panel OVERRIDES the older mechanism — which is not theoretical:
+   the first cut of this file said `display: flex` here and the panel rendered permanently,
+   open or closed, at every mobile width. Stating both states explicitly means the panel's
+   visibility depends only on rules in THIS file, in every engine. */
+.kf-nav__menu {
+  display: none;
+}
+
+.kf-nav__more[open] > .kf-nav__menu {
+  /* Positioned against .kf-nav (the bar), NOT against the "Menu" control. Anchoring it to
+     the control put a 222px panel at x=103 — 5px past the right edge of a 320px phone. Held
+     to the bar's own 12px gutters it is exactly as wide as the content column at every
+     width, so it cannot overflow, and it reads as a sheet under the bar rather than a
+     tooltip hanging off a button. */
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 12px;
+  right: 12px;
+  /* 50 clears the in-page sticky bars (20 / 25) so the open panel is never painted under the
+     search or filter bar, and stays below the mobile filter sheet's scrim (55) and the sheet
+     itself (60): that sheet is a modal, and a nav menu must not float on top of a modal. */
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--kf-white);
+  border: 1px solid var(--kf-neutral-200);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(16, 35, 22, 0.16);
+}
+
+/* Full-width rows with a real tap target, rather than the bar's compact pills: this is a
+   list to read down, not a strip to squeeze along. */
+.kf-nav__menu .kf-nav__link {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.kf-nav__menu .kf-nav__link:hover {
+  background: var(--kf-warm-paper);
+}
+
+/* The bar's current-page rule is an inset underline, which reads as a stray line on a
+   stacked list; the panel states it as a left rule instead. Still weight + a non-colour
+   cue, so D10 / WCAG 1.4.1 holds exactly as it does in the row. */
+.kf-nav__menu .kf-nav__link[aria-current='page'] {
+  box-shadow: inset 3px 0 0 var(--kf-park-moss);
+}
+
+/* A phone has no room for a session email beside the destinations; the account controls
    themselves stay, so signing in/out is never more than the same one tap it was. */
 @media (max-width: 767px) {
   .kf-nav__inner {
@@ -141,10 +260,23 @@
     align-items: center;
   }
 
-  /* And a fade at the right edge, because the list can still overflow on the narrowest phones and
-     a strip that scrolls with no visual affordance reads as a strip that is simply cut off. */
+  /* ═══ THE STRIP IS GONE BELOW 768px — MEASURED, NOT TUNED ═══
+     What used to be here was a right-edge fade mask over a horizontally scrolling row, added
+     because "the list can still overflow on the narrowest phones". It did not overflow a
+     little. Measured at 390px with the real stylesheet: 200px of a 456px row was visible —
+     "Storytime" cut mid-word, and "Indoor play", "Classes" and "Free" entirely off the end.
+     The mask was also invisible in practice: it faded warm paper to transparent ON warm
+     paper, so the only cue that four destinations existed was text appearing to stop.
+
+     A fade cannot fix this, and neither can scroll-snap: six pills need ~456px and a 390px
+     phone has ~200px to give once the wordmark and the account control are paid for. The
+     row is replaced below 768px by .kf-nav__more, which shows every destination at once.
+     tests/ui/site-nav-mobile.test.tsx pins the arithmetic so this cannot regress quietly. */
   .kf-nav__list {
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
-    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+    display: none;
+  }
+
+  .kf-nav__more {
+    display: block;
   }
 }
