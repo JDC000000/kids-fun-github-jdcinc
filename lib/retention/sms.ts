@@ -7,13 +7,23 @@
 // job explicitly ("out of scope for this migration") and that deferral was never closed while
 // consumer-facing copy went live promising the behaviour.
 //
-// TWO OPERATIONS, AND THEY ARE GENUINELY DIFFERENT SHAPES (0034 header, lines 49-59):
+// TWO OPERATIONS, ONE SHAPE — AND THE SECOND ONE CHANGED ON 2026-09-04:
 //
-//   30-day post-stop   an UPDATE that nulls four personal columns and KEEPS the row, because
+//   30-day post-stop   an UPDATE that nulls the personal columns and KEEPS the row, because
 //                      sms_send_log's CASL audit trail must keep pointing at a subscription
 //                      that demonstrably existed.
-//   90-day unconfirmed a real row DELETE, because a signup that never confirmed produced no
-//                      commercial message and so has no audit trail to preserve.
+//   90-day unconfirmed the SAME null-and-keep UPDATE. It used to be a real row DELETE. See
+//                      purgeUnconfirmedSignups below for why that changed and what it costs.
+//
+// ⚠ THREE OTHER FILES STILL DESCRIBE THE OLD SHAPE AND ARE NOW WRONG. This module's own files
+// were the agreed scope of that change, so the prose elsewhere was deliberately left alone
+// rather than edited across workstreams — which means it is stale, not right:
+//   • lib/retention/sms-config.ts, SMS_PENDING_RETENTION_DAYS  — "the row is DELETED outright"
+//   • supabase/migrations/0034_sms_consent.sql, header          — "IS a row delete"
+//   • supabase/migrations/0039_sms_retention_schedule.sql       — "the 90-day DELETE"
+// They are comments on applied/committed files, so correcting them is a follow-up edit, not a
+// rewrite of history. Flagged here because "every artifact agrees with every other artifact and
+// none of them agrees with production" is the exact failure 0039 was written to correct.
 //
 // WHY NOT lib/db/retention-purge.ts. That module handles ONE shape: tables with a
 // `retained_until` column, purged by DELETE (PURGEABLE_TABLES = analytics_event,
@@ -85,6 +95,9 @@ function cutoffFor(now: Date, days: number): string {
  * achieving nothing. It also means `matched` on a dry run reports rows that would ACTUALLY
  * change, not rows that merely match the age condition.
  *
+ * DOES NOT CLEAR preferences_token, and that is not an oversight — see purgeUnconfirmedSignups,
+ * which does. PRD §1.3 enumerates four columns for this rule and this rule honours exactly them.
+ *
  * Uses idx_sms_consent_stopped_at (0034). Throws on a real DB error — a maintenance job should
  * surface failures so the queue retries and eventually dead-letters, rather than recording a
  * silent success.
@@ -136,13 +149,46 @@ export async function purgeStoppedSubscriberData(
 }
 
 /**
- * 90-DAY NEVER-CONFIRMED PURGE. Deletes pending signups that never replied JOIN.
+ * 90-DAY NEVER-CONFIRMED PURGE. Erases the personal columns of pending signups that never
+ * replied JOIN, and KEEPS the row.
  *
- * A real DELETE, and the FK design is what makes it safe: sms_send_log and sms_click_event
- * reference sms_consent with ON DELETE SET NULL (0035/0036), so any log rows survive with a
- * null subscriber_id rather than being cascaded away. That is the same mechanism
- * /admin/sms-subscribers/[id] relies on — its phone_hash fallback exists precisely because a
- * send record can outlive the consent row it pointed at.
+ * ═══ THIS WAS A DELETE UNTIL 2026-09-04 ═══
+ * 0034 designed it as a row delete and gave a real reason: a signup that never confirmed
+ * produced no commercial message, so there is no CASL trail to preserve. The FK design made it
+ * safe rather than destructive — sms_send_log and sms_click_event reference sms_consent with
+ * ON DELETE SET NULL (0035/0036), so log rows survive with a null subscriber_id instead of
+ * being cascaded away.
+ *
+ * What that reasoning did not weigh is what the null costs. `subscriber_id` IS the link between
+ * a send row and the subscription it belonged to, and nulling it is not a partial loss — after
+ * the delete there is no way to tell which surviving log rows came from which deleted signup.
+ * The 2026-09-04 audit ran into exactly that wall from the other side: 13 log rows with a null
+ * subscriber_id, and no way to say what they had been attached to. Keeping the row keeps the
+ * link, at the price of one all-NULL row per never-confirmed signup — a row that holds an id,
+ * some timestamps and a status, and nothing about a person.
+ *
+ * Note what this does NOT fix, so nobody reads it as the incident's remedy: this job has never
+ * run (0039 seeds the schedule disabled; the 2026-09-01 production check found zero cron.job
+ * rows), so it cannot have produced those 13 rows. This is a narrowing of what the codebase is
+ * ABLE to do — after this change no shipped code path deletes an sms_consent row at all, which
+ * is what makes migration 0043's trigger a meaningful alarm rather than background noise.
+ *
+ * ═══ FIVE COLUMNS, NOT THE STOPPED RULE'S FOUR ═══
+ * preferences_token is cleared here and is not cleared by the 30-day rule. The two rules are
+ * narrowing from opposite directions: the stopped rule narrows from KEEPING a live row, where
+ * PRD §1.3's four columns are the whole ask; this rule narrows from DESTROYING the row
+ * outright, which took the bearer token with it. Leaving a live preferences-page credential on
+ * a row we now retain forever would make this change a net LOSS of privacy, which it must not
+ * be. So the set here is every personal-or-credential column on the table.
+ *
+ * ═══ `phone_number IS NOT NULL` IS LOAD-BEARING ═══
+ * Same predicate, same reason, as the stopped rule — but it became necessary here only with
+ * this change. A deleted row stops matching a WHERE clause by ceasing to exist; a nulled row
+ * does not. Without this predicate every purged pending row would still satisfy
+ * `status = 'pending' AND consent_timestamp < cutoff` on every future run, forever, and the job
+ * would rewrite its entire historical output nightly while achieving nothing. It also keeps
+ * `matched` on a dry run honest: rows that would ACTUALLY change, not rows that merely match
+ * the age condition.
  *
  * Uses idx_sms_consent_pending_since (0034).
  */
@@ -158,7 +204,7 @@ export async function purgeUnconfirmedSignups(
   if (dryRun) {
     const rows = await query<{ n: string }>(
       `SELECT count(*)::text AS n FROM sms_consent
-        WHERE status = 'pending' AND consent_timestamp < $1`,
+        WHERE status = 'pending' AND consent_timestamp < $1 AND phone_number IS NOT NULL`,
       [cutoff]
     );
     const matched = Number(rows[0]?.n ?? '0');
@@ -172,10 +218,12 @@ export async function purgeUnconfirmedSignups(
   for (;;) {
     if (batches >= maxBatches) { truncated = true; break; }
     const rows = await query<{ id: string }>(
-      `DELETE FROM sms_consent
+      `UPDATE sms_consent
+          SET phone_number = NULL, postal_code = NULL, birth_years = NULL,
+              category_interests = NULL, preferences_token = NULL
         WHERE id IN (
           SELECT id FROM sms_consent
-           WHERE status = 'pending' AND consent_timestamp < $1
+           WHERE status = 'pending' AND consent_timestamp < $1 AND phone_number IS NOT NULL
            ORDER BY consent_timestamp
            LIMIT $2
         )
