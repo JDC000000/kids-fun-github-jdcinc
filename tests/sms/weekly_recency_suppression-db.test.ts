@@ -39,15 +39,24 @@ const TEST_CONSENT_VERSION = 'test-recency-suppression';
 let seq = 0;
 const nextPhone = () => `${PREFIX}${String(8100 + seq++).padStart(4, '0')}`;
 
+// NO `as SmsSignup` CAST HERE, and that is the point rather than a style preference. This helper
+// originally ended `} as SmsSignup`, which silenced the compiler about TWO required fields it was
+// missing — `consentMethod` and `regionId` — and every row this suite tried to create then failed
+// on migration 0034's NOT NULL, returning `subscriberId: null`. Five of six tests failed against
+// the suppression logic, which was correct the whole time. A cast that turns a compile error into
+// a runtime one is worth more than the keystrokes it saves only when the shape is genuinely
+// unknowable; here it was simply wrong, and it cost a db-lane round trip to find out.
 function signup(over: Partial<SmsSignup> = {}): SmsSignup {
   return {
     phoneNumber: nextPhone(),
     postalCode: 'V5L 1A1',
+    regionId: 'van',
     birthYears: [2018],
     categoryInterests: [],
+    consentMethod: 'web_form',
     consentTextVersion: TEST_CONSENT_VERSION,
     ...over,
-  } as SmsSignup;
+  };
 }
 
 async function cleanup() {
