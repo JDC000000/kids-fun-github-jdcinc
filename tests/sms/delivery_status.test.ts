@@ -6,25 +6,50 @@
 //
 // Requests are signed with TWILIO'S OWN SDK, not with our implementation — same differential
 // reasoning as tests/sms/twilio_signature.test.ts.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getExpectedTwilioSignature } from 'twilio/lib/webhooks/webhooks';
 import { POST, MAX_STATUS_PAYLOAD_BYTES } from '@/app/api/sms/status/route';
 import {
+  applyDeliveryStatus,
+  DELIVERY_STATUS_RANK,
+  DELIVERY_STATUS_RETRY_DELAYS_MS,
+  deliveryStatusRank,
   FAILED_DELIVERY_STATUSES,
   KNOWN_DELIVERY_STATUSES,
   parseDeliveryStatus,
   recordDeliveryStatus,
+  UNRANKED_DELIVERY_RANK,
   type DeliveryStatusReport,
 } from '@/lib/sms/delivery-status';
 
 // The unit lane does not touch a database — Stage B made applyDeliveryStatus issue real SQL. See
 // tests/sms/send_log-db.test.ts for the statement itself, in the `db` lane.
+//
+// The mock is a SPY rather than a constant `[]` because the writer now BRANCHES on what the
+// database answered: an UPDATE that matched nothing means one thing if the row exists and another
+// if it does not. A stub that always says "no rows" would exercise only the retry path, and would
+// make every route test in this file wait out the retry budget.
+const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 vi.mock('@/lib/db/client', () => ({
-  query: async () => [],
+  query: (sql: string, params?: unknown[]) => queryMock(sql, params),
   getPool: () => {
     throw new Error('the unit lane must not open a pool');
   },
 }));
+
+/** The default: whatever is asked, one row comes back — i.e. the UPDATE advanced the row. */
+beforeEach(() => {
+  queryMock.mockReset();
+  queryMock.mockResolvedValue([{ id: 'row-1' }]);
+});
+
+/** The parameter array of the nth UPDATE the writer issued. */
+function updateParams(nth = 0): unknown[] {
+  const updates = queryMock.mock.calls.filter((c) => String(c[0]).includes('UPDATE sms_send_log'));
+  return (updates[nth]?.[1] ?? []) as unknown[];
+}
+const updateCount = () =>
+  queryMock.mock.calls.filter((c) => String(c[0]).includes('UPDATE sms_send_log')).length;
 
 
 const URL_ = 'https://kidsfun.example/api/sms/status';
@@ -132,6 +157,7 @@ describe('recordDeliveryStatus', () => {
       url: URL_,
       write: async (r) => {
         writes.push(r);
+        return 'applied';
       },
     });
     expect(result.outcome).toBe('applied');
@@ -145,6 +171,7 @@ describe('recordDeliveryStatus', () => {
       url: URL_,
       write: async (r) => {
         writes.push(r);
+        return 'applied';
       },
     });
     expect(result.outcome).toBe('unverified');
@@ -170,7 +197,7 @@ describe('recordDeliveryStatus', () => {
     const result = await recordDeliveryStatus(params(evolved), sig(evolved), {
       authToken: TOKEN,
       url: URL_,
-      write: async () => {},
+      write: async () => 'applied',
     });
     expect(result.outcome).toBe('applied');
     // And a signature computed WITHOUT the new field no longer verifies, which is the same fact
@@ -217,6 +244,7 @@ describe('recordDeliveryStatus', () => {
       url: URL_,
       write: async (r) => {
         writes.push(r);
+        return 'applied';
       },
     });
     expect(result.outcome).toBe('applied');
@@ -232,6 +260,156 @@ describe('recordDeliveryStatus', () => {
       url: URL_,
     });
     expect(result.outcome).toBe('applied');
+  });
+});
+
+describe('deliveryStatusRank — the out-of-order guard\'s ordering', () => {
+  it('puts EVERY terminal verdict above EVERY in-flight state', () => {
+    // The load-bearing property, and the only one the fix actually depends on: a callback that
+    // says "still on its way" can never displace one that says how it ended.
+    const inFlight = ['scheduled', 'accepted', 'queued', 'sending', 'sent'];
+    const terminal = ['delivered', 'undelivered', 'failed', 'canceled', 'partially_delivered'];
+    for (const t of terminal)
+      for (const f of inFlight)
+        expect(deliveryStatusRank(t)).toBeGreaterThan(deliveryStatusRank(f));
+  });
+
+  it("follows Twilio's own progression among the in-flight states", () => {
+    const order = ['scheduled', 'accepted', 'queued', 'sending', 'sent'];
+    for (let i = 1; i < order.length; i++)
+      expect(deliveryStatusRank(order[i])).toBeGreaterThan(deliveryStatusRank(order[i - 1]));
+  });
+
+  it('ranks the three terminal verdicts EQUALLY, so one never overwrites another', () => {
+    // Twilio does not send two verdicts for one message, so a second one is a duplicate rather
+    // than a correction. Equal rank + a strictly-greater comparison makes it a no-op.
+    expect(deliveryStatusRank('delivered')).toBe(deliveryStatusRank('undelivered'));
+    expect(deliveryStatusRank('delivered')).toBe(deliveryStatusRank('failed'));
+    // ...and every status the file already calls a terminal failure is at that rank.
+    for (const f of FAILED_DELIVERY_STATUSES)
+      expect(deliveryStatusRank(f)).toBe(deliveryStatusRank('delivered'));
+  });
+
+  it("puts 'read' strictly after 'delivered' — it is the one real advance past it", () => {
+    expect(deliveryStatusRank('read')).toBeGreaterThan(deliveryStatusRank('delivered'));
+  });
+
+  it('sits an UNRECOGNISED status above every in-flight state and below every terminal one', () => {
+    // Neither extreme is safe: lowest would drop a Twilio state we have not heard of yet (their
+    // docs promise there will be some), highest would let any string displace `delivered`.
+    expect(deliveryStatusRank('teleported')).toBe(UNRANKED_DELIVERY_RANK);
+    expect(deliveryStatusRank('teleported')).toBeGreaterThan(deliveryStatusRank('sent'));
+    expect(deliveryStatusRank('teleported')).toBeLessThan(deliveryStatusRank('delivered'));
+  });
+
+  it('ranks nothing that is not a real Twilio status', () => {
+    // The rank table is a subset of the SDK's own MessageStatus union, transcribed not recalled.
+    for (const s of DELIVERY_STATUS_RANK.keys()) expect(KNOWN_DELIVERY_STATUSES.has(s)).toBe(true);
+    // receiving/received describe an INBOUND message and cannot arrive on this callback, so they
+    // are deliberately unranked rather than given an invented position.
+    expect(DELIVERY_STATUS_RANK.has('receiving')).toBe(false);
+    expect(DELIVERY_STATUS_RANK.has('received')).toBe(false);
+  });
+});
+
+describe('applyDeliveryStatus — the guard, the error code and the missing row', () => {
+  /** Parameter positions of the UPDATE, named so the assertions below read as intent. */
+  const STATUS = 0;
+  const ERROR_CODE = 1;
+  const SID = 2;
+  const BLOCKING = 3;
+  const UNRANKED_BLOCKS = 4;
+
+  it('blocks every status at or above the incoming one — a late `queued` cannot land', async () => {
+    await applyDeliveryStatus({ twilioSid: 'SM1', status: 'queued', errorCode: null });
+    const blocking = updateParams()[BLOCKING] as string[];
+    // Everything the row could already hold that is further along, INCLUDING queued itself.
+    for (const s of ['queued', 'sending', 'sent', 'delivered', 'undelivered', 'failed', 'read'])
+      expect(blocking).toContain(s);
+    // ...and nothing behind it, which is what makes this an advance rather than a freeze.
+    for (const s of ['scheduled', 'accepted']) expect(blocking).not.toContain(s);
+    // An unrecognised stored status also outranks `queued`, so it blocks too.
+    expect(updateParams()[UNRANKED_BLOCKS]).toBe(true);
+  });
+
+  it('lets a terminal verdict overwrite anything still in flight', async () => {
+    await applyDeliveryStatus({ twilioSid: 'SM1', status: 'delivered', errorCode: null });
+    const blocking = updateParams()[BLOCKING] as string[];
+    for (const s of ['scheduled', 'accepted', 'queued', 'sending', 'sent'])
+      expect(blocking).not.toContain(s);
+    // Only the other terminals, and `read`, are ahead of it.
+    for (const s of ['delivered', 'undelivered', 'failed', 'read']) expect(blocking).toContain(s);
+    // An unrecognised status does NOT hold off the carrier's final verdict.
+    expect(updateParams()[UNRANKED_BLOCKS]).toBe(false);
+  });
+
+  it('records an unrecognised status over an in-flight one, but never over a verdict', async () => {
+    await applyDeliveryStatus({ twilioSid: 'SM1', status: 'teleported', errorCode: null });
+    const blocking = updateParams()[BLOCKING] as string[];
+    expect(blocking).not.toContain('sent');
+    for (const s of ['delivered', 'undelivered', 'failed']) expect(blocking).toContain(s);
+    expect(updateParams()[UNRANKED_BLOCKS]).toBe(true); // another unknown is a duplicate, not news
+  });
+
+  it('sends the error code to the SAME statement that moves the status', async () => {
+    // Not a second UPDATE: the code on a row must always describe the status on that row.
+    await applyDeliveryStatus({ twilioSid: 'SM1', status: 'undelivered', errorCode: 30003 });
+    expect(updateCount()).toBe(1);
+    expect(updateParams()[STATUS]).toBe('undelivered');
+    expect(updateParams()[ERROR_CODE]).toBe(30003);
+    expect(updateParams()[SID]).toBe('SM1');
+    expect(String(queryMock.mock.calls[0][0])).toContain('delivery_error_code');
+  });
+
+  it('reports `ignored` when the row is there and the guard declined — no retry', async () => {
+    queryMock.mockImplementation(async (sql: string) =>
+      String(sql).includes('UPDATE') ? [] : [{ id: 'row-1' }]
+    );
+    expect(await applyDeliveryStatus({ twilioSid: 'SM1', status: 'queued', errorCode: null })).toBe(
+      'ignored'
+    );
+    // Settled, not transient: retrying a rejected rank would reject it again, forever.
+    expect(updateCount()).toBe(1);
+  });
+
+  it('reports `no_match` rather than success when no row ever appears', async () => {
+    // THE BUG THIS REPLACES: a zero-row UPDATE used to be indistinguishable from a recorded one.
+    queryMock.mockResolvedValue([]);
+    expect(
+      await applyDeliveryStatus({ twilioSid: 'SM_nothing', status: 'delivered', errorCode: null })
+    ).toBe('no_match');
+    expect(updateCount()).toBe(DELIVERY_STATUS_RETRY_DELAYS_MS.length + 1); // bounded, and tried
+  });
+
+  it('RETRIES the callback that overtook its own INSERT, and then applies it', async () => {
+    // The real race: every caller dispatches first and writes sms_send_log immediately after, so
+    // the first status callback can be in flight while the row is still uncommitted.
+    let rowExists = false;
+    queryMock.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('UPDATE')) return rowExists ? [{ id: 'row-1' }] : [];
+      return rowExists ? [{ id: 'row-1' }] : [];
+    });
+    const inFlight = applyDeliveryStatus({ twilioSid: 'SM_late', status: 'sent', errorCode: null });
+    setTimeout(() => {
+      rowExists = true; // the INSERT commits while we are between attempts
+    }, 100);
+    expect(await inFlight).toBe('applied');
+    expect(updateCount()).toBeGreaterThan(1);
+  });
+});
+
+describe('recordDeliveryStatus — the writer\'s verdict reaches the caller', () => {
+  it('passes `ignored` and `no_match` through instead of flattening them into `applied`', async () => {
+    for (const verdict of ['ignored', 'no_match'] as const) {
+      const result = await recordDeliveryStatus(params(DELIVERED), sig(DELIVERED), {
+        authToken: TOKEN,
+        url: URL_,
+        write: async () => verdict,
+      });
+      expect(result.outcome).toBe(verdict);
+      // The report survives either way — an alert needs to know WHICH message went unrecorded.
+      expect(result.report?.twilioSid).toBe(SID);
+    }
   });
 });
 
