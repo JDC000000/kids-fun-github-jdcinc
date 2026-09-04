@@ -10,10 +10,12 @@
 // archaeological. Read the SQL in each TODO before implementing — the non-obvious parts are
 // written out.
 
+import { createHmac } from 'node:crypto';
 import { query } from '@/lib/db/client';
 import { areaLabelForPostal } from '@/lib/geo/postal-fsa';
-import { smsSendingEnabled } from './config';
+import { phoneHashSalt, smsSendingEnabled } from './config';
 import { renderConfirmRequestMessage } from './message';
+import { phoneHash } from './phone-hash';
 import { mintPreferencesToken } from './preferences-token';
 import { redactPhone } from './redact';
 import type { SmsSignup } from './signup-validate';
@@ -23,6 +25,20 @@ import { recordSmsSend } from './send-log';
 export type SignupWriteOutcome =
   | 'created'
   | 'reactivated'
+  /**
+   * The number is ALREADY an active subscriber, and NOTHING WAS WRITTEN.
+   *
+   * Not a variant of 'reactivated'. On this outcome the upsert's DO UPDATE branch was skipped
+   * outright, so the row keeps its status, its confirmed_timestamp, its consent stamp and its
+   * stored preferences — see the guard on `createPendingSubscriber`, which explains why an
+   * already-confirmed number is the one case that must not be re-consented by an unauthenticated
+   * form post.
+   *
+   * `subscriberId` is null here BY DESIGN even though the row plainly exists: no confirmation is
+   * sent on this path and no audit row is written, so nothing downstream has any use for the id,
+   * and handing one back would be the start of leaking it.
+   */
+  | 'already_active'
   | 'dry_run'
   | 'error';
 
@@ -96,6 +112,45 @@ export interface SignupWriteOptions {
  * put the row back at the start of the lifecycle — a resubmission means they have to reply JOIN
  * again, which is correct: re-consent that skipped the double opt-in would not be double opt-in.
  *
+ * ⛔ WITH ONE EXCEPTION, AND IT IS THE WHOLE REASON THIS FUNCTION WAS TOUCHED AGAIN: ⛔
+ * ═══ AN `active` ROW IS LEFT COMPLETELY ALONE. `WHERE sms_consent.status <> 'active'`. ═══
+ *
+ * The paragraph above is right about a PENDING or STOPPED row and was wrong about an ACTIVE one,
+ * and the difference is who is standing at the keyboard. This endpoint is unauthenticated and the
+ * caller has not proved they hold the number they typed. For a number nobody has confirmed, the
+ * worst a stranger's submission can do is cost that handset one confirmation SMS. For a number
+ * that IS confirmed, the same submission used to:
+ *
+ *   • knock a working subscriber back to `pending` and clear `confirmed_timestamp`, so their
+ *     Friday picks stopped until they noticed a text they did not ask for and replied JOIN;
+ *   • overwrite their postal code, their children's ages and their interests with whatever the
+ *     submitter typed — reproduced live on 2026-08-28, where a hub save of four interests plus a
+ *     new postal code was reverted by one later form post;
+ *   • re-stamp `consent_timestamp`/`consent_text_version`, i.e. write a CASL record asserting a
+ *     fresh act of express consent by a person who did nothing;
+ *   • and fire another confirmation SMS at them, every single time, with no throttle anywhere.
+ *
+ * None of that is re-consent. The double opt-in for this number is ALREADY COMPLETE — they
+ * replied JOIN, we have `confirmed_timestamp` to prove it, and it has not been revoked — so there
+ * is nothing a second confirmation would establish that the first one did not. The honest
+ * behaviour is to change nothing and say so, which is `outcome: 'already_active'`.
+ *
+ * NOT A NARROWER FIX (e.g. "keep the status but still save the preferences"), deliberately. We
+ * cannot tell the subscriber from a stranger here, so writing ANY of the submitted fields onto a
+ * confirmed row lets an anonymous caller edit somebody else's subscription. The real subscriber
+ * already has an authenticated path for exactly this: the `/u/{preferencesToken}` hub link that
+ * ships in every message (PRD §2.4). Sending them there costs one screen; the alternative costs
+ * them their data.
+ *
+ * ⚠ AND IT IS A DISCLOSURE, WHICH IS A REAL COST AND WAS TAKEN KNOWINGLY. Reporting
+ * 'already_active' tells an unauthenticated caller that a number they typed is a subscriber —
+ * exactly the oracle consent-copy.ts's SUBMITTED_BODY note refuses to build out of conditional
+ * copy. That refusal was the right default while the alternative was "say nothing and behave
+ * identically"; it is not the right answer when behaving identically means texting a stranger's
+ * handset on demand and silently unsubscribing them. Jon authorised the trade on 2026-09-04.
+ * What limits the damage is the throttle below: enumeration costs 5 numbers per 10 minutes per
+ * IP, not thousands.
+ *
  * WHAT MUST NOT HAPPEN HERE: this must never write `status = 'active'`. Only a JOIN reply may do
  * that (lib/sms/consent-transitions.ts), because the whole value of the double opt-in is that
  * nobody can subscribe a phone number they do not hold.
@@ -160,6 +215,13 @@ export async function createPendingSubscriber(
          confirmed_timestamp     = NULL,
          stopped_at              = NULL,
          consecutive_empty_weeks = 0
+       -- ⛔ THE ONE ROW THIS STATEMENT REFUSES TO TOUCH. See the doc comment above for why an
+       -- already-confirmed subscriber must not be re-consented, re-preferenced or re-texted by an
+       -- unauthenticated form post. A false WHERE here skips the conflict action ENTIRELY — the
+       -- row is not updated and, crucially, NOT RETURNED, which is what the empty-rows branch
+       -- below reads as 'already_active'. Putting the guard here rather than wrapping every SET
+       -- in a CASE keeps it impossible to add a fourth column later and forget to exempt it.
+       WHERE sms_consent.status <> 'active'
        RETURNING id, short_ref, (xmax = 0) AS inserted,
                  (SELECT status FROM prior) AS prior_status,
                  (SELECT postal_code FROM prior) IS DISTINCT FROM $2
@@ -178,9 +240,20 @@ export async function createPendingSubscriber(
 
     const row = rows[0];
     if (!row) {
-      // Unreachable with this statement — an upsert always returns its row. Handled rather than
-      // asserted, because a silent undefined here would become a confident `subscriberId: null`.
-      return { outcome: 'error', subscriberId: null, error: 'upsert returned no row' };
+      // ═══ NO ROW NOW MEANS EXACTLY ONE THING, AND IT IS NOT AN ERROR ═══
+      // It used to be unreachable ("an upsert always returns its row"), and the branch existed
+      // only so a silent undefined could not become a confident `subscriberId: null`. Adding
+      // `WHERE sms_consent.status <> 'active'` to the conflict action gave it a second,
+      // DETERMINISTIC meaning, and it is worth stating why no third one is possible:
+      //
+      //   • the INSERT branch always inserts and always returns;
+      //   • the conflict branch with a non-active row always updates and always returns;
+      //   • the conflict branch with an ACTIVE row is skipped and returns nothing.
+      //
+      // So zero rows ⟺ "this number is already an active subscriber, and we deliberately left it
+      // untouched". Reporting that as an error would 503 a request that succeeded at exactly what
+      // it was supposed to do.
+      return { outcome: 'already_active', subscriberId: null, wasActive: true, preferencesReplaced: false };
     }
 
     // ── The preferences token, minted from the id the database just assigned ──
@@ -240,6 +313,285 @@ function redactSqlError(err: unknown, phoneNumber: string): string {
       ? raw.split(phoneNumber).join(redactPhone(phoneNumber))
       : raw;
   return code ? `[${code}] ${scrubbed}` : scrubbed;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE SIGNUP THROTTLE (migration 0045)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// POST /api/sms/signup had no rate limiting anywhere. Every submission dispatched a confirmation
+// SMS to the number typed into the form, and nothing stopped the same number being submitted
+// again immediately, or a thousand times. That makes a public form a remote control for somebody
+// else's handset, and the person it costs never touched the site.
+//
+// TWO LIMITS, AND THEY ANSWER DIFFERENT QUESTIONS:
+//   • PER NUMBER  — protects ONE handset from repeated confirmation texts. This is the half that
+//     actually stops the harm, and it is the half that cannot be evaded, because the number is
+//     the thing the text is sent to.
+//   • PER IP      — defence in depth against ONE caller spraying MANY different numbers, which
+//     the per-number limit cannot see at all. Weaker on purpose and never trusted alone: it
+//     derives from a forwarded-for header the client can influence, and a shared NAT (a school, a
+//     library, a mobile carrier) puts real families behind one address. Hence limits that a
+//     household could not plausibly hit and an attacker cannot ignore.
+
+/** Every knob the throttle has, in one place. Exported so tests set limits instead of waiting. */
+export interface SignupThrottleLimits {
+  /** Seconds that must pass between two ALLOWED signups for the same phone number. */
+  readonly phoneMinIntervalSeconds: number;
+  /** Allowed signups per phone number per UTC day. */
+  readonly phonePerDay: number;
+  /** Seconds that must pass between two ALLOWED signups from the same IP. */
+  readonly ipMinIntervalSeconds: number;
+  /** Allowed signups per IP per UTC day. */
+  readonly ipPerDay: number;
+}
+
+/**
+ * The production limits.
+ *
+ * PER NUMBER: one every ten minutes, three a day. A parent who did not get the text is asked to
+ * wait ten minutes; an attacker gets three texts a day out of a handset instead of unlimited.
+ *
+ * PER IP: thirty seconds apart, twenty a day. The daily cap is the one that bites — thirty seconds
+ * only exists so a script cannot burn the whole day's budget in one burst. Twenty distinct signups
+ * from a single address in a day is far outside anything a household or a school produces for a
+ * product this size, and it bounds a spraying attacker to twenty strangers' phones per address
+ * rather than an unbounded number. IF A REAL SHARED-NAT COMPLAINT EVER ARRIVES, THIS NUMBER IS
+ * THE THING TO RAISE — not the per-number limits, which are what protect people.
+ */
+export const SIGNUP_THROTTLE_LIMITS: SignupThrottleLimits = {
+  phoneMinIntervalSeconds: 600,
+  phonePerDay: 3,
+  ipMinIntervalSeconds: 30,
+  ipPerDay: 20,
+};
+
+/** Which limit refused, for logs and metrics. NEVER returned to the caller — see the route. */
+export type SignupThrottleReason = 'phone_interval' | 'phone_daily' | 'ip_interval' | 'ip_daily';
+
+export interface SignupThrottleResult {
+  allowed: boolean;
+  /** Null when allowed. */
+  reason: SignupThrottleReason | null;
+  /** Whole seconds until the refused limit next admits a request. At least 1 when refused, else 0. */
+  retryAfterSeconds: number;
+  /**
+   * The check could not run, and the request was LET THROUGH.
+   *
+   * ═══ FAIL OPEN, WHICH IS THE OPPOSITE OF THIS MODULE'S USUAL POSTURE, ON PURPOSE ═══
+   * `createPendingSubscriber` 503s on a failed write and `phoneHash` refuses to invent a value,
+   * both fail-closed. This one goes the other way, for a reason specific to what it is: a
+   * throttle that fails closed converts "the counter table is unreachable" into "nobody in Metro
+   * Vancouver can sign up", and the two ways it can be unreachable are a database outage — in
+   * which case `createPendingSubscriber` is about to 503 anyway, so failing closed here buys
+   * nothing — and migration 0045 not being applied yet, which is a deploy-ordering state, not an
+   * attack.
+   * ⚠ SO IT IS NOISY RATHER THAN SILENT. The route captures this to Sentry, because "the abuse
+   * throttle has been inert since Tuesday" is not a thing to find out from a complaint.
+   */
+  degraded: boolean;
+}
+
+export interface SignupThrottleInput {
+  /** E.164, as validated. Hashed before it goes anywhere near the database. */
+  phoneNumber: string;
+  /** The caller's IP, or null when the request carried no usable one. Hashed the same way. */
+  ipAddress: string | null;
+}
+
+export interface SignupThrottleOptions extends SignupWriteOptions {
+  limits?: SignupThrottleLimits;
+}
+
+/**
+ * HMAC the throttle's IP subject.
+ *
+ * SHARES `SMS_PHONE_HASH_SALT` WITH THE AUDIT TRAIL, DOMAIN-SEPARATED. Adding an eighth secret
+ * would mean this fix could not ship until somebody provisioned it in production, and a throttle
+ * that is inert because a variable is missing is exactly the failure it exists to prevent. The
+ * `sms-signup-ip:` prefix mirrors `phoneHash`'s own `sms-phone:` so the two families cannot
+ * collide even under one salt — the same argument lib/sms/phone-hash.ts already makes for
+ * separating itself from the preferences token.
+ *
+ * Null when there is no IP, and null when there is no salt — both mean "cannot throttle by IP",
+ * and the caller degrades to the per-number limit rather than inventing a subject.
+ */
+function signupIpHash(ip: string | null): string | null {
+  if (!ip) return null;
+  const salt = phoneHashSalt();
+  if (!salt) return null;
+  return createHmac('sha256', salt).update(`sms-signup-ip:${ip}`).digest('hex');
+}
+
+/**
+ * Count one signup attempt against one subject, and say whether it is allowed — ATOMICALLY.
+ *
+ * ═══ THE DECISION AND THE WRITE ARE ONE STATEMENT, AND THAT IS THE WHOLE POINT ═══
+ * The readable implementation is `SELECT count(...)` then `INSERT`, and it does not work: two
+ * concurrent POSTs both take their snapshot before either writes, both see the same count, and
+ * both are allowed. Serverless is precisely where fifty simultaneous requests are one line of
+ * shell, so a check-then-write throttle throttles only polite callers. Putting the INSERT in a
+ * CTE of the SELECT does not help either — same snapshot, same race.
+ *
+ * `ON CONFLICT ... DO UPDATE` takes a ROW LOCK on the conflicting row, so the second request
+ * blocks until the first commits and then re-evaluates its `WHERE` against the row the first one
+ * just wrote. One round trip, no window.
+ *
+ * ZERO ROWS RETURNED ⟺ REFUSED. When the `WHERE` is false the conflict action is skipped
+ * entirely: nothing is updated and nothing is returned. That also means A REFUSED ATTEMPT DOES
+ * NOT MOVE `last_attempt_at`, so hammering cannot extend a caller's own lockout — which matters
+ * because the caller retrying three times in a minute is usually a parent who did not get the
+ * text, not an attacker.
+ */
+async function countAttempt(
+  run: typeof query,
+  scope: 'phone' | 'ip',
+  subjectHash: string,
+  perDay: number,
+  minIntervalSeconds: number
+): Promise<{ allowed: boolean; attempts: number }> {
+  const rows = await run<{ attempts: number }>(
+    `INSERT INTO sms_signup_throttle (scope, subject_hash)
+          VALUES ($1, $2)
+     ON CONFLICT (scope, subject_hash, window_date) DO UPDATE
+            SET attempts        = sms_signup_throttle.attempts + 1,
+                last_attempt_at = now()
+          WHERE sms_signup_throttle.attempts < $3
+            AND sms_signup_throttle.last_attempt_at <= now() - make_interval(secs => $4::int)
+      RETURNING attempts`,
+    [scope, subjectHash, perDay, minIntervalSeconds]
+  );
+  const row = rows[0];
+  return { allowed: Boolean(row), attempts: row?.attempts ?? 0 };
+}
+
+/**
+ * WHY the refused subject was refused, and for how long. Read-only, and only on the refused path.
+ *
+ * A second query rather than more RETURNING, because there is nothing to return: the whole point
+ * of the statement above is that it touches no row when it refuses. This one runs at most once
+ * per rejected request, which is the request we are least worried about the cost of.
+ *
+ * Falls back to the minimum interval if the row has vanished between the two statements (a
+ * retention sweep at midnight, essentially), rather than reporting a confident zero.
+ */
+async function explainRefusal(
+  run: typeof query,
+  scope: 'phone' | 'ip',
+  subjectHash: string,
+  perDay: number,
+  minIntervalSeconds: number
+): Promise<{ daily: boolean; retryAfterSeconds: number }> {
+  const rows = await run<{ attempts: number; since_last: number }>(
+    `SELECT attempts, extract(epoch FROM now() - last_attempt_at)::int AS since_last
+       FROM sms_signup_throttle
+      WHERE scope = $1 AND subject_hash = $2
+        AND window_date = (now() AT TIME ZONE 'UTC')::date`,
+    [scope, subjectHash]
+  );
+  const row = rows[0];
+  if (!row) return { daily: false, retryAfterSeconds: minIntervalSeconds };
+  if (row.attempts >= perDay) {
+    // Until the UTC day rolls over, which is when the counter's bucket changes.
+    const now = new Date();
+    const midnightUtc = Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() + 1,
+      0, 0, 0, 0
+    );
+    return { daily: true, retryAfterSeconds: Math.max(1, Math.ceil((midnightUtc - now.getTime()) / 1000)) };
+  }
+  return {
+    daily: false,
+    retryAfterSeconds: Math.max(1, minIntervalSeconds - Math.max(0, row.since_last)),
+  };
+}
+
+/**
+ * The one call the signup route makes before it writes anything or sends anything.
+ *
+ * ═══ ORDER: NUMBER FIRST, THEN IP ═══
+ * The per-number limit is the one that protects a person, so it is the one that gets to refuse
+ * first and the one whose budget is never spent on a request the IP limit was going to refuse
+ * anyway. The reverse order would let a noisy shared NAT consume a specific handset's allowance.
+ *
+ * ═══ NO SALT ⇒ NO THROTTLE, AND IT SAYS SO ═══
+ * Both subjects are HMACs under SMS_PHONE_HASH_SALT. Without it there is no subject to count
+ * against, and inventing one (an unsalted digest, a constant) would produce a table that looks
+ * populated and either throttles nobody or throttles everybody together. So it degrades openly:
+ * `degraded: true`, allowed, and the route raises it. That salt is already a hard requirement for
+ * the CASL audit trail (lib/sms/phone-hash.ts), so this is a second reason it must be set, not a
+ * new one.
+ *
+ * ═══ DRY RUN ⇒ NOTHING TO THROTTLE ═══
+ * Same `dryRun` semantics as the rest of this module. With sending disabled no text can reach
+ * anyone and no consent row is written, so there is no abuse to prevent — and the throttle must
+ * not be the one thing in the signup path that needs a database in an environment that has none.
+ *
+ * NEVER THROWS. A throttle that can 500 a signup is worse than the abuse it prevents.
+ */
+export async function checkAndRecordSignupAttempt(
+  input: SignupThrottleInput,
+  options: SignupThrottleOptions = {}
+): Promise<SignupThrottleResult> {
+  const dryRun = options.dryRun ?? !smsSendingEnabled();
+  if (dryRun) return { allowed: true, reason: null, retryAfterSeconds: 0, degraded: false };
+
+  const limits = options.limits ?? SIGNUP_THROTTLE_LIMITS;
+  const run = options.query ?? query;
+
+  const phoneSubject = phoneHash(input.phoneNumber);
+  if (!phoneSubject) {
+    return { allowed: true, reason: null, retryAfterSeconds: 0, degraded: true };
+  }
+  const ipSubject = signupIpHash(input.ipAddress);
+
+  try {
+    const phone = await countAttempt(
+      run, 'phone', phoneSubject, limits.phonePerDay, limits.phoneMinIntervalSeconds
+    );
+    if (!phone.allowed) {
+      const why = await explainRefusal(
+        run, 'phone', phoneSubject, limits.phonePerDay, limits.phoneMinIntervalSeconds
+      );
+      return {
+        allowed: false,
+        reason: why.daily ? 'phone_daily' : 'phone_interval',
+        retryAfterSeconds: why.retryAfterSeconds,
+        degraded: false,
+      };
+    }
+
+    // No IP to count against — the per-number limit above already ran, and it is the half that
+    // protects a handset. Degrading to it is a real reduction in cover, not a no-op, so it is
+    // reported: a deployment where every request arrives without a forwarded-for header is a
+    // misconfiguration worth seeing rather than a quietly weaker throttle.
+    if (!ipSubject) {
+      return { allowed: true, reason: null, retryAfterSeconds: 0, degraded: true };
+    }
+
+    const ip = await countAttempt(
+      run, 'ip', ipSubject, limits.ipPerDay, limits.ipMinIntervalSeconds
+    );
+    if (!ip.allowed) {
+      const why = await explainRefusal(
+        run, 'ip', ipSubject, limits.ipPerDay, limits.ipMinIntervalSeconds
+      );
+      return {
+        allowed: false,
+        reason: why.daily ? 'ip_daily' : 'ip_interval',
+        retryAfterSeconds: why.retryAfterSeconds,
+        degraded: false,
+      };
+    }
+
+    return { allowed: true, reason: null, retryAfterSeconds: 0, degraded: false };
+  } catch {
+    // FAIL OPEN, LOUDLY. See `degraded` on SignupThrottleResult for why this direction and not
+    // the other. Nothing from the error is carried out of here: it would contain the number.
+    return { allowed: true, reason: null, retryAfterSeconds: 0, degraded: true };
+  }
 }
 
 export type ConfirmationSendOutcome = 'sent' | 'dry_run' | 'error';

@@ -27,6 +27,7 @@ import {
   SUBMITTED_BODY,
   SUBMITTED_HEADING,
   SUPPORT_LINE,
+  SUPPORT_PHONE_DISPLAY,
   SUPPORT_PHONE_HREF,
 } from '@/lib/sms/consent-copy';
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
@@ -116,6 +117,128 @@ export function canAddAnotherChild(count: number): boolean {
   return count < MAX_CHILDREN;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// WHAT THE PAGE SAYS AFTER A SUBMIT — AND WHY IT IS NO LONGER ONE SCREEN
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// ═══ THE BUG THIS REPLACES ═══
+// This handler used to read exactly one thing off the response — `if (!res.ok)` — and then show
+// "Check your phone". POST /api/sms/signup has always answered with more than that:
+//
+//     { ok: true, dispatched: smsSendingEnabled() && confirm.outcome === 'sent' }
+//
+// and its own comment calls that field "honest about what actually happened". Nothing read it. So
+// a 201 with `dispatched: false` — a real carrier-level STOP block on that number (Twilio 21610),
+// a Twilio outage, or sending simply disabled — produced the full success screen telling a parent
+// to check a phone that was never going to ring. The API was telling the truth into a void.
+//
+// ═══ WHY IT IS THREE STATES AND NOT A BOOLEAN ═══
+// `dispatched: false` now has two very different meanings, and collapsing them would just move
+// the dishonesty: an already-active subscriber resubmitting their own number gets no text BECAUSE
+// THERE IS NOTHING TO CONFIRM, which is a success, not a failure. So the response carries
+// `alreadyActive` and it is checked first. See step 7 of the route.
+
+export type SignupOutcome = 'confirm_sent' | 'already_active' | 'undelivered';
+
+/**
+ * Read the outcome off the API's own answer.
+ *
+ * A PURE FUNCTION WITH ITS OWN EXPORT, for the same reason `canAddAnotherChild` has one: the
+ * decision it makes used to be a bare `setDone(true)` inside an async handler, where no test could
+ * reach it — which is exactly how it went a whole release saying "check your phone" over a text
+ * that was never sent.
+ *
+ * ORDER MATTERS. `alreadyActive` is checked BEFORE `dispatched`, because that response carries
+ * `dispatched: false` too and is not a failure.
+ *
+ * AN UNREADABLE BODY IS 'undelivered', NOT SUCCESS. If the status said ok and the JSON did not
+ * parse, we know the server accepted something and know nothing about whether a text left the
+ * building. Guessing "sent" is the exact failure this function exists to end; the fallback screen
+ * is honest about the uncertainty and its remedy — try again — is harmless if the text did arrive.
+ */
+export function outcomeFromResponse(
+  data: { dispatched?: boolean; alreadyActive?: boolean } | null
+): SignupOutcome {
+  if (data?.alreadyActive === true) return 'already_active';
+  return data?.dispatched === true ? 'confirm_sent' : 'undelivered';
+}
+
+/**
+ * Shown when the API accepted the signup and no confirmation text went out.
+ *
+ * ═══ THE REMEDY IS THE ONE ALREADY APPROVED FOR THIS EXACT SITUATION ═══
+ * SUBMITTED_BODY's third bullet is Jon's own STOP-block sentence, shown unconditionally on the
+ * success screen because the old code could not tell who needed it. Here we DO know a text failed,
+ * so the same remedy leads instead of hiding in a list — reworded to lead, not rewritten.
+ *
+ * `SUPPORT_PHONE_DISPLAY`, NOT A FIFTH HAND-TYPED NUMBER — consent-copy.ts's rule, which exists
+ * because a number typed a fifth time is a number that will eventually be five different numbers.
+ *
+ * "SMS", NOT "TEXT", and "reply" rather than "text" as the verb (Jon, 2026-09-02), matching every
+ * other string on this surface.
+ *
+ * ⚠ WHAT IT DOES NOT SAY: why. The route deliberately never returns Twilio's `errorCode`, so this
+ * page cannot know whether the number is STOP-blocked, unreachable, or whether sending is off —
+ * and must not appear to, or the copy becomes the opt-out oracle the JSON refuses to be. Both
+ * lines below are true and useful for every reader of this screen.
+ */
+export const UNDELIVERED_HEADING = 'We couldn’t send that SMS';
+export const UNDELIVERED_BODY: readonly string[] = [
+  `Replied STOP to us before? Reply START to ${SUPPORT_PHONE_DISPLAY}, then try again.`,
+  'Otherwise your details are safe with us — check the number above and try again in a few minutes.',
+];
+
+/**
+ * Shown when the number is already an active subscriber.
+ *
+ * NOTHING WAS CHANGED AND THE COPY SAYS SO, because nothing was: the store leaves an active row
+ * completely alone rather than re-consenting it from an unauthenticated form post. Telling them
+ * to reply JOIN would be wrong — they already did — and telling them we saved their new details
+ * would be a lie.
+ *
+ * IT POINTS AT THE HUB LINK RATHER THAN AT THIS FORM, because that link is the authenticated way
+ * to change an area, an age or an interest (PRD §2.4), and it is in every message we send them.
+ */
+export const ALREADY_ACTIVE_HEADING = 'You’re already signed up';
+export const ALREADY_ACTIVE_BODY: readonly string[] = [
+  'This number already gets KIDS FUN picks every Friday, so we haven’t changed anything or sent you an SMS.',
+  'To update your area, your kids’ ages or your interests, use the link at the bottom of any SMS we’ve sent you.',
+];
+
+/** Heading + body for one outcome. Kept beside the copy so a fourth state cannot forget one. */
+export function signupOutcomeCopy(outcome: SignupOutcome): {
+  heading: string;
+  lines: readonly string[];
+} {
+  if (outcome === 'already_active') {
+    return { heading: ALREADY_ACTIVE_HEADING, lines: ALREADY_ACTIVE_BODY };
+  }
+  if (outcome === 'undelivered') return { heading: UNDELIVERED_HEADING, lines: UNDELIVERED_BODY };
+  return { heading: SUBMITTED_HEADING, lines: SUBMITTED_BODY };
+}
+
+/**
+ * The post-submit panel, exported so all three states can be rendered by a test rather than only
+ * the one a mocked fetch happens to produce.
+ *
+ * `role="status"` on every branch, unchanged: this replaces the form in place, so a screen-reader
+ * user is told what happened without having to go looking — and that is as true of "we couldn't
+ * send it" as it is of "check your phone".
+ */
+export function SignupOutcomePanel({ outcome }: { outcome: SignupOutcome }) {
+  const { heading, lines } = signupOutcomeCopy(outcome);
+  return (
+    <div className="kf-start__done" role="status">
+      <h2 className="kf-start__done-heading">{heading}</h2>
+      <ul className="kf-start__done-list">
+        {lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function StartForm({ sparseRegionIds }: StartFormProps) {
   const [postal, setPostal] = useState('');
   const [children, setChildren] = useState<ChildRow[]>([newChildRow()]);
@@ -123,7 +246,9 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
   const [phone, setPhone] = useState('');
   const [consent, setConsent] = useState(false); // UNCHECKED BY DEFAULT — PRD §1.3/§1.4.
   const [sending, setSending] = useState(false);
-  const [done, setDone] = useState(false);
+  // WAS `done: boolean`. A boolean could only ever say "the API did not 4xx", which is precisely
+  // how a failed dispatch got rendered as success — see `outcomeFromResponse`.
+  const [outcome, setOutcome] = useState<SignupOutcome | null>(null);
   const [errors, setErrors] = useState<SignupFieldError[]>([]);
   // Bumped ONLY by a submit attempt that produced errors. The focus effect below keys on this
   // rather than on `errors` itself, because clearFieldError() also calls setErrors as the parent
@@ -264,7 +389,14 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
         setErrorSeq((n) => n + 1);
         return;
       }
-      setDone(true);
+      // READ THE ANSWER, DO NOT ASSUME IT. `res.ok` only says the request was accepted; whether a
+      // confirmation SMS actually left the building is `dispatched`, and whether one was even
+      // needed is `alreadyActive`. Both are parsed in one place so the three screens cannot drift.
+      const data = (await res.json().catch(() => null)) as {
+        dispatched?: boolean;
+        alreadyActive?: boolean;
+      } | null;
+      setOutcome(outcomeFromResponse(data));
     } catch {
       setSending(false);
       setErrors([{ message: 'Network error — please try again.' }]);
@@ -281,17 +413,8 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
     );
   }
 
-  if (done) {
-    return (
-      <div className="kf-start__done" role="status">
-        <h2 className="kf-start__done-heading">{SUBMITTED_HEADING}</h2>
-        <ul className="kf-start__done-list">
-          {SUBMITTED_BODY.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      </div>
-    );
+  if (outcome) {
+    return <SignupOutcomePanel outcome={outcome} />;
   }
 
   // ═══ BLUR-TIME VALIDATION FOR ONE FIELD (user-testing rec #2/#3, 2026-09-03) ═══

@@ -462,9 +462,26 @@ describe('the resubmission warning (post-launch item 1)', () => {
       const code = (require('node:fs').readFileSync(consumer, 'utf8') as string)
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/^\s*\/\/.*$/gm, '');
-      const usage = code.slice(code.indexOf('SUBMITTED_BODY.'), code.indexOf('SUBMITTED_BODY.') + 120);
-      expect(usage, consumer).toContain('SUBMITTED_BODY.map');
-      expect(usage, consumer).not.toMatch(/SUBMITTED_BODY\.(filter|slice)\b/);
+      /*
+       * ═══ WIDENED 2026-09-04, AND THE PROPERTY IS UNCHANGED ═══
+       * This used to read a 120-character window after the first `SUBMITTED_BODY.` and require
+       * `SUBMITTED_BODY.map` inside it. That was checking PLACEMENT, not the property: it assumed
+       * the list is mapped at the point it is named. StartForm.tsx no longer does — the post-submit
+       * screen is now three states (confirmation sent / undelivered / already active), so the list
+       * is handed to one shared panel through `signupOutcomeCopy` and mapped there. The window
+       * found no `.` after the name at all and failed on a refactor that narrows nothing.
+       *
+       * What replaces it is STRICTER, not looser: every narrowing operator is refused, and over
+       * the WHOLE file rather than 120 characters of it — so a `.filter` five hundred lines away
+       * now fails too, where before it would have sailed past. The complementary half — that all
+       * four bullets actually reach the success screen — is asserted against the rendered markup
+       * in tests/sms/start_form_outcome.test.tsx, which is where the DOM exists to check.
+       */
+      expect(code, consumer).not.toMatch(
+        /SUBMITTED_BODY\s*\.\s*(filter|slice|find|findLast|at|splice|shift|pop|indexOf)\b/
+      );
+      // Index access is the other way to render a subset, and reads innocently.
+      expect(code, consumer).not.toMatch(/SUBMITTED_BODY\s*\[/);
     }
     // No placeholder survived into the shipped copy.
     expect(SUBMITTED_BODY.join(' ')).not.toMatch(/\$\{|\[\[|%s|undefined|\bnull\b/);
