@@ -202,8 +202,19 @@ export const RESEND_SUPPRESSION_WINDOW_DAYS = 4;
  * shortening this window.
  *
  * ⚠ AND IT CHANGES `scripts/friday-preview-real-subscribers.ts`, which calls this function: run
- * within four days of a real send, the preview now legitimately shows nobody. That is the honest
- * answer to "what would the job do right now", but it will surprise anyone who has not read this.
+ * within four days of a real send, the preview now legitimately shows nobody.
+ *
+ * THAT IS DELIBERATE — SETTLED BY THE OPERATOR, 2026-09-04, AND NOT AN OVERSIGHT TO BE TIDIED.
+ * The question was raised explicitly and decided this way: the preview tool's whole purpose is
+ * fidelity to what the real Friday job would actually do, and "this subscriber would honestly get
+ * nothing right now" is itself correct and useful output — particularly when the thing you are
+ * sanity-checking IS the suppression. A bypass would risk masking the exact behaviour someone
+ * opened the tool to verify.
+ *
+ * AN OVERRIDE FLAG WAS CONSIDERED AND DECLINED. Not forgotten, not too hard: judged unnecessary,
+ * and cheap to add later if it turns out to be annoying in practice. So if the preview showing
+ * nobody has just surprised you, this is the answer, and adding a `--no-suppression` escape hatch
+ * is a decision to REOPEN with the Operator rather than an obvious missing feature to supply.
  *
  * `phone_number IS NOT NULL` is the non-obvious clause. Migration 0034's 30-day post-stop purge
  * NULLs the personal columns in place rather than deleting the row, so a purged subscriber still
