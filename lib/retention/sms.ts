@@ -1,11 +1,18 @@
 // lib/sms/retention.ts — the sms_consent retention ENFORCEMENT job.
 //
 // Closes the gap confirmed against production on 2026-09-01: `/u/` promises "everything we
-// store about you is deleted 30 days later" and NOTHING performed it. `SELECT jobname, schedule,
-// command FROM cron.job` returned zero rows; the schema, the two indexes and several code
-// comments all described a purge that did not exist. Migration 0034's header had deferred the
-// job explicitly ("out of scope for this migration") and that deferral was never closed while
-// consumer-facing copy went live promising the behaviour.
+// store about you is deleted 30 days later" and nothing was enforcing it — 0039 seeds this job's
+// schedule `enabled = false` and it had not been armed yet. The schema, the two indexes and
+// several code comments all described a purge that was not running. Migration 0034's header had
+// deferred the job explicitly ("out of scope for this migration") and that deferral was never
+// closed while consumer-facing copy went live promising the behaviour.
+//
+// ⚠ THIS PARAGRAPH ORIGINALLY CITED THE WRONG EVIDENCE. It read: "`SELECT jobname, schedule,
+// command FROM cron.job` returned zero rows". That query did return zero rows, and always will:
+// this job does not use pg_cron. It is driven by the app-level `global_job_schedule` /
+// `global_job_run` tables (0039), so `cron.job` is empty whether the job is armed or disarmed.
+// The conclusion happened to be true on 2026-09-01; the proof offered for it could not have
+// established it either way. Corrected 2026-09-04 against live production by the Operator.
 //
 // TWO OPERATIONS, ONE SHAPE — AND THE SECOND ONE CHANGED ON 2026-09-04:
 //
@@ -167,11 +174,31 @@ export async function purgeStoppedSubscriberData(
  * link, at the price of one all-NULL row per never-confirmed signup — a row that holds an id,
  * some timestamps and a status, and nothing about a person.
  *
- * Note what this does NOT fix, so nobody reads it as the incident's remedy: this job has never
- * run (0039 seeds the schedule disabled; the 2026-09-01 production check found zero cron.job
- * rows), so it cannot have produced those 13 rows. This is a narrowing of what the codebase is
- * ABLE to do — after this change no shipped code path deletes an sms_consent row at all, which
- * is what makes migration 0043's trigger a meaningful alarm rather than background noise.
+ * Note what this does NOT fix, so nobody reads it as the incident's remedy: this job cannot have
+ * produced those 13 rows. THE ARGUMENT IS DATE MATH, NOT ARM STATUS. `purgeUnconfirmedSignups`
+ * reaches rows older than 90 days; the consent rows behind those 13 log rows were 1-7 DAYS old
+ * when their sibling send-log row was written. A 90-day cutoff cannot reach a 7-day-old row, so
+ * this job is ruled out whether it was armed, disarmed, or running every hour.
+ *
+ * ⚠ CORRECTED 2026-09-04 (Operator, against live production — access this repo does not have).
+ * This paragraph previously asserted "this job has never run (0039 seeds the schedule disabled;
+ * the 2026-09-01 production check found zero cron.job rows)". Both halves were wrong, in a way
+ * worth keeping rather than quietly deleting, because both mistakes are easy to repeat:
+ *   · THE JOB IS LIVE and has run successfully 4 times since 2026-09-02. 0039 does seed the
+ *     schedule disabled — that half of the reading was right — but the same migration documents
+ *     the command to arm it (`UPDATE global_job_schedule SET enabled = true ...`, in its operator
+ *     notes), and somebody ran that after 2026-09-01. READING A MIGRATION TELLS YOU THE DEFAULT
+ *     IT SEEDS, NEVER THE CURRENT LIVE STATE. Those are two different facts, and only production
+ *     answers the second one.
+ *   · THE `cron.job` CHECK WAS AIMED AT THE WRONG MECHANISM. Real query, real zero result, no
+ *     bearing on this job: it runs through `global_job_schedule`, not pg_cron.
+ * The conclusion survives both corrections unchanged, because it never depended on either claim.
+ * That is the argument for resting a finding on its strongest ground rather than its most
+ * convenient one — the date math was always the load-bearing part.
+ *
+ * This is a narrowing of what the codebase is ABLE to do — after this change no shipped code path
+ * deletes an sms_consent row at all, which is what makes the companion migration's trigger a
+ * meaningful alarm rather than background noise.
  *
  * ═══ FIVE COLUMNS, NOT THE STOPPED RULE'S FOUR ═══
  * preferences_token is cleared here and is not cleared by the 30-day rule. The two rules are

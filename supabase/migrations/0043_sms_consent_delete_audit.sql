@@ -14,10 +14,28 @@
 -- Note what the repository can already establish about that gap, because it narrows what this
 -- table is for. `DELETE FROM sms_consent` appears in exactly one place in shipped code —
 -- purgeUnconfirmedSignups in lib/retention/sms.ts — and after this migration's sibling change it
--- appears in NONE. That job has also never run: 0039 seeds its schedule `enabled = false`, and
--- the 2026-09-01 production check returned zero `cron.job` rows. So the deletes that produced
--- those 13 rows came from OUTSIDE the application: a script, a DB-backed test suite pointed at
--- the wrong database (which has happened here before — Round 27), or a hand-run statement.
+-- appears in NONE. That job also cannot have produced those 13 rows, and the reason is DATE
+-- MATH rather than whether it was running: it reaches rows older than 90 days, and the consent
+-- rows behind those 13 log rows were 1-7 DAYS old when their sibling send-log row was written.
+-- A 90-day cutoff cannot reach a 7-day-old row.
+--
+-- ⚠ CORRECTED 2026-09-04 (Operator, against live production). This paragraph previously said
+-- "that job has also never run: 0039 seeds its schedule `enabled = false`, and the 2026-09-01
+-- production check returned zero `cron.job` rows". The job IS live and has run successfully 4
+-- times since 2026-09-02: 0039 does seed the schedule disabled, but the same file's operator
+-- notes give the command to arm it and someone ran that after 2026-09-01. A migration tells you
+-- the DEFAULT it seeds, never the current live state. The `cron.job` check was also aimed at the
+-- wrong mechanism — this job runs through `global_job_schedule`, not pg_cron, so that query
+-- returns zero rows in every world. The conclusion below is unchanged because it rests on the
+-- date math, which neither correction touches.
+--
+-- So the deletes that produced those 13 rows came from OUTSIDE the application: a script, a
+-- DB-backed test suite pointed at the wrong database (which has happened here before — Round
+-- 27), or a hand-run statement.
+--
+-- RULED OUT, recorded so it is not chased twice: the 13 rows are NOT test fixtures that leaked
+-- into production. Checked against real prod data 2026-09-04 — they carry genuine production
+-- `consent_text_version` values, not test markers.
 -- Those are exactly the paths no amount of application-level care can cover, and exactly the
 -- paths a trigger does cover.
 --
