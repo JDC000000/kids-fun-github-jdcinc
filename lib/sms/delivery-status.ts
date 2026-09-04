@@ -156,7 +156,7 @@ export interface DeliveryStatusReport {
   /**
    * `ErrorCode`, present when the status is failed or undelivered.
    *
-   * PERSISTED, as of migration 0043 — it used to be parsed here and then dropped, which left
+   * PERSISTED, as of migration 0044 — it used to be parsed here and then dropped, which left
    * `sms_send_log` able to say a message did not arrive and unable to say why. See that
    * migration for what the codes distinguish and why a log line was not good enough.
    */

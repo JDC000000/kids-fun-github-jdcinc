@@ -281,7 +281,7 @@ describe('applyDeliveryStatus', () => {
 
     const row = await deliveryRow('SM_status_1');
     expect(row.delivery_status).toBe('undelivered');
-    expect(row.delivery_error_code).toBe(30003); // 0043: the REASON, not just the verdict
+    expect(row.delivery_error_code).toBe(30003); // 0044: the REASON, not just the verdict
     expect(row.outcome).toBe('sent'); // untouched
   });
 
@@ -412,7 +412,7 @@ describe('applyDeliveryStatus — a status can only ever move FORWARD', () => {
   });
 });
 
-describe("applyDeliveryStatus — Twilio's ErrorCode is kept (migration 0043)", () => {
+describe("applyDeliveryStatus — Twilio's ErrorCode is kept (migration 0044)", () => {
   it('persists the code and hands it back on a later read', async () => {
     // 30006 is the one that changes what we should DO: the number is a landline and will never
     // receive an SMS. Without this column the row could only say "did not arrive".

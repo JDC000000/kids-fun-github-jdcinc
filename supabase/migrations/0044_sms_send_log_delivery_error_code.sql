@@ -1,4 +1,4 @@
--- 0043 — keep the carrier's REASON, not just its verdict.
+-- 0044 — keep the carrier's REASON, not just its verdict.
 --
 -- STATUS: DRAFT. Not applied by the agent that wrote it; the Operator applies migrations.
 -- lib/sms/delivery-status.ts writes this column, so this migration must land BEFORE that code.
