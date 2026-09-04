@@ -144,16 +144,66 @@ export interface ActiveSubscriber {
 }
 
 /**
+ * How recently a WEEKLY send withholds a subscriber from the next batch.
+ *
+ * FOUR DAYS, and both bounds matter. It must be long enough to absorb a signup that produced an
+ * immediate first send earlier in the same week — a Thursday-evening JOIN is the case that
+ * motivated this — and it must be comfortably SHORTER than the seven days between two Fridays,
+ * or it would swallow the weekly cadence itself and mute the product. Four sits in the middle
+ * with three days of headroom on the side that matters.
+ *
+ * Exported so the db-lane test can express "older than the window" as a relationship to this
+ * number rather than as a second hardcoded 4 that stops matching the day anyone tunes it.
+ */
+export const RESEND_SUPPRESSION_WINDOW_DAYS = 4;
+
+/**
  * Every `active` subscriber the Friday job should consider.
  *
  * THE QUERY:
- *   SELECT id, short_ref, phone_number, postal_code, birth_years, category_interests,
- *          consecutive_empty_weeks, preferences_token, consent_text_version
- *     FROM sms_consent
- *    WHERE status = 'active'
- *      AND phone_number IS NOT NULL      -- a purged row is not a subscriber (migration 0034)
- *    ORDER BY id
- *    [LIMIT $1]
+ *   SELECT c.id, c.short_ref, c.phone_number, c.postal_code, c.birth_years, c.category_interests,
+ *          c.consecutive_empty_weeks, c.preferences_token, c.consent_text_version
+ *     FROM sms_consent c
+ *    WHERE c.status = 'active'
+ *      AND c.is_test = false
+ *      AND c.phone_number IS NOT NULL    -- a purged row is not a subscriber (migration 0034)
+ *      AND NOT EXISTS (                  -- ...and nobody gets texted twice in four days
+ *            SELECT 1 FROM sms_send_log l
+ *             WHERE l.subscriber_id = c.id
+ *               AND l.send_type = 'weekly'
+ *               AND l.created_at > now() - make_interval(days => $1::int))
+ *    ORDER BY c.id
+ *    [LIMIT $2]
+ *
+ * ═══ THE RECENCY CLAUSE (2026-09-04) ═══
+ * Before this, the job texted every active subscriber on every run with no notion of when it had
+ * last texted them — no watermark, no week key, nothing. Harmless while a weekly cron was the
+ * only trigger; not harmless once a subscriber can ask for their first picks at JOIN, because a
+ * Thursday-evening signup would be texted that night and again by the Friday batch fourteen
+ * hours later, against a disclosure promising one message a week.
+ *
+ * IT SUPPRESSES BY WITHHOLDING THE ROW, WHICH IS THE WHOLE DESIGN. A subscriber filtered out here
+ * never reaches the send loop, so nothing is dispatched, no `sms_send_log` row is written and
+ * `consecutive_empty_weeks` is not touched. Skipping them INSIDE the loop instead would run them
+ * through the empty-week path, which writes a row and increments that counter — and three
+ * increments auto-pause a subscriber, so the "tidier" placement would march somebody toward a
+ * pause for a week they were deliberately not texted about. Pinned by the first two assertions in
+ * tests/sms/weekly_recency_suppression-db.test.ts.
+ *
+ * `send_type = 'weekly'` and not merely "any send": a welcome, a confirmation request or a pause
+ * notice must not withhold somebody's picks. Uses `idx_sms_send_log_subscriber (subscriber_id,
+ * created_at DESC)` from 0035 — the same index the novelty filter and the click-through recovery
+ * already use, so this adds no index and no migration.
+ *
+ * ⚠ THIS MAKES THE FRIDAY JOB RE-RUNNABLE, which it was not before: a second run inside the
+ * window now skips everyone the first run reached, instead of texting them again. That is a
+ * behaviour change to an existing job and is intended — a partial-failure re-run was previously
+ * unsafe — but it also means a deliberate immediate re-send is no longer possible without
+ * shortening this window.
+ *
+ * ⚠ AND IT CHANGES `scripts/friday-preview-real-subscribers.ts`, which calls this function: run
+ * within four days of a real send, the preview now legitimately shows nobody. That is the honest
+ * answer to "what would the job do right now", but it will surprise anyone who has not read this.
  *
  * `phone_number IS NOT NULL` is the non-obvious clause. Migration 0034's 30-day post-stop purge
  * NULLs the personal columns in place rather than deleting the row, so a purged subscriber still
@@ -178,15 +228,24 @@ export async function loadActiveSubscribers(limit?: number): Promise<ActiveSubsc
     preferences_token: string | null;
     consent_text_version: string;
   }>(
-    `SELECT id, short_ref, phone_number, postal_code, birth_years, category_interests,
-            consecutive_empty_weeks, preferences_token, consent_text_version
-       FROM sms_consent
-      WHERE status = 'active'
-        AND is_test = false
-        AND phone_number IS NOT NULL
-      ORDER BY id
-      ${typeof limit === 'number' && limit > 0 ? 'LIMIT $1' : ''}`,
-    typeof limit === 'number' && limit > 0 ? [limit] : []
+    `SELECT c.id, c.short_ref, c.phone_number, c.postal_code, c.birth_years, c.category_interests,
+            c.consecutive_empty_weeks, c.preferences_token, c.consent_text_version
+       FROM sms_consent c
+      WHERE c.status = 'active'
+        AND c.is_test = false
+        AND c.phone_number IS NOT NULL
+        AND NOT EXISTS (
+              SELECT 1
+                FROM sms_send_log l
+               WHERE l.subscriber_id = c.id
+                 AND l.send_type = 'weekly'
+                 AND l.created_at > now() - make_interval(days => $1::int)
+            )
+      ORDER BY c.id
+      ${typeof limit === 'number' && limit > 0 ? 'LIMIT $2' : ''}`,
+    typeof limit === 'number' && limit > 0
+      ? [RESEND_SUPPRESSION_WINDOW_DAYS, limit]
+      : [RESEND_SUPPRESSION_WINDOW_DAYS]
   );
 
   return rows.map((row) => ({
