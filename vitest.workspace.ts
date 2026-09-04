@@ -141,6 +141,7 @@ export const DB_INTEGRATION_SUITES = [
   // Stage A: the first suites on this branch that write a real sms_consent row.
   'tests/sms/signup_persistence-db.test.ts',
   'tests/sms/send_log-db.test.ts',
+  'tests/sms/weekly_recency_suppression-db.test.ts',
   'tests/sms/preferences_weekly-db.test.ts',
   'tests/sms/click_through-db.test.ts',
   'tests/sms/waitlist_store-db.test.ts',
