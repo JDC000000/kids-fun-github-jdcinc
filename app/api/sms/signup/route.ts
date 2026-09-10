@@ -60,6 +60,31 @@ function failValidation(errors: SignupFieldError[]): NextResponse {
 }
 
 /**
+ * THE ONE SUCCESS ANSWER THIS ENDPOINT GIVES. Built here, in one place, because two call sites
+ * that must be indistinguishable cannot be trusted to stay that way if each writes its own object
+ * literal — the previous version of this file proved exactly that.
+ *
+ * ═══ WHY A BRAND-NEW SIGNUP AND AN ALREADY-ACTIVE ONE COME OUT OF THE SAME FUNCTION ═══
+ * A caller of this unauthenticated form has not proved they hold the number they typed. If the two
+ * cases differ in ANY way a client can see — an extra field, a different status code, a different
+ * `dispatched` value, a different screen — then the form is an oracle: type a stranger's number,
+ * read the answer, learn whether they subscribe to us. The throttle in step 5 raises the price of
+ * that lookup; only identical answers remove it. So: same status, same keys, same values.
+ *
+ * `dispatched` IS THE SUBTLE ONE. It reports whether a confirmation SMS left the building, and on
+ * the already-active path none is sent — but answering `false` there while a real signup answers
+ * `true` restores the whole oracle through the one field that is left, and hands the parent the
+ * "we couldn't send that SMS" screen for a subscription that is working perfectly. So that path
+ * passes `smsSendingEnabled()`: the value a successful send WOULD have reported in this
+ * environment, which keeps the field's dry-run meaning intact (false whenever sending is off,
+ * so a staging screenshot still cannot be mistaken for a live signup) without making it a
+ * subscriber-status readout.
+ */
+function signupAccepted(dispatched: boolean): NextResponse {
+  return NextResponse.json({ ok: true, dispatched }, { status: 201 });
+}
+
+/**
  * What a throttled caller is told. ONE SENTENCE FOR ALL FOUR LIMITS, deliberately.
  *
  * The result carries a `reason` — per-number interval, per-number daily, per-IP interval, per-IP
@@ -198,7 +223,7 @@ async function smsSignupPost(request: Request): Promise<NextResponse> {
     return fail(503, 'could not save that just now');
   }
 
-  // 7. ALREADY AN ACTIVE SUBSCRIBER — nothing was written, and nothing is sent.
+  // 7. ALREADY AN ACTIVE SUBSCRIBER — nothing is written, nothing is sent, and NOTHING IS SAID.
   //
   //    The store refused to touch the row (see `createPendingSubscriber`): an already-confirmed
   //    number is not re-consented, not re-preferenced and not knocked back to `pending` by an
@@ -206,19 +231,19 @@ async function smsSignupPost(request: Request): Promise<NextResponse> {
   //    text, because there is nothing left to confirm — they replied JOIN already and we hold the
   //    `confirmed_timestamp` that proves it.
   //
-  //    200, NOT 201. Nothing was created. It is still `ok: true` because the caller did nothing
-  //    wrong and there is nothing for them to fix.
+  //    ⚠ AND THE ANSWER IS THE SAME ONE A BRAND-NEW SIGNUP GETS. An earlier version of this branch
+  //    returned `{ ok: true, alreadyActive: true, dispatched: false }` with a 200, and the form
+  //    grew a screen for it. That made this endpoint an enumeration oracle — submit any number,
+  //    read the response, learn whether that person is one of our subscribers — which is precisely
+  //    the disclosure consent-copy.ts's SUBMITTED_BODY note has always refused to build out of
+  //    conditional copy. Jon chose the silent behaviour on 2026-09-10: the no-op is real, and it
+  //    is also invisible. See `signupAccepted` for what "invisible" has to mean field by field.
   //
-  //    ⚠ AND YES, THIS DISCLOSES SUBSCRIBER STATUS TO AN UNAUTHENTICATED CALLER. It is the one
-  //    thing this endpoint says about a number that it did not previously say — step 9's note and
-  //    consent-copy.ts's SUBMITTED_BODY comment both explain why that was refused before. It was
-  //    refused while the alternative was "behave identically and say nothing"; behaving
-  //    identically here means texting a stranger's handset on request and silently unsubscribing
-  //    them, which is a worse thing to do to the same person the secrecy was protecting. Jon
-  //    authorised the trade on 2026-09-04, and step 5's throttle is what keeps it from being an
-  //    enumeration oracle: 3 per number per day, 20 per IP per day.
+  //    THE NO-OP ITSELF IS THE PROTECTION. Behaving identically is only safe because nothing
+  //    happens on this path — no row is rewritten and no stranger's handset rings. Silence over a
+  //    destructive write would be the worst of both, and is what the store guard prevents.
   if (write.outcome === 'already_active') {
-    return NextResponse.json({ ok: true, alreadyActive: true, dispatched: false }, { status: 200 });
+    return signupAccepted(smsSendingEnabled());
   }
 
   // 8. Ask them to confirm. The MESSAGE is real (PRD §2.6, GSM-7-guarded); the Twilio dispatch
@@ -249,13 +274,8 @@ async function smsSignupPost(request: Request): Promise<NextResponse> {
   //    whoever made the request, who has not yet proved they hold the number they submitted —
   //    handing back a row id or a preferences token here would make the form a way to obtain a
   //    bearer credential for someone else's number.
-  return NextResponse.json(
-    {
-      ok: true,
-      // Honest about what actually happened, so a staging screenshot session cannot mistake a
-      // dry run for a live signup. False whenever SMS_SENDING_ENABLED is not 'true'.
-      dispatched: smsSendingEnabled() && confirm.outcome === 'sent',
-    },
-    { status: 201 }
-  );
+  //
+  //    `dispatched` is honest about what actually happened, so a staging screenshot session cannot
+  //    mistake a dry run for a live signup. False whenever SMS_SENDING_ENABLED is not 'true'.
+  return signupAccepted(smsSendingEnabled() && confirm.outcome === 'sent');
 }

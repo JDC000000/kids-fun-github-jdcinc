@@ -161,28 +161,34 @@ describe('the throttle, from outside', () => {
   });
 });
 
+const ALREADY_ACTIVE_WRITE = {
+  outcome: 'already_active',
+  subscriberId: null,
+  wasActive: true,
+  preferencesReplaced: false,
+} as const;
+
 describe('an already-active subscriber resubmitting their own number', () => {
   beforeEach(() => {
-    writeMock.mockResolvedValue({
-      outcome: 'already_active',
-      subscriberId: null,
-      wasActive: true,
-      preferencesReplaced: false,
-    });
+    writeMock.mockResolvedValue({ ...ALREADY_ACTIVE_WRITE });
   });
 
   it('🔴 sends them NO confirmation text — there is nothing left to confirm', async () => {
     // They replied JOIN already and we hold the confirmed_timestamp that proves it. A second
     // confirmation establishes nothing and, when the submitter is not the subscriber, is simply
     // an unrequested text to a stranger's handset.
-    const res = await POST(post());
+    await POST(post());
     expect(sendMock).not.toHaveBeenCalled();
-    expect(res.status).toBe(200); // 200, not 201: nothing was created.
   });
 
-  it('answers ok with alreadyActive, and does not claim a text was dispatched', async () => {
+  it('🔴 says NOTHING about the subscription — no alreadyActive field, at all', async () => {
+    // The regression this replaces: the route used to answer `{ ok: true, alreadyActive: true,
+    // dispatched: false }` with a 200. Absent-and-not-false, because a key that is present-but-
+    // false is still a key a caller can read the truth off by comparing responses.
     const res = await POST(post());
-    expect(await res.json()).toEqual({ ok: true, alreadyActive: true, dispatched: false });
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty('alreadyActive');
+    expect(Object.keys(body)).toEqual(['ok', 'dispatched']);
   });
 
   it('still returns nothing about the subscriber', async () => {
@@ -192,6 +198,65 @@ describe('an already-active subscriber resubmitting their own number', () => {
     for (const leak of ['id', 'short_ref', 'preferences', 'token', '6045550123', '+1604']) {
       expect(raw.toLowerCase()).not.toContain(leak.toLowerCase());
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE ACCEPTANCE CRITERION: THE TWO RESPONSES ARE THE SAME RESPONSE
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// Not "there is no alreadyActive field" — that is one way to fail, and asserting only it would
+// let the next one through. What has to hold is that a caller holding both responses cannot tell
+// which is which, because that is the whole reason this behaviour was chosen: an unauthenticated
+// form that answers differently for a subscriber is a way to look one up.
+//
+// SO THIS COMPARES EVERYTHING A CLIENT CAN SEE — status, header set, key set, and the raw body
+// text — rather than a hand-listed subset, so a field added to one path in a year's time fails
+// here rather than shipping as a new oracle.
+describe('🔴 a new number and an already-active number get the SAME answer', () => {
+  async function answerFor(write: Parameters<typeof writeMock.mockResolvedValue>[0]) {
+    writeMock.mockResolvedValue(write);
+    const res = await POST(post());
+    return {
+      status: res.status,
+      // Sorted: header ORDER is not something a client can meaningfully observe, presence is.
+      headerNames: [...res.headers.keys()].sort(),
+      raw: await res.text(),
+    };
+  }
+
+  it('is byte-identical: same status, same headers, same body', async () => {
+    const fresh = await answerFor({ outcome: 'created', subscriberId: 'sub-1' });
+    const active = await answerFor({ ...ALREADY_ACTIVE_WRITE });
+
+    expect(active.status).toBe(fresh.status);
+    expect(active.headerNames).toEqual(fresh.headerNames);
+    expect(active.raw).toBe(fresh.raw);
+  });
+
+  it('is structurally identical: the same keys, in the same order, with the same value types', async () => {
+    // Key ORDER is observable in the raw JSON text, so it is asserted rather than sorted away.
+    const fresh = JSON.parse((await answerFor({ outcome: 'created', subscriberId: 'sub-1' })).raw);
+    const active = JSON.parse((await answerFor({ ...ALREADY_ACTIVE_WRITE })).raw);
+
+    expect(Object.keys(active)).toEqual(Object.keys(fresh));
+    expect(Object.keys(active)).toEqual(['ok', 'dispatched']);
+    for (const key of Object.keys(fresh)) {
+      expect(typeof active[key], key).toBe(typeof fresh[key]);
+    }
+  });
+
+  it('stays identical with sending OFF, where `dispatched` is false on both paths', async () => {
+    // The dry-run environment is the easy case and it must not be the only one that passes:
+    // `dispatched` has to keep meaning "would a real send have gone out here", which is false
+    // for everyone when SMS_SENDING_ENABLED is not 'true' and true for everyone when it is.
+    vi.stubEnv('SMS_SENDING_ENABLED', 'false');
+    const fresh = await answerFor({ outcome: 'created', subscriberId: 'sub-1' });
+    const active = await answerFor({ ...ALREADY_ACTIVE_WRITE });
+
+    expect(fresh.raw).toContain('"dispatched":false');
+    expect(active.raw).toBe(fresh.raw);
+    expect(active.status).toBe(fresh.status);
   });
 });
 

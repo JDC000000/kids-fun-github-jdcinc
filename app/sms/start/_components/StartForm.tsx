@@ -132,13 +132,19 @@ export function canAddAnotherChild(count: number): boolean {
 // a Twilio outage, or sending simply disabled — produced the full success screen telling a parent
 // to check a phone that was never going to ring. The API was telling the truth into a void.
 //
-// ═══ WHY IT IS THREE STATES AND NOT A BOOLEAN ═══
-// `dispatched: false` now has two very different meanings, and collapsing them would just move
-// the dishonesty: an already-active subscriber resubmitting their own number gets no text BECAUSE
-// THERE IS NOTHING TO CONFIRM, which is a success, not a failure. So the response carries
-// `alreadyActive` and it is checked first. See step 7 of the route.
+// ═══ WHY THERE IS NO THIRD STATE FOR AN ALREADY-ACTIVE SUBSCRIBER ═══
+// There was one, briefly, and removing it is the point of this change. The route used to answer an
+// already-active resubmission with `alreadyActive: true`, and this file read that flag and showed a
+// dedicated "you're already signed up" screen — which turned an unauthenticated public form into a
+// way to look up whether a stranger subscribes to us: type their number, read the screen.
+//
+// The route now answers such a request with the SAME body a brand-new signup gets (see
+// `signupAccepted` in app/api/sms/signup/route.ts), so there is nothing here to branch on and this
+// file must not invent one. `dispatched` is the only thing left to read, it means exactly what it
+// has always meant — did a confirmation SMS leave the building — and an already-active caller sees
+// the ordinary success screen because that is what the ordinary success response says.
 
-export type SignupOutcome = 'confirm_sent' | 'already_active' | 'undelivered';
+export type SignupOutcome = 'confirm_sent' | 'undelivered';
 
 /**
  * Read the outcome off the API's own answer.
@@ -148,18 +154,16 @@ export type SignupOutcome = 'confirm_sent' | 'already_active' | 'undelivered';
  * reach it — which is exactly how it went a whole release saying "check your phone" over a text
  * that was never sent.
  *
- * ORDER MATTERS. `alreadyActive` is checked BEFORE `dispatched`, because that response carries
- * `dispatched: false` too and is not a failure.
+ * ONE FIELD, DELIBERATELY. Do not add a second branch for a subscriber-status field. The response
+ * no longer carries one, and re-deriving that fact on the client would rebuild the same oracle in
+ * a different file — see the note above.
  *
  * AN UNREADABLE BODY IS 'undelivered', NOT SUCCESS. If the status said ok and the JSON did not
  * parse, we know the server accepted something and know nothing about whether a text left the
  * building. Guessing "sent" is the exact failure this function exists to end; the fallback screen
  * is honest about the uncertainty and its remedy — try again — is harmless if the text did arrive.
  */
-export function outcomeFromResponse(
-  data: { dispatched?: boolean; alreadyActive?: boolean } | null
-): SignupOutcome {
-  if (data?.alreadyActive === true) return 'already_active';
+export function outcomeFromResponse(data: { dispatched?: boolean } | null): SignupOutcome {
   return data?.dispatched === true ? 'confirm_sent' : 'undelivered';
 }
 
@@ -188,38 +192,18 @@ export const UNDELIVERED_BODY: readonly string[] = [
   'Otherwise your details are safe with us — check the number above and try again in a few minutes.',
 ];
 
-/**
- * Shown when the number is already an active subscriber.
- *
- * NOTHING WAS CHANGED AND THE COPY SAYS SO, because nothing was: the store leaves an active row
- * completely alone rather than re-consenting it from an unauthenticated form post. Telling them
- * to reply JOIN would be wrong — they already did — and telling them we saved their new details
- * would be a lie.
- *
- * IT POINTS AT THE HUB LINK RATHER THAN AT THIS FORM, because that link is the authenticated way
- * to change an area, an age or an interest (PRD §2.4), and it is in every message we send them.
- */
-export const ALREADY_ACTIVE_HEADING = 'You’re already signed up';
-export const ALREADY_ACTIVE_BODY: readonly string[] = [
-  'This number already gets KIDS FUN picks every Friday, so we haven’t changed anything or sent you an SMS.',
-  'To update your area, your kids’ ages or your interests, use the link at the bottom of any SMS we’ve sent you.',
-];
-
-/** Heading + body for one outcome. Kept beside the copy so a fourth state cannot forget one. */
+/** Heading + body for one outcome. Kept beside the copy so a third state cannot forget one. */
 export function signupOutcomeCopy(outcome: SignupOutcome): {
   heading: string;
   lines: readonly string[];
 } {
-  if (outcome === 'already_active') {
-    return { heading: ALREADY_ACTIVE_HEADING, lines: ALREADY_ACTIVE_BODY };
-  }
   if (outcome === 'undelivered') return { heading: UNDELIVERED_HEADING, lines: UNDELIVERED_BODY };
   return { heading: SUBMITTED_HEADING, lines: SUBMITTED_BODY };
 }
 
 /**
- * The post-submit panel, exported so all three states can be rendered by a test rather than only
- * the one a mocked fetch happens to produce.
+ * The post-submit panel, exported so both states can be rendered by a test rather than only the
+ * one a mocked fetch happens to produce.
  *
  * `role="status"` on every branch, unchanged: this replaces the form in place, so a screen-reader
  * user is told what happened without having to go looking — and that is as true of "we couldn't
@@ -390,12 +374,9 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
         return;
       }
       // READ THE ANSWER, DO NOT ASSUME IT. `res.ok` only says the request was accepted; whether a
-      // confirmation SMS actually left the building is `dispatched`, and whether one was even
-      // needed is `alreadyActive`. Both are parsed in one place so the three screens cannot drift.
-      const data = (await res.json().catch(() => null)) as {
-        dispatched?: boolean;
-        alreadyActive?: boolean;
-      } | null;
+      // confirmation SMS actually left the building is `dispatched`, and that is the only field
+      // this screen may read — see `outcomeFromResponse` for why there is no second one.
+      const data = (await res.json().catch(() => null)) as { dispatched?: boolean } | null;
       setOutcome(outcomeFromResponse(data));
     } catch {
       setSending(false);

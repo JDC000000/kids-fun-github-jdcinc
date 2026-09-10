@@ -16,8 +16,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
-  ALREADY_ACTIVE_BODY,
-  ALREADY_ACTIVE_HEADING,
   SignupOutcomePanel,
   UNDELIVERED_BODY,
   UNDELIVERED_HEADING,
@@ -49,25 +47,27 @@ describe('reading the API’s answer', () => {
     expect(outcomeFromResponse(null)).toBe('undelivered');
   });
 
-  it('checks alreadyActive FIRST, because that response also carries dispatched:false', () => {
-    // Not a failure: an already-active subscriber gets no text because there is nothing left to
-    // confirm. Collapsing the two would just move the dishonesty from one screen to another.
-    expect(outcomeFromResponse({ alreadyActive: true, dispatched: false })).toBe('already_active');
+  it('🔴 IGNORES a subscriber-status field, however the response arrives', () => {
+    // The oracle this file used to help build. `alreadyActive` no longer comes back from the
+    // route (see its step 7), and this asserts the client would not act on one if it did — a
+    // stale deploy, a cache, or a hand-crafted response must not be able to reintroduce the
+    // "you're already signed up" disclosure from the browser side.
+    const withFlag = { alreadyActive: true } as unknown as { dispatched?: boolean };
+    expect(outcomeFromResponse({ ...withFlag, dispatched: true })).toBe('confirm_sent');
+    expect(outcomeFromResponse(withFlag)).toBe('undelivered');
+    expect(outcomeFromResponse({ dispatched: true })).toBe('confirm_sent');
   });
 
-  it('ignores truthy-but-not-true values on both flags', () => {
+  it('ignores truthy-but-not-true values on the one flag it reads', () => {
     // These arrive as JSON from an unauthenticated endpoint. `=== true` rather than a coercion,
     // so a string "false" cannot become a success screen.
     expect(outcomeFromResponse({ dispatched: 'yes' } as unknown as { dispatched?: boolean })).toBe(
       'undelivered'
     );
-    expect(
-      outcomeFromResponse({ alreadyActive: 'yes' } as unknown as { alreadyActive?: boolean })
-    ).toBe('undelivered');
   });
 });
 
-describe('the three screens', () => {
+describe('the two screens', () => {
   it('renders the approved success copy when a confirmation really was sent', () => {
     const text = textOf('confirm_sent');
     expect(text).toContain(SUBMITTED_HEADING);
@@ -90,20 +90,48 @@ describe('the three screens', () => {
     expect(UNDELIVERED_BODY.join(' ')).toContain(SUPPORT_PHONE_DISPLAY);
   });
 
-  it('tells an already-active subscriber that nothing changed, and does not ask them to reply JOIN', () => {
-    // They already did, and the store deliberately left their row untouched. Telling them to
-    // confirm again would be wrong; saying we saved their new details would be a lie.
-    const text = textOf('already_active');
-    expect(text).toContain(ALREADY_ACTIVE_HEADING);
-    for (const line of ALREADY_ACTIVE_BODY) expect(text).toContain(line);
-    expect(text).not.toContain('JOIN');
-    expect(text).not.toContain(SUBMITTED_HEADING);
+  it('🔴 shows an already-active resubmission the ORDINARY success screen, character for character', () => {
+    // The client half of the acceptance criterion, and the regression this file exists to lock:
+    // there used to be a dedicated "You're already signed up" panel here, which made a public
+    // unauthenticated form into a way to look up whether a stranger subscribes to us.
+    //
+    // Both bodies below are what app/api/sms/signup/route.ts now returns on its two success
+    // paths — identical by construction, since they come out of one `signupAccepted` call. This
+    // asserts the identity survives the whole client pipeline, response → outcome → markup,
+    // rather than stopping at the response.
+    const fromNewSignup = { dispatched: true };
+    const fromAlreadyActive = { dispatched: true };
+
+    expect(outcomeFromResponse(fromAlreadyActive)).toBe(outcomeFromResponse(fromNewSignup));
+    expect(renderToStaticMarkup(<SignupOutcomePanel outcome={outcomeFromResponse(fromAlreadyActive)} />)).toBe(
+      renderToStaticMarkup(<SignupOutcomePanel outcome={outcomeFromResponse(fromNewSignup)} />)
+    );
+  });
+
+  it('🔴 offers no screen whose copy is CHOSEN by subscriber status', () => {
+    // Two outcomes, both keyed on `dispatched` alone. The assertion is about the MAPPING, not
+    // about vocabulary: SUBMITTED_BODY's fourth line does say "Already signed up with this
+    // number?", and that is fine precisely because it is unconditional — every submitter reads
+    // it, so it tells a reader nothing about the number they typed. A screen that only some
+    // submitters saw would be the oracle, whatever words were on it.
+    const outcomes = ['confirm_sent', 'undelivered'] as const;
+    expect(outcomes.map((o) => signupOutcomeCopy(o).heading)).toEqual([
+      SUBMITTED_HEADING,
+      UNDELIVERED_HEADING,
+    ]);
+    // ...and the only input that picks between them is `dispatched`.
+    expect(signupOutcomeCopy(outcomeFromResponse({ dispatched: true })).heading).toBe(
+      SUBMITTED_HEADING
+    );
+    expect(signupOutcomeCopy(outcomeFromResponse({ dispatched: false })).heading).toBe(
+      UNDELIVERED_HEADING
+    );
   });
 
   it('keeps role="status" on every branch', () => {
     // The panel replaces the form in place. A screen-reader user has to be told what happened,
     // and that is as true of "we couldn't send it" as it is of "check your phone".
-    for (const outcome of ['confirm_sent', 'undelivered', 'already_active'] as const) {
+    for (const outcome of ['confirm_sent', 'undelivered'] as const) {
       expect(renderToStaticMarkup(<SignupOutcomePanel outcome={outcome} />), outcome).toContain(
         'role="status"'
       );
@@ -111,17 +139,17 @@ describe('the three screens', () => {
   });
 
   it('gives every outcome a heading and at least one line', () => {
-    // The copy and the mapping live together so a fourth state cannot arrive with one missing.
-    for (const outcome of ['confirm_sent', 'undelivered', 'already_active'] as const) {
+    // The copy and the mapping live together so a third state cannot arrive with one missing.
+    for (const outcome of ['confirm_sent', 'undelivered'] as const) {
       const { heading, lines } = signupOutcomeCopy(outcome);
       expect(heading.length, outcome).toBeGreaterThan(0);
       expect(lines.length, outcome).toBeGreaterThan(0);
     }
   });
 
-  it('matches the house voice: "SMS", never "text", on the new screens', () => {
+  it('matches the house voice: "SMS", never "text", on the new screen', () => {
     // Jon, 2026-09-02, applied across SUBMITTED_BODY to the verb forms as well as the noun.
-    for (const line of [...UNDELIVERED_BODY, ...ALREADY_ACTIVE_BODY]) {
+    for (const line of UNDELIVERED_BODY) {
       expect(line.toLowerCase(), line).not.toMatch(/\btexts?\b/);
     }
   });

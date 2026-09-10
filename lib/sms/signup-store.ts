@@ -142,14 +142,14 @@ export interface SignupWriteOptions {
  * ships in every message (PRD §2.4). Sending them there costs one screen; the alternative costs
  * them their data.
  *
- * ⚠ AND IT IS A DISCLOSURE, WHICH IS A REAL COST AND WAS TAKEN KNOWINGLY. Reporting
- * 'already_active' tells an unauthenticated caller that a number they typed is a subscriber —
- * exactly the oracle consent-copy.ts's SUBMITTED_BODY note refuses to build out of conditional
- * copy. That refusal was the right default while the alternative was "say nothing and behave
- * identically"; it is not the right answer when behaving identically means texting a stranger's
- * handset on demand and silently unsubscribing them. Jon authorised the trade on 2026-09-04.
- * What limits the damage is the throttle below: enumeration costs 5 numbers per 10 minutes per
- * IP, not thousands.
+ * ⚠ 'already_active' IS AN INTERNAL OUTCOME AND MUST STAY ONE. It says a number the caller typed
+ * belongs to a subscriber, which is exactly the oracle consent-copy.ts's SUBMITTED_BODY note
+ * refuses to build out of conditional copy — so the route deliberately does not pass it on. An
+ * already-active resubmission gets byte-for-byte the answer a brand-new signup gets (see
+ * `signupAccepted` in app/api/sms/signup/route.ts); Jon chose that silent behaviour on 2026-09-10
+ * over disclosing the status. It is only safe BECAUSE of the guard above: saying nothing while
+ * quietly rewriting the row would be the worst of both, and the guard is what makes the silence
+ * cover a genuine no-op. Keep this flag for diagnostics; do not let it reach a response body.
  *
  * WHAT MUST NOT HAPPEN HERE: this must never write `status = 'active'`. Only a JOIN reply may do
  * that (lib/sms/consent-transitions.ts), because the whole value of the double opt-in is that
