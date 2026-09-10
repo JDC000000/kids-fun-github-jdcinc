@@ -242,6 +242,31 @@ async function smsSignupPost(request: Request): Promise<NextResponse> {
   //    THE NO-OP ITSELF IS THE PROTECTION. Behaving identically is only safe because nothing
   //    happens on this path — no row is rewritten and no stranger's handset rings. Silence over a
   //    destructive write would be the worst of both, and is what the store guard prevents.
+  //    ⚠ THE ONE RESIDUAL, KNOWN AND DELIBERATELY LEFT OPEN. `dispatched` is not perfectly
+  //    symmetric across the two paths, and this is the exact remaining shape of it:
+  //
+  //      • THIS path always answers `smsSendingEnabled()` — in production, unconditionally
+  //        `true`, because no real send is attempted here and so none can fail;
+  //      • a genuinely NEW signup answers `smsSendingEnabled() && confirm.outcome === 'sent'`
+  //        (step 9), so a REAL Twilio or carrier failure to a brand-new number answers `false`.
+  //
+  //    So with sending known to be on, observing `dispatched: false` proves the number was NOT
+  //    already active. Note which way that runs: it can only ever RULE OUT an existing
+  //    subscription, never confirm one, and only in the rare window where a dispatch genuinely
+  //    failed. `dispatched: true` — the overwhelmingly common answer — stays ambiguous, and that
+  //    ambiguity is the disclosure this branch exists to close. The residual is real, and it is
+  //    strictly narrower and weaker than what was closed.
+  //
+  //    WHY IT WAS ACCEPTED RATHER THAN CLOSED (Operator + Jon, 2026-09-10). Both ways of closing
+  //    it cost more than the gap does:
+  //      • answer `true` here on a real Twilio failure — that is a lie to a parent about a text
+  //        that did not arrive, and it discards the "resubmit, or text START" retry that step 8
+  //        deliberately built this route around for genuine failures;
+  //      • make THIS path's `dispatched` artificially non-deterministic so it mimics failure
+  //        noise — real complexity, and a response field that stops meaning anything, all to
+  //        cover a rare case.
+  //    tests/sms/signup_route_abuse.test.ts pins this asymmetry as EXPECTED, so it cannot quietly
+  //    widen into something worse without a test failing.
   if (write.outcome === 'already_active') {
     return signupAccepted(smsSendingEnabled());
   }

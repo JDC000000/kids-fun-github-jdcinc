@@ -258,6 +258,44 @@ describe('🔴 a new number and an already-active number get the SAME answer', (
     expect(active.raw).toBe(fresh.raw);
     expect(active.status).toBe(fresh.status);
   });
+
+  it('the ONE accepted asymmetry: a REAL dispatch failure answers false, already-active never does', async () => {
+    // ⚠ THIS TEST PINS A KNOWN GAP. IT IS NOT ASSERTING A FIX, AND ITS PASSING DOES NOT MEAN THE
+    // TWO ANSWERS ARE INDISTINGUISHABLE HERE. Read "THE ONE RESIDUAL" in step 7 of
+    // app/api/sms/signup/route.ts before touching it — that comment is the decision, this is its
+    // regression pin.
+    //
+    // WITH SENDING ON, a brand-new signup whose confirmation genuinely fails at Twilio answers
+    // `dispatched: false`; the already-active path attempts no send, so it cannot fail, and always
+    // answers `dispatched: true`. A caller who sees `false` in a known-sending-on environment has
+    // therefore ruled OUT an existing subscription. One-directional (it can never CONFIRM one),
+    // and only in the rare window of a real dispatch failure. Operator and Jon accepted this on
+    // 2026-09-10 rather than lie to a parent about a text that did not arrive. THE DIFFERENCE
+    // BELOW IS EXPECTED.
+    //
+    // It is pinned so the gap cannot silently get worse: if a future change makes the
+    // already-active path answer anything but `dispatched: true` here, or gives it a SECOND
+    // observable difference, this fails and somebody re-reads that decision instead of
+    // rediscovering it.
+    sendMock.mockResolvedValue({
+      outcome: 'error',
+      twilioSid: null,
+      segments: 1,
+      errorCode: 21610,
+      error: 'blocked',
+    });
+    const failedFresh = await answerFor({ outcome: 'created', subscriberId: 'sub-1' });
+    const active = await answerFor({ ...ALREADY_ACTIVE_WRITE });
+
+    expect(JSON.parse(failedFresh.raw)).toEqual({ ok: true, dispatched: false });
+    expect(JSON.parse(active.raw)).toEqual({ ok: true, dispatched: true });
+
+    // ...and `dispatched` is the ONLY thing allowed to differ. Everything else a client can see
+    // stays identical, so nothing new gets to join the accepted gap.
+    expect(active.status).toBe(failedFresh.status);
+    expect(active.headerNames).toEqual(failedFresh.headerNames);
+    expect(Object.keys(JSON.parse(active.raw))).toEqual(Object.keys(JSON.parse(failedFresh.raw)));
+  });
 });
 
 describe('the ordinary path is unchanged', () => {
