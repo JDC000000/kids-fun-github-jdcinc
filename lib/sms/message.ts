@@ -160,6 +160,132 @@ export function assertGsm7Safe(body: string): void {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// NORMALISING THIRD-PARTY TEXT — the same substitution the templates got, applied at render time
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// The round-4 finding at the top of this file was acted on by rewriting THIS FILE'S OWN TEMPLATES
+// in ASCII. That fixed every string somebody in this repo types, and none of the strings a
+// municipality types.
+//
+// Activity and venue names arrive from third-party catalogues and are printed verbatim into the
+// weekly message. The real Richmond PerfectMind fixture carries EN DASHES in eight name-like
+// strings — "Westwind School - Gymnasium – Court 1", "BADMINTON BOOKING - COURT 2 – ADULTS" — and
+// ONE of those in ONE pick converts the ENTIRE message to UCS-2. Measured against the live test
+// send, with the production encoder below: 508 septets / 4 segments clean, 535 characters /
+// 8 segments with one poisoned venue name substituted in. Exactly double the bill, for a character
+// nobody in this product chose and no parent can see.
+//
+// `assertGsm7Safe` does not catch this and was never meant to: it is a TEST-time wall over copy
+// THIS REPO AUTHORS. A catalogue name is not copy this repo authors, and it changes without a
+// commit.
+//
+// ── IT NORMALISES, IT DOES NOT REJECT ───────────────────────────────────────────────────
+// That is the posture `assertGsm7Safe`'s own comment already takes: *"a real send must not fail
+// because someone typed a nicer dash, it must merely be visible that they did."* A rejecter here
+// would drop a real activity out of a real parent's Friday text because a Richmond scheduler
+// pressed a nicer hyphen — spending the product to enforce a typography rule. The substitutions
+// below are the SAME mechanical, semantically-identical ones round 4 applied to §2.6 by hand.
+//
+//   !! LAYER 2 (the diacritic fold) AND LAYER 3 (leave it) ARE IMPLEMENTER DECISIONS AND ARE
+//   !! FLAGGED AS SUCH, in the same posture as the round-4 ASCII substitution. See each below.
+
+/**
+ * LAYER 1 — the six known offenders, mapped to the ASCII round 4 already chose.
+ *
+ * These six are not a guess: they are the exact set `tests/sms/weekly_send.test.ts` already pins
+ * in *"detects the punctuation that silently more than halves a segment"*, and the exact set this
+ * file's own header names as *"the characters a careful writer reaches for"*. U+2018 is added to
+ * them because the header names curly single quotes as a PAIR and handling only the closing one
+ * would be a gap rather than a decision.
+ *
+ * The em dash maps to a BARE hyphen, not to " - ": in every real occurrence the dash already
+ * carries its own surrounding spaces ("this week — check back"), so adding more would double
+ * them. Round 4's comment describes the RESULT (" - "), not the replacement string.
+ */
+const GSM7_SUBSTITUTIONS: ReadonlyMap<string, string> = new Map([
+  ['—', '-'], //  —  em dash
+  ['–', '-'], //  –  en dash            ← the one that is actually in the live catalogue
+  ['’', "'"], //  ’  curly apostrophe / right single quote
+  ['‘', "'"], //  ‘  left single quote
+  ['“', '"'], //  “  left double quote
+  ['”', '"'], //  ”  right double quote
+  ['…', '...'], //  …  ellipsis
+]);
+
+/**
+ * Invisible characters, which are worse than the visible ones.
+ *
+ * A non-breaking space is the single most common artefact of scraping a municipal web page, it is
+ * NOT in GSM 03.38, and it is indistinguishable from a space on every screen it will ever appear
+ * on — so it can double the cost of a send with literally nothing to see in the diff. Mapping it
+ * to the space it is already pretending to be involves no judgement at all. Zero-width characters
+ * go to nothing for the same reason: they say nothing and cost everything.
+ */
+const GSM7_INVISIBLE_SUBSTITUTIONS: ReadonlyMap<string, string> = new Map([
+  [' ', ' '], // no-break space
+  [' ', ' '], // figure space
+  [' ', ' '], // thin space
+  [' ', ' '], // narrow no-break space
+  ['​', ''], // zero-width space
+  ['‌', ''], // zero-width non-joiner
+  ['‍', ''], // zero-width joiner
+  ['﻿', ''], // byte-order mark / zero-width no-break space
+]);
+
+/**
+ * LAYER 2 — strip the accent from a letter GSM-7 cannot carry, and ONLY then.
+ *
+ * GSM 03.38 carries a specific and lopsided set of accented letters: è é ù ì ò Ç Å å Ä Ö Ñ Ü ä ö
+ * ñ ü à are in it, and â ê î ô û á í ó ú ç ō are not. So "Café" is already free and "Français"
+ * costs 2.28× — a distinction no reader could predict and no writer intended.
+ *
+ * This decomposes such a letter and drops its combining marks: ç → c, â → a, Sen̓áḵw → Senakw.
+ *
+ *   !! THIS IS A CHANGE TO HOW A NAME IS SHOWN TO A PARENT, not a typographic tidy, and it wants
+ *   !! the same confirmation the round-4 substitution wanted. It fires ONLY where the alternative
+ *   !! is more than doubling the cost of that subscriber's message, and it is deliberately last
+ *   !! rather than a blanket ASCII fold — a letter GSM-7 can carry keeps its accent exactly.
+ */
+function foldUnsupportedDiacritic(ch: string): string {
+  const folded = ch.normalize('NFD').replace(/\p{M}+/gu, '');
+  // `folded` is EMPTY when `ch` was itself a lone combining mark — the tail of a cluster whose
+  // base letter GSM-7 could carry and has already been emitted, as in "Seṉ̓áḵw", where no
+  // precomposed form exists to normalise to. Dropping it is the whole point, and `isGsm7('')` is
+  // true, so the guard below already says so; it must not be special-cased back into the string.
+  return isGsm7(folded) ? folded : ch;
+}
+
+/**
+ * The GSM-7-safe form of a string that this product did not write.
+ *
+ * Apply to CATALOGUE-SOURCED text — activity names, venue names, area labels — not to URLs, which
+ * are ASCII by construction and which a substitution could only break.
+ *
+ * LAYER 3 IS "LEAVE IT". A character that survives all three layers — a CJK venue name, an emoji
+ * in an activity title — is returned untouched, and the message goes out as UCS-2 exactly as it
+ * does today. That is deliberate: replacing it would hand a parent an unreadable name, which is a
+ * worse product than an expensive message, and `estimateSegments` is reported on every send so
+ * the cost stays visible rather than silent. `nonGsm7Characters` names the survivor for whoever
+ * looks. A caller that would rather drop such a pick than pay for it can ask `isGsm7` after this
+ * and decide — this function does not decide for them.
+ */
+export function normalizeForGsm7(text: string): string {
+  let out = '';
+  // NFC FIRST, so a DECOMPOSED letter is judged as the letter it is. GSM 03.38 carries é, and a
+  // catalogue that spells it "e" + U+0301 would otherwise lose the accent to layer 2 for no
+  // reason. NFC is the identity on ASCII, so nothing this product writes is touched.
+  for (const ch of text.normalize('NFC')) {
+    const substitution = GSM7_SUBSTITUTIONS.get(ch) ?? GSM7_INVISIBLE_SUBSTITUTIONS.get(ch);
+    if (substitution !== undefined) {
+      out += substitution;
+      continue;
+    }
+    out += septetCost(ch) === 0 ? foldUnsupportedDiacritic(ch) : ch;
+  }
+  return out;
+}
+
 export interface RenderedMessage {
   body: string;
   encoding: SmsEncoding;
@@ -244,14 +370,17 @@ export function renderWeeklyMessage(input: WeeklyMessageInput): RenderedMessage 
   const ages =
     input.ageLabels.length > 0 ? ` for ages ${input.ageLabels.join(' & ')}` : '';
   const noun = input.totalPicks === 1 ? 'pick' : 'picks';
+  // THE THREE CATALOGUE-SOURCED FIELDS, and only those. The URLs are deliberately NOT normalised:
+  // a short link and a preferences link are ASCII by construction, and a substitution applied to
+  // one could only break a link a parent then cannot tap.
   const lines: string[] = [
-    `${BRAND} ${input.totalPicks} ${noun} this weekend${ages} near ${input.areaLabel}.`,
+    `${BRAND} ${input.totalPicks} ${noun} this weekend${ages} near ${normalizeForGsm7(input.areaLabel)}.`,
   ];
 
   for (const pick of input.directPicks) {
     const day = weekdayLabel(pick.startDatetimeUtc);
-    const venue = pick.venue ? ` (${pick.venue})` : '';
-    lines.push(`${day ? `${day}: ` : ''}${pick.name}${venue} ${pick.url}`);
+    const venue = pick.venue ? ` (${normalizeForGsm7(pick.venue)})` : '';
+    lines.push(`${day ? `${day}: ` : ''}${normalizeForGsm7(pick.name)}${venue} ${pick.url}`);
   }
 
   const remaining = input.totalPicks - input.directPicks.length;
