@@ -20,6 +20,7 @@ import {
   septetLength,
   type MessagePick,
   type NamedPick,
+  shortenVenueName,
   type WeeklyMessageFormat,
 } from '@/lib/sms/message';
 
@@ -94,34 +95,14 @@ const P90_NAMED: NamedPick[] = [
 ];
 
 /**
- * A CANDIDATE venue shortener, used only to measure what Jon's §8 Q2 would buy.
+ * The SHIPPED shortener, imported rather than re-declared.
  *
- * NOT SHIPPED and deliberately not in `lib/` — the abbreviations are the thing he has to approve,
- * and putting them in the source would make the answer look decided. This is the ruleset the
- * recommendation measured, reproduced here so its saving can be re-derived rather than quoted.
+ * This used to be a local copy, because the rules were a proposal waiting on Jon. He approved them
+ * (Q2, 2026-09-11) and they moved into `lib/sms/message.ts`, so the copy had to go: two
+ * implementations of the same rules is a second source of truth, and this suite has already been
+ * bitten once by a number that existed in two places.
  */
-const RULES: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\s*Community Arts and Recreation Centre$/i, ' CC'],
-  [/\s*Community Recreation Centre$/i, ' CC'],
-  [/\s*Community Centre$/i, ' CC'],
-  [/\s*Recreation Complex$/i, ' Rec'],
-  [/\s*Recreation Centre$/i, ' Rec'],
-  [/\s*Aquatic Centre$/i, ' Pool'],
-];
-function candidateShortener(venue: string): string {
-  let stem = venue;
-  let annex = '';
-  // "- Aberthau" is the thing that distinguishes the site and must survive the collapse.
-  const matched = stem.match(/\s+-\s+[A-Za-z][A-Za-z ]*$/);
-  if (matched) {
-    annex = matched[0];
-    stem = stem.slice(0, stem.length - annex.length);
-  }
-  for (const [pattern, replacement] of RULES) {
-    if (pattern.test(stem)) return (stem.replace(pattern, replacement) + annex).trim();
-  }
-  return (stem + annex).trim();
-}
+const candidateShortener = shortenVenueName;
 
 function weekly(
   linked: readonly MessagePick[],
@@ -154,6 +135,7 @@ const AS_SHIPPED: Partial<WeeklyMessageFormat> = {
   groupByDay: false,
   linkOnOwnLine: false,
   nameUnlinkedPicks: false,
+  shortenVenue: (venue) => venue, // B0 printed the catalogue name in full
 };
 
 /**
@@ -168,6 +150,7 @@ const STRUCTURE_ONLY: Partial<WeeklyMessageFormat> = {
   groupByDay: true,
   linkOnOwnLine: true,
   nameUnlinkedPicks: false,
+  shortenVenue: (venue) => venue,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -426,8 +409,10 @@ describe('the four moves, and what each one actually costs', () => {
   });
 
   it('2. day headers pay for themselves — they REPLACE a "Sat: " prefix on every pick beneath', () => {
+    // Both sides pin shortening OFF: this measures the DAY HEADER, and letting one side inherit
+    // the shipped shortener would make the comparison about venue names instead.
     const flat = weekly(LIVE_LINKED, [], { ...AS_SHIPPED, linkOnOwnLine: true });
-    const grouped = weekly(LIVE_LINKED, [], { linkOnOwnLine: true, groupByDay: true });
+    const grouped = weekly(LIVE_LINKED, [], { ...STRUCTURE_ONLY });
     // Two headers and a blank line, minus three "Sat: "/"Sun: " prefixes. Net: 6 septets saved,
     // on a week with only three linked picks. It improves as more picks share a day.
     expect(flat.characters - grouped.characters).toBe(6);
@@ -479,10 +464,10 @@ describe('measured: the LIVE week (Jon\'s test send) and the P90 week', () => {
     // week, label, linked, named, format, septets, segments, named/10, longest line
     ['LIVE', 'B0 as shipped', LIVE_LINKED, LIVE_NAMED, AS_SHIPPED, 508, 4, 3, 121],
     ['LIVE', 'structure only', LIVE_LINKED, LIVE_NAMED, STRUCTURE_ONLY, 502, 4, 3, 78],
-    ['LIVE', 'SHIPPED DEFAULT (Jon Q1: more picks)', LIVE_LINKED, LIVE_NAMED, {}, 610, 4, 8, 78],
+    ['LIVE', 'SHIPPED DEFAULT (all three answers)', LIVE_LINKED, LIVE_NAMED, {}, 556, 4, 10, 87],
     ['P90', 'B0 as shipped', P90_LINKED, P90_NAMED, AS_SHIPPED, 542, 4, 3, 129],
     ['P90', 'structure only', P90_LINKED, P90_NAMED, STRUCTURE_ONLY, 536, 4, 3, 86],
-    ['P90', 'SHIPPED DEFAULT (Jon Q1: more picks)', P90_LINKED, P90_NAMED, {}, 602, 4, 5, 86],
+    ['P90', 'SHIPPED DEFAULT (all three answers)', P90_LINKED, P90_NAMED, {}, 604, 4, 7, 103],
   ] as const;
 
   it.each(rows)(
@@ -515,8 +500,8 @@ describe('measured: the LIVE week (Jon\'s test send) and the P90 week', () => {
     // no longer cost-neutral against B0 -- it deliberately spends up to the same 4-segment ceiling
     // B0 already paid for, and buys visible picks with it.
     for (const [linked, named, expectedNamed] of [
-      [LIVE_LINKED, LIVE_NAMED, 8],
-      [P90_LINKED, P90_NAMED, 5],
+      [LIVE_LINKED, LIVE_NAMED, 10],
+      [P90_LINKED, P90_NAMED, 7],
     ] as const) {
       const b0 = weekly(linked, named, AS_SHIPPED);
       const shipping = weekly(linked, named);
@@ -541,14 +526,60 @@ describe('measured: the LIVE week (Jon\'s test send) and the P90 week', () => {
     }
   });
 
-  it('the LIVE week ships with only 2 septets of headroom — pinned because it is tight', () => {
-    // Worth knowing rather than discovering: without venue shortening (Q2 still open) the live
-    // week lands at 610 of 612 available septets. It cannot overflow -- the fill would name one
-    // pick fewer -- but the NAMED COUNT is therefore volatile week to week, and a "yes" on Q2 is
-    // what buys that margin back. This number is here so a change to it is visible.
+  it('THE THREE ANSWERS COMPOUND rather than adding up, and in the helpful direction', () => {
+    // This is the one that could not be inferred from the parts, so it is measured. Shortening the
+    // venue names frees characters, and the budget fill immediately SPENDS them on more names --
+    // so the message ends up both shorter AND fuller than with shortening off. Not additive.
+    const withoutShortening = weekly(LIVE_LINKED, LIVE_NAMED, { shortenVenue: (v) => v });
     const shipping = weekly(LIVE_LINKED, LIVE_NAMED);
-    expect(shipping.characters).toBe(610);
-    expect(4 * 153 - shipping.characters).toBe(2);
+
+    expect(withoutShortening.characters).toBe(610);
+    expect(namedCount(withoutShortening.body)).toBe(8);
+
+    expect(shipping.characters).toBe(556); // 54 septets SHORTER
+    expect(namedCount(shipping.body)).toBe(10); // and two MORE picks named
+
+    // Headroom goes from alarming to comfortable, which is the practical consequence: the named
+    // count stops being volatile week to week.
+    expect(4 * 153 - withoutShortening.characters).toBe(2);
+    expect(4 * 153 - shipping.characters).toBe(56);
+  });
+
+  it('shortening collides NO two venues across the whole real corpus', () => {
+    // "Probably still unique" is not good enough for a name a parent navigates by. Every venue in
+    // the real ActiveNet Vancouver and Burnaby fixtures, checked for a collision after shortening.
+    const venues = [
+      'Britannia Community Centre', 'Britannia Pool', 'Britannia Rink',
+      'Champlain Heights Community Centre', 'Coal Harbour Community Centre',
+      'Creekside Community Recreation Centre', 'Douglas Park Community Centre',
+      'Dunbar Community Centre', 'False Creek Community Centre', 'Hastings Community Centre',
+      'Hillcrest Aquatic Centre', 'Hillcrest Community Centre', 'Hillcrest Rink',
+      'Kensington Community Centre', 'Kensington Pool', 'Kerrisdale Community Centre',
+      'Killarney Community Centre', 'Killarney Pool', 'Kitsilano Community Centre',
+      'Lord Byng Pool', 'Marpole-Oakridge Community Centre', 'Mount Pleasant Community Centre',
+      'RayCam Co-operative Centre', 'Renfrew Park Community Centre', 'Renfrew Park Pool',
+      'Roundhouse Community Arts and Recreation Centre', 'Strathcona Community Centre',
+      'Sunset Community Centre', 'Sunset Rink', 'Templeton Park Pool',
+      'Thunderbird Community Centre', 'Trout Lake Community Centre', 'Trout Lake Rink',
+      'West End Community Centre', 'West Point Grey Community Centre - Aberthau',
+      'Bonsor Recreation Complex', 'Christine Sinclair Community Centre',
+      'Edmonds Community Centre', 'Rosemary Brown Recreation Centre',
+    ];
+    expect(new Set(venues.map(shortenVenueName)).size).toBe(venues.length);
+
+    // The family the decision was argued on stays three distinct places, not one.
+    expect(shortenVenueName('Hillcrest Aquatic Centre')).toBe('Hillcrest Pool');
+    expect(shortenVenueName('Hillcrest Community Centre')).toBe('Hillcrest CC');
+    expect(shortenVenueName('Hillcrest Rink')).toBe('Hillcrest Rink');
+
+    // The annex survives: it is the specific site, and dropping it would merge two real places.
+    expect(shortenVenueName('West Point Grey Community Centre - Aberthau'))
+      .toBe('West Point Grey CC - Aberthau');
+
+    // And the measured saving the decision was taken on.
+    const saved = venues.map((v) => v.length - shortenVenueName(v).length);
+    expect(Math.max(...saved)).toBe(34);
+    expect(saved.reduce((a, b) => a + b, 0) / saved.length).toBeCloseTo(10.8, 1);
   });
 
   it('with Jon\'s three answers switched on, the LIVE week names 10/10 for the same 4 segments', () => {
@@ -573,11 +604,21 @@ describe('measured: the LIVE week (Jon\'s test send) and the P90 week', () => {
     expect(after.body).toContain('+3 more & settings:'); // the remainder is counted, not dropped
   });
 
-  it('VENUE SHORTENING IS NOT LOAD-BEARING — 8/10 and 5/10 without it, same 4 segments', () => {
-    // Worth knowing before Jon answers Q2: the naming win survives a "no" on the abbreviations.
-    const live = weekly(LIVE_LINKED, LIVE_NAMED, { nameUnlinkedPicks: true, maxSegments: 4 });
+  it('the naming win would have survived a NO on Q2 — 8/10 and 5/10, same 4 segments', () => {
+    // Kept after Jon said yes, because it is the counterfactual that made Q2 safe to decide
+    // independently: had he refused the abbreviations, naming still reached 8 of 10 on a typical
+    // week. It also measures exactly what the yes bought — two more picks and 54 septets.
+    const live = weekly(LIVE_LINKED, LIVE_NAMED, {
+      nameUnlinkedPicks: true,
+      maxSegments: 4,
+      shortenVenue: (v) => v,
+    });
     expect([live.characters, live.segments, namedCount(live.body)]).toEqual([610, 4, 8]);
-    const p90 = weekly(P90_LINKED, P90_NAMED, { nameUnlinkedPicks: true, maxSegments: 4 });
+    const p90 = weekly(P90_LINKED, P90_NAMED, {
+      nameUnlinkedPicks: true,
+      maxSegments: 4,
+      shortenVenue: (v) => v,
+    });
     expect([p90.characters, p90.segments, namedCount(p90.body)]).toEqual([602, 4, 5]);
   });
 

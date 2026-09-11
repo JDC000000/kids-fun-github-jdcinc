@@ -42,6 +42,11 @@ const AS_SHIPPED: Partial<WeeklyMessageFormat> = {
   groupByDay: false,
   linkOnOwnLine: false,
   nameUnlinkedPicks: false,
+  // Added when Jon approved venue shortening (Q2, 2026-09-11) and it became a DEFAULT. This
+  // constant means "exactly what main sends", and main prints the catalogue name in full -- so
+  // every dial that moves has to be pinned here or the byte-identity claim quietly weakens to
+  // "identical except for whatever changed most recently". These tests caught that themselves.
+  shortenVenue: (venue) => venue,
 };
 
 /**

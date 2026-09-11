@@ -422,6 +422,56 @@ export interface WeeklyMessageFormat {
 }
 
 /**
+ * Collapse the generic facility suffix on a venue name. "Roundhouse Community Arts and Recreation
+ * Centre" becomes "Roundhouse CC".
+ *
+ * ── JON APPROVED THIS, 2026-09-11 (recommendation §8 Q2) ────────────────────────────────
+ * It is new consumer-facing copy, which is why it waited for him rather than being invented here.
+ * Measured across the 39 real ActiveNet venues in the Vancouver and Burnaby fixtures: mean saving
+ * 10.8 characters, maximum 34. That is the single largest character saving available anywhere in
+ * the message, and it is what buys the headroom Q1 spends on naming more picks.
+ *
+ * ── IT COLLAPSES ONLY THE GENERIC SUFFIX, AND ONLY AT THE END ───────────────────────────
+ * The suffix is the part that carries no information: every one of these is a community centre, so
+ * saying so 39 times distinguishes nothing. What comes BEFORE it is the actual name and is never
+ * touched. The type that does distinguish — Pool, Rink — is kept, which is why "Hillcrest Pool",
+ * "Hillcrest CC" and "Hillcrest Rink" remain three different places rather than collapsing into
+ * one. `weekly_format.test.ts` asserts zero collisions across the whole real corpus, because
+ * "probably still unique" is not good enough for a name a parent has to navigate by.
+ *
+ * ── A TRAILING ANNEX SURVIVES ───────────────────────────────────────────────────────────
+ * "West Point Grey Community Centre - Aberthau" keeps its "- Aberthau": the annex is the specific
+ * site within the centre, so dropping it would merge two real places. The suffix is collapsed
+ * around it rather than through it. An earlier version of this ruleset got that wrong and the
+ * design document's §4 table still carries the stale figure it produced.
+ */
+export function shortenVenueName(venue: string): string {
+  const RULES: ReadonlyArray<readonly [RegExp, string]> = [
+    // Longest first: "Community Recreation Centre" must not be caught by the "Community Centre"
+    // rule's tail, and "Community Arts and Recreation Centre" must not be caught by either.
+    [/\s*Community Arts and Recreation Centre$/i, ' CC'],
+    [/\s*Community Recreation Centre$/i, ' CC'],
+    [/\s*Community Centre$/i, ' CC'],
+    [/\s*Recreation Complex$/i, ' Rec'],
+    [/\s*Recreation Centre$/i, ' Rec'],
+    [/\s*Aquatic Centre$/i, ' Pool'],
+  ];
+
+  let stem = venue;
+  let annex = '';
+  const matched = stem.match(/\s+-\s+[A-Za-z][A-Za-z ]*$/);
+  if (matched) {
+    annex = matched[0];
+    stem = stem.slice(0, stem.length - annex.length);
+  }
+  for (const [pattern, replacement] of RULES) {
+    if (pattern.test(stem)) return (stem.replace(pattern, replacement) + annex).trim();
+  }
+  // No generic suffix to collapse — "Britannia Pool", "Trout Lake Rink". Left exactly alone.
+  return (stem + annex).trim();
+}
+
+/**
  * The live dial settings. STRUCTURE ON, COPY OFF — see each field above.
  *
  * The two `true`s change no word of §2.6. The three defaults below them are Jon's three open
@@ -437,10 +487,8 @@ export const WEEKLY_MESSAGE_FORMAT: WeeklyMessageFormat = {
   // The FULL budget, not the cheaper 3-segment cap -- which is what "more picks" means in
   // practice. Jon explicitly ruled out banking it.
   maxSegments: 4,
-  // Q2 (venue abbreviation) is still genuinely open, so this stays identity. It costs named picks
-  // -- see the measurements in weekly_format.test.ts -- but it does not block: the fill simply
-  // names as many as fit. A later "yes" is this one line.
-  shortenVenue: (venue) => venue,
+  // JON'S Q2 ANSWER, 2026-09-11: approved. This was the last dial waiting on a decision.
+  shortenVenue: shortenVenueName,
 };
 
 export interface WeeklyMessageInput {
