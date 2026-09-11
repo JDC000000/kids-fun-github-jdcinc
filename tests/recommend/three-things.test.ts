@@ -62,6 +62,27 @@ const UNPRICED = { costStatus: 'check_source' as const, costMinCad: null, costMa
 const PAID = { costStatus: 'known' as const, costMinCad: 5, costMaxCad: 5 };
 const INDOOR_TAGS = { suitabilityTags: ['indoor'] };
 
+/**
+ * "LEGO(R) Block Party" with the registered sign BUILT FROM ITS CODEPOINT, never typed.
+ *
+ * THIS TITLE IS THE REASON `foldTitleForComparison` EXISTS — the measured pair of library-branch
+ * cards it was written to merge — and it is used by five assertions in this file. Written as a
+ * raw literal it carried a silent failure mode: strip that one character in any edit or transport
+ * and `same('LEGO(R) Block Party', 'LEGO Block Party')` quietly becomes a comparison of a string
+ * with itself. Green forever, asserting nothing, in the suite's most load-bearing fold case.
+ *
+ * That is not hypothetical. A sibling workstream shipped a substitution table to production whose
+ * own keys were invisible characters, several of which had degraded to plain spaces and silently
+ * stopped working; and the first version of this file's accent test lost its escapes in transit
+ * while the author was actively watching for exactly that.
+ *
+ * So: ONE definition, built by a function call over ASCII digits, used everywhere. There is no
+ * special character in this source file to lose, and `registered-sign literals are intact` below
+ * asserts on THIS constant — the one the other four call sites actually use — rather than on a
+ * private copy, which is what makes the guard worth anything.
+ */
+const LEGO_BRANDED = `LEGO${String.fromCodePoint(0x00ae)} Block Party`;
+
 /** A listing that clears both front-door gates unless a case deliberately breaks one. */
 function listing(over: Partial<ListingRecord> & { id: string }): ListingRecord {
   return makeListing({
@@ -279,7 +300,7 @@ describe('cross-slot de-duplication', () => {
     // id/series de-dupe can see it. Measured live 2026-08-19: this pair was two of the FOUR
     // showable indoor cards in the whole region.
     const rows = [
-      listing({ id: 'lego-wpg', seriesId: 's1', activityName: 'LEGO® Block Party', venueName: 'West Point Grey Branch', ...FREE, ...INDOOR_TAGS, geo: NEAR_DOWNTOWN }),
+      listing({ id: 'lego-wpg', seriesId: 's1', activityName: LEGO_BRANDED, venueName: 'West Point Grey Branch', ...FREE, ...INDOOR_TAGS, geo: NEAR_DOWNTOWN }),
       listing({ id: 'lego-ren', seriesId: 's2', activityName: 'LEGO Block Party', venueName: 'Renfrew Branch', ...FREE, ...INDOOR_TAGS, geo: NEAR_DOWNTOWN }),
     ];
     const picked = filledSlots(selectThreeThings(input(rows))).map((s) => s.item.listing.id);
@@ -299,7 +320,7 @@ describe('cross-slot de-duplication', () => {
 describe('foldTitleForComparison', () => {
   it('merges the shapes it is meant to, against titles measured live on 2026-08-19', () => {
     const same = (a: string, b: string) => expect(foldTitleForComparison(a)).toBe(foldTitleForComparison(b));
-    same('LEGO® Block Party', 'LEGO Block Party');
+    same(LEGO_BRANDED, 'LEGO Block Party');
     same('Indoor Soccer - Wed', 'Indoor Soccer');
     same('Strong HIIT Conditioning - Two Sets', 'Strong HIIT Conditioning - Set Two');
     same('$3 Open Gym 8yrs+ Delbrook', 'Open Gym Delbrook');
@@ -320,7 +341,7 @@ describe('foldTitleForComparison', () => {
   it('never yields an empty key for a real title, because an empty key must not group anything', () => {
     // `repeatsPlaced` ignores an empty fold on purpose — two untitled rows are not "the same
     // thing". This pins that the ordinary path cannot reach that branch by accident.
-    for (const name of ['LEGO® Block Party', '$3 Open Gym', 'Play Palace - 0-12yrs']) {
+    for (const name of [LEGO_BRANDED, '$3 Open Gym', 'Play Palace - 0-12yrs']) {
       expect(foldTitleForComparison(name)).not.toBe('');
     }
   });
@@ -355,24 +376,68 @@ describe('foldTitleForComparison', () => {
 
   it('strips DECOMPOSED ACCENTS, so one accented title cannot split from its plain twin', () => {
     // THIS TEST EXISTS BECAUSE THE RULE IT COVERS IS WRITTEN IN INVISIBLE CHARACTERS.
-    // The fold's first step is NFKD, which decomposes "é" into "e" + an invisible combining
-    // acute; the next step deletes the combining marks (U+0300-U+036F). Until this case was
-    // added, NOTHING in the suite exercised that second step — so if the character class ever
-    // silently degraded (the failure mode that makes an invisible literal dangerous: it becomes
-    // something else and everything still compiles), every test would still have passed while the
-    // catalogue quietly split "Café Storytime" from "Cafe Storytime" into two different things.
+    // The fold's first step is NFKD, which decomposes an accented letter into a plain letter plus
+    // an invisible combining mark; the next step deletes those marks (U+0300-U+036F). Until this
+    // case was added, NOTHING in the suite exercised that second step, so if the character class
+    // ever silently degraded, every test would still have passed while the catalogue quietly
+    // split an accented title from its plain twin into two different things.
     //
-    // Same defensive shape as tests/sms/keywords.test.ts's "does NOT let a DECOMPOSED accent be
-    // deleted into a bare keyword", which guards the equivalent step in the SMS normaliser.
+    // === EVERY SPECIAL CHARACTER HERE IS BUILT WITH String.fromCodePoint, NEVER TYPED ===
+    // This test is the one place in the suite where a flattened character does not cause a
+    // FAILURE, it causes a VACUOUS PASS: strip the accent from the input and the assertion
+    // becomes `same('Cafe X', 'Cafe X')`, green forever, guarding nothing, in the test whose
+    // whole job is to guard something invisible.
+    //
+    // AND A \\uXXXX ESCAPE IS NOT ENOUGH, WHICH I LEARNED BY DOING IT. The first version of this
+    // test used escapes and they arrived as raw characters anyway: an escape is still TEXT, and
+    // anything that rewrites text can resolve it on the way through. `String.fromCodePoint(0x301)`
+    // is a function call over ASCII digits. There is no invisible character anywhere in this
+    // file to lose, which is the only version of this that actually holds.
+    const ACUTE = String.fromCodePoint(0x0301);        // combining acute, invisible alone
+    const E_PRECOMPOSED = String.fromCodePoint(0x00e9); // 'e-acute' as ONE codepoint
+    const CAFE_PRE = `Caf${E_PRECOMPOSED} Storytime`;
+    const CAFE_DECOMPOSED = `Cafe${ACUTE} Storytime`;
+    const CAFE_PLAIN = 'Cafe Storytime';
+
+    // -- NON-VACUITY, ASSERTED BEFORE ANY BEHAVIOUR -------------------------------------
+    // If these fail, the inputs have lost their accents and every assertion below would be
+    // comparing a string to itself. This is the guard on the guard.
+    expect(CAFE_PRE).not.toBe(CAFE_PLAIN);
+    expect(CAFE_DECOMPOSED).not.toBe(CAFE_PLAIN);
+    expect(CAFE_DECOMPOSED).toContain(ACUTE);
+    expect(CAFE_PRE.length).toBe(CAFE_PLAIN.length);            // precomposed: one codepoint
+    expect(CAFE_DECOMPOSED.length).toBe(CAFE_PLAIN.length + 1);  // decomposed: letter + mark
+
+    // -- THE BEHAVIOUR ------------------------------------------------------------------
     const same = (a: string, b: string) => expect(foldTitleForComparison(a)).toBe(foldTitleForComparison(b));
-    same('Café Storytime', 'Cafe Storytime');
-    same('Crème Brûlée Club', 'Creme Brulee Club');
-    same('Piñata Party', 'Pinata Party');
-    same('Zoë and Friends', 'Zoe and Friends');
-    // The letter must SURVIVE the strip — only the mark is removed, never the character it sat on.
-    expect(foldTitleForComparison('Café Storytime')).toBe('cafe storytime');
+    same(CAFE_PRE, CAFE_PLAIN);
+    same(CAFE_DECOMPOSED, CAFE_PLAIN);
+    same(CAFE_PRE, CAFE_DECOMPOSED); // both spellings of one title reach one key
+    // A letter must SURVIVE the strip: only the mark is removed, never the character it sat on.
+    expect(foldTitleForComparison(CAFE_PRE)).toBe('cafe storytime');
+
+    // ...across the marks a real catalogue actually carries.
+    const ch = (cp: number) => String.fromCodePoint(cp);
+    same(`Cr${ch(0x00e8)}me Br${ch(0x00fb)}l${ch(0x00e9)}e Club`, 'Creme Brulee Club');
+    same(`Pi${ch(0x00f1)}ata Party`, 'Pinata Party');
+    same(`Zo${ch(0x00eb)} and Friends`, 'Zoe and Friends');
     // And an accented title still differs from a genuinely different one.
-    expect(foldTitleForComparison('Café Storytime')).not.toBe(foldTitleForComparison('Cafe Swim'));
+    expect(foldTitleForComparison(CAFE_PRE)).not.toBe(foldTitleForComparison('Cafe Swim'));
+  });
+
+  it('NON-VACUITY: the registered-sign literal this whole file leans on is still intact', () => {
+    // Review of the previous commit caught that its guard proved the FOLD handles the registered
+    // sign, using a string it built itself — which is not the same as proving the literal the
+    // other assertions actually use is still intact. If that one had been flattened, this guard
+    // would have kept passing while four assertions quietly compared strings with themselves.
+    // Correct fix: one shared constant (see `LEGO_BRANDED`), asserted here, used at every site.
+    const REGISTERED = String.fromCodePoint(0x00ae);
+    expect(LEGO_BRANDED).toContain(REGISTERED);
+    expect(LEGO_BRANDED).not.toBe('LEGO Block Party');
+    expect(LEGO_BRANDED.length).toBe('LEGO Block Party'.length + 1);
+    // …and the fold still reduces it to the plain key, which is the behaviour every site relies on.
+    expect(foldTitleForComparison(LEGO_BRANDED)).toBe(foldTitleForComparison('LEGO Block Party'));
+    expect(foldTitleForComparison(LEGO_BRANDED)).toBe('lego block party');
   });
 
   it('keeps a LEADING weekday, because there it is the programme NAME and not a timetable note', () => {
@@ -393,11 +458,11 @@ describe('foldTitleForComparison', () => {
     // The regression this file most needs to catch. The measured LEGO pair is the reason
     // `foldTitleForComparison` exists at all, and neither new rule touches either string: same
     // key before, same key after, and the three-card hero still collapses the pair to one card.
-    expect(foldTitleForComparison('LEGO® Block Party')).toBe('lego block party');
+    expect(foldTitleForComparison(LEGO_BRANDED)).toBe('lego block party');
     expect(foldTitleForComparison('LEGO Block Party')).toBe('lego block party');
 
     const rows = [
-      listing({ id: 'lego-wpg', seriesId: 's1', activityName: 'LEGO® Block Party', venueName: 'West Point Grey Branch', ...FREE, ...INDOOR_TAGS, geo: NEAR_DOWNTOWN }),
+      listing({ id: 'lego-wpg', seriesId: 's1', activityName: LEGO_BRANDED, venueName: 'West Point Grey Branch', ...FREE, ...INDOOR_TAGS, geo: NEAR_DOWNTOWN }),
       listing({ id: 'lego-ren', seriesId: 's2', activityName: 'LEGO Block Party', venueName: 'Renfrew Branch', ...FREE, ...INDOOR_TAGS, geo: NEAR_DOWNTOWN }),
     ];
     const picked = filledSlots(selectThreeThings(input(rows))).map((s) => s.item.listing.id);
