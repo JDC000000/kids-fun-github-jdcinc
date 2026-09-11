@@ -40,7 +40,12 @@ export function describeActivity(activity: Activity): string {
     activity.area,
     formatCost(activity),
   ].join(' · ');
-  const trust = `Source: ${activity.sourceName} · ${formatChecked(activity.lastCheckedIso)}.`;
+  // The source half is dropped when there is no source to name, rather than previewing a
+  // shared or indexed link with the mapper's old 'fixture source' stand-in in it. The
+  // last-checked half stands on its own and is still true.
+  const trust = activity.sourceName
+    ? `Source: ${activity.sourceName} · ${formatChecked(activity.lastCheckedIso)}.`
+    : `${formatChecked(activity.lastCheckedIso)}.`;
   // Strip a trailing period from the composed lead before the sentence join so a
   // cost segment that already ends in a period (e.g. "$7 approx.") does not produce
   // a double period ("…$7 approx.. Source:") in the share meta-description. (R15/Task R F1)

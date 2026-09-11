@@ -81,7 +81,12 @@ function requiredFacts(a: Activity): string[] {
     formatDistance(a), // area + drive + distance (where)
     formatCost(a), // cost (honest)
     statusMeta(a.status, a.seasonLabel).label, // status (text, never colour-only)
-    a.sourceName, // source
+    // SOURCE — a required fact only when there IS one. `sourceName` is null for a listing with
+    // no usable source URL, and the card face then drops the claim rather than naming the old
+    // 'fixture source' stand-in (search-api.ts#readSourceUrl), so there is nothing to require.
+    // Spread rather than filtered: a blanket filter on this list would also swallow a genuinely
+    // empty REQUIRED fact, which is the regression this file exists to catch.
+    ...(a.sourceName ? [a.sourceName] : []),
     formatChecked(a.lastCheckedIso), // freshness
     // SOURCE CONFIDENCE ("Official source" / "Editorial listing" / "Community-listed") is NO
     // LONGER a required card-face fact. The badge that carried it was removed from the tile on

@@ -342,8 +342,20 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
       {/* Source & freshness panel — provenance foregrounded; consistent help. */}
       <section className="kf-panel">
         <h2 className="kf-panel__title">Source &amp; freshness</h2>
+        {/* The source claim is DROPPED, not defaulted, when there is no source to name — the
+            same rule the Booking and Distance stats above already follow, and the same rule the
+            hero control follows. Only the "Official source: X · " SEGMENT goes: the status, the
+            last-checked stamp and the confidence sentence in this same sentence are unrelated
+            facts we do hold, and deleting them with it would be a far bigger loss than the
+            defect. The separator belongs to the segment, so the line never opens on an orphaned
+            " · " — the pattern FreshnessStamp already documents for its own status label. */}
         <p>
-          Official source: <b>{activity.sourceName}</b> · {meta.label} · {formatChecked(activity.lastCheckedIso)} ·{' '}
+          {activity.sourceName && (
+            <>
+              Official source: <b>{activity.sourceName}</b> ·{' '}
+            </>
+          )}
+          {meta.label} · {formatChecked(activity.lastCheckedIso)} ·{' '}
           {confidenceSentence(activity.confidence)}
         </p>
         {/* The "View official source" and "Open in maps" links that used to sit here were

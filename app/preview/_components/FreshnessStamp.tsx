@@ -43,8 +43,16 @@ export function FreshnessStamp({
           <span aria-hidden="true">·</span>
         </>
       )}
-      <span className="kf-stamp__src">{activity.sourceName}</span>
-      <span aria-hidden="true">·</span>
+      {/* Same rule as the status label above, and the same reason its separator is bundled with
+          it: with no source to name, the chip would otherwise read "Confirmed · · Checked
+          today" — or, before this, name the mapper's 'fixture source' stand-in on every card in
+          the results list. The last-checked stamp stands on its own. */}
+      {activity.sourceName && (
+        <>
+          <span className="kf-stamp__src">{activity.sourceName}</span>
+          <span aria-hidden="true">·</span>
+        </>
+      )}
       <span>{checked}</span>
     </span>
   );

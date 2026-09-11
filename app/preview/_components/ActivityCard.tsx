@@ -63,7 +63,16 @@ export function ActivityCard({ activity }: { activity: Activity }) {
   // in-app detail. The CTA states which, honestly, so the whole-card link has a visible,
   // predictable destination (G-T22-1 "source CTA"; Blueprint screen-2 item 9).
   const external = Boolean(activity.detailUrl);
-  const ctaLabel = external ? `View on ${activity.sourceName} ↗` : 'See details →';
+  // A card CTA must carry text, so this one cannot simply drop the source the way the detail
+  // page's "Official source" line and the freshness chip do. It falls back to the wording the
+  // detail page already uses for exactly this case rather than to invented copy — and, more to
+  // the point, rather than to the mapper's old 'fixture source' stand-in, which is how "View on
+  // fixture source ↗" came to be a tappable button in the results list.
+  const ctaLabel = external
+    ? activity.sourceName
+      ? `View on ${activity.sourceName} ↗`
+      : 'View official source ↗'
+    : 'See details →';
   // The accessible name mirrors what is VISIBLE on the card and nothing more. The old
   // source-authority read ("Official source") was dropped from it along with the badge below —
   // announcing a label a sighted parent can no longer see is exactly the kind of drift that

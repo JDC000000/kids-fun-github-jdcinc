@@ -142,7 +142,17 @@ export interface Activity {
   status: StatusState;
   booking: BookingType;
   confidence: ConfidenceLabel;
-  sourceName: string; // e.g. "vancouver.ca"
+  /**
+   * The source's host, for display — e.g. "vancouver.ca". NULLABLE, for the same reason
+   * `sourceUrl` below is: derived from the source URL, so when there is no usable URL there is
+   * no host to name. It used to be non-nullable, and the mapper's fallback for an unparseable
+   * URL was the literal string `'fixture source'` — internal test vocabulary, rendered to
+   * parents on four surfaces at once (the detail page's "Official source" line, the freshness
+   * chip on every card and in the detail hero, the results card's "View on … ↗" CTA, and the
+   * share/search preview built by detail-metadata.ts). Every consumer now drops the source
+   * claim when it is null rather than printing a stand-in a parent could mistake for a fact.
+   */
+  sourceName: string | null;
   /**
    * The authoritative deep link (external). NULLABLE, and the null is the point.
    *

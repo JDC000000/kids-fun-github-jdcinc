@@ -238,16 +238,17 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     activityName: l.activityName,
     descriptionSnippet: l.descriptionSnippet,
   });
-  // Carried VERBATIM, null included — the same rule `startIso`, `distanceKm` and
-  // `lastCheckedIso` in this same mapper already follow. `?? '#'` used to sit here, and it is
-  // the same defect in a third place: a nullable column (source_url, migration 0004) meeting a
-  // non-nullable type, so the boundary made a value up. `'#'` is not an inert placeholder — it
-  // is a valid href, so every truthiness guard downstream passes and it renders as a live
-  // control. The hero cluster's "View official source" button carries target="_blank", so a
-  // parent tapping it got a BLANK NEW TAB; the sticky bar's primary CTA got no navigation at
-  // all. An empty or whitespace-only string states the same fact as null (the source carried no
-  // URL) and `href=""` resolves to the CURRENT page, so it collapses to null here too.
-  const sourceUrl = l.sourceUrl?.trim() || null;
+  // ONE reading of "is there a usable source here", feeding BOTH the href and the label.
+  // Two separate judgements is how the page came to render a live button next to the words
+  // "fixture source": the href said yes and the label said no.
+  //
+  // Carried VERBATIM when it is usable, null when it is not — the same rule `startIso`,
+  // `distanceKm` and `lastCheckedIso` in this same mapper already follow. `?? '#'` used to sit
+  // here, and it is the same defect in a third place: a nullable column (source_url, migration
+  // 0004) meeting a non-nullable type, so the boundary made a value up.
+  const source = readSourceUrl(l.sourceUrl);
+  const sourceUrl = source.href;
+  const sourceName = source.label;
   const slotCount = item.slots?.length ?? 1;
   // A collapsed card states the GROUP's cost, so the card formatter needs every member's own three
   // cost fields and not just the representative's (app/preview/_data/format.ts#formatCost). Carried
@@ -312,7 +313,7 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     status: mapStatus(l.statusState),
     booking: mapBooking(l.statusState, l.bookingUrl, tags),
     confidence: mapConfidence(l.confidenceLabel),
-    sourceName: hostLabel(sourceUrl),
+    sourceName,
     sourceUrl,
     ...(l.bookingUrl ? { bookingUrl: l.bookingUrl } : {}),
     ...(l.venueAddress ? { address: l.venueAddress } : {}),
@@ -522,12 +523,48 @@ function timeOfDay(iso: string): TimeOfDay {
   return 'evening';
 }
 
-function hostLabel(url: string | null): string {
+/**
+ * Read `source_url` once: is this a link a parent can actually follow, and what do we call it?
+ *
+ * Returns the href VERBATIM (never the parsed URL's `.href`, which normalises — `new URL(
+ * 'https://vancouver.ca').href` gains a trailing slash, and no listing that works today should
+ * have its link rewritten by a bug fix). The label is derived from the parse.
+ *
+ * Three things are "no source", and they were each failing differently before:
+ *
+ *   • NULL. `source_url` is nullable (migration 0004) and the admin listing form writes null
+ *     for a blank field. This used to become the literal `'#'` — a VALID href, so every
+ *     truthiness guard downstream passed and it rendered as a live control: the hero's
+ *     "View official source" button carries target="_blank", so a parent tapping it got a
+ *     BLANK NEW TAB, and the sticky bar's primary CTA got no navigation at all.
+ *
+ *   • EMPTY / WHITESPACE. `??` never caught these, and `href=""` resolves to the CURRENT page,
+ *     so target="_blank" opened a duplicate of the activity page in a new tab.
+ *
+ *   • NOT AN ABSOLUTE http(s) URL. The admin form stores this field as free text with no URL
+ *     validation (app/admin/listings/_lib/vocab.ts — optText), so a typed "vancouver.ca" is
+ *     stored as-is and renders as a RELATIVE href: tapping it navigated inside the app to
+ *     /activity/vancouver.ca. Every real adapter emits https:// (asserted in
+ *     tests/compliance/attribution.test.ts), so no working listing is affected by this arm.
+ *
+ * The label is null rather than a stand-in, and that is the whole point of this function's
+ * second half. Its `catch` used to return the literal string 'fixture source', which is
+ * internal test vocabulary, and it reached FOUR parent-facing surfaces: the detail page's
+ * "Official source: …" line, the freshness chip on every card AND in the detail hero, the
+ * results card's "View on … ↗" CTA, and — via detail-metadata.ts — the description a shared
+ * or indexed link previews with. Callers now drop the claim instead of printing a fake one.
+ */
+function readSourceUrl(raw: string | null | undefined): { href: string | null; label: string | null } {
+  const href = raw?.trim();
+  if (!href) return { href: null, label: null };
+  let parsed: URL;
   try {
-    return new URL(url ?? '').hostname.replace(/^www\./, '');
+    parsed = new URL(href);
   } catch {
-    return 'fixture source';
+    return { href: null, label: null };
   }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { href: null, label: null };
+  return { href, label: parsed.hostname.replace(/^www\./, '') };
 }
 
 // The local haversine that used to live here is GONE with its only caller. Distance is measured

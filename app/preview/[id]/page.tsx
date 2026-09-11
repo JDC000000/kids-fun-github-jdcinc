@@ -29,7 +29,10 @@ export default async function DetailPage({ params }: { params: { id: string } })
   await recordListingView(params.id, {
     activityName: activity.activityName,
     category: activity.category,
-    sourceName: activity.sourceName,
+    // `?? undefined` is a TYPE bridge, not a defaulting decision: the analytics meta field is
+    // optional-string and `sourceName` is now nullable. recordListingView stores `?? null`
+    // either way, so an absent source is recorded as absent rather than as a stand-in.
+    sourceName: activity.sourceName ?? undefined,
   });
 
   return (
