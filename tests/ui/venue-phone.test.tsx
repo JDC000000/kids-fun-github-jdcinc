@@ -149,7 +149,10 @@ describe('listings with no phone render cleanly — the majority case, not an ed
   it('does not regress the rest of the detail page', () => {
     expect(html).toContain('Source &amp; freshness');
     expect(html).toContain('kf-statrow');
-    expect(html).toContain('kf-actionbar');
+    // Was `kf-actionbar`. The bar stopped rendering for unblocked listings on 2026-09-11 (its
+    // duplicate source CTA was deleted), so the hero's source control is the page furniture
+    // this smoke test should be watching.
+    expect(html).toContain('kf-detail__source');
   });
 
   it('holds for EVERY phone-less fixture, not just the one sampled', () => {

@@ -57,10 +57,10 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   const isBookable = activity.status === 'confirmed' || activity.status === 'bookable_open';
   const isBlocked = activity.status === 'cancelled' || activity.status === 'postponed';
   const bookLabel = bookingTag(activity.booking) || 'View booking page';
-  // C1 (Jon, 2026-09-03): the source/booking link now appears in the HERO as well as the sticky
-  // action bar. Href and label are derived ONCE, here, and rendered twice — the same reason
-  // formatDistance is shared by the card and this page: two hand-written copies of a link are
-  // two things that drift, and the one that drifts is the one nobody re-reads.
+  // C1 (Jon, 2026-09-03): the source/booking link moved into the HERO. It was derived here and
+  // rendered TWICE — hero and sticky bar — until 2026-09-11, when Jon ruled the duplicate out
+  // and the bar's copy was deleted (see `barAction`). The derivation stays here, above its one
+  // remaining consumer, because heroSourceHref/heroSourceLabel below are computed FROM it.
   const sourceHref = activity.bookingUrl ?? activity.sourceUrl;
   const sourceLabel = activity.bookingUrl ? bookLabel : 'View official source';
   // ═══ A BLOCKED SESSION NEVER WEARS A BOOKING LABEL IN THE HERO (2026-09-10) ═══
@@ -73,7 +73,8 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   // returns '' and bookLabel falls back to the literal "View booking page" — an invitation
   // in plain words.) As an underlined text link that was easy to miss.
   // As a bordered control in a set of three it reads as a live invitation to register
-  // for something that is not happening. The bar keeps sourceHref/sourceLabel unchanged.
+  // for something that is not happening. (Until 2026-09-11 the bar rendered the unblocked
+  // source*/sourceLabel pair; it now renders no link at all, so hero* is the only consumer.)
   const heroSourceHref = isBlocked ? activity.sourceUrl : sourceHref;
   const heroSourceLabel = isBlocked ? 'View official source' : sourceLabel;
   const ages = ageGuide(activity.ageMin, activity.ageMax);
@@ -82,21 +83,28 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   // number) and also for the pathological "stored but undialable" case — one gate, because
   // both mean the same thing to a parent: there is no number to offer, so offer none.
   const phoneHref = activity.venuePhone ? telHref(activity.venuePhone) : null;
-  // The sticky bar's one control, decided before the bar exists (see the note at the bar).
-  // Null means there is no do-action to offer and no bar to put it in.
+  // ═══ ONE SOURCE CONTROL, AND IT IS THE HERO'S (Jon, 2026-09-11) ═══
+  // The bar's source/booking link is GONE. It and the hero control rendered the same href
+  // under the same words on every listing — "View official source" twice down one page —
+  // and Jon has ruled that the hero keeps it and the lower one goes.
+  //
+  // This reverses the note still standing at the hero link, which argued for the duplicate
+  // on thumb-reach grounds: "the sticky bar is the thumb-zone do-action and stays visible
+  // the whole way down the page; moving the link up here would trade an always-reachable
+  // CTA for one that scrolls away." That reasoning is left in place rather than deleted,
+  // because it is the reason this is a DECISION and not a tidy-up — the cost is real and was
+  // accepted knowingly. What the bar bought was reach; what it cost was telling a parent the
+  // same thing twice, in a bar that covered the page's own content to do it.
+  //
+  // The bar itself survives for exactly one job: a cancelled or postponed session still gets
+  // its disabled "not available" ghost. That is not a duplicate of anything — it is a refusal,
+  // and it is the only thing on the page besides the honesty block that says the session is
+  // not happening. `barAction` stays null-able and the bar stays gated on it, so for every
+  // other listing there is no bar and no empty 45px strip where one used to be.
   const barAction = isBlocked ? (
     <button type="button" className="kf-btn kf-btn--ghost" style={{ flex: 1 }} disabled>
       {meta.label} — not available
     </button>
-  ) : sourceHref ? (
-    <a
-      className="kf-btn kf-btn--primary"
-      href={sourceHref}
-      target="_blank"
-      rel="noreferrer noopener"
-    >
-      {sourceLabel}
-    </a>
   ) : null;
 
   return (
@@ -143,29 +151,42 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             it is not the bar's question, which is "do the thing". The bar keeps the single
             do-action; everything that identifies or reaches the venue now sits together.
 
-            The phone block is WRAPPED, not modified — its copy is a contract asserted in
-            tests/ui/venue-phone.test.tsx, including negatively. Nothing inside it changes. */}
+            ═══ THE CAVEAT LEFT THE ROW (Jon, 2026-09-11) ═══
+            The front-desk caveat used to ride INSIDE the row, wrapped with the phone link in a
+            .kf-detail__contact div so the two entered the flex layout as one item. That made
+            the phone item two lines taller than the controls beside it, and with
+            align-items: flex-start the row opened a ~68px hole to its right — at 320px the
+            cluster read as three unrelated controls scattered down the hero rather than one
+            set. Colouring the controls made it worse, not better: a filled control draws the
+            eye straight to the ragged edge beside it.
+
+            The caveat now sits BELOW the whole group, and the wrapper is gone, so the three
+            controls are direct flex items and size themselves.
+
+            THE CAVEAT IS NOT WEAKENED BY THE MOVE, which is the only thing that mattered here:
+            it is the reason the number could ship at all, and the note that used to sit here
+            said it must never be separated from the number it qualifies. The tie is
+            `aria-describedby` -> PHONE_NOTE_ID, which is an ID reference and does not care
+            about DOM proximity — a screen-reader user still hears the qualifier ON the link,
+            exactly as before, and it is asserted in tests/ui/venue-phone.test.tsx. Visually it
+            moved from beside the number to directly under the group that contains it. Its copy
+            is untouched: that copy is a contract, asserted including negatively, in the same
+            file. */}
         <div className="kf-detail__actions">
           {/* Venue phone — in the hero, above the fold, on purpose (Jon, 2026-08-01: "make
               those phone numbers prominent and easily available"). Renders only when the
               source published one; see the decision note in the Source & freshness panel. */}
           {phoneHref && (
-            <div className="kf-detail__contact">
-              <a
-                className="kf-phone"
-                href={phoneHref}
-                aria-label={`Call the venue at ${activity.venuePhone}`}
-                aria-describedby={PHONE_NOTE_ID}
-              >
-                <span aria-hidden="true">☎</span>
-                <span className="kf-phone__label">Call the venue</span>
-                <span className="kf-phone__number">{activity.venuePhone}</span>
-              </a>
-              <p className="kf-phone__note" id={PHONE_NOTE_ID}>
-                The venue&apos;s front desk — not a line for this specific session. At sites with more
-                than one facility it may ring the main centre.
-              </p>
-            </div>
+            <a
+              className="kf-phone"
+              href={phoneHref}
+              aria-label={`Call the venue at ${activity.venuePhone}`}
+              aria-describedby={PHONE_NOTE_ID}
+            >
+              <span aria-hidden="true">☎</span>
+              <span className="kf-phone__label">Call the venue</span>
+              <span className="kf-phone__number">{activity.venuePhone}</span>
+            </a>
           )}
 
           {/* The source link is DUPLICATED here, not moved (Jon asked for it "near Call the
@@ -236,6 +257,14 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             </a>
           )}
         </div>
+
+        {/* The caveat, under the group rather than inside it — see the note above the row. */}
+        {phoneHref && (
+          <p className="kf-phone__note" id={PHONE_NOTE_ID}>
+            The venue&apos;s front desk — not a line for this specific session. At sites with more
+            than one facility it may ring the main centre.
+          </p>
+        )}
 
         <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
           <FreshnessStamp activity={activity} />
@@ -343,14 +372,54 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
       <section className="kf-panel">
         <h2 className="kf-panel__title">Source &amp; freshness</h2>
         <p>
-          Official source: <b>{activity.sourceName}</b> · {meta.label} · {formatChecked(activity.lastCheckedIso)} ·{' '}
+          Official source:{' '}
+          {/* ═══ THE SOURCE NAME IS THE LINK (Jon, 2026-09-11) ═══
+              Deleting the sticky bar's copy of "View official source" left the source reachable
+              from exactly one place: a control in the hero, at the top of a page that runs to
+              roughly 1500px. A parent who has scrolled down to read the details — which is
+              precisely when "who says so?" occurs to them — had no way to the source without
+              scrolling back up.
+
+              This is the answer to that, and it is deliberately NOT a second button. The domain
+              was already printed here, in the panel whose whole subject is provenance; it was
+              just inert text. Making the words that NAME the source the thing you press is
+              contextual — it is already where the reader's eye is when they want it — and it
+              adds no new row, no new CTA, and nothing that could read as a duplicate of the
+              hero control. A repeated button here is exactly the problem this commit removes.
+
+              It points at `sourceUrl`, never at `bookingUrl`. The hero control falls through to
+              the booking URL when there is one (sourceHref), because its job is "take me to the
+              thing". This panel's job is the provenance claim, so it must resolve to the page
+              that MAKES that claim or to nothing at all.
+
+              Guarded on sourceUrl, like every other outbound control on this page. The mapper
+              hands back null (2026-09-11 QA fix) and hostLabel() then renders the literal string
+              "fixture source" — a known, separately-tracked copy defect. Linking it would turn a
+              bad label into a bad label that is also a dead link, so when there is no URL the
+              name stays exactly the plain <b> it has always been. */}
+          {activity.sourceUrl ? (
+            <a
+              className="kf-srclink"
+              href={activity.sourceUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              {activity.sourceName}
+              <span className="kf-sr"> (opens in a new tab)</span>
+            </a>
+          ) : (
+            <b>{activity.sourceName}</b>
+          )}{' '}
+          · {meta.label} · {formatChecked(activity.lastCheckedIso)} ·{' '}
           {confidenceSentence(activity.confidence)}
         </p>
-        {/* The "View official source" and "Open in maps" links that used to sit here were
+        {/* The "View official source" and "Open in maps" BUTTONS that used to sit here were
             DUPLICATES — same hrefs as the action-bar buttons at the foot of the page, different
-            labels, both rendering on every listing. Removed 2026-09-03 (copy audit); the buttons
-            are the canonical affordance. ReportWrongInfo stays: it is the only thing in this row
-            that appears nowhere else. */}
+            labels, both rendering on every listing. Removed 2026-09-03 (copy audit). That
+            judgement stands and the inline link above does not reopen it: the objection was to a
+            repeated CTA competing with the canonical one, not to the provenance sentence being
+            able to resolve itself. ReportWrongInfo stays: it is the only thing in this row that
+            appears nowhere else. */}
         <div className="kf-linkrow">
           <ReportWrongInfo occurrenceId={occurrenceId} />
         </div>
@@ -372,20 +441,13 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             negatively, in tests/ui/venue-phone.test.tsx — reword only with that file. */}
       </section>
 
-      {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action, and now
-          the ONLY action in it. Maps moved to the hero cluster; it answers "where is this",
-          which is a different question from "do the thing" and belongs with the venue name,
-          address and phone that already answer it. The lone button is centred at >=768px
-          (preview.css) so it does not sit flush-left in a bar three times its width. */}
-      {/* THE BAR IS ITS ACTION (2026-09-11, QA). Since this bar became a single-action bar it
-          had exactly one thing in it, and that thing was `href={sourceHref}` unguarded — so a
-          listing with neither a bookingUrl nor a sourceUrl rendered the page's ONE primary CTA
-          pointing at the mapper's `'#'`, a filled green button that silently did nothing. With
-          sourceUrl now carrying its null, the action is computed first and the bar renders only
-          if there is one: a sticky strip with nothing in it is a 45px bordered artefact, which
-          is not an improvement on a dead button. `.kf-detail`'s 88px padding-bottom stays and
-          simply reads as end-of-page whitespace in that case. The markup for every listing that
-          HAS an href is byte-identical to before. */}
+      {/* Sticky bottom action bar (thumb zone) — now a REFUSAL BAR, and nothing else. Maps left
+          it for the hero cluster on 2026-09-10; the source/booking CTA left it on 2026-09-11
+          (see the note at `barAction`), so a cancelled or postponed session is the only thing
+          that puts a bar on this page. The centring rule at >=768px and the `barAction &&` gate
+          both still apply: a sticky strip with nothing in it is a 45px bordered artefact, and
+          the QA guard that introduced this gate — a listing with no sourceUrl at all — is now
+          simply one of the many listings that get no bar. */}
       {barAction && <div className="kf-actionbar">{barAction}</div>}
     </div>
   );
