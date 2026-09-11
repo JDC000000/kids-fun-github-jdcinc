@@ -204,13 +204,13 @@ export function assertGsm7Safe(body: string): void {
  * them. Round 4's comment describes the RESULT (" - "), not the replacement string.
  */
 const GSM7_SUBSTITUTIONS: ReadonlyMap<string, string> = new Map([
-  ['—', '-'], //  —  em dash
-  ['–', '-'], //  –  en dash            ← the one that is actually in the live catalogue
-  ['’', "'"], //  ’  curly apostrophe / right single quote
-  ['‘', "'"], //  ‘  left single quote
-  ['“', '"'], //  “  left double quote
-  ['”', '"'], //  ”  right double quote
-  ['…', '...'], //  …  ellipsis
+  ['\u2014', '-'], // U+2014 em dash
+  ['\u2013', '-'], // U+2013 en dash            ← the one that is actually in the live catalogue
+  ['\u2019', "'"], // U+2019 curly apostrophe / right single quote
+  ['\u2018', "'"], // U+2018 left single quote
+  ['\u201C', '"'], // U+201C left double quote
+  ['\u201D', '"'], // U+201D right double quote
+  ['\u2026', '...'], // U+2026 ellipsis
 ]);
 
 /**

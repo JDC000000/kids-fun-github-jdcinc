@@ -66,18 +66,41 @@ const weekly = (picks: readonly MessagePick[], total = 10, area = 'Vancouver') =
 describe('normalizeForGsm7', () => {
   it('maps the six known offenders, and the opening single quote the pinned list omits', () => {
     // The six are the exact set `weekly_send.test.ts` already pins in "detects the punctuation
-    // that silently more than halves a segment".
-    expect(normalizeForGsm7('a — b')).toBe('a - b');
-    expect(normalizeForGsm7('a – b')).toBe('a - b');
-    expect(normalizeForGsm7('don’t')).toBe("don't");
-    expect(normalizeForGsm7('“quoted”')).toBe('"quoted"');
-    expect(normalizeForGsm7('wait…')).toBe('wait...');
-    // U+2018 is NOT in that list of six. It is handled anyway — the pair is the unit.
-    expect(normalizeForGsm7('‘quoted’')).toBe("'quoted'");
+    // that silently more than halves a segment". U+2018 is NOT in that list; it is handled anyway,
+    // because the pair is the unit and handling only the closing quote would be a gap.
+    //
+    // ── EVERY INPUT IS BUILT FROM A CODEPOINT, AND NON-VACUITY IS ASSERTED FIRST ──────────
+    // An escape sequence is NOT sufficient protection here, which this suite learned the hard way
+    // from a sibling workstream: an editor or a copy step can RESOLVE `\u2014` back into a raw em
+    // dash, at which point the same pipeline that flattens the source map key flattens the test
+    // literal with it. Both sides move together and the assertion becomes
+    // `expect(normalize('a - b')).toBe('a - b')` -- true, green, and testing nothing.
+    //
+    // A function call survives an arbitrary text pipeline; a literal does not. So the input is
+    // constructed, and every case asserts the input DIFFERS from the expected output before
+    // asserting what the normaliser does to it. A vacuous case now fails loudly.
+    const ch = (cp: number) => String.fromCodePoint(cp);
 
-    for (const offender of ['—', '–', '’', '‘', '“', '”', '…']) {
-      expect(isGsm7(offender)).toBe(false); // the premise, checked rather than assumed
-      expect(isGsm7(normalizeForGsm7(`Court 1 ${offender} Gym`))).toBe(true);
+    const CASES: ReadonlyArray<readonly [number, string, string]> = [
+      [0x2014, 'em dash', '-'],
+      [0x2013, 'en dash', '-'],
+      [0x2019, 'curly apostrophe', "'"],
+      [0x2018, 'left single quote', "'"],
+      [0x201c, 'left double quote', '"'],
+      [0x201d, 'right double quote', '"'],
+      [0x2026, 'ellipsis', '...'],
+    ];
+
+    for (const [cp, label, ascii] of CASES) {
+      const input = `a${ch(cp)}b`;
+      const expected = `a${ascii}b`;
+      // The premise: this really is a character that forces UCS-2. If it flattened, this fails.
+      expect(isGsm7(ch(cp))).toBe(false);
+      // Non-vacuity: the input must not already BE the answer, or the next line proves nothing.
+      expect(input).not.toBe(expected);
+      expect(normalizeForGsm7(input)).toBe(expected);
+      expect(isGsm7(normalizeForGsm7(`Court 1 ${ch(cp)} Gym`))).toBe(true);
+      expect(label.length).toBeGreaterThan(0); // label is documentation; keep it referenced
     }
   });
 
@@ -92,40 +115,66 @@ describe('normalizeForGsm7', () => {
     // A no-break space is the commonest artefact of scraping a municipal web page and is
     // indistinguishable from a space on every screen it will ever appear on.
     //
-    // WRITTEN AS ESCAPES, NOT AS THE CHARACTERS THEMSELVES. A literal U+00A0 sitting in this file
-    // would be invisible to every reviewer of it, and it does not survive being copied between
-    // editors — an earlier draft of this test silently became a plain space and passed while
-    // asserting nothing. The escape is the only form that can be read and cannot rot.
-    expect(isGsm7('Trout\u00A0Lake')).toBe(false);
-    expect(normalizeForGsm7('Trout\u00A0Lake')).toBe('Trout Lake');
-    expect(normalizeForGsm7('Gym\u200BBugs')).toBe('GymBugs');
-    expect(normalizeForGsm7('\uFEFFBritannia')).toBe('Britannia');
-    expect(normalizeForGsm7('a\u2009b\u202Fc\u2007d')).toBe('a b c d');
+    // CONSTRUCTED, NOT WRITTEN -- not even as an escape. An earlier draft of this test used a raw
+    // U+00A0, which was flattened to a plain space and left the assertion inverted and green. The
+    // obvious fix was `\u00A0`, and that is still not enough: an escape can be RESOLVED back into
+    // the raw character by the next tool that touches the file, which puts it right back where it
+    // started. Only a function call survives an arbitrary text pipeline, because `0x00a0` is
+    // ASCII and `String.fromCodePoint` cannot be flattened into anything else.
+    const ch = (cp: number) => String.fromCodePoint(cp);
+
+    const nbsp = `Trout${ch(0x00a0)}Lake`;
+    expect(nbsp).not.toBe('Trout Lake'); // it is really a no-break space, not a space
+    expect(isGsm7(nbsp)).toBe(false);
+    expect(normalizeForGsm7(nbsp)).toBe('Trout Lake');
+
+    expect(normalizeForGsm7(`Gym${ch(0x200b)}Bugs`)).toBe('GymBugs'); // zero-width space
+    expect(normalizeForGsm7(`${ch(0xfeff)}Britannia`)).toBe('Britannia'); // byte-order mark
+    expect(normalizeForGsm7(`a${ch(0x2009)}b${ch(0x202f)}c${ch(0x2007)}d`)).toBe('a b c d');
+
+    // Each of the eight really is non-GSM-7 to begin with, or the mapping proves nothing.
+    for (const cp of [0x00a0, 0x2007, 0x2009, 0x202f, 0x200b, 0x200c, 0x200d, 0xfeff]) {
+      expect(isGsm7(ch(cp))).toBe(false);
+    }
   });
 
   it('strips an accent ONLY when GSM-7 cannot carry the letter', () => {
-    // GSM 03.38's accented set is lopsided: é is in it, ç is not. That is a distinction no reader
-    // could predict and no writer intended, so it is the one place a name is allowed to change.
-    expect(isGsm7('Café')).toBe(true);
-    expect(normalizeForGsm7('Café')).toBe('Café'); // untouched — the accent survives
-    expect(isGsm7('Français')).toBe(false);
-    expect(normalizeForGsm7('Français')).toBe('Francais');
-    // Built from CODEPOINTS, never typed. If the combining marks were pasted literally and
-    // later flattened, the input would already read 'Senakw' and this assertion would pass
-    // while testing nothing -- exactly how the no-break-space case above once rotted.
-    const senakw = 'Sen\u0313a\u0301k\u0331w'.normalize('NFC');
+    // GSM 03.38's accented set is lopsided: e-acute is in it, c-cedilla is not. That is a
+    // distinction no reader could predict and no writer intended, so it is the one place a name is
+    // allowed to change.
+    //
+    // CONSTRUCTED, AND NON-VACUITY ASSERTED, for the reason given on the offenders test above: an
+    // accent that flattened in BOTH the fixture and the expectation turns "Cafe stays Cafe" into a
+    // tautology that passes while proving nothing about accents at all.
+    const ch = (cp: number) => String.fromCodePoint(cp);
+    const cafe = `Caf${ch(0x00e9)}`; // e-acute, which GSM-7 DOES carry
+    const francais = `Fran${ch(0x00e7)}ais`; // c-cedilla, which it does not
+
+    expect(cafe).not.toBe('Cafe'); // the accent is really there
+    expect(isGsm7(cafe)).toBe(true);
+    expect(normalizeForGsm7(cafe)).toBe(cafe); // untouched -- the accent survives
+
+    expect(francais).not.toBe('Francais'); // the cedilla is really there
+    expect(isGsm7(francais)).toBe(false);
+    expect(normalizeForGsm7(francais)).toBe('Francais');
+
+    // Combining marks with no precomposed form, same treatment.
+    const senakw = `Sen${ch(0x0313)}a${ch(0x0301)}k${ch(0x0331)}w`.normalize('NFC');
     expect(senakw).not.toBe('Senakw'); // the input really does carry marks
-    expect(normalizeForGsm7(senakw)).toBe('Senakw'); // combining marks, no precomposed form
+    expect(normalizeForGsm7(senakw)).toBe('Senakw');
   });
 
   it('LEAVES a character it cannot fold, rather than handing a parent mojibake', () => {
     // Layer 3. A CJK venue name still costs UCS-2 — but replacing it would produce a name nobody
     // can read, which is a worse product than an expensive message. The cost stays VISIBLE:
     // `estimateSegments` is reported on every send and `nonGsm7Characters` names the survivor.
-    const normalized = normalizeForGsm7('海濱中心 – Court 1');
-    expect(normalized).toBe('海濱中心 - Court 1'); // the dash still got fixed
+    const ch = (cp: number) => String.fromCodePoint(cp);
+    const venue = `${ch(0x6d77)}${ch(0x6ffb)}${ch(0x4e2d)}${ch(0x5fc3)} ${ch(0x2013)} Court 1`;
+    expect(venue).not.toContain('-'); // the en dash is really an en dash, not a hyphen
+    const normalized = normalizeForGsm7(venue);
+    expect(normalized).toBe(`${ch(0x6d77)}${ch(0x6ffb)}${ch(0x4e2d)}${ch(0x5fc3)} - Court 1`);
     expect(isGsm7(normalized)).toBe(false);
-    expect(nonGsm7Characters(normalized)).toEqual(['海', '濱', '中', '心']);
+    expect(nonGsm7Characters(normalized)).toEqual([ch(0x6d77), ch(0x6ffb), ch(0x4e2d), ch(0x5fc3)]);
   });
 
   it('is idempotent, and leaves clean ASCII exactly alone', () => {
@@ -160,13 +209,22 @@ describe('the live catalogue defect', () => {
   // "Westwind School - Gymnasium – Court 1" is verbatim from
   // worker/adapters/perfectmind/__fixtures__/richmond.classes.registered-visits.json. Eight
   // name-like strings in that one file carry an en dash; nothing on the render path touched them.
-  const POISONED = 'Westwind School - Gymnasium – Court 1';
+  // Constructed for the same reason as the tests above: if this en dash were flattened to a
+  // hyphen the fixture would stop being poisoned, and this suite's headline measurement would
+  // be measuring a clean message. The assertion below makes that impossible to do quietly.
+  const POISONED = `Westwind School - Gymnasium ${String.fromCodePoint(0x2013)} Court 1`;
 
   it('ONE en dash in ONE venue name doubled the bill for the whole message', () => {
+    expect(isGsm7(POISONED)).toBe(false); // the fixture really is poisoned
     const rendered = weekly(LIVE.map((p, i) => (i === 0 ? { ...p, venue: POISONED } : p))).body;
 
     // What the renderer produced BEFORE this change: the catalogue string, verbatim.
-    const unfixed = rendered.replace('Gymnasium - Court', 'Gymnasium – Court');
+    // Re-injected from a codepoint, not a literal: if THIS en dash flattened, the replace
+    // would silently become a no-op and the 'before' message would not be poisoned at all.
+    const unfixed = rendered.replace(
+      'Gymnasium - Court',
+      `Gymnasium ${String.fromCodePoint(0x2013)} Court`
+    );
     expect(unfixed).not.toBe(rendered); // the normaliser is what makes these two differ
 
     const before = estimateSegments(unfixed);
