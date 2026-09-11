@@ -8,6 +8,13 @@
 // able to tell that anything happened unless their text contained a character that was costing
 // double.
 //
+// ── THIS FILE DIFFERS BY ONE THING FROM ITS FORM ON fix/kf-sms-gsm7-normalizer ──────────
+// There, the flat layout IS the default and these tests call the renderer bare. Here the layout
+// work exists, so the same assertions are made with the structural dials explicitly OFF. That is
+// not a weakening — it is the stronger statement: main's exact bytes are still reachable, so the
+// day-grouping work is genuinely inert rather than merely unreferenced, and the GSM-7 fix can be
+// deployed on its own while this branch waits on Jon.
+//
 // Every number is MEASURED with the production `estimateSegments`, not quoted from a document.
 import { describe, expect, it } from 'vitest';
 import {
@@ -18,7 +25,15 @@ import {
   renderWeeklyMessage,
   septetLength,
   type MessagePick,
+  type WeeklyMessageFormat,
 } from '@/lib/sms/message';
+
+/** The layout exactly as main ships it — every structural dial off. */
+const AS_SHIPPED: Partial<WeeklyMessageFormat> = {
+  groupByDay: false,
+  linkOnOwnLine: false,
+  nameUnlinkedPicks: false,
+};
 
 const ORIGIN = 'https://kidsfunapp.ca';
 const s = (token: string) => `${ORIGIN}/s/${token}`;
@@ -57,6 +72,7 @@ const weekly = (picks: readonly MessagePick[], total = 10, area = 'Vancouver') =
     areaLabel: area,
     directPicks: picks,
     preferencesUrl: HUB,
+    format: AS_SHIPPED,
   });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -252,7 +268,7 @@ describe('the live catalogue defect', () => {
 
     const byArea = renderWeeklyMessage({
       totalPicks: 10, ageLabels: [], areaLabel: 'Vancouver – West', directPicks: LIVE,
-      preferencesUrl: HUB,
+      preferencesUrl: HUB, format: AS_SHIPPED,
     }).body;
     expect(byArea).toContain('near Vancouver - West.');
     expect(isGsm7(byArea)).toBe(true);
@@ -294,6 +310,7 @@ describe('a message built from clean catalogue text is BYTE-IDENTICAL to before'
         },
       ],
       preferencesUrl: HUB,
+      format: AS_SHIPPED,
     });
 
     expect(body.body).toBe(
@@ -327,6 +344,7 @@ describe('a message built from clean catalogue text is BYTE-IDENTICAL to before'
         },
       ],
       preferencesUrl: HUB,
+      format: AS_SHIPPED,
     });
 
     expect(body.body).toBe(
@@ -340,10 +358,11 @@ describe('a message built from clean catalogue text is BYTE-IDENTICAL to before'
     expect(body.segments).toBe(3);
   });
 
-  it('the LAYOUT is untouched: one line per pick, link still inline, no day headers', () => {
-    // The structural work (day grouping, link on its own line) is deliberately NOT on this branch.
-    // It changes what a parent sees, and Jon has not answered the three wording questions yet.
-    // If it ever arrives here by a bad merge, this is where that is caught.
+  it('with the dials off, the layout is main\'s: one line per pick, link inline, no day headers', () => {
+    // The structural work exists on this branch but changes what a parent sees, and Jon has not
+    // answered the three wording questions. This asserts it is INERT rather than merely optional:
+    // with the dials off the renderer still emits main's exact shape, which is what lets the GSM-7
+    // fix deploy ahead of it.
     const lines = weekly(LIVE).body.split('\n');
     expect(lines).toHaveLength(6); // opener + 3 picks + "+N more" + STOP
     expect(lines.filter((l) => l === '')).toHaveLength(0); // no blank separators

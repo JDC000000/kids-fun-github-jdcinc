@@ -138,18 +138,30 @@ describe('a normal week (>= 3 picks)', () => {
     expect(plan.directOccurrenceIds).toHaveLength(3);
     expect(plan.hubPickCount).toBe(3);
 
+    // The §2.6 shape as re-laid-out on 2026-09-10: picks grouped under a DAY HEADER, a blank
+    // line between groups, and every URL on its own line. No word of §2.6 changed — the "Sat: "
+    // prefix became a "SAT" header over the picks that share the day, and the space before each
+    // link became a newline, which costs exactly the same one septet. See lib/sms/message.ts.
     const body = plan.message?.body ?? '';
     const lines = body.split('\n');
-    expect(lines).toHaveLength(6); // opener + 3 picks + "+N more" + STOP
 
     expect(lines[0]).toBe('KIDS FUN: 6 picks this weekend for ages 5-9 near Vancouver.');
-    expect(lines[4]).toBe('+3 more & settings: https://kidsfun.example/u/8fJ2q');
-    expect(lines[5]).toBe('Reply STOP to end');
+    expect(lines.at(-3)).toBe('+3 more & settings:');
+    expect(lines.at(-2)).toBe('https://kidsfun.example/u/8fJ2q');
+    expect(lines.at(-1)).toBe('Reply STOP to end');
 
-    // Every pick line: a weekday prefix, the name, the venue in brackets, and a short link.
-    for (const line of lines.slice(1, 4)) {
-      expect(line).toMatch(/^(Sat|Sun): .+ \(.+\) https:\/\/kidsfun\.example\/s\/[0-9A-Za-z]{13}$/);
-    }
+    // Exactly two day headers, chronological, and exactly one blank line between the groups.
+    expect(lines.filter((l) => /^[A-Z]{3}$/.test(l))).toEqual(['SAT', 'SUN']);
+    expect(lines.filter((l) => l === '')).toHaveLength(1);
+
+    // Each linked pick is a two-line block: name + venue, then its own short link beneath.
+    const headlines = lines.filter((l) => /\(.+\)$/.test(l));
+    const links = lines.filter((l) => l.startsWith('https://kidsfun.example/s/'));
+    expect(headlines).toHaveLength(3);
+    expect(links).toHaveLength(3);
+    for (const headline of headlines) expect(headline).toMatch(/^[^ ].+ \(.+\)$/);
+    for (const link of links) expect(link).toMatch(/^https:\/\/kidsfun\.example\/s\/[0-9A-Za-z]{13}$/);
+    for (const link of links) expect(lines[lines.indexOf(link) - 1]).toMatch(/\(.+\)$/);
   });
 
   it('mints a DIFFERENT link for the same activity for a different subscriber', () => {
@@ -159,7 +171,9 @@ describe('a normal week (>= 3 picks)', () => {
     const listings = catalogue(4);
     const a = build(listings, { shortRef: 42 });
     const b = build(listings, { shortRef: 43 });
-    const linkOf = (body: string) => body.split('\n')[1].split(' ').pop();
+    // The first short link in the body — it is on its own line now, not at the end of line 1.
+    const linkOf = (body: string) =>
+      body.split('\n').find((l) => l.startsWith('https://kidsfun.example/s/'));
     expect(linkOf(a.message!.body)).not.toBe(linkOf(b.message!.body));
   });
 
@@ -170,7 +184,8 @@ describe('a normal week (>= 3 picks)', () => {
     const plan = build(catalogue(3));
     const lines = plan.message!.body.split('\n');
     expect(plan.hubPickCount).toBe(0);
-    expect(lines[4]).toBe('Settings: https://kidsfun.example/u/8fJ2q');
+    expect(lines.at(-3)).toBe('Settings:');
+    expect(lines.at(-2)).toBe('https://kidsfun.example/u/8fJ2q');
     expect(plan.message!.body).toContain('/u/8fJ2q');
   });
 

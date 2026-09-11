@@ -337,17 +337,103 @@ export function weekdayLabel(startDatetimeUtc: string | null | undefined): strin
   return SHORT_WEEKDAY[toVancouverParts(parsed).weekday];
 }
 
-/** One line of the weekly message: a pick with its own short link. */
-export interface MessagePick {
+/** A pick that is NAMED in the body but carries no link of its own. */
+export interface NamedPick {
   /** Activity name, as the catalogue holds it. */
   name: string;
+  /** UTC ISO start of the first slot, for the day grouping. Null for open-hours. */
+  startDatetimeUtc: string | null;
+}
+
+/** One line of the weekly message: a pick with its own short link. */
+export interface MessagePick extends NamedPick {
   /** Venue name, printed in brackets. Omitted when the catalogue has none. */
   venue: string | null;
-  /** UTC ISO start of the first slot, for the "Sat"/"Sun" prefix. Null for open-hours. */
-  startDatetimeUtc: string | null;
   /** The absolute short link for this pick. */
   url: string;
 }
+
+/**
+ * The dials this renderer's LAYOUT has, separated from its COPY.
+ *
+ * ── WHY THIS IS A PARAMETER OBJECT AND NOT SIX CONSTANTS ────────────────────────────────
+ * The 2026-09-10 format recommendation splits cleanly into changes that alter no word of PRD
+ * §2.6 and changes that write new consumer-facing copy. The first kind is an implementer's call;
+ * the second kind is Jon's, and three of them were with him when this was written. Rather than
+ * building half the mechanism and leaving the other half as a redesign, every one of them is a
+ * dial here — so answering a question is a one-line change to `WEEKLY_MESSAGE_FORMAT` and not a
+ * change to the renderer.
+ *
+ * Each dial below records which of the two kinds it is.
+ */
+export interface WeeklyMessageFormat {
+  /**
+   * Print a day header (SAT / SUN) with a blank line between groups, instead of a "Sat: " prefix
+   * on every pick. STRUCTURE — it re-arranges the day label that is already in the message.
+   *
+   * NOT BY VENUE, and that was a deliberate rejection rather than an option nobody weighed: venue
+   * grouping only pays off for as long as the venue repetition exists, which is precisely what a
+   * separate workstream is trying to eliminate. If that work lands, venue grouping degrades to ten
+   * headers for ten venues. Day is orthogonal to selection and stays correct whatever the
+   * selection algorithm does. See §7 of the recommendation.
+   */
+  groupByDay: boolean;
+  /**
+   * Break before every URL instead of leaving it at the end of the pick's sentence. STRUCTURE,
+   * and measured at exactly zero cost — a newline and a space are one septet each. It is also the
+   * rule this file already applies to every other template ("a link sitting mid-sentence is a
+   * link that gets mis-tapped"); the weekly message was the one that did not follow it.
+   */
+  linkOnOwnLine: boolean;
+  /**
+   * Name the picks that did not get a link, in a comma run after "Also:".
+   *
+   * COPY — PENDING JON (recommendation §8 Q3: "are unlinked named picks acceptable?"). A parent
+   * who spots one has to open the hub link to reach it; the alternative is today's behaviour,
+   * where seven of ten picks have no day, no name and no venue at all. Off until he answers, and
+   * the whole budget mechanism below is inert while it is off.
+   */
+  nameUnlinkedPicks: boolean;
+  /**
+   * The segment ceiling the named-pick fill may not cross.
+   *
+   * COST — PENDING JON (§8 Q1: spend the freed headroom on more visible picks at today's
+   * 4-segment cost, or bank it as a ~25% cheaper 3-segment send). 4 keeps the current bill.
+   *
+   * A CEILING ON THE DISCRETIONARY PART ONLY. It never drops a linked pick and never truncates
+   * the opener, the hub line or the STOP line — if those alone exceed it the message is sent over
+   * budget and the send log says so, which is the honest failure. Naming is the thing that gives
+   * way, because naming is the thing that was optional.
+   */
+  maxSegments: number;
+  /**
+   * Shorten a venue name for display.
+   *
+   * COPY — PENDING JON (§8 Q2: is "Roundhouse CC" acceptable in place of "Roundhouse Community
+   * Arts and Recreation Centre"?). The recommendation measures a mean saving of 10.7 characters
+   * per venue across the real ActiveNet corpus and a maximum of 34, which is the single largest
+   * character saving available anywhere in the message.
+   *
+   * IT IS A HOOK AND NOT A RULESET ON PURPOSE. The abbreviations themselves are the thing Jon has
+   * to approve, so inventing them here would be answering his question on his behalf. Identity
+   * until he answers; a real shortener drops in without touching this file.
+   */
+  shortenVenue: (venue: string) => string;
+}
+
+/**
+ * The live dial settings. STRUCTURE ON, COPY OFF — see each field above.
+ *
+ * The two `true`s change no word of §2.6. The three defaults below them are Jon's three open
+ * questions, parked at today's behaviour so that this file cannot answer them by accident.
+ */
+export const WEEKLY_MESSAGE_FORMAT: WeeklyMessageFormat = {
+  groupByDay: true,
+  linkOnOwnLine: true,
+  nameUnlinkedPicks: false,
+  maxSegments: 4,
+  shortenVenue: (venue) => venue,
+};
 
 export interface WeeklyMessageInput {
   /** Total picks selected — the number in the opener, INCLUDING the ones behind "+N more". */
@@ -358,50 +444,197 @@ export interface WeeklyMessageInput {
   areaLabel: string;
   /** The picks that get their own line and their own link (PRD §2.3: top 2-3). */
   directPicks: readonly MessagePick[];
+  /**
+   * The remaining picks, in rank order, as candidates to be NAMED without a link.
+   *
+   * A CANDIDATE LIST, NOT A DECISION: how many of them actually appear is computed from the
+   * character budget, not passed in. The caller supplies everything it has and this renderer
+   * spends what fits. Ignored entirely while `nameUnlinkedPicks` is off.
+   */
+  namedPickCandidates?: readonly NamedPick[];
   /** The subscriber's own preferences/hub URL — carries the rest and the CASL controls. */
   preferencesUrl: string;
+  /** Layout overrides, merged over `WEEKLY_MESSAGE_FORMAT`. Tests and callers, not production. */
+  format?: Partial<WeeklyMessageFormat>;
+}
+
+/** A day's worth of picks, in the order they will be printed. */
+interface DayGroup {
+  /** "SAT", or null for the dateless bucket — see `groupPicksByDay`. */
+  header: string | null;
+  /** Earliest start in the group, in ms. Sorts the groups. Infinity for the dateless bucket. */
+  earliest: number;
+  linked: MessagePick[];
+  named: NamedPick[];
+}
+
+/**
+ * Split picks into day groups, earliest day first.
+ *
+ * ── THE DATELESS BUCKET HAS NO HEADER, DELIBERATELY ─────────────────────────────────────
+ * `weekdayLabel` returns null for an open-hours listing — an aquarium is on every day, and
+ * printing "SAT" over it would invent a fact. Those picks are printed last, under no header at
+ * all, which is exactly what they do today (they get no "Sat: " prefix either). A LABEL for that
+ * bucket ("ANYTIME", "ALL WEEKEND") would be new consumer-facing copy and therefore Jon's, so
+ * this renders the honest nothing rather than choosing a word for him.
+ *
+ * GROUPS ARE ORDERED CHRONOLOGICALLY, not by the rank of the first pick in each. A parent reading
+ * SUN above SAT would be reading a bug. Rank still decides which picks are in the message and
+ * which get links; it just stops deciding what order the DAYS come in. The rank itself is
+ * untouched and is what `sms_send_log.picks_snapshot` records.
+ */
+function groupPicksByDay(linked: readonly MessagePick[], named: readonly NamedPick[]): DayGroup[] {
+  const groups = new Map<string, DayGroup>();
+
+  const groupFor = (pick: NamedPick): DayGroup => {
+    const header = weekdayLabel(pick.startDatetimeUtc)?.toUpperCase() ?? null;
+    // A space cannot occur in a weekday label, so this key can never collide with a real day.
+    const key = header ?? ' dateless';
+    let group = groups.get(key);
+    if (!group) {
+      group = { header, earliest: Infinity, linked: [], named: [] };
+      groups.set(key, group);
+    }
+    const started = pick.startDatetimeUtc ? Date.parse(pick.startDatetimeUtc) : NaN;
+    if (!Number.isNaN(started)) group.earliest = Math.min(group.earliest, started);
+    return group;
+  };
+
+  for (const pick of linked) groupFor(pick).linked.push(pick);
+  for (const pick of named) groupFor(pick).named.push(pick);
+
+  return [...groups.values()].sort((a, b) => a.earliest - b.earliest);
+}
+
+/** The opener, which every shape of this message shares. */
+function weeklyOpener(input: WeeklyMessageInput): string {
+  const ages = input.ageLabels.length > 0 ? ` for ages ${input.ageLabels.join(' & ')}` : '';
+  const noun = input.totalPicks === 1 ? 'pick' : 'picks';
+  const area = normalizeForGsm7(input.areaLabel);
+  return `${BRAND} ${input.totalPicks} ${noun} this weekend${ages} near ${area}.`;
+}
+
+/** "Tai Chi Chuan - Beginners (Roundhouse CC)" — a linked pick's own line, without its URL. */
+function pickHeadline(pick: MessagePick, format: WeeklyMessageFormat): string {
+  const venue = pick.venue ? ` (${format.shortenVenue(normalizeForGsm7(pick.venue))})` : '';
+  return `${normalizeForGsm7(pick.name)}${venue}`;
+}
+
+/**
+ * One candidate body, with exactly `namedCount` of the unlinked picks named.
+ *
+ * Pure and cheap, because `renderWeeklyMessage` calls it once per candidate count and MEASURES
+ * the result rather than predicting it — see there for why.
+ *
+ * EVERY CATALOGUE-SOURCED STRING GOES THROUGH `normalizeForGsm7` ON ITS WAY IN, and the URLs do
+ * not: a short link and a preferences link are ASCII by construction, and a substitution applied
+ * to one could only break a link that a parent then cannot tap.
+ */
+function composeWeeklyBody(
+  input: WeeklyMessageInput,
+  format: WeeklyMessageFormat,
+  namedCount: number
+): string {
+  const named = (input.namedPickCandidates ?? []).slice(0, namedCount);
+  const lines: string[] = [weeklyOpener(input)];
+
+  if (format.groupByDay) {
+    for (const group of groupPicksByDay(input.directPicks, named)) {
+      // A blank line between groups — measured at +1 septet for the one the live week needs,
+      // which makes it the cheapest structural separation on the list.
+      if (lines.length > 1) lines.push('');
+      if (group.header) lines.push(group.header);
+      for (const pick of group.linked) {
+        const headline = pickHeadline(pick, format);
+        if (format.linkOnOwnLine) lines.push(headline, pick.url);
+        else lines.push(`${headline} ${pick.url}`);
+      }
+      if (group.named.length > 0) {
+        lines.push(`Also: ${group.named.map((p) => normalizeForGsm7(p.name)).join(', ')}`);
+      }
+    }
+  } else {
+    for (const pick of input.directPicks) {
+      const day = weekdayLabel(pick.startDatetimeUtc);
+      const headline = `${day ? `${day}: ` : ''}${pickHeadline(pick, format)}`;
+      if (format.linkOnOwnLine) lines.push(headline, pick.url);
+      else lines.push(`${headline} ${pick.url}`);
+    }
+    if (named.length > 0) {
+      lines.push(`Also: ${named.map((p) => normalizeForGsm7(p.name)).join(', ')}`);
+    }
+  }
+
+  // "+N more" counts the picks that are NOT IN THE TEXT — so naming one takes it out of the
+  // count. It was only ever equal to "picks without a link" because those were the same set.
+  const remaining = input.totalPicks - input.directPicks.length - named.length;
+  const hubLabel = remaining > 0 ? `+${remaining} more & settings:` : 'Settings:';
+  lines.push(
+    format.linkOnOwnLine
+      ? `${hubLabel}\n${input.preferencesUrl}`
+      : `${hubLabel} ${input.preferencesUrl}`
+  );
+  lines.push(STOP_LINE);
+
+  return lines.join('\n');
 }
 
 /**
  * The normal weekly send (PRD §2.6).
  *
  *     KIDS FUN: 6 picks this weekend for ages 2-4 & 5-9 near East Van.
- *     Sat: Story Time (VPL Renfrew) https://kidsfun.ca/s/7hK2pQmzN4wT
- *     Sun: PNE Farm Day https://kidsfun.ca/s/xQ2mZ9vLp7Kd
- *     +3 more & settings: https://kidsfun.ca/u/8fJ2q
+ *     SAT
+ *     Story Time (VPL Renfrew)
+ *     https://kidsfun.ca/s/7hK2pQmzN4wT
+ *
+ *     SUN
+ *     PNE Farm Day
+ *     https://kidsfun.ca/s/xQ2mZ9vLp7Kd
+ *     +3 more & settings:
+ *     https://kidsfun.ca/u/8fJ2q
  *     Reply STOP to end
  *
  * The "+N more" line is present whenever N > 0 and carries the preferences URL; when every pick
- * got a direct link it degrades to a bare settings link, because the preferences URL must appear
- * in EVERY message regardless — it is the unsubscribe path and the access/correction mechanism
- * at once, not a footer.
+ * is in the text it degrades to a bare settings link, because the preferences URL must appear in
+ * EVERY message regardless — it is the unsubscribe path and the access/correction mechanism at
+ * once, not a footer.
+ *
+ * ═══ HOW MANY PICKS ARE LINKED AND HOW MANY ARE NAMED ARE TWO DIFFERENT NUMBERS ═══
+ * They used to be one number. `DIRECT_LINK_PICKS = 3` decided both how many picks get an
+ * attributable click AND how many picks a parent can read — so seven of ten picks reached the
+ * message as a bare integer in "+7 more", with no day, no name and no venue.
+ *
+ * Those two things have nothing in common. A link costs ~37 characters and carries the
+ * per-(occurrence, subscriber) attribution `click-through.ts` depends on; a name in an "Also:"
+ * run costs ~21 and carries most of the scanning value. So the LINK count stays a product
+ * constant and stays in `weekly-picks.ts`, and the NAMED count is computed here, out of whatever
+ * character headroom the linked picks leave behind.
+ *
+ * ── IT MEASURES EACH CANDIDATE RATHER THAN COMPUTING A BUDGET ───────────────────────────
+ * The fill renders the body once per candidate count and asks `estimateSegments`, which is the
+ * same function the send log reports. Predicting the cost arithmetically would be wrong rather
+ * than merely approximate: naming a pick adds a day header AND a blank line if it is the first
+ * pick on its day, adds two characters and a name if its day is already open, and the "+N more"
+ * label collapses to "Settings:" at the moment the last one is named. Eleven renders of a
+ * ten-item list is far cheaper than a delta calculation that has to know all of that.
+ *
+ * AND IT DOES NOT STOP AT THE FIRST OVERRUN. Cost is monotonic in the named count everywhere
+ * except that final step, where the body gets SHORTER. Breaking early would silently refuse to
+ * name the last pick of a week that fits.
  */
 export function renderWeeklyMessage(input: WeeklyMessageInput): RenderedMessage {
-  const ages =
-    input.ageLabels.length > 0 ? ` for ages ${input.ageLabels.join(' & ')}` : '';
-  const noun = input.totalPicks === 1 ? 'pick' : 'picks';
-  // THE THREE CATALOGUE-SOURCED FIELDS, and only those. The URLs are deliberately NOT normalised:
-  // a short link and a preferences link are ASCII by construction, and a substitution applied to
-  // one could only break a link a parent then cannot tap.
-  const lines: string[] = [
-    `${BRAND} ${input.totalPicks} ${noun} this weekend${ages} near ${normalizeForGsm7(input.areaLabel)}.`,
-  ];
+  const format = { ...WEEKLY_MESSAGE_FORMAT, ...input.format };
+  const candidates = format.nameUnlinkedPicks ? (input.namedPickCandidates ?? []).length : 0;
 
-  for (const pick of input.directPicks) {
-    const day = weekdayLabel(pick.startDatetimeUtc);
-    const venue = pick.venue ? ` (${normalizeForGsm7(pick.venue)})` : '';
-    lines.push(`${day ? `${day}: ` : ''}${normalizeForGsm7(pick.name)}${venue} ${pick.url}`);
+  // n = 0 is the floor and is used even when it does not fit: the linked picks, the opener, the
+  // hub link and the STOP line are not discretionary. See `maxSegments`.
+  let body = composeWeeklyBody(input, format, 0);
+  for (let n = 1; n <= candidates; n += 1) {
+    const candidate = composeWeeklyBody(input, format, n);
+    if (estimateSegments(candidate).segments <= format.maxSegments) body = candidate;
   }
 
-  const remaining = input.totalPicks - input.directPicks.length;
-  lines.push(
-    remaining > 0
-      ? `+${remaining} more & settings: ${input.preferencesUrl}`
-      : `Settings: ${input.preferencesUrl}`
-  );
-  lines.push(STOP_LINE);
-
-  return render(lines.join('\n'));
+  return render(body);
 }
 
 /**

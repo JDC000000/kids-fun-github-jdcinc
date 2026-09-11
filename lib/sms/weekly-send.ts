@@ -39,6 +39,7 @@ import {
   renderPauseNoticeMessage,
   renderWeeklyMessage,
   type MessagePick,
+  type NamedPick,
   type RenderedMessage,
 } from './message';
 import {
@@ -283,11 +284,24 @@ export function buildWeeklySms(input: BuildWeeklySmsInput): WeeklySmsPlan {
     };
   });
 
+  // Everything the selection chose that did NOT get a link, in rank order, offered to the
+  // renderer as candidates to NAME. How many of them fit is the renderer's budget call, not a
+  // second constant here — see `renderWeeklyMessage`. A pick with no `short_ref` is in this list
+  // too: it lost its link, which is not a reason to lose its name as well.
+  const linkedIds = new Set(linkable.map((pick) => pick.item.listing.id));
+  const namedPickCandidates: NamedPick[] = picks.picks
+    .filter((pick) => !linkedIds.has(pick.item.listing.id))
+    .map((pick) => ({
+      name: pick.item.listing.activityName,
+      startDatetimeUtc: pick.item.slots[0]?.startDatetimeUtc ?? pick.item.listing.startDatetimeUtc,
+    }));
+
   const message = renderWeeklyMessage({
     totalPicks: picks.picks.length,
     ageLabels: ageLabelsFor(ageBands),
     areaLabel,
     directPicks,
+    namedPickCandidates,
     preferencesUrl: preferences,
   });
 
