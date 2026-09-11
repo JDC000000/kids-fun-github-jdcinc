@@ -1,0 +1,78 @@
+/* app/_components/interstitial.css — the one-panel "something did not work" page.
+ *
+ * TWO PAGES RENDER THIS SHAPE, AND THEY MUST NOT DRIFT:
+ *   /activity-unavailable  the token verified, the activity has since been archived (round 9)
+ *   /link-unavailable      the token did not verify at all (mobile audit, 2026-09-11)
+ * Both are reached the same way — a redirect from app/s/[shortId]/route.ts, from a link in a text
+ * message, on a phone, immediately after tapping something the reader expected to work. They are
+ * the same moment with a different sentence in it, so they are the same panel.
+ *
+ * ═══ WHY THIS MOVED OUT OF app/activity-unavailable/activity-unavailable.css ═══
+ * It was co-located, correctly, while it had one consumer. The second page arrived and the choice
+ * was: import a stylesheet out of another route's folder (which says these two are coupled in a
+ * direction neither owns), copy ~50 lines (two panels that look identical today and diverge the
+ * first time one is touched), or name the shared thing. This is the shared thing. The class prefix
+ * changed from `kf-gone` to `kf-interstitial` for the same reason — `kf-gone` described one of the
+ * two messages, not the shape both use.
+ *
+ * Tokens only, mobile-first, and deliberately calm: neither page is reporting an error the reader
+ * made.
+ */
+
+.kf-interstitial {
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--kf-space-5) var(--kf-space-4);
+  font-family: var(--kf-font-ui);
+  color: var(--kf-ink);
+}
+
+.kf-interstitial__panel {
+  max-width: 28rem;
+  background: var(--kf-surface);
+  border-radius: var(--kf-r-card);
+  padding: var(--kf-space-6) var(--kf-space-5);
+  box-shadow: var(--kf-e-100);
+  text-align: center;
+}
+
+.kf-interstitial__heading {
+  font-size: 1.375rem;
+  line-height: 1.3;
+  margin: 0 0 var(--kf-space-3);
+}
+
+/* The message itself carries the page. Not the danger palette: a cancelled session — or a link
+ * a messaging app cut in half — is a fact about the world, not a mistake the reader made. */
+.kf-interstitial__body {
+  margin: 0 0 var(--kf-space-5);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  color: var(--kf-ink-secondary);
+}
+
+.kf-interstitial__support,
+.kf-interstitial__onward {
+  margin: 0 0 var(--kf-space-3);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.kf-interstitial__support a,
+.kf-interstitial__onward a {
+  color: var(--kf-anchor);
+}
+
+/* THE ONWARD LINK IS THE ONE USEFUL ACTION ON THE PAGE AND IS SIZED AS ONE. It sits below a
+ * hairline so it reads as a next step rather than as fine print — the same correction the hub
+ * page's dead-token branch already needed (see app/u/[preferencesToken]/page.tsx's note on
+ * kf-prefs__recover), for the same reason: the person whose link just failed is exactly the
+ * person who needs this to look like a way forward. */
+.kf-interstitial__onward {
+  margin-bottom: 0;
+  padding-top: var(--kf-space-3);
+  border-top: 1px solid var(--kf-hairline);
+}

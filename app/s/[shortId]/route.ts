@@ -13,7 +13,9 @@
 // the inbound webhook, this needs no feature flag: a token that has never been minted cannot be
 // guessed (13 base62 characters with a 20-bit HMAC check), and before any real message is sent
 // there is nothing to reach. What it DOES need is to be unable to do anything worse than redirect
-// someone to /search, which is what `resolveClickThrough` guarantees by never throwing.
+// someone to a static interstitial saying their link did not work, which is what
+// `resolveClickThrough` guarantees by never throwing. (That destination was a bare /search until
+// 2026-09-11 — see FALLBACK_DESTINATION for why a silent results page was the wrong answer.)
 //
 // NOTHING ABOUT THE SUBSCRIBER LEAVES THIS ROUTE. The redirect target is an occurrence id and
 // nothing else — no phone number, no subscriber id, no token echoed into a query string, and no

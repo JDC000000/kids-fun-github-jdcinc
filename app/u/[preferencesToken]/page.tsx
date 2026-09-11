@@ -123,13 +123,19 @@ export default async function PreferencesPage({
   // anyone holding an old link whether that person is still a subscriber. The second is
   // information about somebody else.
   //
-  // A rendered notice rather than notFound(), and this is the ONE place this branch deviates from
-  // the click-through route's posture — deliberately. That route redirects a tap it cannot resolve
-  // to /search, which is a fine answer for "go find something to do". This link's whole purpose is
-  // to reach the unsubscribe and delete controls, so a bare 404 would leave someone trying to opt
-  // out with nowhere to go. Saying "this link is not working, here is how to sign up again" is the
-  // honest version. It is NOT a fix for the missing not-found experience the click-through round
-  // flagged — that gap is Jon's/the Operator's (§8 Q3) and this does not pre-empt it.
+  // A rendered notice rather than notFound(). This branch used to be the ONE place that deviated
+  // from the click-through route's posture: that route redirected a tap it could not resolve to a
+  // bare /search, and the note here called that "a fine answer for 'go find something to do'" while
+  // explaining why this page could not do the same — its whole purpose is to reach the unsubscribe
+  // and delete controls, so a bare 404 or a silent results page would leave someone trying to opt
+  // out with nowhere to go.
+  //
+  // ⇒ THE DEVIATION IS GONE, AND THIS PAGE IS WHAT CLOSED IT. A 2026-09-11 mobile audit reached
+  // the same verdict about the short link that this branch reached about the hub link, and
+  // `invalid_token` now lands on /link-unavailable — a page built on exactly this shape: say the
+  // link is not working, do not guess why, offer the one useful way forward. Both tokenised
+  // surfaces now fail the same way, which is the outcome this comment was asking for rather than a
+  // coincidence.
   if (resolution.outcome !== 'found') {
     return (
       <main className="kf-prefs">

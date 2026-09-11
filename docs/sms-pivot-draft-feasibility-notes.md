@@ -1589,6 +1589,30 @@ it is a real change rather than a technicality.
 So the oracle is **accepted deliberately** and named in `GONE_DESTINATION`'s own comment so nobody
 has to rediscover it.
 
+> **UPDATE 2026-09-11 — `invalid_token` no longer lands on `/search`, and the oracle is unchanged.**
+> A mobile audit walked `/s/badcode` and found what this section's own wording quietly concedes:
+> "both land on `/search`" meant a parent who tapped a link in a text got an unfiltered results
+> page with **no explanation that anything had failed**. Round 9 made exactly this argument for the
+> `occurrence_gone` outcome and fixed only that one. `invalid_token` now lands on
+> **`/link-unavailable`**, a static interstitial built on the same panel as
+> `/activity-unavailable`.
+>
+> **This does not widen the oracle analysed above.** The observable partition was two destinations
+> before (`/search` vs `/activity-unavailable`) and is two after (`/link-unavailable` vs
+> `/activity-unavailable`). Only the copy on one side changed. The property round 6 protected —
+> malformed indistinguishable from checksum-failed — is untouched and still asserted deep-equal,
+> now over six failing token shapes rather than two.
+>
+> **What the new page may not say.** Not "expired": the token carries no timestamp and no validity
+> window, so a link that arrives intact still resolves months later, and claiming an expiry would
+> invent a mechanism the product does not have — the same trade this section refuses two paragraphs
+> up when it declines to tell a mangled-link parent their activity was cancelled. Not *which way*
+> the token failed. Not any identifier; the redirect still carries no query string.
+>
+> **The copy is Operator-drafted and NOT Jon-approved** — recorded in `consent-copy.ts` rather than
+> quietly inheriting the approval `ACTIVITY_GONE_BODY` earned. It is a placeholder written to the
+> same bar, and replacing it is a one-constant change.
+
 **One related cost I want on the record:** a failed occurrence *read* (database outage) also takes
 the `occurrence_gone` branch, so an outage tells a handful of parents an activity was cancelled when
 it was not. The alternative is a bare error page — worse for them, and no more truthful about what

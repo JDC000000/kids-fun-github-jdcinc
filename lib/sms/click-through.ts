@@ -27,10 +27,50 @@ import { decodeShortLink } from './short-link';
 
 /**
  * Where a tap goes when the token itself does not verify — malformed, tampered, wrong length, bad
- * checksum. Generic on purpose: we do not know what they were trying to reach, so /search is the
- * honest "go find something to do" answer and it says nothing about the token.
+ * checksum. Generic on purpose: we do not know what they were trying to reach, and the destination
+ * still says nothing about WHICH way the token failed.
+ *
+ * ═══ THIS WAS '/search' UNTIL 2026-09-11, AND THAT WAS A SILENT DEAD END ═══
+ * The old comment here called /search "the honest 'go find something to do' answer". It was honest
+ * about the TOKEN and silent about everything else: a parent who tapped a link in a text landed on
+ * an unfiltered results page with no heading, no explanation and no sign that anything had gone
+ * wrong. A mobile audit walked /s/badcode and reported it as a blank page — which is the same
+ * verdict round 9 reached about sending the `occurrence_gone` outcome to /search, for the same
+ * reason, and fixed there and not here. This closes the other half.
+ *
+ * WHY IT MATTERS MORE THAN THE OUTCOME'S SHARE OF TRAFFIC SUGGESTS. The short link is how a beta
+ * parent FIRST opens this product — there is no app, no bookmark and no account, so the text
+ * message is the front door. `invalid_token` is also not a rare, adversarial outcome: it is what a
+ * messaging app truncating a link produces, what a link scanner rewriting one produces, and what
+ * copy-pasting a link into another app produces. The failure mode was "first impression is a blank
+ * page", not "a prober sees a blank page".
+ *
+ * ═══ DOES A THIRD DESTINATION WIDEN THE ORACLE? NO — IT IS THE SAME TWO-WAY SPLIT ═══
+ * Worth stating explicitly, because GONE_DESTINATION's comment below spends a long section
+ * accepting an oracle and this looks like it enlarges it. It does not:
+ *   • BEFORE: invalid → /search, gone → /activity-unavailable. Two destinations, distinguishable.
+ *   • AFTER:  invalid → /link-unavailable, gone → /activity-unavailable. Two destinations, equally
+ *     distinguishable, and not one bit more.
+ * The observable partition of the outcome space is UNCHANGED. Only the copy on one side of it
+ * changed. In particular the property round 6 actually protected is untouched: `decodeShortLink`
+ * still returns null for malformed AND for checksum-failed, both still resolve to `invalid_token`,
+ * and both still land here — so there is still no "warmer/colder" signal inside the space of
+ * failing tokens, and a prober still cannot tell they were one character away.
+ *
+ * WHAT THE PAGE MAY NOT SAY, AND WHY THE COPY IS CAREFUL ABOUT IT. "This link has expired" is the
+ * obvious sentence and it is FALSE: these tokens carry no timestamp and no validity window (see
+ * lib/sms/short-link.ts — 76 bits, all of them spent on two short_refs and a check), so nothing
+ * about them can expire. See LINK_UNAVAILABLE_BODY in consent-copy.ts for the wording and for why
+ * inventing an expiry would repeat exactly the mistake GONE_DESTINATION refuses when it declines
+ * to tell a parent whose link was mangled that an activity was cancelled.
+ *
+ * IT STILL CARRIES NOTHING — no token, no short_ref, no query string, same as GONE_DESTINATION.
+ * The page itself offers the onward step to /search that the old redirect performed silently, so
+ * nobody loses the "go find something to do" answer; they now get told why they are being offered
+ * it. Kept as a CONSTANT, and still the single source of this path, so the route, the tests and
+ * the preview scripts cannot drift apart.
  */
-export const FALLBACK_DESTINATION = '/search';
+export const FALLBACK_DESTINATION = '/link-unavailable';
 
 /**
  * Where a tap goes when the token VERIFIED but the activity has since been archived (PRD §8 Q3,
@@ -43,8 +83,10 @@ export const FALLBACK_DESTINATION = '/search';
  * WHAT ROUND 6 PROTECTED, AND STILL DOES. The concern was distinguishing MALFORMED from
  * CHECKSUM-FAILED — telling a prober they were one character away and turning a 20-bit check into
  * a guided search. That distinction is UNCHANGED: `decodeShortLink` returns null for both, both
- * are `invalid_token`, both land on /search. There is still no "warmer/colder" signal inside the
- * space of failing tokens.
+ * are `invalid_token`, both land on FALLBACK_DESTINATION. There is still no "warmer/colder" signal
+ * inside the space of failing tokens. (That destination stopped being /search on 2026-09-11 and
+ * became a page that explains itself; the two failing halves still cannot be told apart, which is
+ * the only part this section was ever about.)
  *
  * WHAT IS NEWLY VISIBLE. A prober can now tell "my token PASSED the HMAC but named no live
  * activity" from "my token did not pass". That is a validity ORACLE that did not exist before, and
@@ -66,7 +108,9 @@ export const FALLBACK_DESTINATION = '/search';
  *   • Send BOTH here. A parent whose link was mangled by their messaging app would be told an
  *     activity was CANCELLED when nothing was — inventing a fact to protect a 20-bit check. This
  *     project does not trade honesty for that.
- *   • Send both to /search, i.e. round 6's status quo. That is what Jon's ruling changed.
+ *   • Send both to /search, i.e. round 6's status quo. That is what Jon's ruling changed — and
+ *     /search stopped being either outcome's destination on 2026-09-11, so this alternative no
+ *     longer exists to return to.
  * So: the oracle is accepted, deliberately, and named here so nobody has to rediscover it.
  *
  * THE REDIRECT CARRIES NOTHING — no occurrence id, no short_ref, no query string. This URL lands
@@ -377,7 +421,8 @@ export const recordClick: ClickRecorder = async (event) => {
  * Decide where a tapped short link goes, and count the tap if it can be counted.
  *
  * NEVER THROWS. This is a public, unauthenticated endpoint reached from a text message; the worst
- * a garbage path segment may do is send someone to /search.
+ * a garbage path segment may do is send someone to a static interstitial that explains that their
+ * link did not work (FALLBACK_DESTINATION) — no body, no stack trace, no echo of the input.
  *
  * ── FAILING CLOSED, AND WHY BOTH FAILURES LOOK IDENTICAL ────────────────────────────────
  * A malformed token and a token whose HMAC check fails resolve to exactly the same

@@ -1,4 +1,4 @@
-import './activity-unavailable.css';
+import '../_components/interstitial.css';
 import {
   ACTIVITY_GONE_BODY,
   ACTIVITY_GONE_HEADING,
@@ -28,6 +28,13 @@ import {
 // id, no short_ref, no query string at all. See lib/sms/click-through.ts's `GONE_DESTINATION` for
 // why: this page's URL ends up in browser history, and it must not say WHICH activity was gone
 // for WHOM.
+//
+// ── IT HAS A SIBLING NOW: /link-unavailable (2026-09-11) ────────────────────────────────
+// The argument two paragraphs up — "landing on /search with no explanation concludes the product
+// is broken more slowly" — was true of the OTHER failing outcome too, and that one was still
+// going to /search. It now has its own page, built on this one. The panel styles moved to
+// app/_components/interstitial.css so the two cannot drift; nothing else about this page
+// changed, and the copy below is untouched and still not a reviewer's to polish.
 
 export const dynamic = 'force-static';
 
@@ -38,26 +45,26 @@ export const metadata = {
 
 export default function ActivityUnavailablePage() {
   return (
-    <main className="kf-gone">
-      <div className="kf-gone__panel">
-        <h1 className="kf-gone__heading">{ACTIVITY_GONE_HEADING}</h1>
+    <main className="kf-interstitial">
+      <div className="kf-interstitial__panel">
+        <h1 className="kf-interstitial__heading">{ACTIVITY_GONE_HEADING}</h1>
 
         {/* Operator-authored under Jon's explicit advance delegation — "YOU WRTIE THE ONE LINE -
             I APPROVE YOUR WORDS" (2026-08-28). NOT his own typing, which is what this comment
             used to claim; see consent-copy.ts for why the distinction is recorded rather than
             smoothed. Still not a sentence a reviewer may polish. */}
-        <p className="kf-gone__body">{ACTIVITY_GONE_BODY}</p>
+        <p className="kf-interstitial__body">{ACTIVITY_GONE_BODY}</p>
 
         {/* "Let us know if you have any other questions" needs somewhere to be let known. Same
             support contact as every other surface, from the same constant. */}
-        <p className="kf-gone__support">
+        <p className="kf-interstitial__support">
           {/* sms:, not tel: — this link SAID "Text" while dialling (Jon, 2026-09-03). The label
               and the behaviour now agree. SUPPORT_SMS_HREF rather than the shared
               SUPPORT_PHONE_HREF, which three CASL footers correctly use for a real phone call. */}
           <a href={SUPPORT_SMS_HREF}>SMS {SENDER_IDENTITY.supportPhone}</a>
         </p>
 
-        <p className="kf-gone__onward">
+        <p className="kf-interstitial__onward">
           <a href="/search">{ACTIVITY_GONE_ONWARD}</a>
         </p>
       </div>

@@ -12,6 +12,9 @@ describe('isSmsSurface', () => {
       '/sms/signup',
       '/u/alice-token-0123456789abcdef',
       '/activity-unavailable',
+      // The "that link did not work" interstitial (mobile audit, 2026-09-11). An SMS surface by
+      // this list's own test: reachable only by redirect from /s/{token}, linked from nowhere else.
+      '/link-unavailable',
     ]) {
       expect(isSmsSurface(path), path).toBe(true);
     }
@@ -42,12 +45,16 @@ describe('isSmsSurface', () => {
     expect(SMS_SURFACE_PREFIXES).toContain('/sms');
     expect(SMS_SURFACE_PREFIXES).toContain('/u/');
     expect(SMS_SURFACE_PREFIXES).toContain('/activity-unavailable');
+    // 🔴 Both short-link failure interstitials, together. `invalid_token` used to redirect to
+    // /search — a shared, chromed, account-bearing page — so the SMS product's route map was
+    // silently missing the destination of one of its two failing outcomes.
+    expect(SMS_SURFACE_PREFIXES).toContain('/link-unavailable');
   });
 });
 
 describe('hidesAccountNav — a DIFFERENT question from isSmsSurface', () => {
   it('hides on every SMS surface, as before', () => {
-    for (const path of ['/sms/signup', '/u/abc123', '/activity-unavailable']) {
+    for (const path of ['/sms/signup', '/u/abc123', '/activity-unavailable', '/link-unavailable']) {
       expect(hidesAccountNav(path), path).toBe(true);
     }
   });

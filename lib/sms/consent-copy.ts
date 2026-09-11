@@ -676,3 +676,67 @@ export const ACTIVITY_GONE_BODY = 'That activity has been cancelled. Sorry about
  */
 export const ACTIVITY_GONE_HEADING = 'That one is gone';
 export const ACTIVITY_GONE_ONWARD = 'See what else is on this weekend';
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ * THE LINK THAT DID NOT VERIFY — /link-unavailable (mobile audit, 2026-09-11)
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `occurrence_gone` got the copy above and its own page in round 9. `invalid_token` — the OTHER
+ * failing outcome, and the one a mangled text message actually produces — was left redirecting to
+ * a bare `/search`, where a parent lands on an unfiltered results page with nothing telling them
+ * their link failed. FALLBACK_DESTINATION's old comment called that "the honest 'go find something
+ * to do' answer"; a mobile audit found it reads as a broken product, which is the same conclusion
+ * round 9 reached about sending the GONE outcome there. See lib/sms/click-through.ts.
+ *
+ * ⚠ AUTHORSHIP — THESE ARE NOT JON'S WORDS AND NOT OPERATOR-UNDER-DELEGATION EITHER ⚠
+ * ACTIVITY_GONE_BODY above carries a long note about who may write parent-facing copy on these
+ * interstitials, and the answer there was "the author, or someone he explicitly delegated to". No
+ * such delegation exists for THIS page: these three strings were drafted by the implementer to
+ * close a live defect, and they are marked as such rather than quietly inheriting the approval
+ * that sentence earned. THEY ARE A PLACEHOLDER WITH A REAL BAR: they must match the product's
+ * voice and must not assert anything false (see below), and Jon may replace them freely — that is
+ * the expected next step, not a concession. What they must not do is be left as they are while
+ * being described as approved.
+ *
+ * ═══ WHY IT DOES NOT SAY "EXPIRED", WHICH IS THE OBVIOUS WORD AND IS FALSE ═══
+ * These tokens DO NOT EXPIRE. `encodeShortLink` is deterministic over (occurrence short_ref,
+ * subscriber short_ref) plus a 20-bit HMAC check — there is no timestamp in the 76 bits and no
+ * validity window anywhere in lib/sms/short-link.ts. A token that fails is a token that was never
+ * minted, or was altered after it was: truncated by a messaging app, broken across a line by a
+ * mail client, retyped by hand, mangled by a link scanner, or forged.
+ *   Saying "this link has expired" would invent a mechanism the product does not have — the same
+ *   mistake GONE_DESTINATION's comment refuses when it declines to tell a parent whose link was
+ *   mangled that an activity was CANCELLED. The honest sentence is that the link did not work and
+ *   that links get damaged in transit, which is true of every case above.
+ *
+ * ═══ AND WHY IT DOES NOT BLAME THE PARENT ═══
+ * The overwhelmingly likely cause is a link that lost characters on its way through somebody
+ * else's software. "That link didn't work" states what happened without implying they typed it
+ * wrong — the same posture as the body above, where a cancelled session is "a fact about the
+ * world, not a mistake the reader made" (activity-unavailable.css).
+ */
+export const LINK_UNAVAILABLE_HEADING = 'That link didn’t work';
+
+/**
+ * The body. One sentence on what happened, one on what to do, and no cause invented.
+ *
+ * "cut short or changed" covers every real case — truncation, a line break, a link scanner
+ * rewriting it — without claiming which one. "the original text" is the one action that actually
+ * recovers a working link, since the link is still valid if it arrives intact: nothing has
+ * expired, so the same link tapped from the real message still resolves.
+ */
+export const LINK_UNAVAILABLE_BODY =
+  'Links in a text can get cut short or changed on the way. ' +
+  'Try tapping it again in the original text — it should still work.';
+
+/**
+ * The onward step, for when the original text is gone or the link is genuinely dead.
+ *
+ * ⚠ THE LABEL AND THE LINK HAVE TO AGREE. This says "this weekend", so the page links to
+ * `/search?when=weekend` and NOT to a bare `/search`. That is the whole defect this page exists to
+ * fix, in miniature: an unfiltered results page is not what "see what's on this weekend" promised,
+ * and shipping the explanation while leaving the reader on the same unexplained page would be a
+ * fix in name only. See app/link-unavailable/page.tsx.
+ */
+export const LINK_UNAVAILABLE_ONWARD = 'Or see what’s on this weekend';

@@ -22,8 +22,9 @@
 // ═══ REFUSES WITHOUT THE REAL SECRET. NO ESCAPE HATCH. ═══
 // east-van-picks-preview.ts has PREVIEW_ALLOW_FAKE_LINKS for previewing synthetic families.
 // THIS SCRIPT DELIBERATELY HAS NO EQUIVALENT. A placeholder-minted link does not 404 — it fails
-// its HMAC check and redirects to '/search' (lib/sms/click-through.ts, FALLBACK_DESTINATION), so
-// it reads as a broken product rather than a preview artifact. That already happened once with
+// its HMAC check and lands on FALLBACK_DESTINATION (lib/sms/click-through.ts), which since
+// 2026-09-11 is /link-unavailable: a page that tells the reader their link did not work. So it
+// reads as a broken product rather than a preview artifact. That already happened once with
 // synthetic content. Doing it with a real subscriber's real picks is strictly worse, so the
 // option to proceed anyway simply does not exist here.
 import { loadActiveSubscribers, loadWeeklySmsDeps } from '../lib/sms/weekly-send-io';
@@ -35,8 +36,9 @@ async function main(): Promise<void> {
     console.error('REFUSING TO RUN: SMS_SHORT_LINK_SECRET is not set.');
     console.error('');
     console.error('Every /s/ link would be minted against a placeholder. Those links do NOT 404 —');
-    console.error("they fail the HMAC check and redirect to '/search', which reads as a broken");
-    console.error('product rather than a preview. This script has no override for that, on purpose:');
+    console.error('they fail the HMAC check and land on /link-unavailable, which tells the reader');
+    console.error('their link is broken — a broken PRODUCT, not a preview. This script has no');
+    console.error('override for that, on purpose:');
     console.error('it previews a REAL subscriber, where that failure is worse than it was for the');
     console.error('synthetic East Van preview, where it already happened once.');
     process.exit(1);

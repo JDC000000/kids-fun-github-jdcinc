@@ -25,6 +25,12 @@ export const SMS_SURFACE_PREFIXES = [
   '/sms', //                 the public signup form
   '/u/', //                  the no-login preferences / hub page
   '/activity-unavailable', // the "activity gone" interstitial a text link can land on
+  // The "that link did not work" interstitial (mobile audit, 2026-09-11). Added HERE and not only
+  // to ACCOUNT_NAV_HIDDEN_PREFIXES below, because this genuinely IS an SMS surface by the test
+  // that list's own comment sets: it exists only to be redirected to from /s/{token}, it is
+  // reachable no other way, and nothing outside the SMS product links to it. Its sibling directly
+  // above is here for exactly the same reason.
+  '/link-unavailable',
 ] as const;
 
 /**

@@ -22,8 +22,12 @@ import { GET } from '@/app/s/[shortId]/route';
 import { hubClickPath, LINK_ORIGIN_PARAM, parseLinkOrigin } from '@/lib/sms/click-through';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ActivityUnavailablePage from '@/app/activity-unavailable/page';
+import LinkUnavailablePage, { metadata as linkUnavailableMetadata } from '@/app/link-unavailable/page';
 import {
   ACTIVITY_GONE_BODY,
+  LINK_UNAVAILABLE_BODY,
+  LINK_UNAVAILABLE_HEADING,
+  LINK_UNAVAILABLE_ONWARD,
   SUPPORT_PHONE_DISPLAY,
   SUPPORT_PHONE_E164,
 } from '@/lib/sms/consent-copy';
@@ -345,7 +349,10 @@ describe('GET /s/[shortId]', () => {
     ]) {
       const res = await get(hostile);
       expect(res.status).toBe(307);
-      expect(res.headers.get('location')).toBe('https://kidsfun.example/search');
+      // Asserted through the CONSTANT, not a literal. This line said '/search' until 2026-09-11
+      // and was the only place in the suite that hardcoded it — which is exactly how a destination
+      // change gets half-applied. The literal is pinned once, in its own test below.
+      expect(res.headers.get('location')).toBe(`https://kidsfun.example${FALLBACK_DESTINATION}`);
       const location = res.headers.get('location') ?? '';
       expect(location).not.toContain('script');
       expect(location).not.toContain('DROP TABLE');
@@ -527,5 +534,190 @@ describe('the interstitial the "gone" outcome redirects to', () => {
 
   it('offers the one useful next step', () => {
     expect(html).toContain('href="/search"');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OTHER FAILING OUTCOME — `invalid_token` (mobile audit, 2026-09-11)
+//
+// Round 9 gave `occurrence_gone` a page and left `invalid_token` redirecting to a bare /search,
+// where a parent who tapped a link in a text landed on an unfiltered results page with nothing
+// saying anything had gone wrong. These tests pin the fix AND the two properties it had to keep:
+// no "warmer/colder" signal inside the space of failing tokens, and nothing about the subscriber
+// leaving the route.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('an unverifiable token no longer lands on a silent /search', () => {
+  it('🔴 goes to an interstitial that can explain itself — NOT to bare search results', async () => {
+    // THE AUDIT'S ACTUAL FINDING, as an assertion. /s/badcode used to 307 to /search: no heading,
+    // no explanation, no evidence the link had failed. The short link is how a beta parent FIRST
+    // opens this product, so this was the front door quietly falling through to a blank page.
+    withSecret();
+    const result = await resolveClickThrough('badcode', wiredDeps().deps);
+
+    expect(result.outcome).toBe('invalid_token');
+    expect(result.destination).toBe('/link-unavailable');
+    // The regression this file must never allow back. Written as a prefix check so that neither
+    // '/search' nor '/search?anything' can satisfy it.
+    expect(result.destination.startsWith('/search')).toBe(false);
+  });
+
+  it('pins the literal path exactly once, since three other modules name it', () => {
+    // app/link-unavailable/page.tsx, lib/sms/surfaces.ts and both preview scripts all refer to
+    // this path. FALLBACK_DESTINATION is the single source; this is the one place its VALUE is
+    // asserted, so renaming the route is a deliberate two-line change rather than a silent 404.
+    expect(FALLBACK_DESTINATION).toBe('/link-unavailable');
+  });
+
+  it('still carries no token, no query string and no identifier', async () => {
+    withSecret();
+    const token = validToken();
+    for (const t of [token, 'badcode', '../../etc/passwd']) {
+      const result = await resolveClickThrough(t, wiredDeps({ findOccurrenceIdByShortRef: async () => null }).deps);
+      expect(result.destination).not.toContain(t);
+      expect(result.destination).not.toContain('?');
+    }
+  });
+
+  it('🔴 STILL cannot be told apart from a checksum failure — round 6\'s property, re-pinned', async () => {
+    // The new page is the only thing that changed. If a future edit ever made this destination
+    // depend on HOW the token failed, it would tell a prober they were one character away and
+    // turn a 20-bit check into a guided search.
+    withSecret();
+    const token = validToken();
+    const outcomes = await Promise.all(
+      [
+        '!!!!!!!!!!!!!',
+        `${token.slice(0, -1)}${token.at(-1) === 'a' ? 'b' : 'a'}`,
+        token.slice(1),
+        `${token}x`,
+        'badcode',
+        '',
+      ].map((t) => resolveClickThrough(t, wiredDeps().deps))
+    );
+    for (const o of outcomes) expect(o).toEqual(outcomes[0]);
+  });
+
+  it('does not widen the oracle: still TWO observable destinations, not three', async () => {
+    // GONE_DESTINATION's comment accepts a validity oracle — a prober can tell "my forged token
+    // passed the HMAC but named no live activity" from "it did not pass". Repointing the failing
+    // branch does not enlarge that: the partition was two destinations before and is two after.
+    withSecret();
+    const gone = await resolveClickThrough(
+      validToken(),
+      wiredDeps({ findOccurrenceIdByShortRef: async () => null }).deps
+    );
+    const invalid = await resolveClickThrough('badcode', wiredDeps().deps);
+    const live = await resolveClickThrough(validToken(), wiredDeps().deps);
+    expect(new Set([gone.destination, invalid.destination, live.destination]).size).toBe(3);
+    expect(gone.destination).toBe(GONE_DESTINATION);
+    expect(invalid.destination).toBe(FALLBACK_DESTINATION);
+  });
+});
+
+describe('GET /s/badcode — the audit\'s exact URL, end to end', () => {
+  it('307s to the interstitial with no body and no echo of the input', async () => {
+    withSecret();
+    const res = await get('badcode');
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('https://kidsfun.example/link-unavailable');
+    expect(await res.text()).toBe('');
+    expect(res.headers.get('location')).not.toContain('badcode');
+  });
+
+  it('keeps the headers the click data and the referrer chain depend on', async () => {
+    // A failing token writes no click row, but the route must not grow a second header posture
+    // for the failing branch — it is the same response builder either way.
+    withSecret();
+    const res = await get('badcode');
+    expect(res.headers.get('cache-control')).toContain('no-store');
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    expect([301, 308]).not.toContain(res.status);
+  });
+
+  it('resolves on the REQUEST origin, so a preview host stays on the preview host', async () => {
+    withSecret();
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://production.example');
+    const res = await GET(new Request('https://staging.example/s/badcode'), {
+      params: { shortId: 'badcode' },
+    });
+    expect(res.headers.get('location')).toBe('https://staging.example/link-unavailable');
+  });
+});
+
+describe('the /link-unavailable interstitial', () => {
+  const html = renderToStaticMarkup(<LinkUnavailablePage />);
+
+  it('says what happened, in the product\'s own voice', () => {
+    expect(html).toContain(LINK_UNAVAILABLE_HEADING.replace(/'/g, '&#x27;'));
+    expect(html).toContain(LINK_UNAVAILABLE_BODY.replace(/'/g, '&#x27;'));
+  });
+
+  it('🔴 never claims the link EXPIRED — the tokens have no expiry to claim', () => {
+    // lib/sms/short-link.ts spends all 76 bits on two short_refs and a 20-bit check. There is no
+    // timestamp and no validity window, so a link that arrives intact still resolves months later
+    // and "this link has expired" would be inventing a mechanism the product does not have. Same
+    // refusal GONE_DESTINATION makes when it declines to tell a parent whose link was mangled that
+    // an activity was cancelled.
+    expect(html.toLowerCase()).not.toContain('expire');
+    expect(LINK_UNAVAILABLE_BODY.toLowerCase()).not.toContain('expire');
+    expect(LINK_UNAVAILABLE_HEADING.toLowerCase()).not.toContain('expire');
+  });
+
+  it('does not tell the reader WHICH way their token failed', () => {
+    // Not "invalid", not "checksum", not "token" — the page is the same page for a link a
+    // messaging app truncated and for a forgery, and it must not leak which it is looking at.
+    for (const leak of ['checksum', 'hmac', 'invalid token', 'short_ref', 'signature']) {
+      expect(html.toLowerCase(), leak).not.toContain(leak);
+    }
+  });
+
+  it('does not blame the reader', () => {
+    // The overwhelmingly likely cause is somebody else's software cutting the link short.
+    for (const blame of ['you typed', 'you entered', 'mistyped', 'incorrect', 'error']) {
+      expect(html.toLowerCase(), blame).not.toContain(blame);
+    }
+  });
+
+  it('offers a route to support, from the shared constant', () => {
+    expect(html).toContain(`sms:${SUPPORT_PHONE_E164}`);
+    expect(html).toContain(SUPPORT_PHONE_DISPLAY);
+    // The label says SMS; the href must honour it. Fixed next door on 2026-09-03 and pinned here
+    // so this page never has to learn the same lesson.
+    expect(html).not.toContain(`tel:${SUPPORT_PHONE_E164}`);
+  });
+
+  it('🔴 offers an onward link that HONOURS ITS OWN LABEL', () => {
+    // "see what's on this weekend" pointing at a bare /search would be the same unfiltered page
+    // this whole change exists to get a parent off, with a sentence in front of it.
+    expect(html).toContain(LINK_UNAVAILABLE_ONWARD.replace(/'/g, '&#x27;'));
+    expect(html).toContain('href="/search?when=weekend"');
+    expect(html).not.toContain('href="/search"');
+  });
+
+  it('carries NO identifier — not the occurrence, not the subscriber, not a token', () => {
+    // Its URL lands in browser history and is handed to every proxy in between.
+    expect(html).not.toContain(OCCURRENCE_ID);
+    expect(html).not.toContain(SUBSCRIBER_ID);
+    expect(html).not.toMatch(/short_?ref/i);
+    // The ONE query string on the page is the onward link's own `when=weekend`, which is a static
+    // literal and says nothing about anybody. Asserted precisely rather than banning '?' outright.
+    expect(html.match(/\?/g) ?? []).toEqual(['?']);
+    expect(html).toContain('?when=weekend');
+  });
+
+  it('is not indexed — a search result pointing here is a dead end for whoever clicked', () => {
+    expect(linkUnavailableMetadata.robots).toEqual({ index: false, follow: false });
+  });
+
+  it('🔴 shares ONE panel with its sibling, so the two interstitials cannot drift apart', () => {
+    // Same moment, same shape, different sentence — see app/_components/interstitial.css. If a
+    // future edit gives one page its own classes, this fails and the divergence is a decision
+    // rather than an accident.
+    const sibling = renderToStaticMarkup(<ActivityUnavailablePage />);
+    for (const cls of ['kf-interstitial', 'kf-interstitial__panel', 'kf-interstitial__heading', 'kf-interstitial__body', 'kf-interstitial__onward']) {
+      expect(html, cls).toContain(`"${cls}"`);
+      expect(sibling, cls).toContain(`"${cls}"`);
+    }
   });
 });

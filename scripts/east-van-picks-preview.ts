@@ -40,10 +40,13 @@ async function main(): Promise<void> {
   // production runs took that path, and the warning was cropped when the message bodies were
   // relayed onward — so content went to Jon with links that could not resolve.
   //
-  // AND THE FAILURE IS QUIET, WHICH IS WHY A WARNING WAS NEVER ENOUGH. A token minted with the
-  // wrong secret fails its HMAC check, and lib/sms/click-through.ts sends a failed token to
-  // FALLBACK_DESTINATION — '/search'. So a tapped link does not 404. It lands on a plausible page
-  // and reads as "the product sent me the wrong activity" rather than "this was a preview".
+  // AND THE FAILURE DOES NOT ANNOUNCE ITSELF AS A PREVIEW PROBLEM, WHICH IS WHY A WARNING WAS
+  // NEVER ENOUGH. A token minted with the wrong secret fails its HMAC check, and
+  // lib/sms/click-through.ts sends a failed token to FALLBACK_DESTINATION. So a tapped link does
+  // not 404 — and since 2026-09-11 it does not land silently on /search either; it lands on
+  // /link-unavailable, which tells the reader their link did not work. Better for a real parent,
+  // and still wrong here: it reads as "KIDS FUN sent me a broken link", not "this was a preview
+  // minted against a placeholder secret". The page cannot know the difference and must not guess.
   //
   // A caveat that has to survive a copy-paste to be true is not a safeguard. Refusing is.
   const placeholderAllowed = process.env.PREVIEW_ALLOW_FAKE_LINKS === 'true';
@@ -52,8 +55,9 @@ async function main(): Promise<void> {
     console.error('REFUSING TO RUN: SMS_SHORT_LINK_SECRET is not set.');
     console.error('');
     console.error('Every /s/ link would be minted against a placeholder. Such links do NOT 404 —');
-    console.error("they fail the HMAC check and redirect to '/search', which looks like a broken");
-    console.error('product rather than a preview artifact. That has already happened once.');
+    console.error('they fail the HMAC check and land on /link-unavailable, which tells the reader');
+    console.error('their link is broken — i.e. it reads as a broken PRODUCT rather than a preview');
+    console.error('artifact. That has already happened once.');
     console.error('');
     console.error('  set SMS_SHORT_LINK_SECRET to preview real, tappable links, or');
     console.error('  set PREVIEW_ALLOW_FAKE_LINKS=true to proceed with every message body');
@@ -101,7 +105,7 @@ async function main(): Promise<void> {
     // relay and the caveat did not reach the person who read the content.
     if (usingPlaceholder) {
       console.log('⚠ LINKS BELOW ARE NOT REAL — minted with a placeholder secret. Do not tap;');
-      console.log('  they redirect to /search rather than failing visibly.');
+      console.log('  they land on /link-unavailable, which reads as a broken product.');
     }
     console.log(plan.message.body);
     console.log('');

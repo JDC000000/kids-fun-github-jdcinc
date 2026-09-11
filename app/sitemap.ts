@@ -11,8 +11,9 @@
 // ═══ WHAT IS EXCLUDED, AND WHY, SO NOBODY "COMPLETES" THIS LIST LATER ═══
 //   /account              bounces anonymous visitors to sign-in — nothing for a crawler to index
 //   /activity-unavailable already declares robots: { index: false, follow: false } in its own
-//                         metadata. Its comment: a search result pointing at it "would be a dead
-//                         end for whoever clicked". Listing it here would contradict the page.
+//   /link-unavailable     metadata. Their comments: a search result pointing at either "would be a
+//                         dead end for whoever clicked". Listing them here would contradict the
+//                         pages. Both are reachable ONLY by redirect from /s/{token}.
 //   /u/, /s/              per-subscriber tokenised URLs. See app/robots.ts.
 //   /admin, /api          gated / not documents.
 import type { MetadataRoute } from 'next';
