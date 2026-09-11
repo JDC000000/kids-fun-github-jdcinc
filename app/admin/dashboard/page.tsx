@@ -200,7 +200,7 @@ export default async function AdminDashboardPage({
 
   return (
     <main className="adm">
-      <style>{ADMIN_CSS}</style>
+      <style dangerouslySetInnerHTML={{ __html: ADMIN_CSS }} />
 
       <header className="adm-head">
         <h1>KIDS FUN — Admin / Health</h1>

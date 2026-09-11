@@ -160,8 +160,8 @@ export default async function AdminQaQueuePage({
 
   return (
     <main className="adm">
-      <style>{ADMIN_CONSOLE_CSS}</style>
-      <style>{DEDUP_CSS}</style>
+      <style dangerouslySetInnerHTML={{ __html: ADMIN_CONSOLE_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: DEDUP_CSS }} />
 
       <header className="adm-head">
         <h1>KIDS FUN — QA Queue</h1>

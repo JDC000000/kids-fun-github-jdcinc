@@ -43,7 +43,7 @@ export default async function AdminNewListingPage({
 
   return (
     <main className="adm">
-      <style>{ADMIN_CONSOLE_CSS}</style>
+      <style dangerouslySetInnerHTML={{ __html: ADMIN_CONSOLE_CSS }} />
 
       <header className="adm-head">
         <h1>KIDS FUN — Manual listing</h1>

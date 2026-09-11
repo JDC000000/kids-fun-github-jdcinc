@@ -1,0 +1,101 @@
+/* coverage-status.css — the /coverage-status page's scoping stylesheet.
+   WHY A FILE AND NOT `<style>{COVERAGE_CSS}</style>`: React escapes the text child of an
+   element, so an apostrophe in the comment below was served as `&#x27;`. `<style>` is a RAW
+   TEXT element in the HTML spec, so the parser does not decode that back — the browser's text
+   node said `&#x27;` while React's client render said `'`, and every load of this page failed
+   hydration ("Text content does not match server-rendered HTML"), taking the whole root into a
+   client re-render. A stylesheet has no text node to disagree about, and it is what every other
+   surface here already does (privacy.css, terms.css, search.css, site-nav.css …). */
+
+/* font-family is set here AS WELL AS on body in design-tokens.css. Belt and suspenders: this
+     page has no other scoping stylesheet, and it is the page that surfaced the missing body rule
+     in the first place — if that rule is ever scoped away, this one keeps the page out of the
+     browser's default serif. */
+.kf-cov {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+  font-family: var(--kf-font-ui);
+  color: var(--kf-ink);
+  background: var(--kf-canvas);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+.kf-cov__head h1 {
+  font-size: 24px;
+  margin: 0 0 6px;
+}
+.kf-cov__sub {
+  margin: 0;
+  color: var(--kf-ink-secondary);
+  max-width: 56ch;
+}
+.kf-cov__tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 24px;
+}
+.kf-cov__tile {
+  border: 1px solid var(--kf-hairline);
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: var(--kf-surface);
+}
+.kf-cov__tile-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.kf-cov__tile-label {
+  color: var(--kf-ink-secondary);
+  margin-top: 4px;
+  font-size: 13px;
+}
+.kf-cov__section {
+  margin-top: 32px;
+}
+.kf-cov__section h2 {
+  font-size: 16px;
+  margin: 0 0 10px;
+  border-bottom: 2px solid var(--kf-hairline);
+  padding-bottom: 6px;
+}
+.kf-cov__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.kf-cov__table th,
+.kf-cov__table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--kf-hairline);
+}
+.kf-cov__table thead th {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--kf-ink-secondary);
+  background: var(--kf-surface-subtle);
+}
+.kf-cov__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.kf-cov__dim {
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+}
+.kf-cov__empty {
+  color: var(--kf-ink-muted);
+  font-style: italic;
+  margin-top: 12px;
+}
+.kf-cov__foot {
+  margin-top: 28px;
+  color: var(--kf-ink-muted);
+  font-size: 12px;
+  border-top: 1px solid var(--kf-hairline);
+  padding-top: 12px;
+}
