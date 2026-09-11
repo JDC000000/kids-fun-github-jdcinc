@@ -991,8 +991,18 @@ function orderByCategorySpread(
 
 // ── (f) Named-slot venue spread ──────────────────────────────────────────────
 
+/** Why a named slot was refilled. See `spreadNamedSlots` — the order between these is the design. */
+export type PromotionReason = 'age_band' | 'venue';
+
 /** One named slot that was filled from further down the list, and what it cost. */
 export interface PromotedPick {
+  /** Which rule asked for this promotion. `age_band` outranks `venue`; see `spreadNamedSlots`. */
+  reason: PromotionReason;
+  /**
+   * For an `age_band` promotion, the requested bands this pick brought INTO the named block that
+   * nothing named covered before. Empty for a `venue` promotion.
+   */
+  bandsGained: AgeBandKey[];
   occurrenceId: string;
   /** Where it sat in the post-cap selection (0-based) before being promoted. */
   fromIndex: number;
@@ -1011,75 +1021,161 @@ export interface PromotedPick {
 }
 
 /**
- * Permute the chosen picks so the first `DIRECT_LINK_PICKS` are at distinct venues, where the
- * chosen picks allow it.
+ * Permute the chosen picks so the NAMED block — the first `DIRECT_LINK_PICKS`, the only ones a
+ * parent reads without tapping through — speaks to every one of this household's children, and
+ * then to as many different places as the chosen picks allow.
  *
- * ═══ SUBORDINATE TO JON'S RULING, NOT A QUALIFICATION OF IT ═══
- * `applyCoverageSwap` places a forced pick at the FRONT so it is always named — *"I approve
- * option A. Let it jump the Q so it's always named."* This stage runs AFTER that and NEVER MOVES A
- * FORCED PICK: not out of a named slot, not into one, not as the thing that gets displaced. Where
- * the two rules collide — the only card representing an unrepresented age band happens to sit at
- * a venue already named — the forced pick wins and two named picks share a venue. That is the
- * ACCEPTED outcome and not a gap in this stage: a missing age band is closer to WRONG, a repeated
- * venue is merely LESS GOOD, which is the ordering `three-things.ts#preferenceScore` already
- * establishes and this file reuses rather than re-argues.
+ * RENAMED from `spreadNamedSlotVenues` when age-band fairness landed: the job is no longer only
+ * about venues, and a name that says otherwise would mislead the next reader about which rule
+ * wins.
+ *
+ * ═══ TWO RULES, AND THE ORDER BETWEEN THEM IS THE WHOLE DESIGN ═══
+ *   1. AGE-BAND FAIRNESS (higher). A band that IS represented in the ten but is NOT represented
+ *      among the named three means a parent of that child reads three links, taps none of them,
+ *      and sees nothing for them — while the product did in fact find something.
+ *   2. VENUE SPREAD (lower). Three named picks at three different places.
+ *
+ * WHY THEY ARE ONE PASS AND NOT TWO. Two independent passes over the same three slots would
+ * fight, and whichever ran second would silently win — the venue pass would cheerfully swap out
+ * the only named pick for a child. This file has already been bitten by that shape three times
+ * (venue-before-category, the age-fit guard over the category cap, and the coverage swap over
+ * both), so the ordering is explicit, in one pass, and pinned by a test that fails if reversed.
+ *
+ * WHY BAND FAIRNESS OUTRANKS VENUE VARIETY — reused, not re-argued. It is the ordering this
+ * codebase has already settled twice: a child with nothing is closer to WRONG, a repeated venue
+ * is merely LESS GOOD (`three-things.ts#preferenceScore`). `applyCoverageSwap` acts on the same
+ * principle one level up, and its header records the ruling that produced it: a forced pick
+ * "jumps the Q so it's always named", because a pick chosen precisely for a child's age band was
+ * otherwise the one pick guaranteed never to be named.
+ *
+ * ═══ WHAT THIS IS *NOT*: IT IS NOT A SECOND COVERAGE SWAP ═══
+ * `applyCoverageSwap` fires when a band has NO organic match anywhere and reaches OUTSIDE the
+ * selection to fix it — it changes MEMBERSHIP. This fires when a band is represented in the
+ * selection but not in the LINKS, and it only ever reorders what is already chosen. Band
+ * representation in the ten and band representation in the named three are different facts, and
+ * nothing checked the second one until now.
  *
  * ═══ A PURE PERMUTATION, WHICH IS WHY IT IS FREE ═══
- * Only the first `DIRECT_LINK_PICKS` picks are named and linked; the rest fold into an anonymous
- * "+N more" (PRD §2.3), so this is the only part of venue repetition a parent sees without tapping
- * through — and on the 2026-09-10 report it was the sharpest form of it. NO CARD ENTERS OR LEAVES
- * the selection: a promotion is a SWAP, so membership is byte-identical before and after and the
- * relevance cost of this stage is exactly zero. The only thing it changes is which three get
- * named, which is the thing being fixed. When the picks do not contain enough distinct venues it
- * is a no-op — a selection that is entirely one venue is returned unchanged.
+ * No card enters or leaves. A promotion is a SWAP, so membership is byte-identical before and
+ * after and the relevance cost of this stage is exactly zero; the only thing it changes is which
+ * three get named. A swap rather than a splice-and-shift, deliberately: it is obviously a
+ * permutation by construction, and it makes "the pick it displaced" a single unambiguous card,
+ * which is what the telemetry has to name to be worth anything.
  *
- * A SWAP RATHER THAN A SPLICE-AND-SHIFT, deliberately: it is obviously a permutation by
- * construction, and it makes "the pick it displaced" a single unambiguous card, which is what the
- * telemetry has to name to be worth anything.
+ * FORCED PICKS ARE NEVER MOVED — not out of a named slot, not into one, not as the thing
+ * displaced. Where a forced pick collides with either rule, the forced pick wins and the
+ * collision is accepted (see T11's tests). Their bands still COUNT as covered, so a forced pick
+ * already speaking for a child stops this stage from spending a second slot on that child.
  *
  * AN UNNAMED VENUE IS NEVER PROMOTED FOR ITS VARIETY. `venueIdentity` returns null for an empty
- * venue name, and that null is the absence of a fact, not a venue — this module must treat it as
- * "no opinion" (the rule `venue-diversity.ts` states for every caller). So a null-venue pick
- * already in the named block never counts as a repeat, and a null-venue pick below it is never
- * promoted as though it were somewhere new.
+ * venue name, and that null is the absence of a fact, not a venue — the rule `venue-diversity.ts`
+ * states for every caller. So a null-venue pick in the named block never counts as a repeat, and
+ * one below it is never promoted as though it were somewhere new. Band fairness is unaffected by
+ * this: a band is a fact about the listing, not about its venue.
  */
-export function spreadNamedSlotVenues(
+export function spreadNamedSlots(
   selection: readonly SearchResultItem[],
   forcedIds: ReadonlySet<string>,
-  namedCount: number
+  namedCount: number,
+  requestedBands: readonly AgeBandKey[] = []
 ): { selection: SearchResultItem[]; promoted: PromotedPick[] } {
   const picks = [...selection];
   const promoted: PromotedPick[] = [];
   const named = Math.min(namedCount, picks.length);
   if (named < 2) return { selection: picks, promoted };
 
+  const bandsOf = (item: SearchResultItem): AgeBandKey[] =>
+    requestedBands.filter((band) => item.listing.ageBandMatches.includes(band));
+
+  const record = (
+    reason: PromotionReason,
+    bandsGained: AgeBandKey[],
+    incoming: SearchResultItem,
+    outgoing: SearchResultItem,
+    from: number,
+    to: number
+  ) => {
+    promoted.push({
+      reason,
+      bandsGained,
+      occurrenceId: incoming.listing.id,
+      fromIndex: from,
+      toIndex: to,
+      displacedOccurrenceId: outgoing.listing.id,
+      rankDelta: from - to,
+      distanceDeltaKm:
+        incoming.distanceKm != null && outgoing.distanceKm != null
+          ? incoming.distanceKm - outgoing.distanceKm
+          : null,
+    });
+  };
+
+  const swap = (i: number, j: number) => {
+    const tmp = picks[i];
+    picks[i] = picks[j];
+    picks[j] = tmp;
+  };
+
+  /** Named slots phase 1 has spent. Phase 2 may not touch them, or it would undo the fix. */
+  const lockedSlots = new Set<number>();
+  const namedBands = () => new Set(picks.slice(0, named).flatMap(bandsOf));
+
+  // ── PHASE 1 — AGE-BAND FAIRNESS ────────────────────────────────────────────────────────
+  // Only bands that are actually reachable are pursued: a band nothing in the ten speaks to is
+  // `applyCoverageSwap`'s problem and was already given its chance. This stage never reaches
+  // outside the selection, so it can never fail in a way that costs a pick.
+  if (requestedBands.length > 0) {
+    const reachable = new Set(picks.flatMap(bandsOf));
+    for (let i = 0; i < named; i += 1) {
+      const missing = [...reachable].filter((band) => !namedBands().has(band));
+      if (missing.length === 0) break;
+      if (forcedIds.has(picks[i].listing.id)) continue; // never moved — see the header
+      // Would vacating this slot cost the named block a band nothing else named covers? If so it
+      // is not a slot to spend, whatever it might buy. Same guard shape as the category pass's
+      // age-fit rule: a diversity move may never REDUCE coverage.
+      const others = new Set(picks.slice(0, named).filter((_, k) => k !== i).flatMap(bandsOf));
+      if (bandsOf(picks[i]).some((band) => !others.has(band))) continue;
+
+      const swapIndex = picks.findIndex((candidate, index) => {
+        if (index < named) return false; // already named — moving it here changes nothing
+        if (forcedIds.has(candidate.listing.id)) return false;
+        return bandsOf(candidate).some((band) => missing.includes(band));
+      });
+      if (swapIndex === -1) break; // the ten do not allow it — nothing further down speaks to it
+
+      const incoming = picks[swapIndex];
+      const outgoing = picks[i];
+      const gained = bandsOf(incoming).filter((band) => missing.includes(band));
+      swap(i, swapIndex);
+      lockedSlots.add(i);
+      record('age_band', gained, incoming, outgoing, swapIndex, i);
+    }
+  }
+
+  // ── PHASE 2 — VENUE SPREAD, SUBORDINATE TO PHASE 1 ─────────────────────────────────────
+  // Subordinate in two distinct ways, and both are needed. It may not touch a slot phase 1 spent,
+  // AND it may not reduce the named block's band coverage by any other route — a pick can be the
+  // sole named voice for a child without phase 1 having put it there.
   const usedVenues = new Set<string>();
   for (let i = 0; i < named; i += 1) {
     const venue = venueIdentity(picks[i].listing.venueName);
-    const isForced = forcedIds.has(picks[i].listing.id);
-    if (!isForced && venue != null && usedVenues.has(venue)) {
+    const movable = !forcedIds.has(picks[i].listing.id) && !lockedSlots.has(i);
+    if (movable && venue != null && usedVenues.has(venue)) {
+      const others = new Set(picks.slice(0, named).filter((_, k) => k !== i).flatMap(bandsOf));
+      const wouldLose = bandsOf(picks[i]).filter((band) => !others.has(band));
       const swapIndex = picks.findIndex((candidate, index) => {
-        if (index < named) return false; // already named — moving it here changes nothing
-        if (forcedIds.has(candidate.listing.id)) return false; // a forced pick is never moved
+        if (index < named) return false;
+        if (forcedIds.has(candidate.listing.id)) return false;
         const v = venueIdentity(candidate.listing.venueName);
-        return v != null && !usedVenues.has(v);
+        if (v == null || usedVenues.has(v)) return false;
+        // …and it must carry every band this slot is the only named voice for.
+        return wouldLose.every((band) => bandsOf(candidate).includes(band));
       });
       if (swapIndex !== -1) {
         const incoming = picks[swapIndex];
         const outgoing = picks[i];
-        picks[i] = incoming;
-        picks[swapIndex] = outgoing;
-        promoted.push({
-          occurrenceId: incoming.listing.id,
-          fromIndex: swapIndex,
-          toIndex: i,
-          displacedOccurrenceId: outgoing.listing.id,
-          rankDelta: swapIndex - i,
-          distanceDeltaKm:
-            incoming.distanceKm != null && outgoing.distanceKm != null
-              ? incoming.distanceKm - outgoing.distanceKm
-              : null,
-        });
+        swap(i, swapIndex);
+        record('venue', [], incoming, outgoing, swapIndex, i);
       }
     }
     const seated = venueIdentity(picks[i].listing.venueName);
@@ -1183,14 +1279,15 @@ function selectFrom(
   // what the coverage swap reaches into, so "the top 20" means one thing rather than two.
   const { selection, forced } = applyCoverageSwap(afterCap, ordered, bands, maxPicks);
 
-  // ── NAMED-SLOT VENUE SPREAD (2026-09-10) ────────────────────────────────────────────
-  // AFTER the coverage swap, and moving none of what the swap forced — see
-  // `spreadNamedSlotVenues`. A pure permutation of what is already chosen.
+  // ── NAMED-SLOT SPREAD — AGE BANDS FIRST, THEN VENUES (2026-09-10 / 2026-09-11) ──────
+  // AFTER the coverage swap, and moving none of what the swap forced — see `spreadNamedSlots`.
+  // A pure permutation of what is already chosen.
   const forcedIds = new Set(forced.map((f) => f.occurrenceId));
-  const { selection: spread, promoted } = spreadNamedSlotVenues(
+  const { selection: spread, promoted } = spreadNamedSlots(
     selection,
     forcedIds,
-    DIRECT_LINK_PICKS
+    DIRECT_LINK_PICKS,
+    bands
   );
 
   return {
