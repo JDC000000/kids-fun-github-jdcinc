@@ -95,11 +95,25 @@ describe('🔴 the words "fixture source" never reach a parent, on any surface',
   }
 });
 
-describe('🔴 no source drops the CLAIM, and only the claim', () => {
+describe('🔴 no source STATES the absence — Jon\'s copy, and it is a contract', () => {
   const html = detail({ sourceUrl: null });
 
-  it('drops "Official source:" rather than naming something that is not a source', () => {
+  it('says "No official source listed." on the detail page', () => {
+    // Approved wording (Jon, 2026-09-11). This panel is the one place a parent is reading about
+    // provenance, so the absence is the answer, not a gap. Reword only with this assertion.
+    expect(html).toContain('No official source listed.');
+  });
+
+  it('never names something that is not a source', () => {
     expect(html).not.toContain('Official source:');
+    expect(html).not.toContain(LEAK);
+  });
+
+  it('punctuates the sentence as a sentence, not as a list item', () => {
+    // "No official source listed. · Confirmed" puts a middot after a full stop. The separator
+    // belongs to the segment it follows, so it leaves with it.
+    expect(html).not.toContain('listed. ·');
+    expect(html).toMatch(/No official source listed\.\s*Confirmed/);
   });
 
   it('keeps the three unrelated facts that share that sentence', () => {
@@ -132,6 +146,20 @@ describe('🔴 the freshness chip closes up rather than leaving a gap', () => {
   });
 });
 
+describe('🔴 the sentence stays on the surface it was written for', () => {
+  // Deliberately NOT reused where it does not fit. The chip is a compact token run and the CTA
+  // is a button label; a full sentence in either is a worse outcome than the silence.
+  it('never appears inside the freshness chip', () => {
+    const html = stamp({ sourceUrl: null });
+    expect(html).not.toContain('No official source listed');
+    expect(html).not.toContain(LEAK);
+  });
+
+  it('never appears as a card button label', () => {
+    expect(card({ sourceUrl: null })).not.toContain('No official source listed');
+  });
+});
+
 describe('🔴 the results card CTA cannot be blank and cannot be fake', () => {
   it('falls back to the wording the detail page already uses for this case', () => {
     const html = card({ sourceUrl: null });
@@ -144,11 +172,21 @@ describe('🔴 the results card CTA cannot be blank and cannot be fake', () => {
   });
 });
 
-describe('🔴 the share/search preview drops the source half, not the checked half', () => {
-  it('omits "Source:" when there is none but keeps the freshness sentence', () => {
+describe('🔴 the share/search preview states the absence too', () => {
+  it('carries Jon\'s copy instead of "Source: …" and keeps the freshness sentence', () => {
+    // A share preview is read by someone deciding whether to trust the link at all, so silence
+    // about provenance is the wrong shape of answer. Same copy as the detail page.
     const text = describeActivity(activity({ sourceUrl: null }));
+    expect(text).toContain('No official source listed.');
     expect(text).not.toContain('Source:');
+    expect(text).not.toContain(LEAK);
     expect(text).toMatch(/Checked/);
+  });
+
+  it('joins the two sentences without a stray separator or doubled stop', () => {
+    const text = describeActivity(activity({ sourceUrl: null }));
+    expect(text).not.toContain('listed. ·');
+    expect(text).not.toContain('..');
   });
 
   it('still carries both when the source is real', () => {
@@ -181,5 +219,39 @@ describe('the guard does NOT over-apply — a real source is untouched', () => {
     const html2 = detail({ sourceUrl: bare });
     expect(html2).toContain(`href="${bare}"`);
     expect(html2).not.toContain(`href="${bare}/"`);
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE EMPTY ADDRESS LINE (2026-09-11, folded in on Jon's nod)
+//
+// `formatVenueAddress` has always promised not to render an empty line — tests/venue-address-
+// display.test.ts asserts it "returns null for absent or empty input rather than an empty
+// line". The component then ignored that promise: it guarded on the RAW `activity.address`,
+// which is truthy for "   " or "," while the formatter reduces both to null after stripping
+// comma runs and edge punctuation. Result: <p class="kf-detail__address"></p> — a reserved
+// line with nothing in it, a dead gap between the venue name and the action cluster.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+describe('🔴 an address that formats to nothing renders no line at all', () => {
+  for (const addr of ['   ', ',', ' , , ', ',,']) {
+    it(`${JSON.stringify(addr)} renders no empty address paragraph`, () => {
+      const html = detail({ venueAddress: addr });
+      expect(html).not.toContain('<p class="kf-detail__address"></p>');
+      expect(html).not.toContain('kf-detail__address');
+    });
+  }
+
+  it('does NOT over-apply — a real address still renders, tidied', () => {
+    const html = detail({ venueAddress: '600 Hamilton St, Vancouver, British Columbia' });
+    expect(html).toContain('class="kf-detail__address"');
+    expect(html).toContain('600 Hamilton St, Vancouver, BC');
+  });
+
+  it('still suppresses an address that merely repeats the venue name', () => {
+    // Unchanged behaviour: the repeat check reads the RAW address, as it always did.
+    const html = detail({ venueName: 'Granville Street', venueAddress: 'Granville St, Vancouver, BC' });
+    expect(html).not.toContain('kf-detail__address');
   });
 });

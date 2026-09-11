@@ -82,6 +82,8 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   // number) and also for the pathological "stored but undialable" case — one gate, because
   // both mean the same thing to a parent: there is no number to offer, so offer none.
   const phoneHref = activity.venuePhone ? telHref(activity.venuePhone) : null;
+  // Formatted once, and the RENDERED value is what the guard below tests — see the note there.
+  const venueAddress = formatVenueAddress(activity.address);
   // The sticky bar's one control, decided before the bar exists (see the note at the bar).
   // Null means there is no do-action to offer and no bar to put it in.
   const barAction = isBlocked ? (
@@ -131,9 +133,16 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             not have. Plain text, not a link: the Maps control in the cluster immediately below is
             the map affordance, and an address that is also a link invites a tap that opens the
             same thing twice. */}
-        {activity.address &&
+        {/* GUARDED ON THE FORMATTED VALUE, not the raw one (2026-09-11, QA). `activity.address`
+            can be truthy while `formatVenueAddress` returns null — it strips the comma runs and
+            edge punctuation its substitutions leave behind, so a stored "   " or "," or " , , "
+            formats to nothing. The guard tested the RAW string, so those rendered an empty
+            <p class="kf-detail__address"></p>: a reserved line with nothing in it, sitting as a
+            dead gap between the venue name and the action cluster. Verified reproducible before
+            fixing. The repeat check still reads the raw address — unchanged semantics. */}
+        {venueAddress &&
           !addressRepeatsVenueName(activity.address, activity.venue) && (
-            <p className="kf-detail__address">{formatVenueAddress(activity.address)}</p>
+            <p className="kf-detail__address">{venueAddress}</p>
           )}
 
         {/* ═══ THE HERO ACTION CLUSTER (2026-09-10) ═══
@@ -342,18 +351,31 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
       {/* Source & freshness panel — provenance foregrounded; consistent help. */}
       <section className="kf-panel">
         <h2 className="kf-panel__title">Source &amp; freshness</h2>
-        {/* The source claim is DROPPED, not defaulted, when there is no source to name — the
-            same rule the Booking and Distance stats above already follow, and the same rule the
-            hero control follows. Only the "Official source: X · " SEGMENT goes: the status, the
-            last-checked stamp and the confidence sentence in this same sentence are unrelated
-            facts we do hold, and deleting them with it would be a far bigger loss than the
-            defect. The separator belongs to the segment, so the line never opens on an orphaned
-            " · " — the pattern FreshnessStamp already documents for its own status label. */}
+        {/* ═══ "NO OFFICIAL SOURCE LISTED." (Jon, 2026-09-11) ═══
+            The absence is STATED here rather than left silent. This is the one surface where a
+            parent is reading about provenance, so "we have no source for this" is itself the
+            answer to the question the panel exists to answer — and a reader who has seen other
+            listings name a source would otherwise be left to wonder whether ours failed to load.
+            What it replaced was the mapper's 'fixture source' stand-in, which is the actual
+            defect: internal test vocabulary a parent could mistake for the name of a real
+            organisation. Copy is Jon's and is a contract — see the note in the report.
+
+            It is a SENTENCE, so it takes the separator with it: "No official source listed. ·
+            Confirmed" would punctuate a full stop with a middot. The status, last-checked and
+            confidence that share this line are unrelated facts we do hold and are untouched.
+
+            NOT REUSED on the other two surfaces that lost the same stand-in, on purpose. The
+            freshness chip is a compact token run ("Confirmed · vancouver.ca · Checked today") —
+            a sentence inside it would wreck the chip, so it drops the token. The results-card
+            CTA is a button label and must stay short. Neither is a place a parent is asking
+            about provenance; this is. */}
         <p>
-          {activity.sourceName && (
+          {activity.sourceName ? (
             <>
               Official source: <b>{activity.sourceName}</b> ·{' '}
             </>
+          ) : (
+            <>No official source listed.{' '}</>
           )}
           {meta.label} · {formatChecked(activity.lastCheckedIso)} ·{' '}
           {confidenceSentence(activity.confidence)}

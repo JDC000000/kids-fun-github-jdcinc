@@ -40,12 +40,14 @@ export function describeActivity(activity: Activity): string {
     activity.area,
     formatCost(activity),
   ].join(' · ');
-  // The source half is dropped when there is no source to name, rather than previewing a
-  // shared or indexed link with the mapper's old 'fixture source' stand-in in it. The
-  // last-checked half stands on its own and is still true.
+  // States the absence rather than previewing a shared or search-indexed link with the mapper's
+  // old 'fixture source' stand-in in it. Same copy, and the same reasoning, as the detail page's
+  // Source & freshness line (Jon, 2026-09-11) — a share preview is read by someone deciding
+  // whether to trust the link at all, so silence about provenance is the wrong shape of answer.
+  // Already a sentence, so it joins the freshness sentence directly, with no separator.
   const trust = activity.sourceName
     ? `Source: ${activity.sourceName} · ${formatChecked(activity.lastCheckedIso)}.`
-    : `${formatChecked(activity.lastCheckedIso)}.`;
+    : `No official source listed. ${formatChecked(activity.lastCheckedIso)}.`;
   // Strip a trailing period from the composed lead before the sentence join so a
   // cost segment that already ends in a period (e.g. "$7 approx.") does not produce
   // a double period ("…$7 approx.. Source:") in the share meta-description. (R15/Task R F1)
