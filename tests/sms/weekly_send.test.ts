@@ -146,9 +146,21 @@ describe('a normal week (>= 3 picks)', () => {
     const lines = body.split('\n');
 
     expect(lines[0]).toBe('KIDS FUN: 6 picks this weekend for ages 5-9 near Vancouver.');
-    expect(lines.at(-3)).toBe('+3 more & settings:');
+
+    // "+3 more" IS GONE, AND THAT IS THE POINT. Three picks get a direct link; the other three are
+    // now NAMED in an "Also:" run rather than folded into an anonymous count, so nothing is left
+    // behind for the hub line to tally. This is Jon's Q1 answer (2026-09-11) reaching the message:
+    // spend the freed headroom on picks a parent can see.
+    expect(lines.at(-3)).toBe('Settings:');
     expect(lines.at(-2)).toBe('https://kidsfun.example/u/8fJ2q');
     expect(lines.at(-1)).toBe('Reply STOP to end');
+    expect(body).not.toContain('more & settings');
+
+    // All six readable: three as linked two-line blocks, three in the "Also:" runs.
+    const alsoNamed = lines
+      .filter((l) => l.startsWith('Also: '))
+      .reduce((n, l) => n + l.slice(6).split(', ').length, 0);
+    expect(alsoNamed).toBe(3);
 
     // Exactly two day headers, chronological, and exactly one blank line between the groups.
     expect(lines.filter((l) => /^[A-Z]{3}$/.test(l))).toEqual(['SAT', 'SUN']);

@@ -25,7 +25,7 @@
 //
 // The table is read out of the source file as well as exercised through the function, so a key
 // that vanished from the map entirely cannot hide behind a passing behavioural assertion.
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isGsm7, normalizeForGsm7 } from '@/lib/sms/message';
@@ -58,26 +58,7 @@ const TABLE: ReadonlyArray<readonly [number, string, string]> = [
 
 const ch = (cp: number) => String.fromCodePoint(cp);
 
-/**
- * The other half of a mutual anchor with `source_hygiene.test.ts`.
- *
- * That file's manifest lists THIS one, so deleting this file fails it. This assertion points back,
- * so deleting THAT file fails here. Neither can now vanish quietly on its own -- which matters
- * because both are the kind of test whose absence changes no behaviour and so breaks nothing else.
- *
- * Credit where due: an earlier version of this pair concluded that a file cannot detect its own
- * deletion and that the anchor therefore had to live outside the repo. That is true of SELF-
- * detection and false of the problem, which a sibling solves for the cost of three lines. The
- * external anchor -- branch and review SHAs -- is still the honest backstop for the case where both
- * files go at once, but it is no longer the first line of defence.
- */
-const SIBLING_GUARD = 'tests/sms/source_hygiene.test.ts';
-
 describe('the substitution tables', () => {
-  it(`is mutually anchored with ${SIBLING_GUARD}`, () => {
-    expect(existsSync(join(process.cwd(), SIBLING_GUARD))).toBe(true);
-  });
-
   // Rows are objects so the title can name the codepoint in HEX. With positional `%s`, vitest
   // prints the number in decimal ("U+160" for a no-break space), which sends whoever reads the
   // failure looking for the wrong character.

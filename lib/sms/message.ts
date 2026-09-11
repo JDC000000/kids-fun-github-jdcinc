@@ -430,8 +430,16 @@ export interface WeeklyMessageFormat {
 export const WEEKLY_MESSAGE_FORMAT: WeeklyMessageFormat = {
   groupByDay: true,
   linkOnOwnLine: true,
-  nameUnlinkedPicks: false,
+  // JON'S Q1 ANSWER, 2026-09-11: spend the freed headroom on showing MORE picks rather than
+  // banking it as a cheaper send. Naming the unlinked picks is the only mechanism that shows more
+  // than the three that get direct links, so answering Q1 that way decides this one with it.
+  nameUnlinkedPicks: true,
+  // The FULL budget, not the cheaper 3-segment cap -- which is what "more picks" means in
+  // practice. Jon explicitly ruled out banking it.
   maxSegments: 4,
+  // Q2 (venue abbreviation) is still genuinely open, so this stays identity. It costs named picks
+  // -- see the measurements in weekly_format.test.ts -- but it does not block: the fill simply
+  // names as many as fit. A later "yes" is this one line.
   shortenVenue: (venue) => venue,
 };
 

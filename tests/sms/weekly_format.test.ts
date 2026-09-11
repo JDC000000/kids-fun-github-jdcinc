@@ -156,6 +156,20 @@ const AS_SHIPPED: Partial<WeeklyMessageFormat> = {
   nameUnlinkedPicks: false,
 };
 
+/**
+ * The layout changes WITHOUT the naming, which is what shipped between the two decisions.
+ *
+ * Kept as its own configuration rather than deleted, because the "structure costs nothing" claim
+ * is still true and still worth pinning — it is just no longer what `{}` means. Since Jon's Q1
+ * answer, the bare default names picks as well, so a test that wants structure-in-isolation has to
+ * ask for it.
+ */
+const STRUCTURE_ONLY: Partial<WeeklyMessageFormat> = {
+  groupByDay: true,
+  linkOnOwnLine: true,
+  nameUnlinkedPicks: false,
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The normaliser. A live defect, independent of any format decision.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,9 +478,11 @@ describe('measured: the LIVE week (Jon\'s test send) and the P90 week', () => {
   const rows = [
     // week, label, linked, named, format, septets, segments, named/10, longest line
     ['LIVE', 'B0 as shipped', LIVE_LINKED, LIVE_NAMED, AS_SHIPPED, 508, 4, 3, 121],
-    ['LIVE', 'SHIPPED DEFAULT (day + own line)', LIVE_LINKED, LIVE_NAMED, {}, 502, 4, 3, 78],
+    ['LIVE', 'structure only', LIVE_LINKED, LIVE_NAMED, STRUCTURE_ONLY, 502, 4, 3, 78],
+    ['LIVE', 'SHIPPED DEFAULT (Jon Q1: more picks)', LIVE_LINKED, LIVE_NAMED, {}, 610, 4, 8, 78],
     ['P90', 'B0 as shipped', P90_LINKED, P90_NAMED, AS_SHIPPED, 542, 4, 3, 129],
-    ['P90', 'SHIPPED DEFAULT (day + own line)', P90_LINKED, P90_NAMED, {}, 536, 4, 3, 86],
+    ['P90', 'structure only', P90_LINKED, P90_NAMED, STRUCTURE_ONLY, 536, 4, 3, 86],
+    ['P90', 'SHIPPED DEFAULT (Jon Q1: more picks)', P90_LINKED, P90_NAMED, {}, 602, 4, 5, 86],
   ] as const;
 
   it.each(rows)(
@@ -481,17 +497,58 @@ describe('measured: the LIVE week (Jon\'s test send) and the P90 week', () => {
     }
   );
 
-  it('THE DEFAULT SHIPS AT NO COST: structure alone is 6 septets cheaper on both weeks', () => {
+  it('THE STRUCTURE COSTS NOTHING: 6 septets cheaper than B0 on both weeks', () => {
     for (const [linked, named] of [
       [LIVE_LINKED, LIVE_NAMED],
       [P90_LINKED, P90_NAMED],
     ] as const) {
       const before = weekly(linked, named, AS_SHIPPED);
-      const after = weekly(linked, named, {});
+      const after = weekly(linked, named, STRUCTURE_ONLY);
       expect(after.segments).toBe(before.segments);
       expect(after.characters).toBe(before.characters - 6);
       expect(longestLine(after.body)).toBeLessThan(longestLine(before.body) - 40);
     }
+  });
+
+  it('AND THE SHIPPING DEFAULT SPENDS THAT HEADROOM, which is what Jon asked for', () => {
+    // Q1, answered 2026-09-11: show more picks rather than bank a cheaper send. So the default is
+    // no longer cost-neutral against B0 -- it deliberately spends up to the same 4-segment ceiling
+    // B0 already paid for, and buys visible picks with it.
+    for (const [linked, named, expectedNamed] of [
+      [LIVE_LINKED, LIVE_NAMED, 8],
+      [P90_LINKED, P90_NAMED, 5],
+    ] as const) {
+      const b0 = weekly(linked, named, AS_SHIPPED);
+      const shipping = weekly(linked, named);
+      expect(shipping.segments).toBe(b0.segments); // SAME BILL as today. That is the deal.
+      expect(shipping.characters).toBeGreaterThan(b0.characters); // more of the budget used
+      expect(namedCount(shipping.body)).toBeGreaterThan(namedCount(b0.body));
+      expect(namedCount(shipping.body)).toBe(expectedNamed);
+    }
+  });
+
+  it('NEVER crosses the segment ceiling it is filling up to', () => {
+    // The fill is greedy against a hard cap, so the interesting question is not "does it fill"
+    // but "can it overfill". It cannot: naming is discretionary and gives way first.
+    for (const [linked, named] of [
+      [LIVE_LINKED, LIVE_NAMED],
+      [P90_LINKED, P90_NAMED],
+    ] as const) {
+      const shipping = weekly(linked, named);
+      expect(shipping.segments).toBeLessThanOrEqual(4);
+      expect(shipping.characters).toBeLessThanOrEqual(4 * 153);
+      expect(shipping.encoding).toBe('GSM-7');
+    }
+  });
+
+  it('the LIVE week ships with only 2 septets of headroom — pinned because it is tight', () => {
+    // Worth knowing rather than discovering: without venue shortening (Q2 still open) the live
+    // week lands at 610 of 612 available septets. It cannot overflow -- the fill would name one
+    // pick fewer -- but the NAMED COUNT is therefore volatile week to week, and a "yes" on Q2 is
+    // what buys that margin back. This number is here so a change to it is visible.
+    const shipping = weekly(LIVE_LINKED, LIVE_NAMED);
+    expect(shipping.characters).toBe(610);
+    expect(4 * 153 - shipping.characters).toBe(2);
   });
 
   it('with Jon\'s three answers switched on, the LIVE week names 10/10 for the same 4 segments', () => {
