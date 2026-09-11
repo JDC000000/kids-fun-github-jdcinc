@@ -617,25 +617,83 @@
   color: var(--ink-secondary);
 }
 
-/* The hero's copy of the source/booking link (C1). Styled as a link, NOT as a second primary
-   button: the sticky bar owns the button treatment, and two filled CTAs on one screen compete
-   for the same tap. 44px min target so it stays thumb-legal.
+/* ═══ THE HERO ACTION CLUSTER (2026-09-10) ═══
+   Phone, source and Maps sit in ONE wrapping row. Maps used to live in the sticky
+   action bar, which split a single cluster across two ends of the page: "which
+   building is this" is the same question the venue name, the address and the phone
+   number above already answer, and it is not the bar's question, which is "do the
+   thing". The bar keeps the one do-action; everything that identifies or reaches
+   the venue is now in the hero, together.
 
-   Selector is `.kf a.kf-detail__source` (0,2,1) for the SAME reason .kf-btn--primary needs it,
-   documented below: `.kf a { color: inherit; text-decoration: none }` is 0,1,1 and beats a bare
-   class, so a plain `.kf-detail__source` rule would have had BOTH its underline and its colour
-   silently stripped — the link would render as ordinary paragraph text.
-   No colour is set on purpose: inheriting body ink is correct in light AND dark mode with no
-   contrast maths, and the underline is what marks it as a link. */
-.kf a.kf-detail__source {
+   align-items: flex-start because the phone item is TALLER — it carries the
+   front-desk caveat — and stretching the two link controls to match would make them
+   read as a different, larger class of control than the one they are copying. */
+.kf-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+}
+/* The phone AND its front-desk caveat enter the row as ONE item, so the caveat can
+   never be separated from the number it qualifies — the caveat is the whole reason
+   the number could ship at all. Sized by the phone, not stretched: a growing
+   container leaves a dead gap on a single-line row. */
+.kf-detail__actions > .kf-detail__contact {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-top: 0;
+}
+/* Without this the caveat's max-content width sets the flex item's width and blows
+   the row apart. 38ch lands it in a column the width of the phone control above it. */
+.kf-detail__actions .kf-phone__note {
+  max-width: 38ch;
+}
+
+/* The hero's copy of the source/booking link (C1), now joined by Maps. Both adopt
+   .kf-phone's OWN chrome — same border, radius, surface, ink and 44px floor — so the
+   three controls read as one set rather than three unrelated affordances that happen
+   to be adjacent.
+
+   Deliberately NOT .kf-btn: that class is `flex: 1` and assumes .kf-actionbar's flex
+   context, and a filled Leaf button here would put a second primary CTA on the same
+   screen as the bar's — two filled CTAs compete for the same tap.
+
+   Selector is (0,2,1) for the SAME reason the rule this replaces needed it, and the
+   same reason .kf-btn--primary does: `.kf a { color: inherit; text-decoration: none }`
+   is (0,1,1) and beats a bare class, so a plain `.kf-detail__source` rule would have
+   its colour silently stripped. No colour is set on purpose — carried forward verbatim
+   from the replaced rule: inheriting body ink is correct in light AND dark mode with
+   no contrast maths. The underline that used to mark this as a link is gone because
+   the border does that job now; kept, it would strike through the control. */
+.kf a.kf-detail__source,
+.kf a.kf-detail__map {
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
-  margin-top: 8px;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--neutral-300);
+  border-radius: 12px;
+  /* Explicit --surface (not the hero's --canvas), matching .kf-phone below. */
+  background: var(--surface);
   font-size: 15px;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
+  margin-top: 0;
+}
+/* The source label is variable-length — "View official source", or whatever booking
+   tag the source published — so it takes the flexible slot and is capped before it
+   becomes a wide desktop slab. Maps is one fixed word and must never wrap. */
+.kf a.kf-detail__source {
+  flex: 1 1 140px;
+  max-width: 320px;
+}
+.kf a.kf-detail__map {
+  flex: 0 1 auto;
+  white-space: nowrap;
 }
 
 /* Venue phone — in the hero rather than tucked into the provenance panel, because the
@@ -988,8 +1046,14 @@
   }
 
   /* A 100%-width primary button looks broken past roughly 500px. */
+  /* Maps has left the bar (it moved to the hero cluster), so the primary is now
+     alone in it. At this breakpoint the primary is `flex: 0 1 320px`, which without
+     centring leaves a 322px button flush-left in a 664-992px bar with a large empty
+     right side. A no-op for the blocked state: its disabled ghost carries an inline
+     `flex: 1` and still fills the bar. */
   .kf-actionbar {
     padding: 12px var(--kf-gutter) calc(12px + env(safe-area-inset-bottom));
+    justify-content: center;
   }
   .kf-actionbar .kf-btn--primary {
     flex: 0 1 320px;

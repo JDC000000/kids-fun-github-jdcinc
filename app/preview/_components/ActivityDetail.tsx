@@ -63,6 +63,19 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   // two things that drift, and the one that drifts is the one nobody re-reads.
   const sourceHref = activity.bookingUrl ?? activity.sourceUrl;
   const sourceLabel = activity.bookingUrl ? bookLabel : 'View official source';
+  // ═══ A BLOCKED SESSION NEVER WEARS A BOOKING LABEL IN THE HERO (2026-09-10) ═══
+  // The hero affordance makes the SOURCE claim ("here is who says so"), which is the
+  // whole reason it survives a cancelled/postponed status while the bar below refuses
+  // the action. The comment on the hero link has argued that since 2026-09-03; the code
+  // never implemented it, so a cancelled session carrying a bookingUrl rendered a booking
+  // label pointing at a dead booking page, directly above the bar's own "Cancelled — not
+  // available". (mapBooking() forces booking='none' for a blocked status, so bookingTag()
+  // returns '' and bookLabel falls back to the literal "View booking page" — an invitation
+  // in plain words.) As an underlined text link that was easy to miss.
+  // As a bordered control in a set of three it reads as a live invitation to register
+  // for something that is not happening. The bar keeps sourceHref/sourceLabel unchanged.
+  const heroSourceHref = isBlocked ? activity.sourceUrl : sourceHref;
+  const heroSourceLabel = isBlocked ? 'View official source' : sourceLabel;
   const ages = ageGuide(activity.ageMin, activity.ageMax);
   const facts = practicalFacts(activity);
   // Null for the majority of listings (no source family but ActiveNet publishes a facility
@@ -99,61 +112,104 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             so it never left the database. It sits under the venue name because "which of the four
             community centres with this name" is the question a parent asks before anything else
             on this page — and until now the only answer was a map link that 99.6% of listings did
-            not have. Plain text, not a link: the map link is separate and already has two homes
-            below, and an address that is also a link invites a tap that opens the same thing. */}
+            not have. Plain text, not a link: the Maps control in the cluster immediately below is
+            the map affordance, and an address that is also a link invites a tap that opens the
+            same thing twice. */}
         {activity.address &&
           !addressRepeatsVenueName(activity.address, activity.venue) && (
             <p className="kf-detail__address">{formatVenueAddress(activity.address)}</p>
           )}
 
-        {/* Venue phone — in the hero, above the fold, on purpose (Jon, 2026-08-01: "make
-            those phone numbers prominent and easily available"). Renders only when the
-            source published one; see the decision note in the Source & freshness panel. */}
-        {phoneHref && (
-          <div className="kf-detail__contact">
+        {/* ═══ THE HERO ACTION CLUSTER (2026-09-10) ═══
+            Phone, source and Maps in one wrapping row. Maps moved here OUT of the sticky
+            action bar: "which building is this, and how do I reach it" is the question the
+            venue name, the address and the phone number directly above already answer, and
+            it is not the bar's question, which is "do the thing". The bar keeps the single
+            do-action; everything that identifies or reaches the venue now sits together.
+
+            The phone block is WRAPPED, not modified — its copy is a contract asserted in
+            tests/ui/venue-phone.test.tsx, including negatively. Nothing inside it changes. */}
+        <div className="kf-detail__actions">
+          {/* Venue phone — in the hero, above the fold, on purpose (Jon, 2026-08-01: "make
+              those phone numbers prominent and easily available"). Renders only when the
+              source published one; see the decision note in the Source & freshness panel. */}
+          {phoneHref && (
+            <div className="kf-detail__contact">
+              <a
+                className="kf-phone"
+                href={phoneHref}
+                aria-label={`Call the venue at ${activity.venuePhone}`}
+                aria-describedby={PHONE_NOTE_ID}
+              >
+                <span aria-hidden="true">☎</span>
+                <span className="kf-phone__label">Call the venue</span>
+                <span className="kf-phone__number">{activity.venuePhone}</span>
+              </a>
+              <p className="kf-phone__note" id={PHONE_NOTE_ID}>
+                The venue&apos;s front desk — not a line for this specific session. At sites with more
+                than one facility it may ring the main centre.
+              </p>
+            </div>
+          )}
+
+          {/* The source link is DUPLICATED here, not moved (Jon asked for it "near Call the
+              venue"; duplicate-vs-move was left to me). The sticky bar is the thumb-zone
+              do-action and stays visible the whole way down the page; moving the link up here
+              would trade an always-reachable CTA for one that scrolls away. The hero copy
+              answers a different question than the bar does — "who actually says this, and how
+              do I reach them" — which is the same question the phone number answers, so the
+              two belong side by side.
+
+              SHOWN FOR CANCELLED AND POSTPONED SESSIONS TOO (Jon, 2026-09-03). This was
+              originally gated on `!isBlocked` to match the action bar, which deliberately
+              renders a DISABLED "not available" button for those two statuses, on the
+              reasoning that a live link above a refusal is the page arguing with itself. Jon
+              has ruled the other way, and the reason is the stronger one: a parent whose
+              session was cancelled is the parent who MOST needs the official page, because it
+              is the only place that can tell them what replaced it or when it returns. The
+              bar's disabled button is about the ACTION (you cannot book this); this link is
+              about the SOURCE (here is who says so). Those are different claims, so the two
+              are not in fact contradicting each other — which is exactly why the href and
+              label here are heroSource*, not source*: a blocked session must make the source
+              claim, never the booking one.
+
+              The class attribute is a single class on purpose. detail-hero-source-and-status
+              .test.tsx matches the literal `class="kf-detail__source"`; restyle via the CSS
+              selector rather than adding a companion class here. */}
+          <a
+            className="kf-detail__source"
+            href={heroSourceHref}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            {heroSourceLabel}
+            <span aria-hidden="true">↗</span>
+            <span className="kf-sr"> (opens in a new tab)</span>
+          </a>
+
+          {/* "Maps", never "Directions". For 99.6% of listings locationUrl is a Google Maps
+              text SEARCH built from an address string, not a verified pin — mapsUrlForAddress
+              makes the point that a wrong pin looks authoritative while a search that lands
+              imprecisely visibly is a search. "Directions" would promise turn-by-turn to a
+              confirmed point, which the data does not support. Pinned in
+              tests/ui/detail-hero-action-cluster.test.tsx.
+
+              The guard stays even though locationUrl is populated for all but a sliver of
+              listings: an admin-created listing can carry neither a location URL nor an
+              address, and a Maps button with no destination is worse than no button. */}
+          {activity.locationUrl && (
             <a
-              className="kf-phone"
-              href={phoneHref}
-              aria-label={`Call the venue at ${activity.venuePhone}`}
-              aria-describedby={PHONE_NOTE_ID}
+              className="kf-detail__map"
+              href={activity.locationUrl}
+              target="_blank"
+              rel="noreferrer noopener"
             >
-              <span aria-hidden="true">☎</span>
-              <span className="kf-phone__label">Call the venue</span>
-              <span className="kf-phone__number">{activity.venuePhone}</span>
+              Maps
+              <span aria-hidden="true">↗</span>
+              <span className="kf-sr"> (opens in a new tab)</span>
             </a>
-            <p className="kf-phone__note" id={PHONE_NOTE_ID}>
-              The venue&apos;s front desk — not a line for this specific session. At sites with more
-              than one facility it may ring the main centre.
-            </p>
-          </div>
-        )}
-
-        {/* DUPLICATED, not moved (Jon asked for it "near Call the venue"; duplicate-vs-move was
-            left to me). The sticky bar is the thumb-zone do-action and stays visible the whole
-            way down the page; moving the link up here would trade an always-reachable CTA for
-            one that scrolls away. The hero copy answers a different question than the bar does —
-            "who actually says this, and how do I reach them" — which is the same question the
-            phone number above it answers, so the two belong side by side.
-
-            SHOWN FOR CANCELLED AND POSTPONED SESSIONS TOO (Jon, 2026-09-03). This was originally
-            gated on `!isBlocked` to match the action bar, which deliberately renders a DISABLED
-            "not available" button for those two statuses, on the reasoning that a live link above
-            a refusal is the page arguing with itself. Jon has ruled the other way, and the reason
-            is the stronger one: a parent whose session was cancelled is the parent who MOST needs
-            the official page, because it is the only place that can tell them what replaced it or
-            when it returns. The bar's disabled button is about the ACTION (you cannot book this);
-            this link is about the SOURCE (here is who says so). Those are different claims, so
-            the two are not in fact contradicting each other.
-
-            The action bar is deliberately untouched — this change is scoped to the hero link. */}
-        <a
-          className="kf-detail__source"
-          href={sourceHref}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          {sourceLabel}
-        </a>
+          )}
+        </div>
 
         <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
           <FreshnessStamp activity={activity} />
@@ -290,7 +346,11 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             negatively, in tests/ui/venue-phone.test.tsx — reword only with that file. */}
       </section>
 
-      {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action. */}
+      {/* Sticky bottom action bar (thumb zone) — booking is the primary do-action, and now
+          the ONLY action in it. Maps moved to the hero cluster; it answers "where is this",
+          which is a different question from "do the thing" and belongs with the venue name,
+          address and phone that already answer it. The lone button is centred at >=768px
+          (preview.css) so it does not sit flush-left in a bar three times its width. */}
       <div className="kf-actionbar">
         {isBlocked ? (
           <button type="button" className="kf-btn kf-btn--ghost" style={{ flex: 1 }} disabled>
@@ -304,11 +364,6 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             rel="noreferrer noopener"
           >
             {sourceLabel}
-          </a>
-        )}
-        {activity.locationUrl && (
-          <a className="kf-btn kf-btn--ghost" href={activity.locationUrl} target="_blank" rel="noreferrer noopener">
-            Maps
           </a>
         )}
       </div>
