@@ -18,9 +18,31 @@
 // It inlines the BRAND and STOP_LINE literals rather than importing them. That is intentional: if
 // somebody edits either, this test fails, and it SHOULD — both are consumer-facing copy of record
 // (PRD §1.4), and changing them is a decision, not a refactor. The failure message says so.
+//
+// ── ON THIS BRANCH IT PROVES SOMETHING SLIGHTLY DIFFERENT ───────────────────────────────
+// On `fix/kf-sms-gsm7-normalizer` the flat layout IS the default, so the renderer is called bare
+// and the claim is "the normaliser changed nothing". Here the day-grouping work exists and IS the
+// default, so the renderer is called with the structural dials explicitly OFF and the claim
+// becomes "the layout work is genuinely INERT, not merely unreferenced" — main's exact bytes are
+// still reachable from this branch, for all 684 messages. That is what lets the GSM-7 fix deploy
+// ahead of this one while Jon is still answering the three wording questions.
+//
+// The ONE difference from the other branch's copy of this file is the `AS_SHIPPED` dials below.
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { renderWeeklyMessage, weekdayLabel, type MessagePick } from '@/lib/sms/message';
+import {
+  renderWeeklyMessage,
+  weekdayLabel,
+  type MessagePick,
+  type WeeklyMessageFormat,
+} from '@/lib/sms/message';
+
+/** The layout exactly as main ships it — every structural dial off. */
+const AS_SHIPPED: Partial<WeeklyMessageFormat> = {
+  groupByDay: false,
+  linkOnOwnLine: false,
+  nameUnlinkedPicks: false,
+};
 
 /**
  * `renderWeeklyMessage` exactly as main/4a6e9ba renders it — before `normalizeForGsm7` existed.
@@ -170,7 +192,7 @@ describe('the normaliser is invisible for clean catalogue text', () => {
     // This is the whole promise. Per-case rather than one hash, so a failure names the case.
     const divergent: string[] = [];
     for (const c of CASES) {
-      const actual = renderWeeklyMessage(c).body;
+      const actual = renderWeeklyMessage({ ...c, format: AS_SHIPPED }).body;
       const expected = referenceRenderWeeklyMessage(c);
       if (actual !== expected) {
         divergent.push(
@@ -191,7 +213,7 @@ describe('the normaliser is invisible for clean catalogue text', () => {
       // hash alike. NUL cannot occur in a GSM-7 message. (An earlier draft of this line put
       // a real NUL in the source and turned the file binary -- the same mistake the
       // no-break-space test in gsm7_normalizer.test.ts documents. Escapes, always.)
-      .update(CASES.map((c) => renderWeeklyMessage(c).body).join('\u0000'))
+      .update(CASES.map((c) => renderWeeklyMessage({ ...c, format: AS_SHIPPED }).body).join('\u0000'))
       .digest('hex');
     expect(digest).toBe('77e406d810c745fdb4fe31af9a226f047fe04ddf19c3e370e57ed4a4bc0c0aea');
   });
