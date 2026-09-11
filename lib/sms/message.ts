@@ -115,10 +115,29 @@ export function septetLength(text: string): number {
   let total = 0;
   for (const ch of text) {
     const cost = septetCost(ch);
-    if (cost === 0) return [...text].length;
+    if (cost === 0) return ucs2Units(text);
     total += cost;
   }
   return total;
+}
+
+/**
+ * The length of a string in UCS-2 CODE UNITS, which is the unit the 70/67 budget is counted in.
+ *
+ * NOT the number of characters a reader would count, and that difference is the whole reason this
+ * function exists. A character outside the Basic Multilingual Plane — every emoji a municipality
+ * has ever put in an activity title, and the astral CJK a venue name can carry — is transmitted as
+ * a SURROGATE PAIR and occupies TWO of the 70. `[...text].length` iterates by code point and
+ * counts it as one, so a body of 70 code points containing a single emoji was reported as fitting
+ * in one segment when the carrier splits and bills it as TWO. That is a 100% under-report at the
+ * smallest size the error can occur at, and it under-reports in the direction that costs money.
+ *
+ * `String.prototype.length` IS the UTF-16 code-unit count, so this is deliberately not clever. It
+ * is identical to `[...text].length` for every character in the BMP, which is all of this
+ * product's own copy and all of the existing measurements — nothing that was correct changes.
+ */
+function ucs2Units(text: string): number {
+  return text.length;
 }
 
 export interface SegmentEstimate {
@@ -139,7 +158,7 @@ export function estimateSegments(body: string): SegmentEstimate {
   const gsm7 = isGsm7(body);
   // SEPTETS, not characters, for GSM-7 — an extension-table character such as `~` occupies two of
   // them, so a message can exceed the segment budget while looking short.
-  const characters = gsm7 ? septetLength(body) : [...body].length;
+  const characters = gsm7 ? septetLength(body) : ucs2Units(body);
   const single = gsm7 ? GSM7_SINGLE : UCS2_SINGLE;
   const concat = gsm7 ? GSM7_CONCAT : UCS2_CONCAT;
   const segments = characters <= single ? 1 : Math.ceil(characters / concat);
@@ -244,6 +263,58 @@ const GSM7_INVISIBLE_SUBSTITUTIONS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * LAYER 1b - THE REST OF THE INVISIBLE FAMILY, BY CATEGORY RATHER THAN BY NAME.
+ *
+ * `GSM7_INVISIBLE_SUBSTITUTIONS` above is an ENUMERATION, and an enumeration of invisible
+ * characters is a list of the ones somebody happened to think of. Unicode has roughly seventeen
+ * space characters and around thirty format characters; that map names four spaces and four
+ * zero-widths. The twelve it does not name behave identically in every way that matters here:
+ * invisible on the screen, absent from GSM 03.38, and therefore able to more than double the cost
+ * of a subscriber's message with nothing whatsoever to see in the message, the diff, or the log.
+ *
+ * Measured on the shipped table before this layer existed, each of these still converted a clean
+ * GSM-7 body to UCS-2 on its own:
+ *
+ *     U+2000-U+2006, U+200A  the en/em/per-em/hair spaces   |  U+00AD  SOFT HYPHEN
+ *     U+205F  medium mathematical space                      |  U+2060  WORD JOINER
+ *     U+1680  ogham space mark                               |  U+200E/U+200F  LRM / RLM
+ *     U+3000  ideographic space                              |  U+2066-U+2069  bidi isolates
+ *     U+2028/U+2029  line and paragraph separator            |  U+0009  TAB
+ *
+ * U+00AD is the one to look at twice. A soft hyphen is what a scraped municipal page leaves
+ * behind for every `&shy;` in its markup, it renders as NOTHING at the widths a phone uses, and a
+ * venue name carrying one is visually IDENTICAL to the same name without it. It is the exact
+ * failure the map above was written to stop, and the map did not cover it.
+ *
+ * ── WHY A CATEGORY TEST IS SAFE HERE, WHERE A BLANKET ASCII FOLD WOULD NOT BE ───────────
+ * This runs ONLY for a character that `septetCost` has already scored 0 - a character that, left
+ * alone, sends the whole message as UCS-2. It cannot reach anything GSM-7 can already carry, so
+ * no character this product prints today changes. U+000A and U+000D are in the basic table and
+ * never arrive here, which is what keeps the weekly message's line breaks intact.
+ *
+ * WHITESPACE BECOMES A SPACE, FORMAT AND CONTROL CHARACTERS BECOME NOTHING. Both are the
+ * judgement-free reading of `GSM7_INVISIBLE_SUBSTITUTIONS`'s own comment - "mapping it to the
+ * space it is already pretending to be involves no judgement at all" - applied to the rest of the
+ * family instead of to eight members of it. A line separator inside a venue name folds to a space
+ * rather than a newline on purpose: the weekly message is one pick per line, and a catalogue
+ * cannot be allowed to insert a break that makes a pick look like two.
+ *
+ * LAYER 3 STILL APPLIES TO EVERYTHING ELSE. A visible character that is not GSM-7 - an emoji, a
+ * CJK venue name, a private-use glyph from an icon font - is NOT touched by this and still goes
+ * out as UCS-2, because handing a parent a name they cannot read is the worse failure. This layer
+ * is strictly about characters that have nothing to show them in the first place.
+ */
+const INVISIBLE_WHITESPACE = /[\p{White_Space}\p{Zs}\p{Zl}\p{Zp}]/u;
+const INVISIBLE_FORMAT = /[\p{Cf}\p{Cc}]/u;
+
+/** '' for an invisible non-GSM-7 character, ' ' for an invisible space, or null if it is visible. */
+function foldInvisible(ch: string): string | null {
+  if (INVISIBLE_WHITESPACE.test(ch)) return ' ';
+  if (INVISIBLE_FORMAT.test(ch)) return '';
+  return null;
+}
+
+/**
  * LAYER 2 — strip the accent from a letter GSM-7 cannot carry, and ONLY then.
  *
  * GSM 03.38 carries a specific and lopsided set of accented letters: è é ù ì ò Ç Å å Ä Ö Ñ Ü ä ö
@@ -291,7 +362,15 @@ export function normalizeForGsm7(text: string): string {
       out += substitution;
       continue;
     }
-    out += septetCost(ch) === 0 ? foldUnsupportedDiacritic(ch) : ch;
+    if (septetCost(ch) !== 0) {
+      out += ch;
+      continue;
+    }
+    // LAYER 1b before LAYER 2: a character with nothing to show is dropped or spaced before the
+    // diacritic fold is asked about it, since NFD on a format character has no marks to strip and
+    // would hand it straight through to layer 3.
+    const invisible = foldInvisible(ch);
+    out += invisible ?? foldUnsupportedDiacritic(ch);
   }
   return out;
 }
@@ -572,7 +651,25 @@ function weeklyOpener(input: WeeklyMessageInput): string {
 
 /** "Tai Chi Chuan - Beginners (Roundhouse CC)" — a linked pick's own line, without its URL. */
 function pickHeadline(pick: MessagePick, format: WeeklyMessageFormat): string {
-  const venue = pick.venue ? ` (${format.shortenVenue(normalizeForGsm7(pick.venue))})` : '';
+  // EMPTINESS IS DECIDED AFTER NORMALISING, NOT BEFORE. A venue that is nothing but invisible
+  // characters - the U+200B a scraped table leaves in a cell that looks blank - is TRUTHY, and
+  // `venueLabel`'s `.trim()` in weekly-send.ts does not remove it either, because a zero-width
+  // space is not whitespace by JS's definition. Tested before this line, such a venue reached the
+  // renderer, normalised to the empty string, and printed a real parent an empty bracket pair:
+  // "Story Time () https://...". The renderer is pure and must not lean on its one caller's
+  // cleaning, so the check belongs on the string that is actually about to be printed.
+  //
+  // ON THIS BRANCH THAT STRING IS THE SHORTENED ONE, which is why the gate sits after
+  // `shortenVenue` rather than after `normalizeForGsm7`. Putting it here instead of in
+  // `renderWeeklyMessage` also covers BOTH layouts - the grouped path and the dials-off path both
+  // headline through this function, and the empty bracket was reachable from either.
+  //
+  // THE TRAILING `.trim()` IS LOAD-BEARING FOR A NON-DEFAULT DIAL. `shortenVenueName` trims its
+  // own output, so for production this is a no-op and the printed venue is byte-identical to what
+  // it was; an identity `shortenVenue` (what the tests and the dials-off path use) does not, and
+  // without it a venue of pure exotic spaces would print "( )" rather than nothing.
+  const venueText = pick.venue ? format.shortenVenue(normalizeForGsm7(pick.venue)).trim() : '';
+  const venue = venueText ? ` (${venueText})` : '';
   return `${normalizeForGsm7(pick.name)}${venue}`;
 }
 

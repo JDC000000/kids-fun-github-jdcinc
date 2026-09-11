@@ -57,6 +57,7 @@ const FILES = [
   'tests/sms/gsm7_normalizer.test.ts',
   'tests/sms/gsm7_render_equivalence.test.ts',
   'tests/sms/substitution_table.test.ts',
+  'tests/sms/gsm7_hardening.test.ts',
   'tests/sms/source_hygiene.test.ts',
   // Added on this branch, which owns two more files than fix/kf-sms-gsm7-normalizer does.
   'tests/sms/weekly_format.test.ts',
