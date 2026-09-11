@@ -11,8 +11,13 @@
 //
 // ── WHAT IT ACTUALLY PROVES, WHICH IS MORE THAN THE PROBE DID ───────────────────────────
 // A one-off before/after probe can only say "these two moments agreed". This says something
-// stronger and permanent: the source maps contain EXACTLY these seventeen codepoints, each maps to
-// exactly this replacement, and none of them has degenerated into an identity mapping.
+// stronger and permanent: the source maps contain EXACTLY the codepoints in `TABLE` below, each
+// maps to exactly its replacement, and none of them has degenerated into an identity mapping.
+//
+// NOTE THAT THIS PARAGRAPH NAMES NO COUNT. It used to say "seventeen", which was wrong -- there are
+// fifteen -- and review caught it. A number restated in prose is a second source of truth that
+// nothing checks, which is the exact failure this file was written to end. The count now lives in
+// one asserted place below and nowhere else.
 //
 // That last point is the specific failure mode the escaping was defending against. A key flattened
 // from U+00A0 to a plain space turns its entry into `[' ', ' ']` — which still compiles, still
@@ -95,6 +100,9 @@ describe('the substitution tables', () => {
       const body = source.slice(start, source.indexOf(']);', start));
       return [...body.matchAll(/\['\\u([0-9A-Fa-f]{4})'/g)].map((m) => parseInt(m[1], 16));
     };
+
+    // The count, stated ONCE and checked, rather than in a comment where it silently rots.
+    expect(TABLE).toHaveLength(15);
 
     const visible = keysOf('GSM7_SUBSTITUTIONS');
     const invisible = keysOf('GSM7_INVISIBLE_SUBSTITUTIONS');
