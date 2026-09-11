@@ -284,7 +284,14 @@ const SESSION_QUALIFIER_RE = /\b(?:sets?\s+(?:one|two|three|\d)|(?:one|two|three
 export function foldTitleForComparison(name: string): string {
   return name
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '') // combining marks left behind by NFKD
+    // WRITTEN AS ESCAPES, NEVER AS RAW CHARACTERS. This class is the combining diacritical
+    // marks U+0300-U+036F that NFKD leaves behind, and every one of them is INVISIBLE in a
+    // source file — as raw literals they render as marks hanging off the brackets, so a
+    // reader cannot see what the class contains and any tool that re-normalises the file can
+    // silently change it with nothing to notice. Escapes are byte-identical in behaviour and
+    // legible. (A sibling session lost an hour to exactly this twice in one day: an invisible
+    // literal that degraded into a plain space and made a test pass while asserting nothing.)
+    .replace(/[\u0300-\u036F]/g, '') // combining marks left behind by NFKD
     .toLowerCase()
     .replace(/[®™]/g, '')
     .replace(PRICE_RE, ' ')
