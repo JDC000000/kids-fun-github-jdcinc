@@ -63,7 +63,7 @@ import {
   matchesInterests,
   sameOfferingAtVenue,
   selectWeeklyPicks,
-  spreadNamedSlotVenues,
+  spreadNamedSlots,
   type WeeklyPicks,
   type WeeklyPicksInput,
 } from '@/lib/sms/weekly-picks';
@@ -626,19 +626,19 @@ function selectionOf(venuesInOrder: string[]): SearchResultItem[] {
 
 const idsOf = (items: readonly SearchResultItem[]) => items.map((i) => i.listing.id);
 
-describe('spreadNamedSlotVenues — the three picks a parent actually reads', () => {
+describe('spreadNamedSlots (venue half) — the three picks a parent actually reads', () => {
   it('promotes the highest-ranked unused-venue pick into a repeated named slot', () => {
     const before = selectionOf(['A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']);
-    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
     expect(idsOf(selection).slice(0, 3)).toEqual(['p0', 'p3', 'p2']);
     expect(promoted).toHaveLength(1);
-    expect(promoted[0]).toMatchObject({ occurrenceId: 'p3', displacedOccurrenceId: 'p1', fromIndex: 3, toIndex: 1, rankDelta: 2 });
+    expect(promoted[0]).toMatchObject({ reason: 'venue', occurrenceId: 'p3', displacedOccurrenceId: 'p1', fromIndex: 3, toIndex: 1, rankDelta: 2 });
     // HIGHEST-ranked, not any: 'C' at index 3 is chosen over 'D' at 4 and everything below.
   });
 
   it('is a PURE PERMUTATION — set membership is byte-identical before and after', () => {
     const before = selectionOf(['A', 'A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
-    const { selection } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    const { selection } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
     expect(selection).toHaveLength(before.length);
     expect([...idsOf(selection)].sort()).toEqual([...idsOf(before)].sort());
     // The same objects, not copies of them — nothing is rebuilt on the way through.
@@ -651,14 +651,14 @@ describe('spreadNamedSlotVenues — the three picks a parent actually reads', ()
     // There is nothing to diversify with, so there is nothing to do — the same posture
     // `capVenueRepetition` takes on a single-venue page, and for the same reason.
     const before = selectionOf(Array.from({ length: 10 }, () => 'Only Venue'));
-    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
     expect(idsOf(selection)).toEqual(idsOf(before));
     expect(promoted).toEqual([]);
   });
 
   it('is a no-op when the named block is already three distinct venues', () => {
     const before = selectionOf(['A', 'B', 'C', 'A', 'A', 'D', 'E', 'F', 'G', 'H']);
-    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
     expect(idsOf(selection)).toEqual(idsOf(before));
     expect(promoted).toEqual([]);
   });
@@ -667,10 +667,10 @@ describe('spreadNamedSlotVenues — the three picks a parent actually reads', ()
     // `venueIdentity` returns null for an empty name and every caller must read that as "no
     // opinion". Two unnamed rows are not the same venue, so neither triggers a promotion…
     const unnamed = selectionOf(['', '', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']);
-    expect(idsOf(spreadNamedSlotVenues(unnamed, new Set(), DIRECT_LINK_PICKS).selection)).toEqual(idsOf(unnamed));
+    expect(idsOf(spreadNamedSlots(unnamed, new Set(), DIRECT_LINK_PICKS).selection)).toEqual(idsOf(unnamed));
     // …and an unnamed row below is never promoted as though it were somewhere new.
     const noAlternative = selectionOf(['A', 'A', 'B', '', '', '', '', '', '', '']);
-    expect(idsOf(spreadNamedSlotVenues(noAlternative, new Set(), DIRECT_LINK_PICKS).selection)).toEqual(idsOf(noAlternative));
+    expect(idsOf(spreadNamedSlots(noAlternative, new Set(), DIRECT_LINK_PICKS).selection)).toEqual(idsOf(noAlternative));
   });
 
   it('leaves the named block alone when the ten hold no unused venue to promote', () => {
@@ -678,7 +678,7 @@ describe('spreadNamedSlotVenues — the three picks a parent actually reads', ()
     // most the ten can offer — the stage recognises that and does nothing rather than shuffling
     // for the sake of it. (The third slot repeating A is arithmetic, not a rule failing.)
     const before = selectionOf(['A', 'B', 'A', 'A', 'B', 'A', 'B', 'A', 'B', 'A']);
-    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
     expect(idsOf(selection)).toEqual(idsOf(before));
     expect(promoted).toEqual([]);
   });
@@ -687,7 +687,7 @@ describe('spreadNamedSlotVenues — the three picks a parent actually reads', ()
     // Jon's ruling: "let it jump the Q so it's always named." This stage is subordinate to it.
     // p0 is forced and sits at venue A; p1 repeats A and IS eligible to move.
     const before = selectionOf(['A', 'A', 'B', 'A', 'C', 'D', 'E', 'F', 'G', 'H']);
-    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(['p0']), DIRECT_LINK_PICKS);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(['p0']), DIRECT_LINK_PICKS);
     expect(selection[0].listing.id).toBe('p0'); // still first, still named
     expect(promoted).toHaveLength(1);
     // p3 is at venue A, already used — so the promotion reaches past it to p4 at venue C.
@@ -695,7 +695,7 @@ describe('spreadNamedSlotVenues — the three picks a parent actually reads', ()
 
     // And a forced pick sitting BELOW the named block is never pulled up by this stage either.
     const forcedBelow = selectionOf(['A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']);
-    const out = spreadNamedSlotVenues(forcedBelow, new Set(['p3']), DIRECT_LINK_PICKS);
+    const out = spreadNamedSlots(forcedBelow, new Set(['p3']), DIRECT_LINK_PICKS);
     expect(out.promoted[0]?.occurrenceId).toBe('p4');
   });
 });
@@ -1061,7 +1061,7 @@ describe('T9 — diversity telemetry on the result payload', () => {
     const before = selectionOf(['A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']).map((item, i) =>
       i === 3 ? { ...item, distanceKm: null } : item
     );
-    const { promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    const { promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
     expect(promoted).toHaveLength(1);
     expect(promoted[0].distanceDeltaKm).toBeNull();
   });
@@ -1544,5 +1544,232 @@ describe('T12 — scarcity invariants hold on the category axis as well as the v
     const reference = selectionWithoutDiversityStages(listings, over);
     expect(result.picks.map((p) => p.item.listing.id)).toEqual(reference.map((r) => r.listing.id));
     expect(result.diversity).toMatchObject({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, ageFitBlocked: 0 });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// T8 (approved follow-on) — AGE-BAND FAIRNESS IN THE NAMED BLOCK.
+//
+// Only the first DIRECT_LINK_PICKS picks are named and linked; the rest fold into an anonymous
+// "+N more". `linkOrigin` is assigned purely by rank, so a household that asked about two age
+// bands can get all three LINKS for one child — while the other child's activities sit in the
+// ten, unnamed and untappable.
+//
+// `applyCoverageSwap` does NOT catch this. It fires only when a band has no organic match ANYWHERE
+// and reaches outside the selection to fix it. Here the band IS represented in the ten; it is just
+// not represented in the LINKS. Band representation in the selection and band representation in
+// the links are different facts, and nothing checked the second one.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Picks with an explicit venue AND explicit bands, ranked by position. */
+function selectionWithBands(spec: Array<{ venue: string; bands: AgeBandKey[] }>): SearchResultItem[] {
+  return spec.map((s, i) => {
+    const item = asItem(
+      kidActivity({
+        id: `q${i}`,
+        activityName: FILLER_NAMES[i % FILLER_NAMES.length],
+        venueName: s.venue,
+        geo: northOfHome(600 + i * 600),
+        ageBandMatches: s.bands,
+      })
+    );
+    return { ...item, distanceKm: 0.6 + i * 0.6 };
+  });
+}
+
+const namedBandsOf = (picks: SearchResultItem[], n = DIRECT_LINK_PICKS) =>
+  new Set(picks.slice(0, n).flatMap((p) => p.listing.ageBandMatches));
+
+describe('T8 — the named three must speak to every child, before they speak to every place', () => {
+  const TWO_BANDS: AgeBandKey[] = ['2-4', '10-14'];
+
+  it('promotes a band that is in the ten but missing from the named three', () => {
+    // The reported defect, minimal. The teenager's activity is pick #4 — in the list, never linked.
+    const before = selectionWithBands([
+      { venue: 'A', bands: ['2-4'] },
+      { venue: 'B', bands: ['2-4'] },
+      { venue: 'C', bands: ['2-4'] },
+      { venue: 'D', bands: ['10-14'] },
+      { venue: 'E', bands: ['2-4'] },
+    ]);
+    expect(namedBandsOf(before)).toEqual(new Set(['2-4'])); // the defect, before
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, TWO_BANDS);
+    expect(namedBandsOf(selection)).toEqual(new Set(TWO_BANDS)); // both children now have a link
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]).toMatchObject({ reason: 'age_band', occurrenceId: 'q3', bandsGained: ['10-14'] });
+  });
+
+  it('═══ THE DISAGREEMENT CASE: band fairness and venue spread cannot both be satisfied ═══', () => {
+    // Constructing a REAL either/or takes care, and the first draft of this test did not manage
+    // it — the implementation found a win-win I had not anticipated (it vacated a slot whose
+    // venue left the named block with it, satisfying both rules). That is the right behaviour and
+    // it is why this fixture is shaped the way it is: here the two rules genuinely cannot both be
+    // met, so the ordering has to decide.
+    //
+    //   q0 is the ONLY pick speaking to the 15+ child, so its slot cannot be spent.
+    //   q3 is the ONLY pick speaking to the 10-14 child, and it sits at venue A — which q0 is
+    //     also at, and q0 is staying. Naming it therefore COSTS a distinct venue.
+    //   q4 is a pure venue-variety candidate at an unused venue, buying no coverage at all.
+    //
+    // BAND FAIRNESS WINS: three children represented, two distinct venues. The alternative is a
+    // tidier-looking three venues and a 12-year-old whose parent reads three links, taps none,
+    // and concludes the product found nothing for them. A child with nothing is closer to WRONG;
+    // a repeated venue is merely LESS GOOD.
+    const THREE_BANDS: AgeBandKey[] = ['2-4', '10-14', '15+'];
+    const before = selectionWithBands([
+      { venue: 'A', bands: ['15+'] },     // sole 15+ voice — not a slot that can be spent
+      { venue: 'B', bands: ['2-4'] },     // spendable: q2 also covers 2-4
+      { venue: 'C', bands: ['2-4'] },
+      { venue: 'A', bands: ['10-14'] },   // sole 10-14 voice, at a venue that stays named
+      { venue: 'D', bands: ['2-4'] },     // venue variety, no coverage
+    ]);
+    expect(namedBandsOf(before)).toEqual(new Set(['15+', '2-4'])); // the defect, before
+
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, THREE_BANDS);
+    const namedIds = selection.slice(0, DIRECT_LINK_PICKS).map((p) => p.listing.id);
+    const namedVenueCount = new Set(selection.slice(0, DIRECT_LINK_PICKS).map((p) => p.listing.venueName)).size;
+
+    expect(namedIds).toContain('q3');                                  // every child got a link…
+    expect(namedIds).not.toContain('q4');                              // …and variety did not win
+    expect(namedBandsOf(selection)).toEqual(new Set(THREE_BANDS));
+    expect(namedVenueCount).toBe(2);                                   // the accepted cost
+    expect(promoted.map((p) => p.reason)).toEqual(['age_band']);
+
+    // ═══ THE CONTRAST THAT SHOWS THE ORDERING MATTERS ═══
+    // Same input, band fairness disabled — which is what a venue-only pass, or a separate pass
+    // that ran first and got there before this one, produces. The venue rule sees three distinct
+    // venues already, declares itself satisfied, changes nothing, and the 10-14 child ends the
+    // week with no link at all. Tidier-looking, and wrong.
+    //
+    // So the tradeoff, stated as two numbers: band fairness ON gives 3 children / 2 venues;
+    // band fairness OFF gives 2 children / 3 venues. This scope chooses the children.
+    const venueOnly = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, []);
+    const venueOnlyIds = venueOnly.selection.slice(0, DIRECT_LINK_PICKS).map((p) => p.listing.id);
+    expect(venueOnlyIds).toEqual(['q0', 'q1', 'q2']);
+    expect(venueOnlyIds).not.toContain('q3');                       // the child, unrepresented
+    expect(venueOnly.promoted).toEqual([]);
+    expect(new Set(venueOnly.selection.slice(0, DIRECT_LINK_PICKS).map((p) => p.listing.venueName)).size).toBe(3);
+    expect([...namedBandsOf(venueOnly.selection)]).not.toContain('10-14');
+    // …and q4, the variety-only candidate, is taken by NEITHER: there was never a venue repeat to
+    // spend it on. It is in the fixture to prove band fairness declined an available alternative
+    // rather than simply having none.
+    expect(venueOnlyIds).not.toContain('q4');
+  });
+
+  it('the venue pass may NEVER evict the sole named voice for a child', () => {
+    // Subordination has two halves and this is the second. q1 was not put there by the band phase
+    // — it is simply the only named pick that speaks to the teenager — and the venue rule still
+    // may not take its slot. Same guard shape as the category pass's age-fit rule: a diversity
+    // move may never REDUCE coverage.
+    const before = selectionWithBands([
+      { venue: 'A', bands: ['2-4'] },
+      { venue: 'A', bands: ['10-14'] },   // venue repeat AND the only named '10-14'
+      { venue: 'B', bands: ['2-4'] },
+      { venue: 'C', bands: ['2-4'] },     // what the venue rule would want
+      { venue: 'D', bands: ['2-4'] },
+    ]);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, TWO_BANDS);
+    expect(selection.slice(0, DIRECT_LINK_PICKS).map((p) => p.listing.id)).toEqual(['q0', 'q1', 'q2']);
+    expect(promoted).toEqual([]); // nothing moved: the only legal swap would have cost a child
+    expect(namedBandsOf(selection)).toEqual(new Set(TWO_BANDS));
+  });
+
+  it('…but it DOES proceed when the incoming pick carries the band too', () => {
+    // The guard blocks a REDUCTION, not every move. q3 is at an unused venue AND speaks to the
+    // teenager, so it buys variety at no cost to coverage and the swap goes ahead.
+    const before = selectionWithBands([
+      { venue: 'A', bands: ['2-4'] },
+      { venue: 'A', bands: ['10-14'] },
+      { venue: 'B', bands: ['2-4'] },
+      { venue: 'C', bands: ['10-14'] },
+      { venue: 'D', bands: ['2-4'] },
+    ]);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, TWO_BANDS);
+    expect(selection.slice(0, DIRECT_LINK_PICKS).map((p) => p.listing.id)).toEqual(['q0', 'q3', 'q2']);
+    expect(promoted.map((p) => p.reason)).toEqual(['venue']);
+    expect(namedBandsOf(selection)).toEqual(new Set(TWO_BANDS)); // coverage preserved
+  });
+
+  it('does not chase a band that is not in the ten at all — that is the coverage swap’s job', () => {
+    // This stage NEVER reaches outside the selection, so it cannot fail in a way that costs a pick.
+    // A band with no organic match anywhere already had its chance at `applyCoverageSwap`.
+    const before = selectionWithBands([
+      { venue: 'A', bands: ['2-4'] },
+      { venue: 'B', bands: ['2-4'] },
+      { venue: 'C', bands: ['2-4'] },
+    ]);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, ['2-4', '15+']);
+    expect(selection.map((p) => p.listing.id)).toEqual(before.map((p) => p.listing.id));
+    expect(promoted).toEqual([]);
+  });
+
+  it('never moves a forced pick, and counts its band as already spoken for', () => {
+    // Jon's ruling still outranks this stage. q0 is forced and speaks to the toddler; the band
+    // phase must not spend a second named slot on '2-4', and must not move q0 to get one.
+    const before = selectionWithBands([
+      { venue: 'A', bands: ['2-4'] },
+      { venue: 'B', bands: ['2-4'] },
+      { venue: 'C', bands: ['2-4'] },
+      { venue: 'D', bands: ['10-14'] },
+    ]);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(['q0']), DIRECT_LINK_PICKS, TWO_BANDS);
+    expect(selection[0].listing.id).toBe('q0'); // forced, still first, still named
+    expect(namedBandsOf(selection)).toEqual(new Set(TWO_BANDS));
+    expect(promoted.every((p) => p.occurrenceId !== 'q0' && p.displacedOccurrenceId !== 'q0')).toBe(true);
+  });
+
+  it('is a PURE PERMUTATION and is byte-identical to the old behaviour when no band is requested', () => {
+    const shapes = [
+      [{ venue: 'A', bands: ['2-4'] }, { venue: 'A', bands: ['10-14'] }, { venue: 'B', bands: ['2-4'] }, { venue: 'C', bands: ['10-14'] }],
+      [{ venue: 'A', bands: [] }, { venue: 'A', bands: [] }, { venue: 'A', bands: [] }],
+      [{ venue: 'A', bands: ['2-4'] }, { venue: 'B', bands: ['2-4'] }, { venue: 'C', bands: ['2-4'] }, { venue: 'D', bands: ['10-14'] }, { venue: 'E', bands: ['15+'] }],
+    ] as Array<Array<{ venue: string; bands: AgeBandKey[] }>>;
+    for (const shape of shapes) {
+      const before = selectionWithBands(shape);
+      for (const bands of [[], TWO_BANDS, ['2-4', '10-14', '15+'] as AgeBandKey[]]) {
+        const { selection } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, bands);
+        expect(selection).toHaveLength(before.length);
+        expect([...selection.map((p) => p.listing.id)].sort()).toEqual([...before.map((p) => p.listing.id)].sort());
+        for (const item of before) expect(selection).toContain(item); // same objects, not copies
+      }
+      // No requested bands ⇒ phase 1 is inert ⇒ exactly what this function did before T8 landed.
+      const noBands = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, []);
+      const legacy = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
+      expect(noBands.selection.map((p) => p.listing.id)).toEqual(legacy.selection.map((p) => p.listing.id));
+    }
+  });
+
+  it('END TO END — a 2-and-13 household gets a link for BOTH children', () => {
+    // The real shape: plenty of toddler content ranked above anything for the teenager.
+    //
+    // EVERY LISTING SHARES ONE CATEGORY, deliberately. The first draft spread them across two, and
+    // the CATEGORY cap happened to pull a teen pick into the named three as a side effect — so the
+    // test passed while proving nothing about band fairness. One category makes that pass inert
+    // (its single-key early exit returns the list unchanged) and leaves this stage as the only
+    // thing that can fix the defect.
+    const rows: ListingRecord[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      rows.push(kidActivity({
+        id: `tot-${i}`, activityName: FILLER_NAMES[i], venueName: `Tot Venue ${i}`,
+        geo: northOfHome(600 + i * 600), primaryCategoryKey: OPEN_GYM, categoryTags: [OPEN_GYM],
+        ageMinMonths: 0, ageMaxMonths: 59, ageBandMatches: ['2-4'] as AgeBandKey[],
+      }));
+    }
+    for (let i = 0; i < 4; i += 1) {
+      rows.push(kidActivity({
+        id: `teen-${i}`, activityName: FILLER_NAMES[i + 6], venueName: `Teen Venue ${i}`,
+        geo: northOfHome(4800 + i * 600), primaryCategoryKey: OPEN_GYM, categoryTags: [OPEN_GYM],
+        ageMinMonths: 120, ageMaxMonths: 216, ageBandMatches: ['10-14'] as AgeBandKey[],
+      }));
+    }
+    const result = selectWeeklyPicks(input(rows, { subscriber: profile4Subscriber() }));
+    const named = result.picks.filter((p) => p.linkOrigin === 'direct');
+    const bandsNamed = new Set(named.flatMap((p) => p.item.listing.ageBandMatches));
+    expect(bandsNamed).toEqual(new Set(['2-4', '10-14']));
+    // …and the telemetry says which rule did it and what it cost.
+    const bandPromotions = result.diversity.promoted.filter((p) => p.reason === 'age_band');
+    expect(bandPromotions.length).toBeGreaterThan(0);
+    expect(bandPromotions[0].bandsGained).toContain('10-14');
+    expect(bandPromotions[0].rankDelta).toBeGreaterThan(0);
   });
 });
