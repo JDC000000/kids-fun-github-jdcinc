@@ -479,10 +479,34 @@ export interface FrontDoorSignalInput extends AudienceSignalInput {
  * that shipped on it hours earlier (b9cdc9c). Read that function's header for the measurement
  * behind each gate; the short version is that neither subsumes the other:
  *
- *   1. `ageMinMonths == null` — the SOURCE never stated an age. A genuinely resolved all-ages
- *      listing holds `0`, a real number, so all-ages content stays visible and only the true
- *      unknown is dropped. This is what keeps "Zumba" and "Muay Thai Kickboxing" off a page
+ *   1. `ageMinMonths == null` — NO AGE CLAIM REACHED US. A listing holding `0` is one where
+ *      somebody actually claimed all-ages, so all-ages content stays visible and only the
+ *      unclaimed is dropped. This is what keeps "Zumba" and "Muay Thai Kickboxing" off a page
  *      headed "for your kids".
+ *
+ *      ⚠ THE PREMISE HERE WAS CORRECTED ON 2026-09-10 (T1.4) AND THE LOGIC DELIBERATELY WAS
+ *      NOT. This used to read "a genuinely RESOLVED all-ages listing holds 0" — which quietly
+ *      promised something this predicate cannot check. It cannot, because it is not given the
+ *      information: `FrontDoorSignalInput` is `{ statusState, activityName, ageMinMonths,
+ *      ageMaxMonths, ageNotes }`, and a genuine all-ages row and a manufactured one were
+ *      `(0, null, 'all-ages')` in BOTH cases — byte-identical on every field visible here.
+ *      The provenance that separates them existed only in the adapter.
+ *
+ *      SO THE CONTRACT IS: THE ADAPTER OWNS ALL-AGES PROVENANCE, AND THIS GATE TRUSTS IT.
+ *      `0` means a claim was made; whether that claim was the source's to make is settled
+ *      upstream, in worker/adapters/perfectmind/parse.ts#resolveAgeText, which as of T1.1
+ *      emits an age for a `NoAgeRestriction` record ONLY when the title publishes an all-ages
+ *      claim of its own. Those rows now arrive with `ageMinMonths = null` and this gate drops
+ *      them unchanged — it was always correct, it was being lied to.
+ *
+ *      ⚠ DO NOT "FIX" THIS BY WIDENING IT. Extending the check to `ageMaxMonths == null`, or
+ *      to `min === 0 && max === null`, describes exactly what a GENUINE all-ages listing looks
+ *      like. It would drop "Reserve In Advance: Badminton All Ages" (151 fixture occurrences),
+ *      "All Ages Badminton" (77) and NVRC's "$2 Queer All Ages Skate" from both the homepage
+ *      and the SMS picks — hiding real children's content to fix a defect that lives upstream
+ *      and would still be in the data afterwards. Pinned from both sides in
+ *      tests/recommend/front-door-age-provenance.test.ts; the second test there exists
+ *      specifically to fail if someone tries this.
  *   2. `isAdultOrSeniorOnly` — "Adult 19yrs+ Swim" is stored with `age_min_months = 0`, so it
  *      clears gate 1 on a real number and is caught only by the title/audience signal.
  *

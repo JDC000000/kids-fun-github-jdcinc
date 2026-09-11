@@ -731,12 +731,16 @@ describe('G-T8-4 deterministic ages from the STRUCTURED fields', () => {
     expect(teen.age.ageMaxMonths).toBe(216);
   });
 
-  it('NoAgeRestriction resolves to all-ages', () => {
-    const { verdict, age } = resolvedMonths({ NoAgeRestriction: true });
-    expect(verdict.deterministic).toBe(true);
-    expect(age.resolved).toBe(true);
-    expect(age.ageMinMonths).toBe(0);
-    expect(age.ageMaxMonths).toBeNull();
+  it('NoAgeRestriction resolves to NOTHING — the flag is not an age (T1.1)', () => {
+    // INVERTED 2026-09-10. This test pinned the defect: a booking-system flag became
+    // `[0, ∞)`, a confirmed match for every band including under2, and NVRC's adult lane
+    // swim was offered to a parent filtering for a toddler. The flag is unchanged; what it
+    // produces is. Silence keeps the listing visible (Jon's standing ruling on unknown ages)
+    // without claiming it suits a baby.
+    const verdict = resolveAgeText({ NoAgeRestriction: true } as never);
+    expect(verdict.ageText).toBeUndefined();
+    expect(verdict.deterministic).toBe(false);
+    expect(verdict.code).toBe('no-age-restriction-withheld');
   });
 
   it('falls back to the display string ONLY when the structured fields are unusable', () => {
@@ -809,8 +813,17 @@ describe('perfectmind — a vendor "no age restriction" flag does not overrule t
     expect(resolveAgeText(flagged(title)).ageText).toBeUndefined();
   });
 
-  it('the flag still means all ages when the title makes no age claim', () => {
-    // 198 of the 293 measured records. This is the majority case and must not move.
+  it('the flag alone means NOTHING when the title makes no claim of its own (T1.1)', () => {
+    // INVERTED 2026-09-10, and this is the whole of Finding 4: 198 of the 293 measured
+    // records. The old name — "the flag still means all ages" — described the defect as the
+    // intended behaviour, and the old comment called it "the majority case and must not
+    // move". It was the majority case, and moving it is the entire point: these are the rows
+    // that reached a toddler's picks as confirmed all-ages matches.
+    //
+    // NOTE FOR THE READER WHO LANDS HERE FROM T1.3: "Family Skate" is in this list, and it is
+    // also named in the scope's must-not-break set. Both are true, and they conflict — see the
+    // note reported with this branch. Its all-ages reading comes from the vendor flag and
+    // nothing else, so it cannot survive T1.1 while the defect is fixed.
     for (const title of [
       'Public Swim Delbrook Leisure Pool Saturday 4:00-7:00pm',
       '$2 Public Swim Karen Magnussen Tuesday 6:30 - 9:00pm',
@@ -819,9 +832,9 @@ describe('perfectmind — a vendor "no age restriction" flag does not overrule t
       'Open Gym',
     ]) {
       const verdict = resolveAgeText(flagged(title));
-      expect(verdict.ageText, title).toBe('All ages');
-      expect(verdict.code, title).toBe('no-age-restriction');
-      expect(verdict.deterministic, title).toBe(true);
+      expect(verdict.ageText, title).toBeUndefined();
+      expect(verdict.code, title).toBe('no-age-restriction-withheld');
+      expect(verdict.deterministic, title).toBe(false);
     }
   });
 
@@ -848,7 +861,13 @@ describe('perfectmind — a vendor "no age restriction" flag does not overrule t
       '$2 Public Swim Ron Andrews Tuesday 6:30-7:30pm',
       '$3 Family Open Gym Delbrook',
     ]) {
-      expect(resolveAgeText(flagged(title)).ageText, title).toBe('All ages');
+      // ASSERTS THE CODE, NOT THE TEXT, as of T1.1. Every one of these now withholds, so
+      // `ageText` is undefined for all of them and could no longer tell a clock read as an age
+      // apart from a clock correctly ignored. The code can: `-contradicted` would mean the gate
+      // fired on a wall clock or a dollar sign, which is the regression this test exists for.
+      // '$3 Family Open Gym' also pins the narrow all-ages regex — "Family" is warmth, not an
+      // age claim, so it must NOT reach the title-publishes-all-ages carve-out.
+      expect(resolveAgeText(flagged(title)).code, title).toBe('no-age-restriction-withheld');
     }
   });
 
@@ -857,7 +876,10 @@ describe('perfectmind — a vendor "no age restriction" flag does not overrule t
     // inference measured at a 57% band-error rate and removed elsewhere in this system
     // (worker/core/title.ts's header), pointed the other way.
     for (const title of ['Adult Swim Ron Andrews', 'Youth Night Lynn Creek', 'Family Skate', "Women's Only Swim"]) {
-      expect(resolveAgeText(flagged(title)).ageText, title).toBe('All ages');
+      // Same shift as the block above: the evidence bar is unchanged, the observable is now the
+      // code. A bare audience word must reach neither gate — not `-contradicted` (it states no
+      // age) and not the all-ages carve-out ("Family Skate" is not "all ages").
+      expect(resolveAgeText(flagged(title)).code, title).toBe('no-age-restriction-withheld');
     }
   });
 
@@ -889,14 +911,18 @@ describe('perfectmind — a vendor "no age restriction" flag does not overrule t
       ]),
     ]);
 
-    expect(records.map((r) => r.ageText)).toEqual([undefined, undefined, 'All ages', undefined]);
-    expect(stats.ageSignalCounts['no-age-restriction-contradicted']).toBe(2);
-    expect(stats.ageSignalCounts['no-age-restriction']).toBe(1);
+    // T1.1 (2026-09-10): record 'c' — "Public Swim Delbrook", the vendor flag set and no age
+    // anywhere in the title — used to be the one row here that emitted 'All ages'. It is the
+    // whole Finding-4 population in miniature, and it now withholds like the rest. All four
+    // records publish no age; what still differs, and what this test exists to prove, is WHY.
+    expect(records.map((r) => r.ageText)).toEqual([undefined, undefined, undefined, undefined]);
+    expect(stats.ageSignalCounts['no-age-restriction-contradicted'], 'flag + contradicting title').toBe(2);
+    expect(stats.ageSignalCounts['no-age-restriction-withheld'], 'flag, silent title').toBe(1);
     expect(stats.ageSignalCounts.none, 'a withheld claim is NOT "the feed said nothing"').toBe(1);
-    // Three records publish no age, and the rollup says so rather than counting the two
-    // suppressions as deterministic coverage.
-    expect(stats.ageUnresolved).toBe(3);
-    expect(stats.ageDeterministic).toBe(1);
+    // Every record publishes no age, and the rollup says so rather than counting any
+    // suppression as deterministic coverage.
+    expect(stats.ageUnresolved).toBe(4);
+    expect(stats.ageDeterministic).toBe(0);
   });
 });
 

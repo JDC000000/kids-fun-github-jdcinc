@@ -273,10 +273,28 @@ export function classifyCost(record: BookMe4Class): CostVerdict {
  * and the other is us REFUSING a claim the vendor made. Collapsed into `none` the suppression
  * would be invisible in the run breakdown, and the first question after a listing loses its
  * bands ("did the feed go quiet, or did we withhold it?") would have no answer.
+ *
+ * `no-age-restriction-withheld` REPLACES `no-age-restriction` (T1.1, 2026-09-10), and the
+ * rename is deliberate rather than cosmetic. The old code meant "the vendor flag was set, so we
+ * published `All ages`". The flag is still set and we now publish nothing, so the same name
+ * would have carried the opposite meaning across the deploy boundary — and the first thing
+ * anyone does after this ships is compare a run breakdown before against one after. A new name
+ * makes that comparison read correctly; a reused one would have made it read as "no change".
+ * The old code is REMOVED rather than left in the union: nothing can emit it any more, and a
+ * dead member invites a reader to believe the manufactured-claim path still exists.
+ *
+ * `title-publishes-all-ages` is the OPPOSITE case and must never be collapsed into the one
+ * above, because the two look identical in the data and are opposite in provenance: both end
+ * with an all-ages-shaped record carrying the vendor flag, but one is us inventing a claim and
+ * the other is the venue making one. "$2 Queer All Ages Skate" is NVRC publishing its own
+ * editorial copy; suppressing that would delete a real claim rather than stop inventing a fake
+ * one. It is `deterministic: false` because a title is a display string, not a structured
+ * field, so it files under `ageFromDisplayText` alongside the other free-text codes.
  */
 export const AGE_SIGNAL_CODES = [
-  'no-age-restriction',
+  'no-age-restriction-withheld',
   'no-age-restriction-contradicted',
+  'title-publishes-all-ages',
   'structured-min-max',
   'structured-min-open',
   'structured-min-incoherent-max',
@@ -348,6 +366,22 @@ const AGE_UNIT = '(?:\\s*(?:yrs?|years?|mos?|months?))';
  * age. Zero date ranges occur in NVRC titles today; no month guard is carried for a case
  * that neither exists nor would do damage.
  */
+/**
+ * The source's OWN all-ages claim, published in the title.
+ *
+ * DELIBERATELY NARROW, and deliberately not `worker/core/age.ts`'s `ALL_AGES_RE`, which also
+ * matches `family`, `everyone` and `all welcome`. Those are marketing warmth, not an age
+ * statement: "Family Skate" tells you who the session is pitched at, not that a six-month-old
+ * may attend. Reading them as an all-ages claim would re-manufacture exactly the kind of
+ * unfounded assertion T1.1 exists to stop, one vocabulary over. Only the literal phrase counts.
+ *
+ * Kept separate from TITLE_STATES_AGE_RE rather than added as an alternative to it, because
+ * the two answer different questions — "does the title contradict the flag" versus "does the
+ * title make its own claim" — and that divergence from activenet's combined regex is already
+ * documented and tested (see "a title that says 'All Ages' AGREES with the flag").
+ */
+const TITLE_PUBLISHES_ALL_AGES_RE = /\ball\s+ages\b/i;
+
 const TITLE_STATES_AGE_RE = new RegExp(
   `\\bages?\\s*\\d` +
     `|${AGE_NUMBER}${AGE_UNIT}?\\s*\\+` +
@@ -409,6 +443,26 @@ export function resolveAgeText(record: BookMe4Class): AgeVerdict {
     // `AgeRestrictions` are ALL empty, so falling through is a no-op that reaches `none`.
     // Returning a code of its own keeps "we withheld a claim" distinguishable from "the feed
     // said nothing" in the per-run breakdown, which is the whole point of AGE_SIGNAL_CODES.
+    //
+    // ═══ T1.1 (2026-09-10): SUPPRESSION IS NOW UNCONDITIONAL ═══
+    // The reasoning above was already written and already right; it was simply applied to too
+    // few records. Suppression used to require a CONJUNCTION — the vendor flag AND a title that
+    // happened to contradict it — which covered 95 of the 293 flagged records on the measured
+    // pull. The other 198 have no age in the title at all, so they fell through to
+    // `ageText: 'All ages'` and became a confirmed match for every band including under2.
+    // That population is Finding 4: Tai Chi Chuan, Pickleball 3.0+, Lengths, Lane Swim,
+    // Recreational Line Dancing — adult programmes offered as picks for a toddler.
+    //
+    // A title that contradicts the flag was never what made the flag wrong. The flag is
+    // evidence about BOOKING CONFIGURATION and the question is CHILD-APPROPRIATENESS; those are
+    // different questions, so the flag is not weak evidence, it is evidence of the wrong kind.
+    // Requiring a contradiction meant a record was only protected when a SECOND source happened
+    // to speak up — protection by coincidence.
+    //
+    // Both arms therefore withhold, and they keep separate codes because the run breakdown must
+    // still tell the two populations apart. Nothing here reads an age OUT of the title: that is
+    // refused for the reasons above (worker/core/age.ts resolves `grade 4-7` to ages 4-8), and
+    // this gate still only ever WITHHOLDS. Its failure mode remains silence, never a wrong age.
     if (TITLE_STATES_AGE_RE.test((record.EventName ?? '').trim())) {
       return {
         ageText: undefined,
@@ -421,7 +475,38 @@ export function resolveAgeText(record: BookMe4Class): AgeVerdict {
         reason: 'NoAgeRestriction contradicted by an age stated in the title',
       };
     }
-    return { ageText: 'All ages', deterministic: true, code: 'no-age-restriction', reason: 'NoAgeRestriction' };
+    // ═══ THE SOURCE'S OWN ALL-AGES CLAIM SURVIVES ═══
+    // Unconditional suppression, taken literally, would have deleted this case too — and this
+    // case is the exact opposite of the defect. "$2 Queer All Ages Skate Karen Magnussen" and
+    // "$2 Queer All Ages Swim" are real measured NVRC records that carry the vendor flag AND
+    // publish "All Ages" as their own title copy. The flag is not what makes them all-ages;
+    // the VENUE saying so is, and that claim is theirs to make. Withholding it would be the
+    // same class of error as manufacturing one, pointed the other way: the first invents a
+    // claim nobody made, the second discards one somebody did.
+    //
+    // This is the provenance distinction the whole change rests on, and it is why the branch
+    // is a carve-out rather than a blanket return. It is NOT title inference: nothing here
+    // reads a NUMBER out of a title, so it does not touch the worker/core/age.ts `grade 4-7`
+    // defect that the suppression reasoning above refuses to inherit. It quotes one published
+    // phrase, which is what activenet's own TITLE_STATES_AGE_RE already does with its
+    // `\ball\s+ages\b` alternative for exactly the same reason.
+    if (TITLE_PUBLISHES_ALL_AGES_RE.test((record.EventName ?? '').trim())) {
+      return {
+        ageText: 'All ages',
+        // A title is a display string, not a structured field — same bar as the two free-text
+        // codes below, and it must not inflate the deterministic-coverage headline.
+        deterministic: false,
+        code: 'title-publishes-all-ages',
+        reason: 'the title publishes an all-ages claim of its own',
+      };
+    }
+    return {
+      ageText: undefined,
+      // Same reasoning as the arm above: silence is not a deterministic age claim.
+      deterministic: false,
+      code: 'no-age-restriction-withheld',
+      reason: 'NoAgeRestriction is a booking-system flag, not a statement about age',
+    };
   }
 
   const minYears = typeof record.MinAge === 'number' ? record.MinAge : null;

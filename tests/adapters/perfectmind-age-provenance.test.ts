@@ -70,11 +70,28 @@ const CASES: Array<{
   reason: string;
 }> = [
   {
-    code: 'no-age-restriction',
+    // T1.1 (2026-09-10): was `code: 'no-age-restriction'`, `ageText: 'All ages'`,
+    // `deterministic: true` — the manufactured claim. The vendor flag is unchanged; what
+    // changed is that it no longer produces an age. Suppression is now unconditional rather
+    // than requiring a contradicting title, so this row and the one below differ only in
+    // WHY they withheld, which is exactly what the two codes are for.
+    code: 'no-age-restriction-withheld',
     input: { NoAgeRestriction: true },
+    ageText: undefined,
+    deterministic: false,
+    reason: 'NoAgeRestriction is a booking-system flag, not a statement about age',
+  },
+  {
+    // T1.1's carve-out (2026-09-10). The vendor flag is set AND the venue publishes its own
+    // "All Ages" copy in the title — two real measured NVRC records, "$2 Queer All Ages
+    // Skate" and "$2 Queer All Ages Swim". This is the ONE arm of the flag branch that still
+    // emits an age, and it must: the claim is the source's, not ours. `deterministic: false`
+    // because a title is a display string, so it files under ageFromDisplayText.
+    code: 'title-publishes-all-ages',
+    input: { NoAgeRestriction: true, EventName: '$2 Queer All Ages Skate Karen Magnussen Monday 2:30-3:45pm' },
     ageText: 'All ages',
-    deterministic: true,
-    reason: 'NoAgeRestriction',
+    deterministic: false,
+    reason: 'the title publishes an all-ages claim of its own',
   },
   {
     // Added after the fact and NOT part of the "unchanged" premise this file was written
@@ -176,17 +193,24 @@ describe('perfectmind age provenance — the run-level breakdown', () => {
       { window: WINDOW }
     ).stats;
 
-    // The premise: indistinguishable under the rollups.
-    expect(allStructuredBounds.ageDeterministic).toBe(allNoRestriction.ageDeterministic);
+    // ⚠ THE ORIGINAL PREMISE OF THIS TEST IS SUPERSEDED BY T1.1, and pretending otherwise
+    // would be the contortion. It was written when both runs came out "5 deterministic, 0
+    // unresolved" and were therefore invisible to the coarse counters — that was the argument
+    // for ageSignalCounts existing at all. Since the vendor flag stopped manufacturing a
+    // claim, these two runs differ in the coarse counters too, which is a T1.1 improvement
+    // worth asserting rather than a fact to work around.
+    expect(allStructuredBounds.ageDeterministic, 'structured bounds are a real age').toBe(5);
+    expect(allStructuredBounds.ageUnresolved).toBe(0);
+    expect(allNoRestriction.ageDeterministic, 'the flag alone asserts nothing').toBe(0);
+    expect(allNoRestriction.ageUnresolved).toBe(5);
     expect(allStructuredBounds.ageFromDisplayText).toBe(allNoRestriction.ageFromDisplayText);
-    expect(allStructuredBounds.ageUnresolved).toBe(allNoRestriction.ageUnresolved);
 
     // The point: distinguishable now. "Every age is a parsed numeric range" and "every age
     // is the vendor waiving age entirely" are different facts about a municipality.
     expect(allStructuredBounds.ageSignalCounts).not.toEqual(allNoRestriction.ageSignalCounts);
     expect(allStructuredBounds.ageSignalCounts['structured-min-max']).toBe(5);
-    expect(allStructuredBounds.ageSignalCounts['no-age-restriction']).toBe(0);
-    expect(allNoRestriction.ageSignalCounts['no-age-restriction']).toBe(5);
+    expect(allStructuredBounds.ageSignalCounts['no-age-restriction-withheld']).toBe(0);
+    expect(allNoRestriction.ageSignalCounts['no-age-restriction-withheld']).toBe(5);
     expect(allNoRestriction.ageSignalCounts['structured-min-max']).toBe(0);
   });
 
@@ -204,7 +228,7 @@ describe('perfectmind age provenance — the run-level breakdown', () => {
     );
 
     for (const c of CASES) {
-      const expected = c.code === 'no-age-restriction' ? 2 : 1;
+      const expected = c.code === 'no-age-restriction-withheld' ? 2 : 1;
       expect(stats.ageSignalCounts[c.code], c.code).toBe(expected);
     }
 
@@ -212,11 +236,22 @@ describe('perfectmind age provenance — the run-level breakdown', () => {
     const total = Object.values(stats.ageSignalCounts).reduce((a, b) => a + b, 0);
     expect(total).toBe(stats.recordsEmitted);
     expect(stats.ageDeterministic + stats.ageFromDisplayText + stats.ageUnresolved).toBe(total);
-    expect(stats.ageFromDisplayText, 'the two free-text codes').toBe(
-      stats.ageSignalCounts['display-restrictions'] + stats.ageSignalCounts['age-restrictions']
+    // THREE free-text codes as of T1.1: `title-publishes-all-ages` emits an ageText from a
+    // title, which is a display string like the other two, so it belongs on this side of the
+    // ledger and not in ageDeterministic. Same invariant, one more term.
+    expect(stats.ageFromDisplayText, 'every code that emits a non-structured ageText').toBe(
+      stats.ageSignalCounts['display-restrictions'] +
+        stats.ageSignalCounts['age-restrictions'] +
+        stats.ageSignalCounts['title-publishes-all-ages']
     );
-    expect(stats.ageUnresolved, 'both codes that emit no ageText').toBe(
-      stats.ageSignalCounts.none + stats.ageSignalCounts['no-age-restriction-contradicted']
+    // THREE codes emit no ageText as of T1.1, not two: `no-age-restriction-withheld` joined
+    // them when suppression became unconditional. This assertion is the invariant that
+    // `ageUnresolved` is exactly the sum of the silent codes — if a fourth is ever added and
+    // this is not updated, the rollup stops adding up and this is the test that says so.
+    expect(stats.ageUnresolved, 'every code that emits no ageText').toBe(
+      stats.ageSignalCounts.none +
+        stats.ageSignalCounts['no-age-restriction-contradicted'] +
+        stats.ageSignalCounts['no-age-restriction-withheld']
     );
   });
 
@@ -227,7 +262,7 @@ describe('perfectmind age provenance — the run-level breakdown', () => {
 
     const { stats } = parseTenantCalendars(nvrc, [calendarOf([classRecord({ NoAgeRestriction: true })])], { window: WINDOW });
     for (const code of AGE_SIGNAL_CODES) {
-      expect(stats.ageSignalCounts[code], code).toBe(code === 'no-age-restriction' ? 1 : 0);
+      expect(stats.ageSignalCounts[code], code).toBe(code === 'no-age-restriction-withheld' ? 1 : 0);
     }
   });
 });
