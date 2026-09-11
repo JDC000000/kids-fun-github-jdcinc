@@ -353,6 +353,28 @@ describe('foldTitleForComparison', () => {
     expect(foldTitleForComparison('Open Gym 5pm')).toBe('open gym');
   });
 
+  it('strips DECOMPOSED ACCENTS, so one accented title cannot split from its plain twin', () => {
+    // THIS TEST EXISTS BECAUSE THE RULE IT COVERS IS WRITTEN IN INVISIBLE CHARACTERS.
+    // The fold's first step is NFKD, which decomposes "é" into "e" + an invisible combining
+    // acute; the next step deletes the combining marks (U+0300-U+036F). Until this case was
+    // added, NOTHING in the suite exercised that second step — so if the character class ever
+    // silently degraded (the failure mode that makes an invisible literal dangerous: it becomes
+    // something else and everything still compiles), every test would still have passed while the
+    // catalogue quietly split "Café Storytime" from "Cafe Storytime" into two different things.
+    //
+    // Same defensive shape as tests/sms/keywords.test.ts's "does NOT let a DECOMPOSED accent be
+    // deleted into a bare keyword", which guards the equivalent step in the SMS normaliser.
+    const same = (a: string, b: string) => expect(foldTitleForComparison(a)).toBe(foldTitleForComparison(b));
+    same('Café Storytime', 'Cafe Storytime');
+    same('Crème Brûlée Club', 'Creme Brulee Club');
+    same('Piñata Party', 'Pinata Party');
+    same('Zoë and Friends', 'Zoe and Friends');
+    // The letter must SURVIVE the strip — only the mark is removed, never the character it sat on.
+    expect(foldTitleForComparison('Café Storytime')).toBe('cafe storytime');
+    // And an accented title still differs from a genuinely different one.
+    expect(foldTitleForComparison('Café Storytime')).not.toBe(foldTitleForComparison('Cafe Swim'));
+  });
+
   it('keeps a LEADING weekday, because there it is the programme NAME and not a timetable note', () => {
     // The existing `differ('Monday Funday', 'Funday')` case above is the reason the new rule is
     // "non-initial" rather than "anywhere". Restated here from the other side so the POSITION is
