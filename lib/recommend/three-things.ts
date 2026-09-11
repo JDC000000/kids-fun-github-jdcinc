@@ -191,8 +191,48 @@ const PRICE_RE = /\$\s*\d[\d.,]*/g;
 const TIME_RE = /\b\d{1,2}:\d{2}\s*(?:[ap]\.?m\.?)?|\b\d{1,2}\s*[ap]\.?m\.?/g;
 /** `0-12yrs`, `8yrs+`, `Ages 6-13` — never what distinguishes two different activities. */
 const AGE_TOKEN_RE = /\b(?:ages?\s*)?\d{1,2}\s*(?:-|–|to)\s*\d{1,2}\s*(?:yrs?|years?)?\b|\b\d{1,2}\s*(?:yrs?|years?)\s*\+?/g;
-/** A weekday. Only ever stripped from the END — see `foldTitleForComparison`. */
-const TRAILING_WEEKDAY_RE = /\b(?:mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?\s*$/;
+/** The weekday vocabulary both weekday rules below read. One list, so they cannot disagree. */
+const WEEKDAY = '(?:mon|tues?|wed(?:nes)?|thur?s?|fri|sat(?:ur)?|sun)(?:day)?';
+/**
+ * A weekday at the END of a title.
+ *
+ * KEPT, though `NON_INITIAL_WEEKDAY_RE` below now covers almost everything it does, because it is
+ * the only rule that can strip a title which is NOTHING BUT a weekday — "Sunday" folds to the
+ * empty key, and `repeatsPlaced` ignoring an empty key is what stops two untitled rows grouping.
+ * Removing it would silently turn that '' into 'sunday' and make a bare weekday a grouping
+ * identity, which is the opposite of the intent.
+ */
+const TRAILING_WEEKDAY_RE = new RegExp(`\\b${WEEKDAY}\\s*$`);
+/**
+ * A weekday token ANYWHERE EXCEPT THE FIRST — the leading `\s+` is what "except the first" means,
+ * on an already-trimmed string.
+ *
+ * WHY THE TRAILING RULE WAS NOT ENOUGH, measured 2026-09-10 on the catalogue's own rows. West End
+ * Community Centre lists one activity as "Pickleball - Sun AM" and "Pickleball - Sun PM". The
+ * weekday is not trailing (the daypart is), so the old rule left it in place, the two folded to
+ * DIFFERENT keys, and their raw strings score 0.750 on similarity() — three hundredths under the
+ * dedup threshold. Nothing in the codebase could see two sittings of one activity as one thing.
+ *
+ * WHY "EXCEPT THE FIRST" RATHER THAN "ANYWHERE", which is the interesting half. A weekday that
+ * OPENS a title is part of the programme's NAME — "Monday Funday" is a real programme and the
+ * ingest normaliser leaves it alone for exactly that reason; a weekday that follows the activity
+ * name is the timetable's own qualifier ("Indoor Soccer - Wed", "Pickleball - Sun AM"). Stripping
+ * position 0 as well would fold "Monday Funday" to "funday" and merge it with an unrelated
+ * "Funday", which this file's own suite has pinned as a non-merge since it shipped. The position
+ * is the evidence, and it is the only evidence available in a key nobody reads.
+ */
+const NON_INITIAL_WEEKDAY_RE = new RegExp(`\\s+\\b${WEEKDAY}\\b`, 'g');
+/**
+ * A standalone daypart — "AM", "PM", "a.m.", "P.M." — with no digits attached to it.
+ *
+ * APPLIED IMMEDIATELY AFTER `TIME_RE`, AND THAT ORDER IS THE DEFINITION. `TIME_RE` already removes
+ * every meridiem that belongs to a clock time ("5pm", "3:30 p.m."), so whatever this matches
+ * afterwards is by construction a BARE daypart: a timetable saying which half of the day a sitting
+ * runs in, not a time a parent could read. `(?![a-z0-9])` is what keeps it off "Amazing", "Camp"
+ * and "Program" — and the leading `\b` keeps it off "jam" and "team", where there is no boundary
+ * before the "am" at all.
+ */
+const BARE_DAYPART_RE = /\b[ap]\.?m\.?(?![a-z0-9])/g;
 /** "- Set Two", "- Two Sets" — a timetable's own session numbering, not a different activity. */
 const SESSION_QUALIFIER_RE = /\b(?:sets?\s+(?:one|two|three|\d)|(?:one|two|three|\d)\s+sets?)\b/g;
 
@@ -222,6 +262,24 @@ const SESSION_QUALIFIER_RE = /\b(?:sets?\s+(?:one|two|three|\d)|(?:one|two|three
  * Party" cards distinct, which is the exact case this exists to catch. A three-card hero offers
  * three things to DO; the same thing somewhere else is not a second thing, and where-to-go is the
  * question the nearby slot's own framing answers.
+ *
+ * ── 2026-09-10: THE FOLD LEARNED TWO MORE SHAPES ─────────────────────────────────────────────
+ * A BARE DAYPART and a NON-INITIAL WEEKDAY, both added for one measured case and both stated at
+ * their own constants above. The short version, because the long one belongs next to the regexes:
+ * "Pickleball - Sun AM" and "Pickleball - Sun PM" are one activity sat twice, and before this
+ * change NO rule in the codebase could see that — `collapseSeries` cannot (the source registers
+ * two seriesIds), `isDuplicatePair` cannot (0.750 against a 0.78 threshold, AND the 10:00 and
+ * 12:30 sittings do not overlap), and `repeatsPlaced` cannot (two different folded keys).
+ *
+ * WHY THIS BELONGS IN THE SHARED FOLD RATHER THAN A LOCAL COPY IN THE CALLER THAT NEEDED IT.
+ * Both consumers want the change in the SAME DIRECTION: this file states the cost asymmetry above
+ * ("erring toward merging is deliberate"), and lib/sms/weekly-picks.ts states the convention in
+ * its own header — it reuses this fold rather than mirroring it, precisely so a second copy cannot
+ * drift. The key is read by nobody, which is the same licence the last two rules already took.
+ *
+ * Neither addition can merge anything ON ITS OWN at either call site: `repeatsPlaced` needs an
+ * exact key match and `titlesMatch` needs its place condition ANDed in. The fold decides what two
+ * titles have in common, never whether two cards are the same thing.
  */
 export function foldTitleForComparison(name: string): string {
   return name
@@ -231,9 +289,19 @@ export function foldTitleForComparison(name: string): string {
     .replace(/[®™]/g, '')
     .replace(PRICE_RE, ' ')
     .replace(TIME_RE, ' ')
+    // AFTER TIME_RE, never before it — see BARE_DAYPART_RE. Running it first would eat the "pm"
+    // out of "5pm" and leave a bare "5" for AGE_TOKEN_RE to reason about as an age.
+    .replace(BARE_DAYPART_RE, ' ')
     .replace(AGE_TOKEN_RE, ' ')
     .replace(SESSION_QUALIFIER_RE, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    // Both weekday rules run on the ALREADY-NORMALISED string, so each one is reasoning about
+    // whole space-separated tokens rather than about punctuation. Non-initial first: it can turn
+    // a mid-title weekday into trailing whitespace, and the trailing rule then has a clean end of
+    // string to anchor on.
+    .replace(NON_INITIAL_WEEKDAY_RE, ' ')
+    .replace(/\s+/g, ' ')
     .trim()
     .replace(TRAILING_WEEKDAY_RE, '')
     .trim();

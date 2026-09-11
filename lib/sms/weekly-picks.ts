@@ -52,7 +52,10 @@ import { AGE_BAND_ORDER } from '@/lib/search/filters/age';
 import { ageMonthsToBand } from '@/lib/profile/child-age-bands';
 import { RADIUS_OPTIONS_KM, DEFAULT_RADIUS_KM, distanceKm } from '@/lib/geo/radius';
 import { similarity } from '@/lib/search/text/trigram';
-import { venueIdentity } from '@/lib/search/venue-diversity';
+import type { CollapsedListing } from '@/lib/search/collapse';
+// `capVenueRepetition` is CALLED WITH OPTIONS, never re-tuned. See `orderByVenueSpread` for the
+// three independent reasons the shared constants stay where they are.
+import { capVenueRepetition, venueIdentity } from '@/lib/search/venue-diversity';
 import { relativeDate } from '@/lib/search/parse';
 import { addDaysIso, localIsoDate } from '@/lib/search/time/vancouver';
 // The front-door gate and the comparison fold, reused rather than mirrored. This module does not
@@ -80,10 +83,30 @@ export const FLOOR_PICKS = 3;
 export const DIRECT_LINK_PICKS = 3;
 /** Title-similarity cutoff for the dedup pass (PRD §2.2, corrected to ~0.78 on 2026-08-26). */
 export const DEDUP_TITLE_SIMILARITY = 0.78;
+/**
+ * Title-similarity cutoff for `sameOfferingAtVenue`, i.e. for two cards ALREADY known to be at
+ * the same place. Lower than `DEDUP_TITLE_SIMILARITY` on purpose — see that predicate's header
+ * for why a venue-scoped threshold may be, and for the measured band it has to sit inside.
+ */
+export const SAME_VENUE_TITLE_SIMILARITY = 0.7;
 /** How close two venues must be to count as the same place for dedup (PRD §2.2: "~500m"). */
 export const DEDUP_VENUE_RADIUS_KM = 0.5;
 /** How far down the ranked list the age-coverage swap may reach (PRD §2.2: "top-20"). */
 export const COVERAGE_SWAP_REACH = 20;
+/**
+ * Most picks one text may carry from any ONE venue (2026-09-10 venue-repetition fix).
+ *
+ * Two of ten is 20%. The engine's own `MAX_CARDS_PER_VENUE`/`VENUE_CAP_WINDOW` is 3 of 20, i.e.
+ * 15% — this is the honest translation of that number to a smaller list, erring slightly tighter
+ * because a ten-item text is read WHOLE while a search page is read from the top.
+ *
+ * NAMED AND GREPPABLE BECAUSE IT IS EXPECTED TO MOVE. The real cost of the tradeoff — how much
+ * farther a promoted pick is than the one it deferred — is instrumented on every send
+ * (`WeeklyPicks.diversity`), so this is a number to retune against measurement rather than argue
+ * about. `1` would guarantee ten distinct venues at the cost of pushing more genuinely-good
+ * options down in dense municipalities; `3` would reproduce today's behaviour exactly.
+ */
+export const MAX_PICKS_PER_VENUE = 2;
 /**
  * Total forced picks the coverage swap may make — 2 ACROSS ALL BANDS, not 2 per band (PRD v2.4
  * §2.2 step 4 made this explicit after the first draft asked the question).
@@ -188,6 +211,45 @@ export interface ForcedPick {
   displacedOccurrenceId: string | null;
 }
 
+/**
+ * What the venue/activity diversity stages actually DID on this send.
+ *
+ * PURELY ADDITIVE, AND DELIBERATELY NOT PERSISTED. This is a pure function's return value: the
+ * caller decides what to log or keep, and NOTHING here is written to any store by this module.
+ * There is no schema change behind it — if `sms_send_log` should carry any of it, that is an
+ * Operator decision routed separately, not something a selection module may assume.
+ *
+ * EVERY FIELD IS DERIVED FROM THE RUN THAT PRODUCED THE PICKS, never recomputed from a second
+ * source. A summary that re-derives its numbers by running the rules again is a second
+ * implementation that can disagree with the first, which is the one thing an instrument must not
+ * do — the same argument this file already makes for reporting `degradation` rather than letting
+ * the copy layer infer it.
+ *
+ * WHY THIS EXISTS AT ALL. The one real cost of digest-sized venue diversity is that a promoted
+ * pick is by definition lower-ranked, and in this product's ranking that usually means farther
+ * away. There is deliberately NO second distance ceiling guarding it — the subscriber's radius
+ * already bounds it, and a second ceiling would be a filter wearing a preference's clothes.
+ * Measuring it instead turns "is 2-of-10 the right number?" from an argument into something
+ * `MAX_PICKS_PER_VENUE` can be retuned against after a few real sends.
+ */
+export interface DiversitySummary {
+  /**
+   * Candidates dropped because they were another sitting of an activity already kept AT THE SAME
+   * VENUE (`collapseSameOfferingAtVenue`). Counted separately from `WeeklyPicks.deduped`, which
+   * is the PRD's own dedup pass and answers a different question.
+   */
+  sameOfferingCollapsed: number;
+  /**
+   * How many candidates the venue cap pushed OUT of the ten that rank alone would have put in it.
+   * Never a removal — a deferred card is still in the list, further down (see `orderByVenueSpread`).
+   */
+  venueCapDeferred: number;
+  /** How many of the named slots hold a different pick than they would have without the spread. */
+  namedSlotsPermuted: number;
+  /** Every promotion, with what it cost in rank and distance. Empty on a normal send. */
+  promoted: PromotedPick[];
+}
+
 /** How far the selection had to degrade. See `WeeklyPicks.degradation`. */
 export type Degradation = 'none' | 'widened' | 'widened_and_interests_dropped';
 
@@ -243,6 +305,11 @@ export interface WeeklyPicks {
    * already sent five of them" is a completely different diagnosis from "we found one".
    */
   novelExcluded: number;
+  /**
+   * What the venue/activity diversity stages did — see `DiversitySummary`. Always present,
+   * including on an empty week (where it describes the attempt that produced the emptiness).
+   */
+  diversity: DiversitySummary;
   /**
    * ADVISORY. True when this empty week would be the subscriber's third in a row, i.e. the
    * caller should send the pause notice and set `status = 'paused'` (PRD §2.2 step 6).
@@ -515,6 +582,66 @@ export function isDuplicatePair(
 }
 
 /**
+ * Is this the SAME OFFERING at the SAME PLACE this weekend — i.e. one decision wearing two rows?
+ *
+ * A SIBLING OF `isDuplicatePair`, NOT A CHANGE TO IT. The two answer different questions and both
+ * are worth asking:
+ *   • `isDuplicatePair` — "are these two rows the same OCCURRENCE, reached from two sources?"
+ *     That one is PRD-specified and QA-pinned, it is what `deduped` counts, and it is deliberately
+ *     left completely untouched by this predicate's existence.
+ *   • this one — "is this the same thing to DO, at this building, this weekend?" Two sittings of
+ *     one activity are one decision for a parent, not two, and in a list of TEN a second sitting
+ *     is a wasted slot rather than a choice.
+ *
+ * ═══ TIME OVERLAP IS DELIBERATELY ABSENT, AND THAT IS THE WHOLE POINT ═══
+ * `isDuplicatePair` requires `timesOverlap` because it is asking whether two rows describe ONE
+ * sitting; two rows for the same sitting necessarily share a time. This predicate is asking the
+ * opposite question — whether a parent is being offered the same thing TWICE — and two sittings of
+ * one activity are by construction at DIFFERENT times. Requiring overlap here would not merely be
+ * unnecessary; it would rule out the only case this exists to catch. Measured on the catalogue's
+ * own rows: West End's "Pickleball - Sun AM" (10:00) and "Pickleball - Sun PM" (12:30) do not
+ * overlap at all, which is exactly why `isDuplicatePair` never saw them.
+ *
+ * ═══ WHY A LOWER THRESHOLD IS SAFE HERE AND WOULD NOT BE THERE ═══
+ * 0.78 was measured CROSS-VENUE, where the risk it guards against is "Public Swim" scoring 1.000
+ * at two unrelated pools — the PRD's own central warning. That risk is STRUCTURALLY OUT OF REACH
+ * here: `sameishPlace` has already returned true, so two unrelated pools cannot reach this
+ * comparison at all. What is left to get wrong is only ever a question about one building, and
+ * there a looser title test costs at most one slot and buys the case above.
+ *
+ * ═══ THE MEASURED BAND, RE-MEASURED BEFORE THE CONSTANT WAS FROZEN (2026-09-10) ═══
+ * Run against this repo's own `similarity()` on the report's real rows, not quoted from the scope:
+ *
+ *   similarity('Pickleball - Sun PM',             'Pickleball - Sun AM')              = 0.7500
+ *   similarity('Public Swim Delbrook Whole Pool', 'Public Swim Delbrook Leisure Pool') = 0.6410
+ *
+ * `SAME_VENUE_TITLE_SIMILARITY = 0.70` sits inside that band with roughly equal margin on both
+ * sides (0.050 below the pair that MUST merge, 0.059 above the pair that MUST NOT). The lower edge
+ * is the load-bearing one: Delbrook's Whole Pool and Leisure Pool are two genuinely different
+ * pools in one building, and merging them would take a real choice away from a parent rather than
+ * remove a duplicate. Both numbers are pinned as tests in tests/sms/weekly_picks_diversity.test.ts
+ * so a future metric or catalogue change cannot quietly move the band under this constant.
+ *
+ * The second arm — equal folded titles — is exact string equality after
+ * `foldTitleForComparison`, the same shape `titlesMatch` uses and for the same reason: it cannot
+ * drift the way a second fuzzy threshold could. Since 2026-09-10 that fold also strips a bare
+ * daypart and a non-initial weekday, so the Pickleball pair now satisfies BOTH arms; the
+ * threshold arm is kept because the fold cannot see every vendor's packaging.
+ */
+export function sameOfferingAtVenue(
+  a: SearchResultItem,
+  b: SearchResultItem,
+  sameParentOrg: (x: ListingRecord, y: ListingRecord) => boolean
+): boolean {
+  if (!sameishPlace(a, b, sameParentOrg)) return false;
+  if (similarity(a.listing.activityName, b.listing.activityName) >= SAME_VENUE_TITLE_SIMILARITY) {
+    return true;
+  }
+  const fa = foldTitleForComparison(a.listing.activityName);
+  return fa !== '' && fa === foldTitleForComparison(b.listing.activityName);
+}
+
+/**
  * Collapse duplicates, keeping the better-ranked member of each pair.
  *
  * Runs BEFORE the floor check (PRD §2.2 step 3: "so a collapsed pair doesn't silently eat two
@@ -532,6 +659,40 @@ export function dedupeCandidates(
   let collapsed = 0;
   for (const candidate of candidates) {
     if (kept.some((k) => isDuplicatePair(k, candidate, sameParentOrg))) {
+      collapsed += 1;
+      continue;
+    }
+    kept.push(candidate);
+  }
+  return { kept, collapsed };
+}
+
+/**
+ * Collapse two sittings of ONE activity at ONE venue down to the better-ranked one.
+ *
+ * SAME SHAPE AND SAME ORDERING RATIONALE AS `dedupeCandidates`, deliberately: walk in rank order,
+ * keep the first member seen (which is the better-ranked one, because the list arrives ranked),
+ * and count what was dropped. It runs IMMEDIATELY AFTER `dedupeCandidates` and therefore also
+ * BEFORE the floor check, for the reason that pass already documents — a week that looks like it
+ * has four picks and is really two must degrade like two, and a collapsed pair must not silently
+ * eat two of the ten slots on the way past.
+ *
+ * IT IS THE ONLY NEW STAGE IN THIS FILE THAT REMOVES ANYTHING. Everything else this scope added
+ * is a reorder. That asymmetry is the answer to "could a diversity rule empty a week?" — see
+ * `selectFrom`'s header — and it is pinned from the other side by the scarcity invariants in
+ * tests/sms/weekly_picks_diversity.test.ts.
+ *
+ * O(n²) over the candidate list, exactly as `dedupeCandidates` is, and fine for exactly the same
+ * reason: the list is one weekend's showable listings near one postal code.
+ */
+export function collapseSameOfferingAtVenue(
+  candidates: SearchResultItem[],
+  sameParentOrg: (x: ListingRecord, y: ListingRecord) => boolean
+): { kept: SearchResultItem[]; collapsed: number } {
+  const kept: SearchResultItem[] = [];
+  let collapsed = 0;
+  for (const candidate of candidates) {
+    if (kept.some((k) => sameOfferingAtVenue(k, candidate, sameParentOrg))) {
       collapsed += 1;
       continue;
     }
@@ -653,6 +814,177 @@ export function applyCoverageSwap(
   return { selection: picks, forced };
 }
 
+// ── (e) Digest-sized venue spread ────────────────────────────────────────────
+
+/**
+ * Reorder the candidates so no venue holds more than `MAX_PICKS_PER_VENUE` of the first
+ * `maxPicks` — the shared cap, called at THIS SURFACE'S SIZE.
+ *
+ * ═══ WHY THIS PASSES OPTIONS INSTEAD OF CHANGING THE SHARED CONSTANTS ═══
+ * `lib/search/venue-diversity.ts` already exports `VenueCapOptions` and until now NO CALLER
+ * passed it — the seam exists and was built for exactly this. Three independent reasons to use it
+ * rather than retune `MAX_CARDS_PER_VENUE` / `VENUE_CAP_WINDOW`:
+ *
+ *   1. THEY ARE A DIFFERENT REPORT'S ANSWER TO A DIFFERENT MEASURED DEFECT. "3 per 20" is the
+ *      2026-08-18 independent report's remedy, adopted verbatim, for SEARCH PAGES whose top rows
+ *      were one community centre's whole timetable. Retuning it globally to fix a ten-item SMS
+ *      digest changes /search for a problem /search does not have.
+ *   2. COST, AND IT IS MEASURED IN THAT FILE RATHER THAN GUESSED HERE. The cap runs inside the
+ *      broadening ladder's PROBE LOOP, so one search can pay for it ~10 times. Its rounds scale as
+ *      ceil(the biggest venue's share ÷ maxPerVenue) — so LOWERING `maxPerVenue` globally makes it
+ *      worse on precisely the pathological pages it was tuned for (5,000 cards of one venue:
+ *      253 ms before that file's optimisation, 0.6 ms after). Passing options from one caller
+ *      confines the smaller divisor to one list of ~tens, where it is arithmetically free.
+ *   3. THREE OTHER CONSUMERS AND AN INVARIANT TEST DEPEND ON TODAY'S BEHAVIOUR. `engine.ts` calls
+ *      it from `runPrimary` twice and from `runExpected`, which is /search, the three-card hero,
+ *      this digest and the email digest; `invariants/card-honesty.test.ts` reasons about it.
+ *      Changing a shared constant to fix ONE consumer's sizing problem is the wrong lever when
+ *      the shared module already exports the right one.
+ *
+ * `venue-diversity.ts` is therefore not edited by this scope at all, and its diff is asserted
+ * empty by review rather than by hope.
+ *
+ * ═══ THE ADAPTER, AND WHY IT IS NOT A CAST ═══
+ * The shared cap deals in `CollapsedListing` (it reads `representative.candidate.listing.venueName`
+ * through its own `venueKey`) while this module holds `SearchResultItem`. Every field it needs is
+ * one this module already has, so each item is wrapped in a genuinely-typed `CollapsedListing` and
+ * mapped back by object identity — the cap returns the same card objects reordered, never new
+ * ones, which is what makes the round trip exact. A cast would compile and would be a lie about a
+ * shape the cap is free to start reading more of.
+ *
+ * A REORDER, NEVER A FILTER — inherited, not re-argued. The shared module's own header states it:
+ * a card over the cap is DEFERRED to the next round, not removed, so this returns exactly the
+ * cards it was given. That is what makes it safe to run on the FULL candidate list before
+ * truncation, and it is why no new stage in this file can thin a week.
+ */
+function orderByVenueSpread(items: SearchResultItem[], maxPicks: number): SearchResultItem[] {
+  if (items.length === 0) return items;
+  const byCard = new Map<CollapsedListing, SearchResultItem>();
+  const cards = items.map((item) => {
+    const card: CollapsedListing = {
+      representative: {
+        candidate: { listing: item.listing, relevance: 0, matchedTerms: [], categoryHit: false },
+        score: item.score,
+        components: item.components,
+        distanceKm: item.distanceKm,
+      },
+      slots: item.slots,
+    };
+    byCard.set(card, item);
+    return card;
+  });
+
+  const ordered = capVenueRepetition(cards, {
+    maxPerVenue: MAX_PICKS_PER_VENUE,
+    windowSize: maxPicks,
+  });
+  // `byCard.get` cannot miss: the cap is documented to return "exactly the same cards as the
+  // input". Falling back to the input order rather than asserting keeps a future change to that
+  // contract a reordering bug and not a crash in a Friday send.
+  const mapped = ordered.map((card) => byCard.get(card));
+  return mapped.every((item): item is SearchResultItem => item != null) ? mapped : items;
+}
+
+// ── (f) Named-slot venue spread ──────────────────────────────────────────────
+
+/** One named slot that was filled from further down the list, and what it cost. */
+export interface PromotedPick {
+  occurrenceId: string;
+  /** Where it sat in the post-cap selection (0-based) before being promoted. */
+  fromIndex: number;
+  /** The named slot it was promoted into (0-based). */
+  toIndex: number;
+  /** The pick it swapped places with — the one that stopped being named. */
+  displacedOccurrenceId: string;
+  /** `fromIndex - toIndex`: how much deeper into the ten this named slot had to reach. */
+  rankDelta: number;
+  /**
+   * `promoted.distanceKm - displaced.distanceKm`. Positive means the named slot got FARTHER away,
+   * which is the real cost of this stage and the reason it is reported rather than assumed small.
+   * Null when either card is un-geocoded — an absent coordinate is not a distance of zero.
+   */
+  distanceDeltaKm: number | null;
+}
+
+/**
+ * Permute the chosen picks so the first `DIRECT_LINK_PICKS` are at distinct venues, where the
+ * chosen picks allow it.
+ *
+ * ═══ SUBORDINATE TO JON'S RULING, NOT A QUALIFICATION OF IT ═══
+ * `applyCoverageSwap` places a forced pick at the FRONT so it is always named — *"I approve
+ * option A. Let it jump the Q so it's always named."* This stage runs AFTER that and NEVER MOVES A
+ * FORCED PICK: not out of a named slot, not into one, not as the thing that gets displaced. Where
+ * the two rules collide — the only card representing an unrepresented age band happens to sit at
+ * a venue already named — the forced pick wins and two named picks share a venue. That is the
+ * ACCEPTED outcome and not a gap in this stage: a missing age band is closer to WRONG, a repeated
+ * venue is merely LESS GOOD, which is the ordering `three-things.ts#preferenceScore` already
+ * establishes and this file reuses rather than re-argues.
+ *
+ * ═══ A PURE PERMUTATION, WHICH IS WHY IT IS FREE ═══
+ * Only the first `DIRECT_LINK_PICKS` picks are named and linked; the rest fold into an anonymous
+ * "+N more" (PRD §2.3), so this is the only part of venue repetition a parent sees without tapping
+ * through — and on the 2026-09-10 report it was the sharpest form of it. NO CARD ENTERS OR LEAVES
+ * the selection: a promotion is a SWAP, so membership is byte-identical before and after and the
+ * relevance cost of this stage is exactly zero. The only thing it changes is which three get
+ * named, which is the thing being fixed. When the picks do not contain enough distinct venues it
+ * is a no-op — a selection that is entirely one venue is returned unchanged.
+ *
+ * A SWAP RATHER THAN A SPLICE-AND-SHIFT, deliberately: it is obviously a permutation by
+ * construction, and it makes "the pick it displaced" a single unambiguous card, which is what the
+ * telemetry has to name to be worth anything.
+ *
+ * AN UNNAMED VENUE IS NEVER PROMOTED FOR ITS VARIETY. `venueIdentity` returns null for an empty
+ * venue name, and that null is the absence of a fact, not a venue — this module must treat it as
+ * "no opinion" (the rule `venue-diversity.ts` states for every caller). So a null-venue pick
+ * already in the named block never counts as a repeat, and a null-venue pick below it is never
+ * promoted as though it were somewhere new.
+ */
+export function spreadNamedSlotVenues(
+  selection: readonly SearchResultItem[],
+  forcedIds: ReadonlySet<string>,
+  namedCount: number
+): { selection: SearchResultItem[]; promoted: PromotedPick[] } {
+  const picks = [...selection];
+  const promoted: PromotedPick[] = [];
+  const named = Math.min(namedCount, picks.length);
+  if (named < 2) return { selection: picks, promoted };
+
+  const usedVenues = new Set<string>();
+  for (let i = 0; i < named; i += 1) {
+    const venue = venueIdentity(picks[i].listing.venueName);
+    const isForced = forcedIds.has(picks[i].listing.id);
+    if (!isForced && venue != null && usedVenues.has(venue)) {
+      const swapIndex = picks.findIndex((candidate, index) => {
+        if (index < named) return false; // already named — moving it here changes nothing
+        if (forcedIds.has(candidate.listing.id)) return false; // a forced pick is never moved
+        const v = venueIdentity(candidate.listing.venueName);
+        return v != null && !usedVenues.has(v);
+      });
+      if (swapIndex !== -1) {
+        const incoming = picks[swapIndex];
+        const outgoing = picks[i];
+        picks[i] = incoming;
+        picks[swapIndex] = outgoing;
+        promoted.push({
+          occurrenceId: incoming.listing.id,
+          fromIndex: swapIndex,
+          toIndex: i,
+          displacedOccurrenceId: outgoing.listing.id,
+          rankDelta: swapIndex - i,
+          distanceDeltaKm:
+            incoming.distanceKm != null && outgoing.distanceKm != null
+              ? incoming.distanceKm - outgoing.distanceKm
+              : null,
+        });
+      }
+    }
+    const seated = venueIdentity(picks[i].listing.venueName);
+    if (seated != null) usedVenues.add(seated);
+  }
+
+  return { selection: picks, promoted };
+}
+
 // ── The pipeline ─────────────────────────────────────────────────────────────
 
 interface AttemptResult {
@@ -660,6 +992,7 @@ interface AttemptResult {
   forced: ForcedPick[];
   collapsed: number;
   novelExcluded: number;
+  diversity: DiversitySummary;
 }
 
 /**
@@ -693,6 +1026,16 @@ function selectFrom(
 
   const { kept, collapsed } = dedupeCandidates(showable, sameParentOrg);
 
+  // ── SAME OFFERING AT ONE VENUE (2026-09-10) ─────────────────────────────────────────
+  // BETWEEN the dedup pass and the novelty exclusion, for the two reasons each of its neighbours
+  // already gives. After dedup, because the two answer different questions and the cheaper,
+  // PRD-specified one should have its say first — and because a row that is BOTH a duplicate
+  // occurrence and a second sitting must be counted once, under `deduped`, rather than twice.
+  // Before novelty and before the floor check, because a collapsed pair must not silently eat two
+  // of the ten slots — the same ordering rationale `dedupeCandidates` records for itself.
+  const { kept: distinctOfferings, collapsed: sameOfferingCollapsed } =
+    collapseSameOfferingAtVenue(kept, sameParentOrg);
+
   // ── NOVELTY (PRD v2.8 §2.2 step 4) ──────────────────────────────────────────────────
   // AFTER dedup and BEFORE the coverage swap, exactly as specified — and the ordering is not
   // arbitrary. After dedup, because a repeat and its duplicate should collapse first so the
@@ -702,12 +1045,45 @@ function selectFrom(
   const alreadySent = input.excludeOccurrenceIds;
   const fresh =
     alreadySent && alreadySent.size > 0
-      ? kept.filter((item) => !alreadySent.has(item.listing.id))
-      : kept;
-  const novelExcluded = kept.length - fresh.length;
+      ? distinctOfferings.filter((item) => !alreadySent.has(item.listing.id))
+      : distinctOfferings;
+  const novelExcluded = distinctOfferings.length - fresh.length;
 
-  const { selection, forced } = applyCoverageSwap(fresh.slice(0, maxPicks), fresh, bands, maxPicks);
-  return { selection, forced, collapsed, novelExcluded };
+  // ── DIGEST-SIZED VENUE CAP (2026-09-10) ─────────────────────────────────────────────
+  // Applied to the FULL candidate list and BEFORE the truncation, which is the entire remedy for
+  // the latent failure: the engine capped at a window of 20, then this module's gates, dedup and
+  // novelty removed cards underneath that promise, so the surviving top ten could straddle the
+  // cap's round boundary and hold SIX from one venue. Running last, on everything, over this
+  // surface's own window, means nothing downstream can undo it.
+  //
+  // `maxPicks` is read from the INPUT rather than the constant, so the cap tracks the list size
+  // automatically if a future per-subscriber preference changes it.
+  const ordered = orderByVenueSpread(fresh, maxPicks);
+  const beforeCap = new Set(fresh.slice(0, maxPicks).map((item) => item.listing.id));
+  const afterCap = ordered.slice(0, maxPicks);
+  const venueCapDeferred = afterCap.filter((item) => !beforeCap.has(item.listing.id)).length;
+
+  // `ordered` is the single ranked list from here on — it is what the selection is taken from AND
+  // what the coverage swap reaches into, so "the top 20" means one thing rather than two.
+  const { selection, forced } = applyCoverageSwap(afterCap, ordered, bands, maxPicks);
+
+  // ── NAMED-SLOT VENUE SPREAD (2026-09-10) ────────────────────────────────────────────
+  // AFTER the coverage swap, and moving none of what the swap forced — see
+  // `spreadNamedSlotVenues`. A pure permutation of what is already chosen.
+  const forcedIds = new Set(forced.map((f) => f.occurrenceId));
+  const { selection: spread, promoted } = spreadNamedSlotVenues(
+    selection,
+    forcedIds,
+    DIRECT_LINK_PICKS
+  );
+
+  return {
+    selection: spread,
+    forced,
+    collapsed,
+    novelExcluded,
+    diversity: { sameOfferingCollapsed, venueCapDeferred, namedSlotsPermuted: promoted.length, promoted },
+  };
 }
 
 /**
@@ -800,6 +1176,7 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
       forcedPicks: attempt.forced,
       deduped: attempt.collapsed,
       novelExcluded: attempt.novelExcluded,
+      diversity: attempt.diversity,
       shouldPause: input.subscriber.consecutiveEmptyWeeks + 1 >= 3,
     };
   }
@@ -830,6 +1207,7 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
     forcedPicks: attempt.forced,
     deduped: attempt.collapsed,
     novelExcluded: attempt.novelExcluded,
+    diversity: attempt.diversity,
     shouldPause: false,
   };
 }

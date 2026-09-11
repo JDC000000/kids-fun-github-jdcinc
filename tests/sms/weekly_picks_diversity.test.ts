@@ -1,0 +1,1070 @@
+// tests/sms/weekly_picks_diversity.test.ts — venue and activity repetition in the Friday text.
+//
+// WHAT THIS FILE PINS, AND WHY IT EXISTS SEPARATELY FROM weekly_picks.test.ts.
+// The 2026-09-10 synthetic user test read ten picks for a Kitsilano profile and found seven of
+// them at three places: Britannia Pool x3, West End Community Centre x2, Roundhouse x2 — and two
+// of the three NAMED, linked picks were the same building. The instinct was that a diversity rule
+// was missing. It was not: `capVenueRepetition` runs on this exact path and Britannia's three
+// cards are its 3-per-20 promise being HONOURED at a list size it was never calibrated for.
+//
+// Three separate defects produce that message, so this file reproduces all three as separate
+// cases rather than one end-to-end assertion. Every case below FAILED on `main` (f544e59) before
+// the fix, for the reason named in its own comment:
+//
+//   1. A WINDOW-SIZE MISMATCH. 3-of-20 is a 15% ceiling; the same rule on a 10-item digest
+//      licenses 30%. Three venues at 3/2/2 is fully compliant and is exactly what was rejected.
+//   2. THE CAP DOES NOT SURVIVE WHAT HAPPENS AFTER IT. `selectFrom` gates, dedupes and filters
+//      AFTER the engine capped, so the surviving top ten is drawn from a deeper prefix and can
+//      straddle the cap's round boundary — measured at SIX of ten from one venue, which is
+//      strictly worse than what was already rejected. That is the "Probe-B" case below.
+//   3. NOTHING IN THE CODEBASE SAW TWO SITTINGS OF ONE ACTIVITY AS ONE THING. "Pickleball - Sun
+//      PM" and "Pickleball - Sun AM" score 0.750 on the repo's own similarity(), three
+//      hundredths under the 0.78 dedup threshold, AND their 10:00 and 12:30 sittings do not
+//      overlap — so `isDuplicatePair` fails on BOTH arms, not just the time one. The last case
+//      in this file pins that 0.750/0.78 gap directly, so a future threshold edit cannot
+//      silently invalidate the reasoning the fix is built on.
+//
+// THE FIXTURE ROWS ARE THE REPORT'S REAL ROWS, not invented ones. Their measured trigram scores
+// are asserted in `title identity — the measured numbers the fix is built on` below, so this
+// file fails loudly if the metric or the catalogue's wording moves underneath it.
+//
+// Harness, clock and geography are the same shape weekly_picks.test.ts uses: a fixture-backed
+// REAL SearchEngine, a passed clock, no DB and no network.
+import { describe, expect, it } from 'vitest';
+import { SearchEngine, type SearchResultItem } from '@/lib/search/engine';
+import { InMemoryListingRepository } from '@/lib/search/repository';
+import { FixtureAliasResolver } from '@/lib/search/expand';
+import { RegionHierarchy } from '@/lib/geo/region';
+import { fsaGeocoder } from '@/lib/geo/postal-fsa';
+import { REGIONS } from '@/lib/search/__fixtures__/regions';
+import { ALIAS_SEED } from '@/lib/search/__fixtures__/aliases';
+import { makeListing } from '@/lib/search/__fixtures__/factory';
+import type { AgeBandKey, GeoPoint, ListingRecord } from '@/lib/search/types';
+import { similarity } from '@/lib/search/text/trigram';
+import { foldTitleForComparison, isShowableOnFrontDoor } from '@/lib/recommend/three-things';
+import { isWeeklyPickEligible } from '@/lib/sms/registration';
+import {
+  DEDUP_TITLE_SIMILARITY,
+  DIRECT_LINK_PICKS,
+  FLOOR_PICKS,
+  MAX_FORCED_PICKS,
+  MAX_PICKS,
+  MAX_PICKS_PER_VENUE,
+  SAME_VENUE_TITLE_SIMILARITY,
+  ageBandsFromBirthYears,
+  applyCoverageSwap,
+  buildPicksRequest,
+  collapseSameOfferingAtVenue,
+  dedupeCandidates,
+  matchesInterests,
+  sameOfferingAtVenue,
+  selectWeeklyPicks,
+  spreadNamedSlotVenues,
+  type WeeklyPicks,
+  type WeeklyPicksInput,
+} from '@/lib/sms/weekly-picks';
+
+// ── The clock and the geography ──────────────────────────────────────────────
+/** Friday 2026-08-28, 16:00 PDT — the PRD's send moment, as in weekly_picks.test.ts. */
+const FRIDAY_4PM = new Date('2026-08-28T23:00:00Z');
+const SAT = '2026-08-29';
+const SUN = '2026-08-30';
+
+const HOME: GeoPoint = { lat: 49.28, lng: -123.07 };
+
+/**
+ * A point `metres` due north of HOME.
+ *
+ * Venue SEPARATION is the load-bearing property here, not realism: two fixture venues closer than
+ * `DEDUP_VENUE_RADIUS_KM` (500m) would satisfy `sameishPlace`'s proximity arm and could collapse
+ * across venues on a title coincidence, which is a different rule than the one under test. Every
+ * venue below is at least 600m from its neighbour, and cards AT one venue share its exact point.
+ */
+function northOfHome(metres: number): GeoPoint {
+  return { lat: HOME.lat + metres / 111_320, lng: HOME.lng };
+}
+
+function at(isoDate: string, localHour: number, localMinute = 0): string {
+  // America/Vancouver is UTC-7 in August.
+  return `${isoDate}T${String(localHour + 7).padStart(2, '0')}:${String(localMinute).padStart(2, '0')}:00Z`;
+}
+
+/** Passes every gate: confirmed, a stated age floor, geocoded, dated inside the weekend. */
+function kidActivity(partial: Partial<ListingRecord> & { id: string }): ListingRecord {
+  return makeListing({
+    statusState: 'confirmed',
+    ageMinMonths: 24,
+    ageMaxMonths: 120,
+    ageBandMatches: ['2-4', '5-9'] as AgeBandKey[],
+    startDatetimeUtc: at(SAT, 10),
+    endDatetimeUtc: at(SAT, 11),
+    primaryCategoryKey: 'general',
+    ...partial,
+  });
+}
+
+function engineOver(listings: ListingRecord[]): SearchEngine {
+  return new SearchEngine({
+    repository: new InMemoryListingRepository(listings),
+    aliasResolver: new FixtureAliasResolver(ALIAS_SEED),
+    regionHierarchy: new RegionHierarchy(REGIONS),
+    geocoder: fsaGeocoder,
+  });
+}
+
+function input(listings: ListingRecord[], over: Partial<WeeklyPicksInput> = {}): WeeklyPicksInput {
+  return {
+    engine: engineOver(listings),
+    now: FRIDAY_4PM,
+    ...over,
+    subscriber: {
+      origin: { geo: HOME, label: 'Kitsilano' },
+      radiusKm: 10,
+      birthYears: [2021, 2018], // 5 and 8 in 2026 — both land in '5-9'
+      consecutiveEmptyWeeks: 0,
+      ...over.subscriber,
+    },
+  };
+}
+
+/**
+ * Unrelated filler activities, one per venue, receding from HOME.
+ *
+ * The names are deliberately unrelated words (max pairwise trigram similarity 0.333, the list
+ * weekly_picks.test.ts measured) and none reads as a registration-shaped course — see that file's
+ * header for both traps. A filler is never the subject of an assertion; it is the ALTERNATIVE
+ * that a diversity rule is supposed to be able to reach.
+ */
+const FILLER_NAMES = [
+  'Story Circle', 'Lego Build', 'Puppet Show', 'Nature Walk', 'Music Makers',
+  'Gym Romp', 'Art Studio', 'Chess Club', 'Marble Run', 'Bike Rodeo',
+  'Forest Explorers', 'Garden Club', 'Board Games', 'Pottery Wheel', 'Bird Watching',
+  'Rock Climbing', 'Drama Games', 'Film Night', 'Science Lab', 'Yoga Kids',
+];
+
+function fillers(count: number, firstMetres: number, over: Partial<ListingRecord> = {}): ListingRecord[] {
+  return Array.from({ length: count }, (_, i) =>
+    kidActivity({
+      id: `filler-${i}`,
+      activityName: FILLER_NAMES[i % FILLER_NAMES.length],
+      venueName: `${FILLER_NAMES[i % FILLER_NAMES.length]} Centre`,
+      geo: northOfHome(firstMetres + i * 600),
+      ...over,
+    })
+  );
+}
+
+/** Venue name per pick, in send order — the thing every assertion in this file is about. */
+function venues(result: WeeklyPicks): string[] {
+  return result.picks.map((p) => p.item.listing.venueName ?? '');
+}
+
+function titles(result: WeeklyPicks): string[] {
+  return result.picks.map((p) => p.item.listing.activityName);
+}
+
+function countAt(result: WeeklyPicks, venueName: string): number {
+  return venues(result).filter((v) => v === venueName).length;
+}
+
+/** The picks a parent actually reads without tapping through (PRD §2.3). */
+function namedVenues(result: WeeklyPicks): string[] {
+  return result.picks.filter((p) => p.linkOrigin === 'direct').map((p) => p.item.listing.venueName ?? '');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFILE #2 — Vancouver / Kitsilano. The report's own rows.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The 2026-09-10 report's profile #2, as listings.
+ *
+ * The venues recede from HOME in the order below and every card at one venue shares that venue's
+ * exact point, so each venue's cards arrive together and the concentration under test is the
+ * fixture's rather than an accident of scoring. WITHIN and BETWEEN venues the engine's own
+ * ranking still applies — measured on this fixture, date proximity outweighs a few hundred metres,
+ * so the Saturday cards lead the Sunday ones and West End sits just below Britannia despite being
+ * nearer. That is deliberately NOT flattened: these assertions are about venue COUNTS, which is
+ * what the defect is about, so they survive a ranking change that a golden list would not.
+ *
+ * `capVenueRepetition`'s own 3-per-20 does not reorder this at all — Britannia sits at exactly 3,
+ * which is the whole point of case 1.
+ */
+function profile2(): ListingRecord[] {
+  const roundhouse = northOfHome(600);
+  const coalHarbour = northOfHome(1200);
+  const westEnd = northOfHome(1800);
+  const britannia = northOfHome(2400);
+
+  return [
+    // Roundhouse x2 — two genuinely different activities. These must NOT collapse.
+    kidActivity({ id: 'rh-tai', activityName: 'Tai Chi Chuan - Beginners', venueName: 'Roundhouse Community Arts Centre', geo: roundhouse }),
+    kidActivity({ id: 'rh-dan', activityName: 'Roundhouse Community Dancers', venueName: 'Roundhouse Community Arts Centre', geo: roundhouse, startDatetimeUtc: at(SAT, 13), endDatetimeUtc: at(SAT, 14) }),
+    // The report's pick 6 — one card at its own venue, between the two Roundhouse cards and the rest.
+    kidActivity({ id: 'coal', activityName: 'Splash Time', venueName: 'Coal Harbour Community Centre', geo: coalHarbour }),
+    // West End x2 — ONE activity, two sittings. 0.750 on similarity(), 10:00 and 12:30 so the
+    // times do not overlap: invisible to `isDuplicatePair` on BOTH arms.
+    kidActivity({ id: 'we-am', activityName: 'Pickleball - Sun AM', venueName: 'West End Community Centre', geo: westEnd, startDatetimeUtc: at(SUN, 10), endDatetimeUtc: at(SUN, 11) }),
+    kidActivity({ id: 'we-pm', activityName: 'Pickleball - Sun PM', venueName: 'West End Community Centre', geo: westEnd, startDatetimeUtc: at(SUN, 12, 30), endDatetimeUtc: at(SUN, 13, 30) }),
+    // Britannia x3 — three genuinely different things to do at one building. These must NOT
+    // collapse; they must be DEFERRED by the digest-sized cap.
+    kidActivity({ id: 'br-tot', activityName: 'Public Swim with Tot Pool', venueName: 'Britannia Pool', geo: britannia }),
+    kidActivity({ id: 'br-les', activityName: 'Lessons and One Lane', venueName: 'Britannia Pool', geo: britannia, startDatetimeUtc: at(SAT, 13), endDatetimeUtc: at(SAT, 14) }),
+    kidActivity({ id: 'br-len', activityName: 'Lengths', venueName: 'Britannia Pool', geo: britannia, startDatetimeUtc: at(SUN, 15), endDatetimeUtc: at(SUN, 16) }),
+    // Ten alternatives at ten distinct venues, all inside the subscriber's radius. Every one of
+    // them already passed every relevance, radius, age and safety gate — which is what makes a
+    // deferral a choice between things that exist rather than an invention.
+    ...fillers(10, 3000),
+  ];
+}
+
+describe('profile #2 (Kitsilano) — the message the 2026-09-10 report read', () => {
+  it('CASE 1 — Britannia Pool holds at most 2 of the ten, not the 3 that 3-per-20 licenses', () => {
+    // FAILED ON main: 3. `capVenueRepetition`'s 3-of-20 is a 15% ceiling on a search page and a
+    // 30% ceiling on a ten-item digest. Nothing was breached; the window was simply wrong for
+    // this surface.
+    const result = selectWeeklyPicks(input(profile2()));
+    expect(result.outcome).toBe('picks');
+    expect(result.picks).toHaveLength(MAX_PICKS);
+    expect(countAt(result, 'Britannia Pool')).toBeLessThanOrEqual(2);
+  });
+
+  it('CASE 2 — West End Community Centre holds ONE pick, because its two cards are one activity', () => {
+    // FAILED ON main: 2 ("Pickleball - Sun AM" AND "Pickleball - Sun PM"). Two sittings of one
+    // thing is one decision, not two — it is a wasted slot in a list of ten, never a choice.
+    const result = selectWeeklyPicks(input(profile2()));
+    expect(countAt(result, 'West End Community Centre')).toBe(1);
+    const pickleball = titles(result).filter((t) => /Pickleball/.test(t));
+    expect(pickleball).toHaveLength(1);
+  });
+
+  it('CASE 3 — the Roundhouse pair is NOT collapsed: two different activities are two things to do', () => {
+    // The negative control for case 2. Tai Chi and a community dance troupe score 0.063 on
+    // similarity(): a rule that merged them would be merging on the venue alone.
+    const result = selectWeeklyPicks(input(profile2()));
+    expect(countAt(result, 'Roundhouse Community Arts Centre')).toBe(2);
+  });
+
+  it('CASE 4 — the three NAMED picks are at three distinct venues', () => {
+    // FAILED ON main: the first two picks were both the Roundhouse. Only the first
+    // DIRECT_LINK_PICKS picks are named and linked; everything after folds into an anonymous
+    // "+N more", so this is the only part of the defect a parent sees without tapping through.
+    const result = selectWeeklyPicks(input(profile2()));
+    const named = namedVenues(result);
+    expect(named).toHaveLength(DIRECT_LINK_PICKS);
+    expect(new Set(named).size).toBe(DIRECT_LINK_PICKS);
+  });
+
+  it('reports the concentration it actually shipped, so the improvement is measurable', () => {
+    // The report's number was "7 of 10 across 3 venues". This asserts the SHAPE — no venue over
+    // 2, and at least six distinct places in the ten — rather than a golden list, so a future
+    // ranking change cannot make it fail for a reason that is not this defect.
+    const result = selectWeeklyPicks(input(profile2()));
+    const counts = new Map<string, number>();
+    for (const v of venues(result)) counts.set(v, (counts.get(v) ?? 0) + 1);
+    expect(Math.max(...counts.values())).toBeLessThanOrEqual(2);
+    expect(counts.size).toBeGreaterThanOrEqual(6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFILE #3 — North Vancouver / Central Lonsdale. Same pattern, different city,
+// different operator: the defect is systemic, not one municipality's data.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function profile3(): ListingRecord[] {
+  const delbrook = northOfHome(600);
+  const harryJerome = northOfHome(1400);
+
+  return [
+    // The Delbrook trio. `Whole Pool` and `Leisure Pool` are two DIFFERENT pools in one building
+    // and must stay distinct — they score 0.641, which is the lower edge of the band the
+    // same-venue threshold has to sit inside.
+    kidActivity({ id: 'db-whole', activityName: 'Public Swim Delbrook Whole Pool', venueName: 'Delbrook Community Recreation Centre', geo: delbrook }),
+    kidActivity({ id: 'db-leisure', activityName: 'Public Swim Delbrook Leisure Pool', venueName: 'Delbrook Community Recreation Centre', geo: delbrook, startDatetimeUtc: at(SAT, 13), endDatetimeUtc: at(SAT, 14) }),
+    kidActivity({ id: 'db-lane', activityName: 'Lane Swim Delbrook', venueName: 'Delbrook Community Recreation Centre', geo: delbrook, startDatetimeUtc: at(SUN, 15), endDatetimeUtc: at(SUN, 16) }),
+    kidActivity({ id: 'hj-1', activityName: 'Gym Romp', venueName: 'Harry Jerome Community Recreation Centre', geo: harryJerome }),
+    kidActivity({ id: 'hj-2', activityName: 'Art Studio', venueName: 'Harry Jerome Community Recreation Centre', geo: harryJerome, startDatetimeUtc: at(SUN, 11), endDatetimeUtc: at(SUN, 12) }),
+    ...fillers(10, 2200),
+  ];
+}
+
+describe('profile #3 (Central Lonsdale) — the same shape in a second municipality', () => {
+  it('Delbrook holds at most 2 of the ten', () => {
+    // FAILED ON main: 3. Recurring municipal pool timetables are the densest thing in this
+    // catalogue, so this recurs wherever the catalogue is dense.
+    const result = selectWeeklyPicks(input(profile3()));
+    expect(result.picks).toHaveLength(MAX_PICKS);
+    expect(countAt(result, 'Delbrook Community Recreation Centre')).toBeLessThanOrEqual(2);
+  });
+
+  it('does NOT merge Whole Pool with Leisure Pool — two pools in one building are two outings', () => {
+    // The measured 0.641 pair. A same-venue title rule loose enough to merge this would be
+    // taking a real choice away from a parent, not removing a duplicate.
+    const result = selectWeeklyPicks(input(profile3()));
+    const delbrookTitles = result.picks
+      .filter((p) => p.item.listing.venueName === 'Delbrook Community Recreation Centre')
+      .map((p) => p.item.listing.activityName);
+    // Whichever two survive the cap, they are never the SAME offering twice.
+    expect(new Set(delbrookTitles).size).toBe(delbrookTitles.length);
+  });
+
+  it('names three distinct venues', () => {
+    const named = namedVenues(selectWeeklyPicks(input(profile3())));
+    expect(new Set(named).size).toBe(DIRECT_LINK_PICKS);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROBE B — the latent failure that is strictly worse than the one that was reported.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A venue whose cards STRADDLE the engine cap's round boundary, plus the post-cap attrition that
+ * pulls the far side of it into the top ten.
+ *
+ * `capVenueRepetition` deals in ROUNDS: round 1 seats positions 0-19 with at most 3 per venue and
+ * round 2 starts with FRESH counters at position 20. A venue with six cards therefore lands at
+ * [0,1,2,20,21,22] — two independent allowances, three positions apart. Positions 0-9 sit safely
+ * inside round 1 for the RAW engine output; `selectFrom` then removes cards, so the surviving top
+ * ten is drawn from a deeper prefix and meets both allowances at once.
+ *
+ * The attrition here is the CATEGORY INTEREST post-filter, which is real, is applied in
+ * `selectFrom` after the engine has capped, and on profile #2's real data removed more rows than
+ * anything else. Seventeen of the cards the engine seats in round 1 are outside the subscriber's
+ * stated interest, so they vanish AFTER the cap made its promise about them.
+ */
+function probeB(alternatives = 14): ListingRecord[] {
+  const dominant = northOfHome(400);
+  const wanted = { primaryCategoryKey: 'swimming', categoryTags: ['swimming'] };
+  const unwanted = { primaryCategoryKey: 'general', categoryTags: [] as string[] };
+
+  return [
+    // Six cards at one venue, all wanted. The engine's own cap seats three of them and defers the
+    // other three past position 20 — it cannot do anything else, and that IS correct behaviour
+    // for a page of twenty.
+    ...FILLER_NAMES.slice(0, 6).map((name, i) =>
+      kidActivity({
+        id: `dom-${i}`,
+        activityName: name,
+        venueName: 'Britannia Pool',
+        geo: dominant,
+        startDatetimeUtc: at(i % 2 === 0 ? SAT : SUN, 9 + i),
+        endDatetimeUtc: at(i % 2 === 0 ? SAT : SUN, 10 + i),
+        ...wanted,
+      })
+    ),
+    // Exactly seventeen cards that the engine ranks into round 1 — filling positions 3..19, which
+    // is what pushes the dominant venue's remainder to 20, 21 and 22 — and that
+    // `matchesInterests` then removes INSIDE `selectFrom`, after the cap made its promise.
+    ...Array.from({ length: 17 }, (_, i) =>
+      kidActivity({
+        id: `gone-${i}`,
+        activityName: FILLER_NAMES[(i + 6) % FILLER_NAMES.length],
+        venueName: `Filtered Venue ${i}`,
+        geo: northOfHome(1000 + i * 600),
+        ...unwanted,
+      })
+    ),
+    // Genuine alternatives, ranked below everything above, that DO match the interest. These are
+    // what the deferral spends: every one already passed every relevance, radius, age and safety
+    // gate, so promoting one is a choice between things that exist.
+    ...Array.from({ length: alternatives }, (_, i) =>
+      kidActivity({
+        id: `alt-${i}`,
+        activityName: FILLER_NAMES[(i + 12) % FILLER_NAMES.length],
+        venueName: `Alternative Venue ${i}`,
+        geo: northOfHome(11_200 + i * 300),
+        ...wanted,
+      })
+    ),
+  ];
+}
+
+/** Probe B's subscriber: the stated interest is the attrition that runs AFTER the engine capped. */
+function probeBInput(listings: ListingRecord[]): WeeklyPicksInput {
+  return input(listings, {
+    subscriber: {
+      origin: { geo: HOME, label: 'Kitsilano' },
+      radiusKm: 20,
+      birthYears: [2021, 2018],
+      categoryInterests: ['swimming'],
+      consecutiveEmptyWeeks: 0,
+    },
+  });
+}
+
+describe('Probe B — the cap must survive what `selectFrom` does after it', () => {
+  it('NON-VACUITY — the engine really does seat the dominant venue on both sides of a round boundary', () => {
+    // `capVenueRepetition` deals in rounds: round 1 seats positions 0-19 at up to 3 per venue and
+    // round 2 starts with FRESH counters at position 20. Measured here on the engine's own output,
+    // so the case below is testing the arrangement it claims to test and not a coincidence of the
+    // fixture: the six cards land at exactly [0,1,2] and [20,21,22] — two independent allowances,
+    // seventeen positions apart. Everything between them is about to be filtered away.
+    const engine = engineOver(probeB());
+    const response = engine.search({
+      q: '',
+      now: FRIDAY_4PM,
+      origin: { mode: 'near_me', coords: HOME },
+      includeRegistration: true,
+      ageBands: ['5-9'] as AgeBandKey[],
+      when: 'weekend',
+      radiusKm: 20,
+      minResults: 0,
+    });
+    const positions = response.results
+      .map((item, index) => ({ id: item.listing.id, index }))
+      .filter((r) => r.id.startsWith('dom-'))
+      .map((r) => r.index);
+    expect(positions).toEqual([0, 1, 2, 20, 21, 22]);
+  });
+
+  it('holds a straddling venue to 2 of the ten, not the 6 it reached on main', () => {
+    // FAILED ON main with SIX of ten from one venue — strictly worse than the 3 that was reported
+    // and rejected, and unreachable by any retune of the ENGINE's constants, because the hole is
+    // downstream of the engine. The digest-sized cap runs last, on the full surviving list, so
+    // nothing is left to undo it.
+    const result = selectWeeklyPicks(probeBInput(probeB()));
+    expect(result.outcome).toBe('picks');
+    expect(result.picks).toHaveLength(MAX_PICKS);
+    expect(countAt(result, 'Britannia Pool')).toBeLessThanOrEqual(2);
+    // And it was a DEFERRAL, not a removal: the cards are still in the list, further down.
+    expect(result.diversity.venueCapDeferred).toBeGreaterThan(0);
+  });
+
+  it('DEFERS AS FAR AS THE LIST ALLOWS AND NEVER FURTHER — the scarcity edge, stated honestly', () => {
+    // The same arrangement with only six alternatives instead of fourteen. Twelve candidates, six
+    // of them at one venue: a 2-of-10 promise is then ARITHMETICALLY UNREACHABLE without hiding
+    // four real answers, and hiding them is exactly what `capVenueRepetition` refuses to do — its
+    // own header says so ("the rounds simply get shorter ... they are not told the other five do
+    // not exist"). So the ten still ship, the dominant venue is pushed as far down as twelve cards
+    // permit, and the shortfall is arithmetic rather than a rule failing.
+    //
+    // THIS IS PINNED, NOT TOLERATED. It is the same posture as the floor: a diversity rule may
+    // defer, never thin. If a future change made this case ship EIGHT picks instead of ten in the
+    // name of variety, that would be the rule spending ruling 7.5's empty state on itself.
+    const result = selectWeeklyPicks(probeBInput(probeB(6)));
+    expect(result.picks).toHaveLength(MAX_PICKS);
+    const dominant = countAt(result, 'Britannia Pool');
+    // Twelve candidates minus six alternatives = at least four of the ten must come from Britannia.
+    expect(dominant).toBe(4);
+    // The two cards it COULD defer, it did: without the cap this would have been six.
+    expect(result.diversity.venueCapDeferred).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The numbers the whole fix is built on. If any of these move, the reasoning above
+// stops being true and this file says so BEFORE the behaviour tests start guessing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('title identity — the measured numbers the fix is built on', () => {
+  it('pins the 0.750 / 0.78 gap that hides the Pickleball pair from the dedup pass', () => {
+    // THE SINGLE MOST IMPORTANT NUMBER IN THIS SCOPE. The whole same-venue predicate exists
+    // because this pair is three hundredths short of the cross-venue threshold. Lowering
+    // DEDUP_TITLE_SIMILARITY to catch it would apply CROSS-VENUE, where 0.78 was measured and
+    // where "Public Swim" at two unrelated pools is the exact false merge the PRD warns about.
+    expect(similarity('Pickleball - Sun PM', 'Pickleball - Sun AM')).toBeCloseTo(0.75, 3);
+    expect(DEDUP_TITLE_SIMILARITY).toBe(0.78);
+    expect(similarity('Pickleball - Sun PM', 'Pickleball - Sun AM')).toBeLessThan(DEDUP_TITLE_SIMILARITY);
+  });
+
+  it('pins the 0.641 Delbrook pair that must NOT merge, and the band between the two', () => {
+    // The upper edge is 0.750 (must merge), the lower edge is 0.641 (must not). Every
+    // same-venue threshold this scope could pick has to sit strictly inside that band, and the
+    // band is narrow enough that it is worth a test rather than a comment.
+    expect(similarity('Public Swim Delbrook Whole Pool', 'Public Swim Delbrook Leisure Pool')).toBeCloseTo(0.641, 3);
+    expect(similarity('Public Swim Delbrook Whole Pool', 'Lane Swim Delbrook')).toBeLessThan(0.641);
+    expect(similarity('Public Swim Delbrook Leisure Pool', 'Lane Swim Delbrook')).toBeLessThan(0.641);
+  });
+
+  it('pins that no Britannia or Roundhouse pair comes anywhere near the band', () => {
+    // These are the negative controls: three things to do at one pool, and two at one arts
+    // centre. A same-venue rule that touched any of them would be merging on the venue alone.
+    expect(similarity('Public Swim with Tot Pool', 'Lessons and One Lane')).toBe(0);
+    expect(similarity('Public Swim with Tot Pool', 'Lengths')).toBe(0);
+    expect(similarity('Lessons and One Lane', 'Lengths')).toBeLessThan(0.1);
+    expect(similarity('Tai Chi Chuan - Beginners', 'Roundhouse Community Dancers')).toBeLessThan(0.1);
+  });
+
+  it('the AM/PM pair folds to ONE key, so the fold arm catches it even if the trigram moves', () => {
+    // Two ways to satisfy one condition, exactly as `titlesMatch` already does it: a threshold
+    // AND exact equality of the comparison fold. The fold arm cannot drift.
+    expect(foldTitleForComparison('Pickleball - Sun PM')).toBe(foldTitleForComparison('Pickleball - Sun AM'));
+    expect(foldTitleForComparison('Pickleball - Sun PM')).not.toBe('');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T3 — the predicate itself, at the edges of the measured band.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A minimal SearchResultItem over a listing — for exercising the pure predicates directly. */
+function asItem(listing: ListingRecord): SearchResultItem {
+  return {
+    listing,
+    score: 1,
+    distanceKm: null,
+    components: {} as SearchResultItem['components'],
+    matchedAliases: [],
+    slots: [
+      {
+        id: listing.id,
+        startDatetimeUtc: listing.startDatetimeUtc,
+        endDatetimeUtc: listing.endDatetimeUtc,
+        costStatus: listing.costStatus,
+        costMinCad: listing.costMinCad,
+        costMaxCad: listing.costMaxCad,
+        ageMinMonths: listing.ageMinMonths,
+        ageMaxMonths: listing.ageMaxMonths,
+      },
+    ],
+    slotDays: [],
+    slotSpanEndUtc: listing.endDatetimeUtc,
+    registrationRequired: false,
+  };
+}
+
+const never = () => false;
+
+/** Two rows at one venue, at two times that do NOT overlap — the shape under test. */
+function pairAtVenue(venueName: string, a: string, b: string, geo = northOfHome(600)) {
+  return [
+    asItem(kidActivity({ id: 'x', activityName: a, venueName, geo, startDatetimeUtc: at(SUN, 10), endDatetimeUtc: at(SUN, 11) })),
+    asItem(kidActivity({ id: 'y', activityName: b, venueName, geo, startDatetimeUtc: at(SUN, 14), endDatetimeUtc: at(SUN, 15) })),
+  ] as const;
+}
+
+describe('sameOfferingAtVenue — the venue-scoped identity', () => {
+  it('is TRUE for the West End Pickleball pair, which `isDuplicatePair` misses on BOTH arms', () => {
+    const [am, pm] = pairAtVenue('West End Community Centre', 'Pickleball - Sun AM', 'Pickleball - Sun PM');
+    expect(sameOfferingAtVenue(am, pm, never)).toBe(true);
+    // Both arms carry it independently, which is the point of having two: 0.750 clears the
+    // venue-scoped threshold, AND the two titles fold to one key.
+    expect(similarity(am.listing.activityName, pm.listing.activityName)).toBeGreaterThanOrEqual(SAME_VENUE_TITLE_SIMILARITY);
+    expect(foldTitleForComparison(am.listing.activityName)).toBe(foldTitleForComparison(pm.listing.activityName));
+  });
+
+  it('is FALSE for Delbrook Whole Pool vs Leisure Pool — two pools in one building', () => {
+    // 0.641, the lower edge of the band. THE most important negative in this scope: merging these
+    // would take a real choice away from a parent rather than remove a duplicate.
+    const [whole, leisure] = pairAtVenue(
+      'Delbrook Community Recreation Centre',
+      'Public Swim Delbrook Whole Pool',
+      'Public Swim Delbrook Leisure Pool'
+    );
+    expect(sameOfferingAtVenue(whole, leisure, never)).toBe(false);
+    expect(similarity(whole.listing.activityName, leisure.listing.activityName)).toBeLessThan(SAME_VENUE_TITLE_SIMILARITY);
+  });
+
+  it('is FALSE for every Britannia pair and for the Roundhouse pair', () => {
+    const britannia = ['Public Swim with Tot Pool', 'Lessons and One Lane', 'Lengths'];
+    for (let i = 0; i < britannia.length; i += 1) {
+      for (let j = i + 1; j < britannia.length; j += 1) {
+        const [a, b] = pairAtVenue('Britannia Pool', britannia[i], britannia[j]);
+        expect(sameOfferingAtVenue(a, b, never)).toBe(false);
+      }
+    }
+    const [tai, dancers] = pairAtVenue('Roundhouse Community Arts Centre', 'Tai Chi Chuan - Beginners', 'Roundhouse Community Dancers');
+    expect(sameOfferingAtVenue(tai, dancers, never)).toBe(false);
+  });
+
+  it('is FALSE across two venues however well the titles match — the PRD’s central warning', () => {
+    // "Public Swim" scores 1.000 against itself. The place condition is ANDed in FIRST, so the
+    // loosened title threshold is structurally unable to reach two unrelated pools.
+    const a = asItem(kidActivity({ id: 'a', activityName: 'Public Swim', venueName: 'Templeton Pool', geo: northOfHome(600) }));
+    const b = asItem(kidActivity({ id: 'b', activityName: 'Public Swim', venueName: 'Killarney Pool', geo: northOfHome(6000) }));
+    expect(similarity(a.listing.activityName, b.listing.activityName)).toBe(1);
+    expect(sameOfferingAtVenue(a, b, never)).toBe(false);
+  });
+
+  it('ignores time overlap in BOTH directions, which is the whole difference from `isDuplicatePair`', () => {
+    const [am, pm] = pairAtVenue('West End Community Centre', 'Pickleball - Sun AM', 'Pickleball - Sun PM');
+    // Non-overlapping (10:00 vs 14:00) and still the same offering.
+    expect(sameOfferingAtVenue(am, pm, never)).toBe(true);
+    // `dedupeCandidates`, which requires the overlap, leaves the pair alone — so the two passes
+    // are genuinely independent and the new one is not a restatement of the old.
+    expect(dedupeCandidates([am, pm], never).collapsed).toBe(0);
+    expect(collapseSameOfferingAtVenue([am, pm], never).collapsed).toBe(1);
+  });
+
+  it('keeps the BETTER-RANKED member, in the order the list arrived', () => {
+    const [am, pm] = pairAtVenue('West End Community Centre', 'Pickleball - Sun AM', 'Pickleball - Sun PM');
+    expect(collapseSameOfferingAtVenue([am, pm], never).kept.map((k) => k.listing.id)).toEqual(['x']);
+    expect(collapseSameOfferingAtVenue([pm, am], never).kept.map((k) => k.listing.id)).toEqual(['y']);
+  });
+
+  it('the constant sits strictly inside the band it was measured against', () => {
+    expect(SAME_VENUE_TITLE_SIMILARITY).toBeGreaterThan(similarity('Public Swim Delbrook Whole Pool', 'Public Swim Delbrook Leisure Pool'));
+    expect(SAME_VENUE_TITLE_SIMILARITY).toBeLessThanOrEqual(similarity('Pickleball - Sun PM', 'Pickleball - Sun AM'));
+    expect(SAME_VENUE_TITLE_SIMILARITY).toBeLessThan(DEDUP_TITLE_SIMILARITY);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T6 / T7 — the named block, and what happens when it collides with a forced pick.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** N picks with explicit venues, in the order given. Ranked by position, nearest first. */
+function selectionOf(venuesInOrder: string[]): SearchResultItem[] {
+  return venuesInOrder.map((venueName, i) => {
+    const item = asItem(
+      kidActivity({
+        id: `p${i}`,
+        activityName: FILLER_NAMES[i % FILLER_NAMES.length],
+        venueName,
+        geo: northOfHome(600 + i * 600),
+      })
+    );
+    return { ...item, distanceKm: 0.6 + i * 0.6 };
+  });
+}
+
+const idsOf = (items: readonly SearchResultItem[]) => items.map((i) => i.listing.id);
+
+describe('spreadNamedSlotVenues — the three picks a parent actually reads', () => {
+  it('promotes the highest-ranked unused-venue pick into a repeated named slot', () => {
+    const before = selectionOf(['A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']);
+    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    expect(idsOf(selection).slice(0, 3)).toEqual(['p0', 'p3', 'p2']);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]).toMatchObject({ occurrenceId: 'p3', displacedOccurrenceId: 'p1', fromIndex: 3, toIndex: 1, rankDelta: 2 });
+    // HIGHEST-ranked, not any: 'C' at index 3 is chosen over 'D' at 4 and everything below.
+  });
+
+  it('is a PURE PERMUTATION — set membership is byte-identical before and after', () => {
+    const before = selectionOf(['A', 'A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
+    const { selection } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    expect(selection).toHaveLength(before.length);
+    expect([...idsOf(selection)].sort()).toEqual([...idsOf(before)].sort());
+    // The same objects, not copies of them — nothing is rebuilt on the way through.
+    for (const item of before) expect(selection).toContain(item);
+    // …and all three named slots now hold three different places.
+    expect(new Set(selection.slice(0, 3).map((s) => s.listing.venueName)).size).toBe(3);
+  });
+
+  it('returns a selection that is entirely ONE venue completely unchanged', () => {
+    // There is nothing to diversify with, so there is nothing to do — the same posture
+    // `capVenueRepetition` takes on a single-venue page, and for the same reason.
+    const before = selectionOf(Array.from({ length: 10 }, () => 'Only Venue'));
+    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    expect(idsOf(selection)).toEqual(idsOf(before));
+    expect(promoted).toEqual([]);
+  });
+
+  it('is a no-op when the named block is already three distinct venues', () => {
+    const before = selectionOf(['A', 'B', 'C', 'A', 'A', 'D', 'E', 'F', 'G', 'H']);
+    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    expect(idsOf(selection)).toEqual(idsOf(before));
+    expect(promoted).toEqual([]);
+  });
+
+  it('never treats an UNNAMED venue as a place — not as a repeat, and not as variety', () => {
+    // `venueIdentity` returns null for an empty name and every caller must read that as "no
+    // opinion". Two unnamed rows are not the same venue, so neither triggers a promotion…
+    const unnamed = selectionOf(['', '', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']);
+    expect(idsOf(spreadNamedSlotVenues(unnamed, new Set(), DIRECT_LINK_PICKS).selection)).toEqual(idsOf(unnamed));
+    // …and an unnamed row below is never promoted as though it were somewhere new.
+    const noAlternative = selectionOf(['A', 'A', 'B', '', '', '', '', '', '', '']);
+    expect(idsOf(spreadNamedSlotVenues(noAlternative, new Set(), DIRECT_LINK_PICKS).selection)).toEqual(idsOf(noAlternative));
+  });
+
+  it('leaves the named block alone when the ten hold no unused venue to promote', () => {
+    // Only two venues exist in the whole selection, so two distinct named venues is already the
+    // most the ten can offer — the stage recognises that and does nothing rather than shuffling
+    // for the sake of it. (The third slot repeating A is arithmetic, not a rule failing.)
+    const before = selectionOf(['A', 'B', 'A', 'A', 'B', 'A', 'B', 'A', 'B', 'A']);
+    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    expect(idsOf(selection)).toEqual(idsOf(before));
+    expect(promoted).toEqual([]);
+  });
+
+  it('NEVER MOVES A FORCED PICK — not out of a named slot, not into one, not as the displaced one', () => {
+    // Jon's ruling: "let it jump the Q so it's always named." This stage is subordinate to it.
+    // p0 is forced and sits at venue A; p1 repeats A and IS eligible to move.
+    const before = selectionOf(['A', 'A', 'B', 'A', 'C', 'D', 'E', 'F', 'G', 'H']);
+    const { selection, promoted } = spreadNamedSlotVenues(before, new Set(['p0']), DIRECT_LINK_PICKS);
+    expect(selection[0].listing.id).toBe('p0'); // still first, still named
+    expect(promoted).toHaveLength(1);
+    // p3 is at venue A, already used — so the promotion reaches past it to p4 at venue C.
+    expect(promoted[0]).toMatchObject({ occurrenceId: 'p4', displacedOccurrenceId: 'p1' });
+
+    // And a forced pick sitting BELOW the named block is never pulled up by this stage either.
+    const forcedBelow = selectionOf(['A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']);
+    const out = spreadNamedSlotVenues(forcedBelow, new Set(['p3']), DIRECT_LINK_PICKS);
+    expect(out.promoted[0]?.occurrenceId).toBe('p4');
+  });
+});
+
+describe('T7 — where age coverage and venue diversity collide, the FORCED PICK WINS', () => {
+  /**
+   * The collision, constructed exactly: the ONLY candidate representing an unrepresented age band
+   * sits at a venue that is already named.
+   *
+   * ═══ THE RULING, AND WHY IT IS NOT RE-ARGUED HERE ═══
+   * A missing age band is closer to WRONG; a repeated venue is merely LESS GOOD. That is the
+   * ordering `three-things.ts#preferenceScore` already establishes between a hard fact and a soft
+   * preference, and this file reuses it rather than reaching a second opinion. So the forced pick
+   * is placed at the front, is named, and is never moved by the venue spread.
+   *
+   * THIS CAN LEAVE TWO NAMED PICKS AT ONE VENUE, AND THAT IS THE ACCEPTED OUTCOME rather than a
+   * gap in the spread. The alternative — demoting the forced pick to make room for variety — would
+   * take the one pick chosen SPECIFICALLY because a child's age band had no organic match and make
+   * it the one pick guaranteed never to be named, which is the exact defect Jon's ruling ended.
+   */
+  function collisionFixture(): ListingRecord[] {
+    const shared = northOfHome(600);
+    return [
+      // Six organic picks for the 5-9 band. Two of them are at the shared venue, so the named
+      // block is already crowded before the swap runs.
+      kidActivity({ id: 'org-0', activityName: 'Story Circle', venueName: 'Shared Centre', geo: shared }),
+      kidActivity({ id: 'org-1', activityName: 'Lego Build', venueName: 'Shared Centre', geo: shared, startDatetimeUtc: at(SAT, 13), endDatetimeUtc: at(SAT, 14) }),
+      ...Array.from({ length: 8 }, (_, i) =>
+        kidActivity({
+          id: `org-${i + 2}`,
+          activityName: FILLER_NAMES[(i + 2) % FILLER_NAMES.length],
+          venueName: `Organic Venue ${i}`,
+          geo: northOfHome(1400 + i * 600),
+        })
+      ),
+      // The ONLY under-2 listing in the catalogue — and it is at the crowded venue.
+      kidActivity({
+        id: 'tot',
+        activityName: 'Baby Time',
+        venueName: 'Shared Centre',
+        geo: shared,
+        ageMinMonths: 0,
+        ageMaxMonths: 23,
+        ageBandMatches: ['under2'] as AgeBandKey[],
+        startDatetimeUtc: at(SUN, 10),
+        endDatetimeUtc: at(SUN, 11),
+      }),
+    ];
+  }
+
+  const collisionInput = () =>
+    input(collisionFixture(), {
+      subscriber: {
+        origin: { geo: HOME, label: 'Kitsilano' },
+        radiusKm: 10,
+        birthYears: [2025, 2018], // 1 and 8 → 'under2' and '5-9'
+        consecutiveEmptyWeeks: 0,
+      },
+    });
+
+  it('the forced pick survives, is NAMED, and keeps its front position', () => {
+    const result = selectWeeklyPicks(collisionInput());
+    expect(result.forcedPicks.map((f) => f.occurrenceId)).toContain('tot');
+    expect(result.picks[0].item.listing.id).toBe('tot');
+    expect(result.picks[0].linkOrigin).toBe('direct');
+    expect(result.picks[0].forcedForBand).toBe('under2');
+  });
+
+  it('and the venue spread fixes what it CAN around it, without touching the forced pick', () => {
+    const result = selectWeeklyPicks(collisionInput());
+    // The forced pick holds 'Shared Centre'. The other 'Shared Centre' card is moved out of the
+    // named block if the ten allow it — the spread is subordinate, not disabled.
+    const named = result.picks.filter((p) => p.linkOrigin === 'direct');
+    expect(named[0].item.listing.id).toBe('tot');
+    expect(new Set(named.map((p) => p.item.listing.venueName)).size).toBe(DIRECT_LINK_PICKS);
+  });
+
+  it('leaves MAX_FORCED_PICKS and DIRECT_LINK_PICKS semantics exactly as they were', () => {
+    // Nothing in this scope touches how many picks may be forced or how many are named. Asserted
+    // rather than assumed, because the spread runs between them and could plausibly drift either.
+    expect(MAX_FORCED_PICKS).toBe(2);
+    expect(DIRECT_LINK_PICKS).toBe(3);
+    const result = selectWeeklyPicks(collisionInput());
+    expect(result.forcedPicks.length).toBeLessThanOrEqual(MAX_FORCED_PICKS);
+    expect(result.picks.filter((p) => p.linkOrigin === 'direct')).toHaveLength(DIRECT_LINK_PICKS);
+    expect(result.picks.filter((p) => p.linkOrigin === 'hub')).toHaveLength(MAX_PICKS - DIRECT_LINK_PICKS);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T8 — the scarcity guarantee, made STRUCTURAL rather than promised.
+//
+// The tradeoff question this answers, in the client's own words: "if a family's genuinely closest
+// and best ten things really are concentrated at two pools, forcing artificial diversity could
+// show them worse or farther options instead. Is that acceptable, and where's the line?"
+//
+// The line is a property of the code rather than a judgement call, and it sits at
+// `candidates > MAX_PICKS`. Below it every candidate is going into the digest regardless of
+// order, so a REORDER costs exactly nothing. Above it there is, by definition, a deferred
+// alternative that already passed every relevance, radius, age and safety gate, so promoting one
+// is a choice between things that exist and never an invention.
+//
+// These four cases are what make that true rather than argued.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * EVERY STAGE IN `selectFrom` THAT CAN REMOVE A CANDIDATE, EXHAUSTIVELY — and nothing else.
+ *
+ * ═══ THIS HELPER IS THE FORCING FUNCTION. READ THIS BEFORE ADDING A DIVERSITY RULE. ═══
+ * `weeklyPickCandidates` is the count of things that could possibly be sent. Case (c) below
+ * asserts that the shipped pick count is EXACTLY `min(that count, MAX_PICKS)` — so any future
+ * stage added to `selectFrom` that DROPS a candidate rather than reordering one will fail (c)
+ * immediately, and the only way to make it pass again is to add the stage here, in the open,
+ * where it has to be justified. A stage that merely REORDERS needs no change here at all, which
+ * is exactly the distinction this scope's whole safety argument rests on.
+ */
+function weeklyPickCandidates(listings: ListingRecord[], over: Partial<WeeklyPicksInput> = {}): SearchResultItem[] {
+  const i = input(listings, over);
+  const response = i.engine.search(buildPicksRequest(i, 'primary'));
+  const sameParentOrg = i.sameParentOrg ?? (() => false);
+  const showable = response.results
+    .filter((item) => isShowableOnFrontDoor(item.listing))
+    .filter((item) => isWeeklyPickEligible(item.listing))
+    .filter((item) => matchesInterests(item.listing, i.subscriber.categoryInterests));
+  const { kept } = dedupeCandidates(showable, sameParentOrg);
+  const { kept: distinct } = collapseSameOfferingAtVenue(kept, sameParentOrg);
+  const alreadySent = i.excludeOccurrenceIds;
+  return alreadySent && alreadySent.size > 0
+    ? distinct.filter((item) => !alreadySent.has(item.listing.id))
+    : distinct;
+}
+
+/** The selection the pipeline would have produced with NO diversity stage of any kind. */
+function selectionWithoutDiversityStages(listings: ListingRecord[], over: Partial<WeeklyPicksInput> = {}): SearchResultItem[] {
+  const i = input(listings, over);
+  const response = i.engine.search(buildPicksRequest(i, 'primary'));
+  const bands = ageBandsFromBirthYears(i.subscriber.birthYears, i.now);
+  const maxPicks = i.maxPicks ?? MAX_PICKS;
+  const sameParentOrg = i.sameParentOrg ?? (() => false);
+  const showable = response.results
+    .filter((item) => isShowableOnFrontDoor(item.listing))
+    .filter((item) => isWeeklyPickEligible(item.listing))
+    .filter((item) => matchesInterests(item.listing, i.subscriber.categoryInterests));
+  const { kept } = dedupeCandidates(showable, sameParentOrg);
+  const alreadySent = i.excludeOccurrenceIds;
+  const fresh = alreadySent && alreadySent.size > 0 ? kept.filter((item) => !alreadySent.has(item.listing.id)) : kept;
+  return applyCoverageSwap(fresh.slice(0, maxPicks), fresh, bands, maxPicks).selection;
+}
+
+/** A catalogue of `n` genuinely distinct activities at `n` distinct venues, receding from HOME. */
+function thinCatalogue(n: number, perVenue = 1): ListingRecord[] {
+  return Array.from({ length: n }, (_, i) => {
+    const venue = Math.floor(i / perVenue);
+    return kidActivity({
+      id: `thin-${i}`,
+      activityName: FILLER_NAMES[i % FILLER_NAMES.length],
+      venueName: `Thin Venue ${venue}`,
+      geo: northOfHome(600 + venue * 600),
+      startDatetimeUtc: at(i % 2 === 0 ? SAT : SUN, 9 + (i % 6)),
+      endDatetimeUtc: at(i % 2 === 0 ? SAT : SUN, 10 + (i % 6)),
+    });
+  });
+}
+
+describe('T8 — the scarcity invariants behind the tradeoff', () => {
+  it('(a) BELOW THE LINE the reorder stages cost exactly nothing — same SET, whatever the order', () => {
+    // Seven candidates for ten slots. Every one is going into the digest regardless, so the cap
+    // and the spread can only change the order in which they are read.
+    for (const n of [1, 3, 5, 7, 9, MAX_PICKS]) {
+      const listings = thinCatalogue(n, 3); // 3 per venue — well over MAX_PICKS_PER_VENUE
+      const result = selectWeeklyPicks(input(listings, { floorPicks: 1 }));
+      const reference = selectionWithoutDiversityStages(listings, { floorPicks: 1 });
+      expect(result.diversity.sameOfferingCollapsed).toBe(0); // no same-offering pair in this shape
+      expect(new Set(result.picks.map((p) => p.item.listing.id))).toEqual(new Set(reference.map((r) => r.listing.id)));
+      expect(result.picks).toHaveLength(Math.min(n, MAX_PICKS));
+    }
+  });
+
+  it('(a′) and the ONE stage that can remove takes only the duplicate sitting, nothing else', () => {
+    // The honest completion of (a): `collapseSameOfferingAtVenue` is the single hard stage in
+    // this scope, so below the line the membership difference is EXACTLY the second sitting.
+    const listings = [
+      ...thinCatalogue(6, 1),
+      kidActivity({ id: 'we-am', activityName: 'Pickleball - Sun AM', venueName: 'West End Community Centre', geo: northOfHome(5400), startDatetimeUtc: at(SUN, 10), endDatetimeUtc: at(SUN, 11) }),
+      kidActivity({ id: 'we-pm', activityName: 'Pickleball - Sun PM', venueName: 'West End Community Centre', geo: northOfHome(5400), startDatetimeUtc: at(SUN, 12, 30), endDatetimeUtc: at(SUN, 13, 30) }),
+    ];
+    const result = selectWeeklyPicks(input(listings, { floorPicks: 1 }));
+    const reference = selectionWithoutDiversityStages(listings, { floorPicks: 1 });
+    const actualIds = new Set(result.picks.map((p) => p.item.listing.id));
+    const missing = reference.map((r) => r.listing.id).filter((id) => !actualIds.has(id));
+    expect(missing).toEqual(['we-pm']);
+    expect(result.diversity.sameOfferingCollapsed).toBe(1);
+  });
+
+  it('(b) a SINGLE-VENUE week is returned completely unchanged — order included', () => {
+    // There is nothing to diversify with, and this product must never punish a subscriber for
+    // that. `capVenueRepetition`'s `sameVenueThroughout` early exit returns its input
+    // byte-for-byte; the spread has no unused venue to reach for; the collapse sees no repeated
+    // offering. The result is the pre-change pipeline, exactly.
+    const listings = thinCatalogue(14, 14); // fourteen activities, ONE venue
+    const result = selectWeeklyPicks(input(listings));
+    const reference = selectionWithoutDiversityStages(listings);
+    expect(result.picks.map((p) => p.item.listing.id)).toEqual(reference.map((r) => r.listing.id));
+    expect(result.diversity).toMatchObject({ sameOfferingCollapsed: 0, venueCapDeferred: 0, namedSlotsPermuted: 0 });
+  });
+
+  it('(c) NO NEW STAGE MAY THIN A WEEK — the pick count is exactly what the removal stages left', () => {
+    // ═══ THE LOAD-BEARING ONE. ═══
+    // A diversity rule that could empty or thin a week would be spending ruling 7.5's empty state
+    // — which is reserved for GENUINE SCARCITY — on a rule of ours. A deferral cannot do that, and
+    // this is what makes "cannot" structural instead of a sentence in a header.
+    //
+    // Read `weeklyPickCandidates` above before adding any stage to `selectFrom`.
+    const shapes: Array<{ name: string; listings: ListingRecord[]; over?: Partial<WeeklyPicksInput> }> = [
+      { name: 'profile #2', listings: profile2() },
+      { name: 'profile #3', listings: profile3() },
+      { name: 'probe B', listings: probeB(), over: { subscriber: { origin: { geo: HOME, label: 'K' }, radiusKm: 20, birthYears: [2021, 2018], categoryInterests: ['swimming'], consecutiveEmptyWeeks: 0 } } },
+      { name: 'probe B, starved of alternatives', listings: probeB(6), over: { subscriber: { origin: { geo: HOME, label: 'K' }, radiusKm: 20, birthYears: [2021, 2018], categoryInterests: ['swimming'], consecutiveEmptyWeeks: 0 } } },
+      { name: 'single venue', listings: thinCatalogue(14, 14) },
+      { name: 'one venue, three deep', listings: thinCatalogue(12, 3), over: { subscriber: { origin: { geo: HOME, label: 'K' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } } },
+      { name: 'exactly the floor', listings: thinCatalogue(FLOOR_PICKS, 3) },
+      { name: 'one below the floor', listings: thinCatalogue(FLOOR_PICKS - 1, 3) },
+      { name: 'a single listing', listings: thinCatalogue(1) },
+      { name: 'nothing at all', listings: [] },
+      { name: 'richmond-shaped', listings: thinCatalogue(56, 2), over: { subscriber: { origin: { geo: HOME, label: 'K' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } } },
+      { name: 'novelty removes most of a dense week', listings: profile2(), over: { excludeOccurrenceIds: new Set(['rh-tai', 'rh-dan', 'coal', 'we-am', 'br-tot']) } },
+    ];
+
+    for (const shape of shapes) {
+      const result = selectWeeklyPicks(input(shape.listings, shape.over));
+      const candidates = weeklyPickCandidates(shape.listings, shape.over);
+      // Only meaningful when the primary attempt is what shipped; the degradation ladder is a
+      // deliberate second search and is not what this invariant is about.
+      if (result.degradation !== 'none') continue;
+
+      const expected = Math.min(candidates.length, MAX_PICKS);
+      if (expected >= FLOOR_PICKS) {
+        expect(result.outcome, shape.name).toBe('picks');
+        expect(result.picks.length, shape.name).toBe(expected);
+      } else {
+        // Below the floor the week is an honest empty — but it must be empty for SCARCITY, i.e.
+        // for a reason that existed before any diversity stage ran.
+        expect(result.outcome, shape.name).toBe('empty');
+        expect(selectionWithoutDiversityStages(shape.listings, shape.over).length, shape.name).toBeLessThan(FLOOR_PICKS);
+      }
+    }
+  });
+
+  it('(d) a RICHMOND-SHAPED thin catalogue produces exactly the same picks, in the same order', () => {
+    // ~56 results spread over 28 venues at 2 apiece — the shape the sparse-municipality profile
+    // measured. No venue is over the cap, no offering repeats, and the named three are already
+    // distinct, so every new stage is a provable no-op and the digest is byte-for-byte what it
+    // was before this scope touched the file.
+    const listings = thinCatalogue(56, 2);
+    const over = { subscriber: { origin: { geo: HOME, label: 'Richmond' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } };
+    const result = selectWeeklyPicks(input(listings, over));
+    const reference = selectionWithoutDiversityStages(listings, over);
+    expect(weeklyPickCandidates(listings, over)).toHaveLength(56);
+    expect(result.picks.map((p) => p.item.listing.id)).toEqual(reference.map((r) => r.listing.id));
+    expect(result.diversity).toMatchObject({ sameOfferingCollapsed: 0, venueCapDeferred: 0, namedSlotsPermuted: 0, promoted: [] });
+  });
+
+  it('the degradation ladder still sees the POST-COLLAPSE count, so a thin week degrades', () => {
+    // A week that looks like it has four picks and is really two must degrade like two. The
+    // collapse runs before the floor check, so the retry fires on the true count.
+    const near = northOfHome(600);
+    const listings = [
+      // Four rows that are really two offerings, all inside the primary radius.
+      kidActivity({ id: 'a-am', activityName: 'Pickleball - Sun AM', venueName: 'Near Centre', geo: near, startDatetimeUtc: at(SUN, 10), endDatetimeUtc: at(SUN, 11) }),
+      kidActivity({ id: 'a-pm', activityName: 'Pickleball - Sun PM', venueName: 'Near Centre', geo: near, startDatetimeUtc: at(SUN, 13), endDatetimeUtc: at(SUN, 14) }),
+      kidActivity({ id: 'b-am', activityName: 'Open Gym - Sat AM', venueName: 'Near Centre', geo: near, startDatetimeUtc: at(SAT, 10), endDatetimeUtc: at(SAT, 11) }),
+      kidActivity({ id: 'b-pm', activityName: 'Open Gym - Sat PM', venueName: 'Near Centre', geo: near, startDatetimeUtc: at(SAT, 13), endDatetimeUtc: at(SAT, 14) }),
+      // Content only the WIDENED radius can reach, so the retry has something to find.
+      ...Array.from({ length: 5 }, (_, i) =>
+        kidActivity({
+          id: `far-${i}`,
+          activityName: FILLER_NAMES[(i + 5) % FILLER_NAMES.length],
+          venueName: `Far Venue ${i}`,
+          geo: northOfHome(13_000 + i * 600),
+        })
+      ),
+    ];
+    const result = selectWeeklyPicks(input(listings));
+    // Two offerings survive the collapse — below FLOOR_PICKS — so the ladder ran rather than
+    // shipping a two-pick week dressed as four.
+    expect(result.diversity.sameOfferingCollapsed).toBeGreaterThanOrEqual(2);
+    expect(result.retried).toBe(true);
+    expect(result.degradation).toBe('widened');
+    expect(result.picks.length).toBeGreaterThanOrEqual(FLOOR_PICKS);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T9 — the instrument. The cost of the tradeoff is measured, not assumed small.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T9 — diversity telemetry on the result payload', () => {
+  it('reports every diversity action on the profile #2 fixture, with the deltas it cost', () => {
+    const result = selectWeeklyPicks(input(profile2()));
+
+    // ONE offering collapsed: West End's second Pickleball sitting.
+    expect(result.diversity.sameOfferingCollapsed).toBe(1);
+    // ONE pick deferred by the venue cap: Britannia's third card, which a filler replaced.
+    expect(result.diversity.venueCapDeferred).toBe(1);
+    // ONE named slot permuted: the second Roundhouse card gave up its named slot to the
+    // best-ranked pick at a place not yet named.
+    expect(result.diversity.namedSlotsPermuted).toBe(1);
+    expect(result.diversity.promoted).toHaveLength(1);
+
+    const [promotion] = result.diversity.promoted;
+    expect(promotion.occurrenceId).toBe('br-les');
+    expect(promotion.displacedOccurrenceId).toBe('rh-tai');
+    expect(promotion.toIndex).toBe(1);
+    expect(promotion.fromIndex).toBe(3);
+    // It reached two places deeper into the ten…
+    expect(promotion.rankDelta).toBe(2);
+    // …and cost about 1.8 km: the Britannia card promoted into the named block is 2.4 km out and
+    // the second Roundhouse card it displaced is 0.6 km.
+    // THIS IS THE NUMBER THE WHOLE TRADEOFF TURNS ON, which is why it is reported per promotion
+    // rather than averaged away. There is deliberately no second distance ceiling guarding it —
+    // the subscriber's radius already bounds it, and a second ceiling would be a filter wearing a
+    // preference's clothes.
+    expect(promotion.distanceDeltaKm).toBeCloseTo(1.8, 1);
+  });
+
+  it('is DERIVED from the run that produced the picks — every id it names is one that shipped', () => {
+    // A summary that re-derives its numbers by running the rules a second time is a second
+    // implementation that can disagree with the first. Pinned from the outside: the promoted card
+    // is in the named block, the displaced card is still in the ten but is no longer named.
+    const result = selectWeeklyPicks(input(profile2()));
+    const shipped = result.picks.map((p) => p.item.listing.id);
+    for (const promotion of result.diversity.promoted) {
+      expect(shipped).toContain(promotion.occurrenceId);
+      expect(shipped).toContain(promotion.displacedOccurrenceId);
+      expect(shipped.indexOf(promotion.occurrenceId)).toBe(promotion.toIndex);
+      expect(shipped.indexOf(promotion.displacedOccurrenceId)).toBe(promotion.fromIndex);
+      expect(result.picks[promotion.toIndex].linkOrigin).toBe('direct');
+      expect(result.picks[promotion.fromIndex].linkOrigin).toBe('hub');
+    }
+  });
+
+  it('is all zeroes when nothing had to be done, including on an EMPTY week', () => {
+    const quiet = selectWeeklyPicks(input(thinCatalogue(56, 2), { subscriber: { origin: { geo: HOME, label: 'R' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } }));
+    expect(quiet.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, namedSlotsPermuted: 0, promoted: [] });
+
+    // An empty week still carries the summary, describing the attempt that produced the emptiness
+    // — a caller reading `diversity` must never have to branch on `outcome` first.
+    const empty = selectWeeklyPicks(input([]));
+    expect(empty.outcome).toBe('empty');
+    expect(empty.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, namedSlotsPermuted: 0, promoted: [] });
+  });
+
+  it('reports a null distance delta rather than a zero when a card is un-geocoded', () => {
+    // An absent coordinate is the ABSENCE of a fact, not a distance of zero — the same rule this
+    // codebase applies to an unnamed venue. Averaging a fabricated zero into the distribution the
+    // constant is retuned against would be the quiet kind of wrong.
+    const before = selectionOf(['A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']).map((item, i) =>
+      i === 3 ? { ...item, distanceKm: null } : item
+    );
+    const { promoted } = spreadNamedSlotVenues(before, new Set(), DIRECT_LINK_PICKS);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0].distanceDeltaKm).toBeNull();
+  });
+
+  it('writes NOTHING anywhere — this is a pure function returning a value', () => {
+    // No store, no log, no schema change. The caller decides what to keep; persistence, if it is
+    // ever wanted, is an Operator decision routed separately and is not assumed here.
+    const listings = profile2();
+    const snapshot = JSON.stringify(listings);
+    const a = selectWeeklyPicks(input(listings));
+    const b = selectWeeklyPicks(input(listings));
+    expect(JSON.stringify(listings)).toBe(snapshot); // the catalogue was not mutated
+    expect(a.diversity).toEqual(b.diversity); // and the run is reproducible
+    expect(MAX_PICKS_PER_VENUE).toBe(2); // the approved decision: 2-of-10, not the stricter 1-of-10
+  });
+});
