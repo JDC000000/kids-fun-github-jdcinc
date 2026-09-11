@@ -98,6 +98,16 @@ export default function NotFound() {
                 Search for something instead
               </h2>
               <form className="kf-nf__search" action="/search" method="get" role="search">
+                {/* NO `aria-label` ON THE INPUT, deliberately — and the two sibling search forms
+                    (app/page.tsx, SearchBar.tsx) both have one. An aria-label OVERRIDES the
+                    associated <label> in the accessible-name computation, so those fields are
+                    announced as "Search kids' activities across Metro Vancouver" while the words
+                    printed beside them say "What are you looking for?". That is a WCAG 2.5.3
+                    (Label in Name) mismatch and it breaks voice control outright: "click what are
+                    you looking for" matches nothing. The visible label IS the accessible name
+                    here; `role="search"` on the form supplies the context the aria-label was
+                    reaching for. (The other two are pre-existing and out of this change's scope —
+                    noted so the difference reads as a decision, not an omission.) */}
                 <label className="kf-nf__search-label" htmlFor="kf-nf-q">
                   What are you looking for?
                 </label>
@@ -110,7 +120,6 @@ export default function NotFound() {
                     placeholder="family swim, storytime, soft play&hellip;"
                     autoComplete="off"
                     enterKeyHint="search"
-                    aria-label="Search kids' activities across Metro Vancouver"
                   />
                   <Button type="submit" variant="primary" className="kf-nf__search-btn">
                     Search

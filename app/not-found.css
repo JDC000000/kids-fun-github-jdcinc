@@ -21,10 +21,10 @@
 
 /* ── The statement ─────────────────────────────────────────────────────────── */
 
-/* Same mark /search's empty state uses. Decorative and aria-hidden: the heading says
- * everything this says, and an unlabelled ring read aloud is noise. */
+/* Same mark, same 30px, as `.kf-empty__glyph` on /search. Decorative and aria-hidden: the
+ * heading says everything this says, and an unlabelled ring read aloud is noise. */
 .kf-nf__glyph {
-  font-size: 34px;
+  font-size: 30px;
   line-height: 1;
   color: var(--ink-muted);
   margin-bottom: var(--kf-space-3);
@@ -144,9 +144,22 @@
   font-size: 14px;
 }
 
+/* ═══ NOT `--anchor`, WHICH IS THE TRAP design-tokens.css WARNS ABOUT ═══
+ * This link was written as `color: var(--anchor)` — the obvious choice, and wrong. `--anchor`
+ * is an anchor SURFACE role, not a link colour: in dark mode it resolves to
+ * --kf-neutral-1000 (#0e110e, the near-black fill behind the nav's "Sign in" pill), which
+ * against the dark --surface (#183b24) is about 1.4:1. The link was very nearly invisible in
+ * dark mode, and — exactly as the token file predicts — the light-mode render looked correct,
+ * so nothing about the declaration read as a bug.
+ *
+ * `--ink` is the semantic pair that flips WITH the surface, so it is legible in both schemes
+ * by construction. Underlined because ink-coloured text needs the underline to still read as
+ * a link. (`--leaf-hover`, which home.css uses for its in-content links, was measured and
+ * rejected: 2.8:1 on warm paper and 4.0:1 on the dark surface — under AA in BOTH schemes.) */
 .kf-nf__home a {
-  color: var(--anchor);
+  color: var(--ink);
   font-weight: 600;
+  text-decoration: underline;
   text-underline-offset: 3px;
 }
 
@@ -160,5 +173,11 @@
 
   .kf-nf__title {
     font-size: 28px;
+  }
+
+  /* Hold the field to the same measure as the body copy above it. Left to stretch, the input
+     runs the full width of the widened artboard — a ~1000px text field for a two-word query. */
+  .kf-nf__search-row {
+    max-width: 34rem;
   }
 }
