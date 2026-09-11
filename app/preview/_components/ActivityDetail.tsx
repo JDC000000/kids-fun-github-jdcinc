@@ -447,8 +447,21 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
           ) : (
             <>No official source listed.{' '}</>
           )}
-          {meta.label} · {formatChecked(activity.lastCheckedIso)} ·{' '}
-          {confidenceSentence(activity.confidence)}
+          {meta.label} · {formatChecked(activity.lastCheckedIso)}
+          {/* ═══ NO SOURCE ⇒ NO SENTENCE ABOUT "THE OFFICIAL SOURCE" ═══
+              Three of confidenceSentence()'s four outputs name "the official source"
+              ("confirmed directly by the official source", "check the official source before you
+              rely on it"). `confidence` and `sourceUrl` are set independently — mapConfidence()
+              reads confidence_label, the source name comes from readSourceUrl() — so a listing
+              with no source can carry any tier, and this line could read "No official source
+              listed. … check the official source before you rely on it." A parent cannot act on
+              that, and the two halves contradict each other in the same breath.
+
+              So the sentence LEAVES with the source, separator and all — the same rule the line
+              above already follows: where there is no source, we make no claim about one. What
+              stays is what we actually hold without one: the status and the last check. With a
+              source present this is byte-for-byte the line it has always been. */}
+          {activity.sourceName ? <> · {confidenceSentence(activity.confidence)}</> : null}
         </p>
         {/* The "View official source" and "Open in maps" BUTTONS that used to sit here were
             DUPLICATES — same hrefs as the action-bar buttons at the foot of the page, different

@@ -116,12 +116,23 @@ describe('🔴 no source STATES the absence — Jon\'s copy, and it is a contrac
     expect(html).toMatch(/No official source listed\.\s*Confirmed/);
   });
 
-  it('keeps the three unrelated facts that share that sentence', () => {
-    // Status, freshness and confidence are things we DO hold. Deleting them alongside the
+  it('keeps the facts that do not depend on a source', () => {
+    // Status and freshness are things we DO hold without a source. Deleting them alongside the
     // source would be a much bigger loss than the defect being fixed.
     expect(html).toContain('Confirmed');
     expect(html).toContain('Checked');
     expect(html).toContain('Source &amp; freshness');
+  });
+
+  it('does not undo itself one clause later by naming "the official source" anyway', () => {
+    // The confidence sentence used to render here regardless: three of its four outputs name
+    // "the official source", so this paragraph could read "No official source listed. … check
+    // the official source before you rely on it." Confidence is not a fact we hold WITHOUT a
+    // source — it is a claim ABOUT one — so it leaves with the source claim. Tier-by-tier
+    // coverage of the same rule lives in tests/ui/confidence-sentence.test.tsx.
+    expect(html).not.toContain('the official source');
+    expect(html).not.toContain('Verified —');
+    expect(html).not.toContain('Not yet verified');
   });
 
   it('never opens the line on an orphaned separator', () => {
