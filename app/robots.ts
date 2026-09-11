@@ -18,6 +18,13 @@
 //
 // /admin is gated and 404s for un-gated callers, and /api returns JSON. Neither belongs in an
 // index and neither should be spent crawl budget on.
+//
+// /preview is the interim mobile fixture/demo shell (app/preview/README.md) — a legitimate,
+// intentionally public surface, NOT a secret leak (it resolves the same live search/detail data
+// as the canonical /search and /activity/[id] routes, and its own detail page already sets
+// <link rel=canonical> AT /activity/[id] so it never competes for that content). Disallowing it
+// here is pure crawl-budget/duplicate-content hygiene, the same reasoning as /admin and /api
+// above — it changes nothing about who can reach the page, only whether search engines bother to.
 import type { MetadataRoute } from 'next';
 
 /** The production origin. Deliberately a literal: a sitemap pointing at the wrong host is worse
@@ -30,7 +37,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/admin', '/api', '/u/', '/s/'],
+        disallow: ['/admin', '/api', '/u/', '/s/', '/preview'],
       },
     ],
     sitemap: `${ORIGIN}/sitemap.xml`,
