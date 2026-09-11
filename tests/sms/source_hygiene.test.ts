@@ -44,9 +44,12 @@ import { describe, expect, it } from 'vitest';
  * effect of `readFileSync`, so nobody later "fixes" the ENOENT with a try/catch and quietly
  * removes the anchor.
  *
- * ONE TURTLE REMAINS, AND IT IS NAMED RATHER THAN PAPERED OVER: this file cannot detect its own
- * deletion, because the detector goes with it. The anchor for THAT is external — the branch and
- * review SHAs recorded outside the repo.
+ * AND THE LAST TURTLE IS CLOSED BY A SIBLING, not by leaving the repo. This file cannot detect its
+ * own deletion — the detector goes with it — but `substitution_table.test.ts` asserts this file
+ * exists, and this manifest lists that one, so the two anchor each other. An earlier version of
+ * this comment concluded the anchor had to be external; that was true of SELF-detection and wrong
+ * about the problem, and review caught it. The external anchor (branch and review SHAs) remains
+ * the honest backstop for both files disappearing at once, which is a far less likely accident.
  */
 const FILES = [
   'lib/sms/message.ts',
