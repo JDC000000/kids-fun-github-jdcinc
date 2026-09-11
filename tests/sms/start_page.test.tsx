@@ -44,7 +44,7 @@ describe("Jon's copy, verbatim", () => {
       'Fun activities for you and your kids delivered by SMS once per week.'
     );
     expect(START_CTA).toBe(
-      "Enter your postal code, kids ages, activity preferences and tel number. We'll do the rest"
+      "Enter your postal code, your kids' ages, what they are into and your mobile number. We will do the rest."
     );
   });
 });

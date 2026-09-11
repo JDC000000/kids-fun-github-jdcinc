@@ -667,7 +667,7 @@ export const PREFS_UNKNOWN_TOKEN_BODY =
  * the support contact as its own paragraph directly beneath this one, so the removed clause was a
  * lead-in to something still on the page, not the only route to it.
  */
-export const ACTIVITY_GONE_BODY = 'That activity has been cancelled. Sorry about that.';
+export const ACTIVITY_GONE_BODY = 'That activity is not listed any more. Sorry about that.';
 
 /**
  * "Let us know if you have any other questions" needs somewhere to be let known. It points at the

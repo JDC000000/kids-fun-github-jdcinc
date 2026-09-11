@@ -160,9 +160,30 @@ describe('the welcome message (PRD §2.6)', () => {
       childAges: [5],
       preferencesUrl: 'https://kidsfun.example/u/8fJ2q',
     });
-    expect(noArea.body).toContain("You're in! Your weekly picks, ages 5, start Friday");
+    expect(noArea.body).toContain("You're in! Your weekly picks, age 5, start Friday");
     expect(noArea.body).not.toContain('null');
     expect(noArea.body).not.toContain('for ,');
+  });
+
+  it('🔴 says "age" for an only child and "ages" for more than one', () => {
+    // Regression guard. This shipped reading "ages 5" to every one-child family — the majority of
+    // subscribers — in the one message whose whole job is to prove we recorded their details
+    // correctly. Nothing caught it because the only assertion that touched the clause happened to
+    // use a single child and pinned the wrong wording as expected, so the bug was written into the
+    // test. Both branches are asserted here, and the plural is asserted in the negative too, so
+    // the singular case cannot be "fixed" back by loosening the match.
+    const build = (childAges: readonly number[]) =>
+      renderWelcomeMessage({
+        areaLabel: 'East Van',
+        childAges,
+        preferencesUrl: 'https://kidsfun.example/u/8fJ2q',
+      }).body;
+
+    expect(build([5])).toContain('for East Van, age 5, start Friday');
+    expect(build([5])).not.toContain('ages');
+
+    expect(build([5, 8])).toContain('for East Van, ages 5, 8, start Friday');
+    expect(build([5, 8, 11])).toContain('for East Van, ages 5, 8, 11, start Friday');
   });
 
   it('drops the ages clause independently', () => {

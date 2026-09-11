@@ -306,8 +306,8 @@ export default function TermsPage() {
             Questions about these Terms? Email us at{' '}
             <strong>
               <a href="mailto:joncartwright00@gmail.com">joncartwright00@gmail.com</a>
-            </strong>{' '}
-            <em>(interim contact — this will move to a dedicated address once a domain is registered).</em>
+            </strong>
+            .
           </p>
         </main>
       </div>

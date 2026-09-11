@@ -883,7 +883,11 @@ export interface WelcomeMessageInput {
  */
 export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessage {
   const area = input.areaLabel ? ` for ${input.areaLabel}` : '';
-  const ages = input.childAges.length > 0 ? `, ages ${input.childAges.join(', ')},` : '';
+  // "age 5" for an only child, "ages 5, 8" for more than one. The clause echoes back what the
+  // parent typed, so getting their own family's number wrong is exactly the kind of detail that
+  // undermines the confirmation it exists to provide.
+  const ageLabel = input.childAges.length === 1 ? 'age' : 'ages';
+  const ages = input.childAges.length > 0 ? `, ${ageLabel} ${input.childAges.join(', ')},` : '';
   return render(
     `${BRAND} You're in! Your weekly picks${area}${ages} start Friday ~4pm.\n` +
       `Manage anytime: ${input.preferencesUrl}\n${STOP_LINE}`

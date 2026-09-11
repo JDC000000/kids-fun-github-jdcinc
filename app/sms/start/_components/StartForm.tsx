@@ -12,10 +12,11 @@
 // refers to. This page is a different PRESENTATION of one signup, not a second signup.
 //
 // ── WHAT IS GENUINELY DIFFERENT ─────────────────────────────────────────────────────────
-// Field ORDER follows Jon's own call to action — "postal code, kids ages, activity preferences and
-// tel number" — rather than the existing form's phone-first order. That also preserves his earlier
-// ruling that the coverage check fires BEFORE consent: postal is first, the consent box is last, so
-// an out-of-area parent is told so before being asked to agree to anything.
+// Field ORDER follows Jon's own call to action — "postal code, your kids' ages, what they are into
+// and your mobile number" — rather than the existing form's phone-first order. The CTA was reworded
+// on 2026-09-11; the ORDER it names is unchanged, which is why only the quote moved here. That also
+// preserves his earlier ruling that the coverage check fires BEFORE consent: postal is first, the
+// consent box is last, so an out-of-area parent is told so before being asked to agree to anything.
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {

@@ -25,6 +25,13 @@
 export const START_HEADING =
   'Fun activities for you and your kids delivered by SMS once per week.';
 
-/** Jon, 2026-08-28, verbatim — including the missing full stop, which is his. */
+/**
+ * Jon, 2026-09-11, verbatim — replacing his 2026-08-28 wording after a copywriter audit.
+ *
+ * Three changes, all his: "kids ages" gains its possessive apostrophe, "activity preferences and
+ * tel number" becomes the spoken-register "what they are into and your mobile number", and the
+ * sentence now ends with a full stop. The missing full stop was previously preserved BECAUSE it
+ * was his; it is gone now for the same reason, not because a reviewer tidied it.
+ */
 export const START_CTA =
-  "Enter your postal code, kids ages, activity preferences and tel number. We'll do the rest";
+  "Enter your postal code, your kids' ages, what they are into and your mobile number. We will do the rest.";

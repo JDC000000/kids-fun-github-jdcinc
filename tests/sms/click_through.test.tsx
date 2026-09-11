@@ -507,8 +507,9 @@ describe('the interstitial the "gone" outcome redirects to', () => {
   it('🔴 still offers a route to support — now the ONLY one, since the copy dropped its lead-in', () => {
     // This assertion mattered before and matters MORE now. The old copy said "Let us know if you
     // have any other questions", so the page carried its own pointer to support; the 2026-08-28
-    // rewrite ("That activity has been cancelled. Sorry about that.") removed it. This separately
-    // rendered paragraph is therefore the only remaining way a parent on this page reaches help.
+    // rewrite removed it, and the 2026-09-11 one ("That activity is not listed any more. Sorry
+    // about that.") kept it removed. This separately rendered paragraph is therefore the only
+    // remaining way a parent on this page reaches help.
     //
     // Asserted against the RENDERED page rather than a copy constant, because that is the only
     // form of this check that means anything — see the note in signup_copy.test.ts about an

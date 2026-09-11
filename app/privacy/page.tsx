@@ -319,11 +319,8 @@ export default function PrivacyPage() {
             Questions or privacy concerns? Contact us at{' '}
             <strong>
               <a href="mailto:joncartwright00@gmail.com">joncartwright00@gmail.com</a>
-            </strong>{' '}
-            <em>
-              (interim contact — will move to a dedicated <code>privacy@</code> address once a domain is
-              registered).
-            </em>
+            </strong>
+            .
           </p>
           <p>
             If you have a concern about how we handle your personal information and we haven&apos;t

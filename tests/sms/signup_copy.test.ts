@@ -135,18 +135,24 @@ describe('the CASL / double-opt-in copy (PRD §1.4)', () => {
 
 describe('the "activity gone" interstitial (PRD §8 Q3)', () => {
   it('is the approved sentence, EXACTLY', () => {
-    // Replaced wholesale on 2026-08-28. The previous assertion guarded Jon's own typed words; this
-    // guards the Operator's words written under his explicit advance delegation ("YOU WRTIE THE ONE
-    // LINE - I APPROVE YOUR WORDS"). Different provenance, same rule: not a reviewer's to polish.
-    expect(ACTIVITY_GONE_BODY).toBe('That activity has been cancelled. Sorry about that.');
+    // Replaced again on 2026-09-11, on Jon's instruction after a copywriter audit. Same rule as
+    // every prior revision of this line: the words move when the author moves them, and a reviewer
+    // who merely dislikes them does not get to. Provenance of the current sentence is his.
+    expect(ACTIVITY_GONE_BODY).toBe('That activity is not listed any more. Sorry about that.');
   });
 
-  it('spells it "cancelled", like every other consumer surface and the status value itself', () => {
-    // Survives the rewrite. The detail page renders "Cancelled" / "This occurrence was cancelled.",
-    // terms says "cancelled", the CSS tokens are --kf-cancelled-*, and the occurrence status in the
-    // database is the string 'cancelled'.
-    expect(ACTIVITY_GONE_BODY).toContain('cancelled');
-    expect(ACTIVITY_GONE_BODY).not.toMatch(/\bcanceled\b/);
+  it('🔴 does NOT claim the activity was cancelled, because we do not know that', () => {
+    // This assertion inverts its predecessor, deliberately. The old one pinned the Canadian
+    // spelling of "cancelled" — correct as spelling, but it guarded a word that asserted a FACT
+    // the redirect cannot establish. A listing reaches this interstitial when it is expired,
+    // delisted, past-date or genuinely cancelled, and the 'gone' outcome does not distinguish
+    // them. "Not listed any more" is true in all four cases; "cancelled" is true in one.
+    //
+    // The spelling rule is untouched everywhere it still applies: the detail page renders
+    // "Cancelled" / "This occurrence was cancelled.", the CSS tokens are --kf-cancelled-*, and the
+    // occurrence status in the database is the string 'cancelled'. This sentence simply no longer
+    // makes the claim, so it no longer needs to spell it.
+    expect(ACTIVITY_GONE_BODY).not.toMatch(/cancell?ed/i);
   });
 
   it('🔴 no longer claims to carry the OLD sentence\'s shape', () => {
