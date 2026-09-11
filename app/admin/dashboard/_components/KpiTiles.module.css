@@ -67,3 +67,19 @@
 .badgeRow {
   margin-top: var(--kf-space-1);
 }
+
+/* An un-instrumented tile: the "Not yet instrumented" stand-in sits where the big
+ * number would be, but deliberately reads as prose, not data — smaller, muted and
+ * non-tabular, so it can never be skimmed as a measured value. */
+.pendingValue {
+  font: 600 15px/1.25 var(--kf-font-ui);
+  color: var(--kf-ink-muted);
+  /* no --kf-font-feature here: this is not a number */
+}
+
+.pendingEvent {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; /* matches sibling admin modules */
+  font-size: 11px;
+  color: var(--kf-ink-secondary);
+  word-break: break-word;
+}

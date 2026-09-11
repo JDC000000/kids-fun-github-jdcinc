@@ -10,8 +10,15 @@
 // `_`-prefixed, non-route folder) so the T33 data-health and T34 admin-console
 // sections can follow the same modular pattern instead of everything piling into
 // page.tsx. All derived numbers use the pure, unit-tested helpers from kpi.ts.
+//
+// HONESTY RULE (see `pendingEvents` below): several §9 events have a capture
+// layer but no emit call site yet — their rollups are structurally 0, not a
+// measured 0. Those tiles say so instead of printing a number the dashboard
+// cannot actually stand behind.
 import { Badge, Card } from '@/components/ui';
 import { formatCount } from '@/lib/admin/format';
+import { catalogEntry } from '@/lib/analytics/catalog';
+import type { AnalyticsEventType } from '@/lib/analytics/types';
 import {
   SOURCE_CTR_TARGET_PCT,
   perDay,
@@ -23,6 +30,23 @@ import {
 import styles from './KpiTiles.module.css';
 
 const EM_DASH = '—';
+
+/** Shown in place of a number when nothing in the product emits the event yet. */
+const NOT_INSTRUMENTED = 'Not yet instrumented';
+
+/**
+ * Of the events a tile's number is computed from, those with no emit call site
+ * on the real product path yet.
+ *
+ * The answer is read from EVENT_CATALOG (`wiring === 'wired'`) rather than
+ * hard-coded here, so the moment an owning stream wires its emit and flips its
+ * catalog entry to 'wired', the tile goes back to rendering a real number with
+ * no edit to this file. An unknown/deferred type is treated as un-wired, which
+ * is the safe direction: we under-claim rather than over-claim.
+ */
+function pendingEvents(...types: AnalyticsEventType[]): AnalyticsEventType[] {
+  return types.filter((t) => catalogEntry(t)?.wiring !== 'wired');
+}
 
 /** A percentage value → "42%", or an em-dash when null (not enough data). */
 function formatPct(value: number | null): string {
@@ -39,21 +63,45 @@ interface KpiTileProps {
   value: string;
   sub?: string;
   badge?: { text: string; variant: 'confirmed' | 'info' | 'expected' | 'neutral' };
+  /**
+   * Events feeding this tile that nothing emits yet. When non-empty the tile
+   * renders NOT_INSTRUMENTED (and names the missing events) instead of `value`
+   * and `badge` — a structural zero must not be readable as real engagement.
+   */
+  pending?: readonly AnalyticsEventType[];
 }
 
 /** One KPI tile: a Card surface with a label, a big tabular value, an optional
  *  target/status Badge and an optional sub-line. */
-function KpiTile({ label, value, sub, badge }: KpiTileProps) {
+function KpiTile({ label, value, sub, badge, pending }: KpiTileProps) {
+  const uninstrumented = pending != null && pending.length > 0;
+
   return (
     <Card className={styles.tile}>
       <div className={styles.label}>{label}</div>
-      <div className={styles.value}>{value}</div>
-      {badge && (
-        <div className={styles.badgeRow}>
-          <Badge variant={badge.variant}>{badge.text}</Badge>
-        </div>
+      {uninstrumented ? (
+        <>
+          <div className={styles.pendingValue}>{NOT_INSTRUMENTED}</div>
+          <div className={styles.badgeRow}>
+            <Badge variant="expected">no emit source yet</Badge>
+          </div>
+          <div className={styles.sub}>
+            Nothing in the product emits{' '}
+            <span className={styles.pendingEvent}>{pending.join(' / ')}</span> yet, so this is a
+            structural zero, not a measured one.
+          </div>
+        </>
+      ) : (
+        <>
+          <div className={styles.value}>{value}</div>
+          {badge && (
+            <div className={styles.badgeRow}>
+              <Badge variant={badge.variant}>{badge.text}</Badge>
+            </div>
+          )}
+          {sub && <div className={styles.sub}>{sub}</div>}
+        </>
       )}
-      {sub && <div className={styles.sub}>{sub}</div>}
     </Card>
   );
 }
@@ -83,6 +131,12 @@ export function KpiTiles({ kpis }: { kpis: ProductHealthKpis }) {
   const zeroRate = zeroResultPct(engagement.zeroResultSearches, engagement.searchesWithResults);
   const signedInShare = signedInSharePct(accountValue.signedInUsers, activeUsers.mau);
 
+  // Resolved once per render from the catalog; see pendingEvents() above.
+  const pendingOutbound = pendingEvents('outbound_source_click');
+  const pendingSignIn = pendingEvents('account_signed_in');
+  const pendingSavedSearch = pendingEvents('saved_search_created');
+  const pendingEmailOptIn = pendingEvents('weekly_email_opt_in');
+
   return (
     <section className={styles.wrap} aria-label="Product-health KPIs">
       <KpiGroup
@@ -103,12 +157,14 @@ export function KpiTiles({ kpis }: { kpis: ProductHealthKpis }) {
           label="Outbound source clicks"
           value={formatPerDay(perDay(engagement.outboundClicks, windows.engagementDays))}
           sub={`${formatCount(engagement.outboundClicks)} in ${windows.engagementDays}d`}
+          pending={pendingOutbound}
         />
         <KpiTile
           label="Source click-through rate"
           value={formatPct(ctr)}
           badge={ctrBadge(ctr)}
           sub={`${formatCount(engagement.outboundClicks)} clicks ÷ ${formatCount(engagement.listingViews)} views`}
+          pending={pendingOutbound}
         />
         <KpiTile
           label="Zero-result search rate"
@@ -137,6 +193,7 @@ export function KpiTiles({ kpis }: { kpis: ProductHealthKpis }) {
               : { text: `${signedInShare}% of MAU`, variant: 'info' }
           }
           sub="distinct accounts that signed in"
+          pending={pendingSignIn}
         />
       </KpiGroup>
 
@@ -148,16 +205,19 @@ export function KpiTiles({ kpis }: { kpis: ProductHealthKpis }) {
           label="Saved searches created"
           value={formatCount(accountValue.savedSearches)}
           sub="saved_search_created events"
+          pending={pendingSavedSearch}
         />
         <KpiTile
           label="Weekly-email opt-ins"
           value={formatCount(accountValue.emailOptIns)}
           sub="weekly_email_opt_in (opted-in)"
+          pending={pendingEmailOptIn}
         />
         <KpiTile
           label="Sign-ins"
           value={formatCount(accountValue.signInEvents)}
           sub="account_signed_in events"
+          pending={pendingSignIn}
         />
       </KpiGroup>
     </section>
