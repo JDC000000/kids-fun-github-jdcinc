@@ -1,0 +1,164 @@
+/* app/not-found.css — the branded 404 (app/not-found.tsx).
+ *
+ * Co-located with its page and written in tokens only, the same shape as
+ * app/activity-unavailable/activity-unavailable.css. Mobile-first: it sits inside the shared
+ * `.kf` / `.kf-page` / `.kf-app` phone artboard, so the local `--canvas` / `--ink` / `--r-card`
+ * aliases defined on `.kf` in app/preview/preview.css are in scope here — the same ones
+ * search.css and home.css consume. Nothing in this file introduces a colour, a radius or a
+ * spacing value of its own.
+ *
+ * The glyph / eyebrow / title / body rules below are a deliberate MIRROR of `.kf-empty` and
+ * `.kf-browse__empty-eyebrow` in app/search/search.css, with matching sizes and weights, so
+ * the two "there is nothing here" surfaces read as one idea. See app/not-found.tsx for why
+ * they are mirrored rather than imported.
+ */
+
+.kf-nf {
+  flex: 1 1 auto;
+  padding: var(--kf-space-6) var(--kf-gutter) var(--kf-space-7);
+  color: var(--ink);
+}
+
+/* ── The statement ─────────────────────────────────────────────────────────── */
+
+/* Same mark /search's empty state uses. Decorative and aria-hidden: the heading says
+ * everything this says, and an unlabelled ring read aloud is noise. */
+.kf-nf__glyph {
+  font-size: 34px;
+  line-height: 1;
+  color: var(--ink-muted);
+  margin-bottom: var(--kf-space-3);
+}
+
+.kf-nf__eyebrow {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.kf-nf__title {
+  margin: 0 0 var(--kf-space-3);
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+/* Not the danger palette, on purpose — the same reasoning as the cancelled-activity
+ * interstitial. A wrong address is a fact about a URL, not an error the reader committed. */
+.kf-nf__body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink-secondary);
+  max-width: 34rem;
+}
+
+/* ── The ways out ──────────────────────────────────────────────────────────── */
+
+.kf-nf__section {
+  margin-top: var(--kf-space-6);
+}
+
+.kf-nf__section-title {
+  margin: 0 0 var(--kf-space-3);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.kf-nf__search-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.kf-nf__search-row {
+  display: flex;
+  gap: var(--kf-space-2);
+  align-items: stretch;
+}
+
+.kf-nf__search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.kf-nf__search-btn {
+  flex: 0 0 auto;
+}
+
+/* A wrapping row of pills rather than the home page's two-column glyph tiles: this is a
+ * short list of exits, not a browse surface, and a grid of illustrated cards would make the
+ * 404 look like a landing page that was reached on purpose. */
+.kf-nf__links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--kf-space-2);
+}
+
+.kf-nf__link {
+  display: inline-flex;
+  align-items: center;
+  /* 44px, the product's standard touch target — clears WCAG 2.5.8 AA (24px) and 2.5.5 AAA.
+   * These are the only controls on the page besides the search field, and the parent
+   * tapping them has already missed once. */
+  min-height: 44px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-chip);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color var(--motion);
+}
+
+.kf-nf__link:hover {
+  border-color: var(--leaf-hover);
+}
+
+.kf-nf__link:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
+.kf-nf__home {
+  margin: var(--kf-space-6) 0 0;
+  padding-top: var(--kf-space-4);
+  border-top: 1px solid var(--hairline);
+  font-size: 14px;
+}
+
+.kf-nf__home a {
+  color: var(--anchor);
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+
+/* Once there is width, the page stops being a phone column: the artboard already widens at
+ * the shared breakpoints (preview.css), and this only relaxes the top padding to match the
+ * other routes' desktop gutters. Nothing re-flows, because nothing here is a grid. */
+@media (min-width: 768px) {
+  .kf-nf {
+    padding-top: var(--kf-space-7);
+  }
+
+  .kf-nf__title {
+    font-size: 28px;
+  }
+}
