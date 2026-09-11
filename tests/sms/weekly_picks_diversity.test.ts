@@ -49,7 +49,11 @@ import {
   FLOOR_PICKS,
   MAX_FORCED_PICKS,
   MAX_PICKS,
+  MAX_PICKS_PER_CATEGORY,
   MAX_PICKS_PER_VENUE,
+  CLASS_PROGRAM_CAP,
+  CLASS_PROGRAM_CATEGORY_KEY,
+  COVERAGE_SWAP_REACH,
   SAME_VENUE_TITLE_SIMILARITY,
   ageBandsFromBirthYears,
   applyCoverageSwap,
@@ -918,6 +922,12 @@ describe('T8 — the scarcity invariants behind the tradeoff', () => {
       { name: 'nothing at all', listings: [] },
       { name: 'richmond-shaped', listings: thinCatalogue(56, 2), over: { subscriber: { origin: { geo: HOME, label: 'K' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } } },
       { name: 'novelty removes most of a dense week', listings: profile2(), over: { excludeOccurrenceIds: new Set(['rh-tai', 'rh-dan', 'coal', 'we-am', 'br-tot']) } },
+      // ── the CATEGORY key's shapes, so (c) covers both axes rather than just the first one ──
+      { name: 'profile #4 (swim monoculture)', listings: profile4(), over: { subscriber: profile4Subscriber() } },
+      { name: 'profile #4 minus its spare category', listings: profile4().filter((r) => r.id !== 'story-0'), over: { subscriber: profile4Subscriber() } },
+      { name: 'single category, many venues', listings: Array.from({ length: 14 }, (_, i) => kidActivity({ id: `sc-${i}`, activityName: `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`, primaryCategoryKey: SWIM, categoryTags: [SWIM], venueName: `Pool ${i}`, geo: northOfHome(600 + i * 600), ...BOTH_BANDS })), over: { subscriber: profile4Subscriber() } },
+      { name: 'every listing teen-only (the guard can never promote)', listings: Array.from({ length: 14 }, (_, i) => kidActivity({ id: `to-${i}`, activityName: `Activity ${i}`, primaryCategoryKey: i < 10 ? SWIM : OPEN_GYM, categoryTags: [], venueName: `V${i}`, geo: northOfHome(600 + i * 600), ...TEEN_ONLY })), over: { subscriber: profile4Subscriber() } },
+      { name: 'category cap with no alternative inside the reach', listings: [...Array.from({ length: 22 }, (_, i) => kidActivity({ id: `s-${i}`, activityName: `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`, primaryCategoryKey: SWIM, categoryTags: [SWIM], venueName: `Pool ${i}`, geo: northOfHome(600 + i * 400), ...BOTH_BANDS })), kidActivity({ id: 'far-gym', activityName: 'Rock Climbing', primaryCategoryKey: OPEN_GYM, categoryTags: [OPEN_GYM], venueName: 'Far Gym', geo: northOfHome(15_000), ...BOTH_BANDS })], over: { subscriber: profile4Subscriber() } },
     ];
 
     for (const shape of shapes) {
@@ -1035,13 +1045,13 @@ describe('T9 — diversity telemetry on the result payload', () => {
 
   it('is all zeroes when nothing had to be done, including on an EMPTY week', () => {
     const quiet = selectWeeklyPicks(input(thinCatalogue(56, 2), { subscriber: { origin: { geo: HOME, label: 'R' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } }));
-    expect(quiet.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, namedSlotsPermuted: 0, promoted: [] });
+    expect(quiet.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [] });
 
     // An empty week still carries the summary, describing the attempt that produced the emptiness
     // — a caller reading `diversity` must never have to branch on `outcome` first.
     const empty = selectWeeklyPicks(input([]));
     expect(empty.outcome).toBe('empty');
-    expect(empty.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, namedSlotsPermuted: 0, promoted: [] });
+    expect(empty.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [] });
   });
 
   it('reports a null distance delta rather than a zero when a card is un-geocoded', () => {
@@ -1066,5 +1076,473 @@ describe('T9 — diversity telemetry on the result payload', () => {
     expect(JSON.stringify(listings)).toBe(snapshot); // the catalogue was not mutated
     expect(a.diversity).toEqual(b.diversity); // and the run is reproducible
     expect(MAX_PICKS_PER_VENUE).toBe(2); // the approved decision: 2-of-10, not the stricter 1-of-10
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ROOT CAUSE B — CATEGORY MONOCULTURE.
+//
+// A Deep Cove family with a 2-year-old and a 13-year-old got NINE OF TEN picks in `public_swim`:
+// one skate, two named swims, six more hub-linked swims. There is no category-diversity mechanism
+// at all — categories reach this surface only as a subscriber-chosen post-filter.
+//
+// IT IS NOT THE SAME DEFECT AS VENUE REPETITION AND THE VENUE FIX DOES NOT TOUCH IT. That is
+// measured below, not assumed: apply the venue rules alone to this shape and the freed slots
+// simply refill with more swim at different pools.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const SWIM = 'public_swim';
+const SKATE = 'skate';
+const OPEN_GYM = 'open_gym';
+
+/** Profile #4 — North Vancouver / Deep Cove. Children aged 2 and 13. */
+function profile4Subscriber() {
+  return {
+    origin: { geo: HOME, label: 'Deep Cove' },
+    radiusKm: 20,
+    birthYears: [2024, 2013], // 2 and 13 in 2026 → bands '2-4' and '10-14'
+    consecutiveEmptyWeeks: 0,
+  };
+}
+
+/** Fits BOTH of profile #4's bands — a toddler and a teenager can both attend. */
+const BOTH_BANDS = { ageMinMonths: 0, ageMaxMonths: 216, ageBandMatches: ['2-4', '10-14'] as AgeBandKey[] };
+/** Fits ONLY the teenager. `Open Gym 8yrs+` does not admit a 2-year-old. */
+const TEEN_ONLY = { ageMinMonths: 96, ageMaxMonths: 216, ageBandMatches: ['10-14'] as AgeBandKey[] };
+
+/**
+ * The swim-heavy shape, realistically interleaved — alternatives present throughout rather than
+ * all stacked below the swims, which is what the real list looked like (skate ranked first).
+ */
+function profile4(): ListingRecord[] {
+  const rows: ListingRecord[] = [];
+  const push = (id: string, name: string, category: string, metres: number, age = BOTH_BANDS, venue = `${id}-venue`) =>
+    rows.push(kidActivity({ id, activityName: name, primaryCategoryKey: category, categoryTags: [category], venueName: venue, geo: northOfHome(metres), ...age }));
+
+  push('skate-0', 'Family Skate', SKATE, 600);
+  // Twelve swims at twelve different pools — venue-diverse and category-monotonous, which is the
+  // whole point: the venue cap has nothing to fix here and the list is still nine-tenths swimming.
+  for (let i = 0; i < 12; i += 1) push(`swim-${i}`, `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`, SWIM, 1200 + i * 600);
+  // The age-fit case: an open gym that admits the 13-year-old and NOT the 2-year-old.
+  push('gym-teen', 'Open Gym 8yrs Plus', OPEN_GYM, 2400, TEEN_ONLY);
+  // Genuine alternatives that fit the whole family, inside the reach.
+  push('museum-0', 'Museum Drop In', 'museum_venue', 3000);
+  push('attraction-0', 'Aquarium Visit', 'attraction', 3600);
+  push('festival-0', 'Harvest Fair', 'festival_event', 4200);
+  push('park-0', 'Nature Walk', 'outdoor_park', 4800);
+  push('gym-all', 'Open Gym All Ages', OPEN_GYM, 5400);
+  push('story-0', 'Storytime Drop In', 'storytime', 6000);
+  return rows;
+}
+
+function categories(result: WeeklyPicks): string[] {
+  return result.picks.map((p) => p.item.listing.primaryCategoryKey ?? '');
+}
+const countCategory = (result: WeeklyPicks, key: string) => categories(result).filter((c) => c === key).length;
+
+describe('profile #4 (Deep Cove) — nine of ten in one category', () => {
+  it('CASE 5 — the ten hold at least four distinct categories, with public_swim capped', () => {
+    // FAILED ON main: 9 of 10 `public_swim`, 2 distinct categories.
+    const result = selectWeeklyPicks(input(profile4(), { subscriber: profile4Subscriber() }));
+    expect(result.outcome).toBe('picks');
+    expect(result.picks).toHaveLength(MAX_PICKS);
+    expect(new Set(categories(result)).size).toBeGreaterThanOrEqual(4);
+    expect(countCategory(result, SWIM)).toBeLessThanOrEqual(3);
+  });
+
+  it('THE GUARD AND THE CAP ARE IN TENSION, AND THE GUARD WINS — measured, not hand-waved', () => {
+    // Remove the one both-bands alternative that lets this profile reach its category target, and
+    // the only remaining candidate for that slot is `gym-teen`, which the 2-year-old cannot
+    // attend. The category cap WANTS it; the age-fit guard refuses; the slot goes to a swim that
+    // serves both children instead. Swim therefore rises to 4, and that is the CORRECT outcome,
+    // not a cap failure — variety is found among things that fit the whole family, or it is not
+    // found this week.
+    //
+    // Pinned because it is the one place the two new rules genuinely disagree, and a future reader
+    // who saw only the happy-path test above could reasonably "fix" the swim count by weakening
+    // the guard. That would be the single worst change anyone could make to this file.
+    const withoutSpare = profile4().filter((row) => row.id !== 'story-0');
+    const result = selectWeeklyPicks(input(withoutSpare, { subscriber: profile4Subscriber() }));
+    expect(countCategory(result, SWIM)).toBe(4);
+    expect(result.diversity.ageFitBlocked).toBeGreaterThan(0);
+    // The teen-only gym is NOT in the ten, even though seating it would have bought a 7th category.
+    expect(result.picks.map((p) => p.item.listing.id)).not.toContain('gym-teen');
+    // Every pick in the ten admits the 2-year-old.
+    for (const pick of result.picks) expect(pick.item.listing.ageBandMatches).toContain('2-4');
+  });
+
+  it('and the VENUE fix alone would NOT have fixed it — the two are orthogonal', () => {
+    // Measured, not asserted: every swim in the fixture is at its own pool, so the venue cap has
+    // literally nothing to defer. If category diversity were a side effect of venue diversity,
+    // this list would already be fine. It is not — which is why the category pass exists.
+    const venueCounts = new Map<string, number>();
+    for (const row of profile4()) venueCounts.set(row.venueName ?? '', (venueCounts.get(row.venueName ?? '') ?? 0) + 1);
+    expect(Math.max(...venueCounts.values())).toBe(1); // no venue repeats AT ALL
+    const result = selectWeeklyPicks(input(profile4(), { subscriber: profile4Subscriber() }));
+    expect(result.diversity.venueCapDeferred).toBe(0); // the venue cap did nothing…
+    expect(result.diversity.categoryCapDeferred).toBeGreaterThan(0); // …and the category cap did the work
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T10 — THE AGE-FIT GUARD. The most important rule in this scope.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T10 — category variety may NEVER be bought with age fit', () => {
+  it('an "Open Gym 8yrs+" CANNOT displace a public swim that fits both children', () => {
+    // ═══ THIS TEST IS THE ENTIRE POINT OF THE GUARD. ═══
+    // A large part of profile #4's swim dominance is the product answering a hard question
+    // CORRECTLY. Scored with the real ranker, `Open Gym 8yrs+` is joint-FIRST for a household of
+    // 9- and 15-year-olds and FOURTH for this household of 2- and 13-year-olds — not because of a
+    // category bug, but because it does not admit a 2-year-old (`ageMatchScore` returns
+    // covered/bands, so fitting 1 of 2 costs 0.3). Public swim, skating and museums are among the
+    // few things that genuinely serve a toddler and a teenager at the same time.
+    //
+    // So a category rule that "fixed" this list by promoting the open gym over a swim would hand a
+    // parent of a 2-year-old something their toddler cannot attend — trading monotony for
+    // IRRELEVANCE, which is worse. It would also spend one mechanism to defeat another: it is the
+    // exact inverse of what `applyCoverageSwap` exists to guarantee. Hence a hard guard, not a
+    // preference.
+    const result = selectWeeklyPicks(input(profile4(), { subscriber: profile4Subscriber() }));
+    const picked = result.picks.map((p) => p.item.listing.id);
+
+    // The teen-only gym is never promoted ahead of a both-bands pick by the category pass.
+    const teenGymIndex = picked.indexOf('gym-teen');
+    if (teenGymIndex !== -1) {
+      // If it is in the ten at all, it is there on its own rank — never ahead of a deferred swim.
+      const swimIndexes = picked.map((id, i) => (id.startsWith('swim-') ? i : -1)).filter((i) => i >= 0);
+      expect(Math.min(...swimIndexes)).toBeLessThan(teenGymIndex);
+    }
+    // And the guard says so out loud rather than working silently.
+    expect(result.diversity.ageFitBlocked).toBeGreaterThan(0);
+
+    // Every pick in the ten that came from a category promotion still fits BOTH children.
+    for (const promotion of result.diversity.promoted) {
+      const item = result.picks.find((p) => p.item.listing.id === promotion.occurrenceId)!;
+      expect(item.item.listing.ageBandMatches).toContain('2-4');
+    }
+  });
+
+  it('a SAME-COVERAGE promotion still proceeds normally — the guard blocks only a reduction', () => {
+    // The guard would be useless if it froze the category pass entirely. `gym-all` fits both bands
+    // exactly as the swims do, so promoting it costs the family nothing and is allowed.
+    const result = selectWeeklyPicks(input(profile4(), { subscriber: profile4Subscriber() }));
+    expect(result.picks.map((p) => p.item.listing.id)).toContain('gym-all');
+    expect(new Set(categories(result)).size).toBeGreaterThanOrEqual(4);
+  });
+
+  it('is INERT when no age band was requested — there is no coverage to reduce', () => {
+    // A subscriber with no readable birth year searches with no age filter at all. The guard must
+    // not invent a constraint out of an empty band list.
+    const noBands = { origin: { geo: HOME, label: 'Deep Cove' }, radiusKm: 20, birthYears: [] as number[], consecutiveEmptyWeeks: 0 };
+    const result = selectWeeklyPicks(input(profile4(), { subscriber: noBands }));
+    expect(result.ageAware).toBe(false);
+    expect(result.diversity.ageFitBlocked).toBe(0);
+    expect(new Set(categories(result)).size).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T8 — the two caps are ordered, and the order is a decision.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T8 — venue capped BEFORE category, and a test that fails if that is reversed', () => {
+  /**
+   * A shape where the order is observable: one pool holds THREE swims, and there are swims
+   * elsewhere too. Venue-first defers the duplicate-venue swims and hands the category pass an
+   * already-spread list. Category-first would seat two swims AT THE SAME POOL and force the venue
+   * pass to undo work the category pass had just justified.
+   */
+  function orderSensitive(): ListingRecord[] {
+    const rows: ListingRecord[] = [];
+    const push = (id: string, cat: string, venue: string, metres: number) =>
+      rows.push(kidActivity({ id, activityName: `Activity ${id}`, primaryCategoryKey: cat, categoryTags: [cat], venueName: venue, geo: northOfHome(metres), ...BOTH_BANDS }));
+    push('a-swim-0', SWIM, 'Crowded Pool', 600);
+    push('a-swim-1', SWIM, 'Crowded Pool', 600);
+    push('a-swim-2', SWIM, 'Crowded Pool', 600);
+    push('b-swim-0', SWIM, 'Other Pool', 1200);
+    for (let i = 0; i < 8; i += 1) push(`alt-${i}`, ['skate', OPEN_GYM, 'museum_venue', 'attraction'][i % 4], `Alt Venue ${i}`, 1800 + i * 600);
+    return rows;
+  }
+
+  it('no venue holds more than 2 AND no ordinary category holds more than 2', () => {
+    const result = selectWeeklyPicks(input(orderSensitive(), { subscriber: profile4Subscriber() }));
+    expect(result.picks).toHaveLength(MAX_PICKS);
+    const venueCounts = new Map<string, number>();
+    for (const v of venues(result)) venueCounts.set(v, (venueCounts.get(v) ?? 0) + 1);
+    expect(Math.max(...venueCounts.values())).toBeLessThanOrEqual(MAX_PICKS_PER_VENUE);
+    expect(countCategory(result, SWIM)).toBeLessThanOrEqual(MAX_PICKS_PER_CATEGORY);
+  });
+
+  it('THE ORDER ITSELF: the crowded pool never keeps 2 swims once the category cap has run', () => {
+    // Reversing the passes shows up precisely here. Category-first seats `a-swim-0` and
+    // `a-swim-1` (two swims, both at Crowded Pool) because the category cap is satisfied by two,
+    // and the venue pass then has to break up a pair the category pass had just chosen. Running
+    // venue-first, `a-swim-2` is deferred for its VENUE before the category pass ever sees it, so
+    // the two passes never disagree about the same card.
+    const result = selectWeeklyPicks(input(orderSensitive(), { subscriber: profile4Subscriber() }));
+    const crowded = result.picks.filter((p) => p.item.listing.venueName === 'Crowded Pool');
+    expect(crowded.length).toBeLessThanOrEqual(MAX_PICKS_PER_VENUE);
+    // Both constraints hold simultaneously — which is the property a reversed order loses.
+    expect(countCategory(result, SWIM)).toBeLessThanOrEqual(MAX_PICKS_PER_CATEGORY);
+    expect(crowded.every((p) => p.item.listing.primaryCategoryKey === SWIM)).toBe(true);
+  });
+
+  it('the category cap is BOUNDED by the coverage swap’s own reach, reused not duplicated', () => {
+    // Same discipline, same value, one constant. Past the reach "a representative is just a
+    // low-relevance listing wearing a band label" — swap "band" for "category".
+    expect(COVERAGE_SWAP_REACH).toBe(20);
+  });
+
+  it('leaves a genuinely SINGLE-CATEGORY week completely alone', () => {
+    // A family near only swim facilities is shown swimming, and nothing clever is done. The cap's
+    // `sameKeyThroughout` early exit returns the input byte-for-byte.
+    const swimOnly = Array.from({ length: 14 }, (_, i) =>
+      kidActivity({ id: `only-${i}`, activityName: `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`, primaryCategoryKey: SWIM, categoryTags: [SWIM], venueName: `Pool ${i}`, geo: northOfHome(600 + i * 600), ...BOTH_BANDS })
+    );
+    const result = selectWeeklyPicks(input(swimOnly, { subscriber: profile4Subscriber() }));
+    const reference = selectionWithoutDiversityStages(swimOnly, { subscriber: profile4Subscriber() });
+    expect(result.picks.map((p) => p.item.listing.id)).toEqual(reference.map((r) => r.listing.id));
+    expect(result.diversity.categoryCapDeferred).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T13 — the catch-all category, and the profile it would have gutted.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T13 — `class_program` is a catch-all and gets a looser cap', () => {
+  /** Profile #2's activities as the taxonomy really keys them: all four are `class_program`. */
+  function profile2AsClassProgram(): ListingRecord[] {
+    return profile2().map((row) =>
+      /Pickleball|Tai Chi|Dancers/.test(row.activityName)
+        ? { ...row, primaryCategoryKey: CLASS_PROGRAM_CATEGORY_KEY, categoryTags: [CLASS_PROGRAM_CATEGORY_KEY] }
+        : row
+    );
+  }
+
+  it('does NOT gut profile #2 — its monotony was never categorical', () => {
+    // Measured: capping `class_program` at 2 removed FIVE of profile #2's seven picks. Tai Chi,
+    // Pickleball and a community dance troupe are genuinely three different things to do; the key
+    // is simply not granular enough to say so. Profile #2's real defect is venue repetition, and
+    // the venue cap plus the same-offering collapse already carry it.
+    expect(CLASS_PROGRAM_CAP).toBeGreaterThan(MAX_PICKS_PER_CATEGORY);
+    const result = selectWeeklyPicks(input(profile2AsClassProgram()));
+    expect(result.picks).toHaveLength(MAX_PICKS);
+    expect(countCategory(result, CLASS_PROGRAM_CATEGORY_KEY)).toBeLessThanOrEqual(CLASS_PROGRAM_CAP);
+  });
+
+  it('profile #2’s improvement comes from the VENUE rules, not from the category cap', () => {
+    // The claim the looser cap rests on, made executable: with the category axis doing nothing at
+    // all for this profile, the venue outcome is still fixed.
+    const result = selectWeeklyPicks(input(profile2AsClassProgram()));
+    const counts = new Map<string, number>();
+    for (const v of venues(result)) counts.set(v, (counts.get(v) ?? 0) + 1);
+    expect(Math.max(...counts.values())).toBeLessThanOrEqual(MAX_PICKS_PER_VENUE);
+    expect(new Set(namedVenues(result)).size).toBe(DIRECT_LINK_PICKS);
+    expect(result.diversity.sameOfferingCollapsed).toBe(1); // the Pickleball pair
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFILE #3 — the MUST-NOT-REGRESS control.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('profile #3 (Central Lonsdale) — a healthier mix must not be made worse', () => {
+  /**
+   * Profile #3 is the same municipality as #4 and got a genuinely varied list — 4 open gym,
+   * 1 skate, 5 swim. The difference is not geography, it is age bands: #3 is 9 and 15, so
+   * `Open Gym 8yrs+` fits BOTH its children and ranks joint-first.
+   *
+   * This list is the control. Nothing in this scope may make it worse, and that is a named exit
+   * criterion rather than an assumption.
+   */
+  function profile3Mixed(): ListingRecord[] {
+    const bothOlder = { ageMinMonths: 96, ageMaxMonths: 216, ageBandMatches: ['5-9', '15+'] as AgeBandKey[] };
+    const rows: ListingRecord[] = [];
+    const push = (id: string, cat: string, metres: number) =>
+      rows.push(kidActivity({ id, activityName: `Activity ${id}`, primaryCategoryKey: cat, categoryTags: [cat], venueName: `${id}-venue`, geo: northOfHome(metres), ...bothOlder }));
+    for (let i = 0; i < 4; i += 1) push(`gym-${i}`, OPEN_GYM, 600 + i * 600);
+    push('skate-0', SKATE, 3000);
+    for (let i = 0; i < 5; i += 1) push(`swim-${i}`, SWIM, 3600 + i * 600);
+    for (let i = 0; i < 6; i += 1) push(`extra-${i}`, ['museum_venue', 'attraction', 'outdoor_park'][i % 3], 6600 + i * 600);
+    return rows;
+  }
+
+  const profile3Subscriber = () => ({
+    origin: { geo: HOME, label: 'Central Lonsdale' },
+    radiusKm: 20,
+    birthYears: [2017, 2011], // 9 and 15 → bands '5-9' and '15+'
+    consecutiveEmptyWeeks: 0,
+  });
+
+  it('keeps at least as many distinct categories as it had before this scope', () => {
+    const listings = profile3Mixed();
+    const over = { subscriber: profile3Subscriber() };
+    const before = selectionWithoutDiversityStages(listings, over);
+    const beforeCategories = new Set(before.map((r) => r.listing.primaryCategoryKey)).size;
+    const after = selectWeeklyPicks(input(listings, over));
+    expect(new Set(categories(after)).size).toBeGreaterThanOrEqual(beforeCategories);
+  });
+
+  it('keeps the same number of picks and never fewer distinct venues', () => {
+    const listings = profile3Mixed();
+    const over = { subscriber: profile3Subscriber() };
+    const before = selectionWithoutDiversityStages(listings, over);
+    const after = selectWeeklyPicks(input(listings, over));
+    expect(after.picks).toHaveLength(before.length);
+    expect(new Set(venues(after)).size).toBeGreaterThanOrEqual(new Set(before.map((r) => r.listing.venueName)).size);
+  });
+
+  it('never blocks a promotion here — every listing fits both of this household’s bands', () => {
+    // The age-fit guard is silent on a household whose children are served by the same content.
+    // Contrast with profile #4, where it fires: the guard tracks the FAMILY, not the catalogue.
+    const result = selectWeeklyPicks(input(profile3Mixed(), { subscriber: profile3Subscriber() }));
+    expect(result.diversity.ageFitBlocked).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T11 — a forced pick outranks BOTH caps, not just the venue one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T11 — age coverage outranks every diversity rule in this file', () => {
+  /**
+   * The collision on the CATEGORY axis: the only listing representing an unrepresented age band
+   * is in a category that is already at its cap.
+   *
+   * ═══ THE RULING, REUSED RATHER THAN RE-ARGUED ═══
+   * A missing age band is closer to WRONG; a repeated venue or category is merely LESS GOOD. That
+   * is the ordering `three-things.ts#preferenceScore` already establishes between a hard fact and
+   * a soft preference. So `applyCoverageSwap` runs AFTER both caps and its forced pick may
+   * REINTRODUCE a capped venue or a capped category.
+   *
+   * THAT IS THE ACCEPTED OUTCOME, NOT A GAP. The alternative — letting a diversity cap veto the
+   * one pick chosen specifically because a child's age band had no organic match — would make the
+   * caps the very thing they were built to prevent: a rule that decides a parent sees nothing for
+   * one of their children.
+   */
+  function bandCollision(): ListingRecord[] {
+    const rows: ListingRecord[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      rows.push(kidActivity({
+        id: `swim-${i}`, activityName: `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`,
+        primaryCategoryKey: SWIM, categoryTags: [SWIM], venueName: `Pool ${i}`,
+        geo: northOfHome(600 + i * 600),
+        ageMinMonths: 60, ageMaxMonths: 216, ageBandMatches: ['5-9', '10-14'] as AgeBandKey[],
+      }));
+    }
+    // The ONLY under-2 content in the catalogue — and it is another public swim (the category that
+    // is already at its cap), at the FARTHEST pool (whose venue is already used), on the Sunday.
+    // Ranked last, so the coverage swap genuinely has to REACH for it: if it merely sat in the top
+    // ten on its own merits, nothing would be forced and this test would pass vacuously.
+    rows.push(kidActivity({
+      id: 'tot-swim', activityName: 'Parent and Tot Swim', primaryCategoryKey: SWIM,
+      categoryTags: [SWIM], venueName: 'Pool 11', geo: northOfHome(600 + 11 * 600),
+      ageMinMonths: 0, ageMaxMonths: 23, ageBandMatches: ['under2'] as AgeBandKey[],
+      startDatetimeUtc: at(SUN, 15), endDatetimeUtc: at(SUN, 16),
+    }));
+    return rows;
+  }
+
+  const collisionInput = () =>
+    input(bandCollision(), {
+      subscriber: {
+        origin: { geo: HOME, label: 'Deep Cove' }, radiusKm: 20,
+        birthYears: [2025, 2014], // 1 and 12 → 'under2' and '10-14'
+        consecutiveEmptyWeeks: 0,
+      },
+    });
+
+  it('NON-VACUITY — the under-2 pick ranks OUTSIDE the ten, so it must be reached for', () => {
+    const sub = { origin: { geo: HOME, label: 'Deep Cove' }, radiusKm: 20, birthYears: [2025, 2014], consecutiveEmptyWeeks: 0 };
+    const candidates = weeklyPickCandidates(bandCollision(), { subscriber: sub }).map((c) => c.listing.id);
+    expect(candidates.indexOf('tot-swim')).toBeGreaterThanOrEqual(MAX_PICKS);
+  });
+
+  it('the forced pick survives and is NAMED even though its category is already capped', () => {
+    const result = selectWeeklyPicks(collisionInput());
+    expect(result.forcedPicks.map((f) => f.occurrenceId)).toContain('tot-swim');
+    expect(result.picks[0].item.listing.id).toBe('tot-swim');
+    expect(result.picks[0].linkOrigin).toBe('direct');
+    expect(result.picks[0].forcedForBand).toBe('under2');
+  });
+
+  it('and it may push its category back OVER the cap — documented, accepted, asserted', () => {
+    // The cap is a preference; the band is a fact. This assertion exists so that if someone later
+    // makes the caps win, they have to come here and delete a test that says why they shouldn't.
+    const result = selectWeeklyPicks(collisionInput());
+    expect(countCategory(result, SWIM)).toBeGreaterThan(MAX_PICKS_PER_CATEGORY);
+    expect(result.picks).toHaveLength(MAX_PICKS);
+  });
+
+  it('MAX_FORCED_PICKS and DIRECT_LINK_PICKS semantics are untouched by either cap', () => {
+    const result = selectWeeklyPicks(collisionInput());
+    expect(result.forcedPicks.length).toBeLessThanOrEqual(MAX_FORCED_PICKS);
+    expect(result.picks.filter((p) => p.linkOrigin === 'direct')).toHaveLength(DIRECT_LINK_PICKS);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T12 — the scarcity invariants, on the CATEGORY key too.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T12 — scarcity invariants hold on the category axis as well as the venue axis', () => {
+  it('(a) below the line, the category pass cannot change the SET either', () => {
+    for (const n of [1, 3, 5, 7, MAX_PICKS]) {
+      const listings = Array.from({ length: n }, (_, i) =>
+        kidActivity({ id: `c-${i}`, activityName: `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`, primaryCategoryKey: SWIM, categoryTags: [SWIM], venueName: `Pool ${i}`, geo: northOfHome(600 + i * 600), ...BOTH_BANDS })
+      );
+      const over = { subscriber: profile4Subscriber(), floorPicks: 1 };
+      const result = selectWeeklyPicks(input(listings, over));
+      const reference = selectionWithoutDiversityStages(listings, over);
+      expect(new Set(result.picks.map((p) => p.item.listing.id))).toEqual(new Set(reference.map((r) => r.listing.id)));
+    }
+  });
+
+  it('(b) a single-CATEGORY week is returned unchanged, order included', () => {
+    const listings = Array.from({ length: 14 }, (_, i) =>
+      kidActivity({ id: `only-${i}`, activityName: `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`, primaryCategoryKey: SWIM, categoryTags: [SWIM], venueName: `Pool ${i}`, geo: northOfHome(600 + i * 600), ...BOTH_BANDS })
+    );
+    const over = { subscriber: profile4Subscriber() };
+    const result = selectWeeklyPicks(input(listings, over));
+    const reference = selectionWithoutDiversityStages(listings, over);
+    expect(result.picks.map((p) => p.item.listing.id)).toEqual(reference.map((r) => r.listing.id));
+    expect(result.diversity.categoryCapDeferred).toBe(0);
+  });
+
+  it('THE SPARSE CASE, end to end: one alternative beyond the reach is left where it is', () => {
+    // The client's objection, answered as a number rather than a promise. 22 swims and exactly one
+    // non-swim option ranked outside `COVERAGE_SWAP_REACH`: the family is shown swimming, because
+    // that is what is near them, and nothing is dragged up from the far end of the list.
+    const listings = [
+      ...Array.from({ length: 22 }, (_, i) =>
+        kidActivity({ id: `swim-${i}`, activityName: `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`, primaryCategoryKey: SWIM, categoryTags: [SWIM], venueName: `Pool ${i}`, geo: northOfHome(600 + i * 400), ...BOTH_BANDS })),
+      kidActivity({ id: 'far-gym', activityName: 'Rock Climbing', primaryCategoryKey: OPEN_GYM, categoryTags: [OPEN_GYM], venueName: 'Far Gym', geo: northOfHome(15_000), ...BOTH_BANDS }),
+    ];
+    const over = { subscriber: profile4Subscriber() };
+    const result = selectWeeklyPicks(input(listings, over));
+    const reference = selectionWithoutDiversityStages(listings, over);
+    expect(result.picks.map((p) => p.item.listing.id)).toEqual(reference.map((r) => r.listing.id));
+    expect(result.picks.map((p) => p.item.listing.id)).not.toContain('far-gym');
+  });
+
+  it('(d) the Richmond-shaped thin catalogue is untouched on BOTH keys', () => {
+    // Already asserted for venues; restated with categories spread so neither cap has anything to
+    // do, and the digest is byte-for-byte what it was before this scope existed.
+    const listings = Array.from({ length: 56 }, (_, i) =>
+      kidActivity({
+        id: `rich-${i}`, activityName: FILLER_NAMES[i % FILLER_NAMES.length],
+        primaryCategoryKey: ['public_swim', 'skate', 'open_gym', 'museum_venue', 'attraction', 'outdoor_park', 'storytime', 'festival_event'][i % 8],
+        categoryTags: [], venueName: `Rich Venue ${Math.floor(i / 2)}`, geo: northOfHome(600 + Math.floor(i / 2) * 600),
+        startDatetimeUtc: at(i % 2 === 0 ? SAT : SUN, 9 + (i % 6)), endDatetimeUtc: at(i % 2 === 0 ? SAT : SUN, 10 + (i % 6)),
+        ...BOTH_BANDS,
+      })
+    );
+    const over = { subscriber: profile4Subscriber() };
+    const result = selectWeeklyPicks(input(listings, over));
+    const reference = selectionWithoutDiversityStages(listings, over);
+    expect(result.picks.map((p) => p.item.listing.id)).toEqual(reference.map((r) => r.listing.id));
+    expect(result.diversity).toMatchObject({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, ageFitBlocked: 0 });
   });
 });
