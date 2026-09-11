@@ -21,16 +21,39 @@
 // THE RULE: any character that cannot be SEEN must be written as a `\uXXXX` escape. Visible
 // non-ASCII is fine and is not the target here — an em dash, a curly quote and a CJK venue name
 // are all legible, and those are the fixtures these suites are made of.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-/** Files this workstream owns. Cheap to extend; deliberately not a whole-repo walk. */
+/**
+ * Files this workstream owns. Cheap to extend; deliberately not a whole-repo walk.
+ *
+ * ── THIS LIST IS ALSO THE MANIFEST, AND THAT IS NOW ON PURPOSE ──────────────────────────
+ * It began as a scan list and turned out to do a second job by accident: the scan reads each file,
+ * so DELETING one made this suite fail with ENOENT. That accident is the only reason a
+ * silently-vanished test file would ever have been noticed here.
+ *
+ * Most of the files listed above are the kind whose disappearance nothing else would catch. A test
+ * that hardens an assertion, or guards against a situation that does not currently arise, adds a
+ * FAILURE MODE rather than changing a behaviour — and CI only exercises situations that DO arise.
+ * So if such a file vanished, every remaining test would pass and the loss would be invisible.
+ * `substitution_table.test.ts` was exactly that: added after this list, never added TO it, and
+ * therefore deletable without a trace until now.
+ *
+ * The existence check below makes the manifest role explicit instead of leaving it as a side
+ * effect of `readFileSync`, so nobody later "fixes" the ENOENT with a try/catch and quietly
+ * removes the anchor.
+ *
+ * ONE TURTLE REMAINS, AND IT IS NAMED RATHER THAN PAPERED OVER: this file cannot detect its own
+ * deletion, because the detector goes with it. The anchor for THAT is external — the branch and
+ * review SHAs recorded outside the repo.
+ */
 const FILES = [
   'lib/sms/message.ts',
   'lib/sms/weekly-send.ts',
   'tests/sms/gsm7_normalizer.test.ts',
   'tests/sms/gsm7_render_equivalence.test.ts',
+  'tests/sms/substitution_table.test.ts',
   'tests/sms/source_hygiene.test.ts',
 ];
 
@@ -55,6 +78,13 @@ function isInvisible(ch: string): boolean {
 }
 
 describe('SMS source files carry no invisible characters', () => {
+  it('every file in the manifest still exists', () => {
+    // The anchor, stated outright. A file whose absence nothing else would notice is exactly the
+    // kind that goes missing quietly -- to a bad merge, a stray revert, a restore race.
+    const missing = FILES.filter((relative) => !existsSync(join(process.cwd(), relative)));
+    expect(missing).toEqual([]);
+  });
+
   it.each(FILES)('%s', (relative) => {
     const text = readFileSync(join(process.cwd(), relative), 'utf8');
     const offences: string[] = [];
