@@ -238,7 +238,16 @@ export function mapSearchItemToActivity(item: SearchItemDto): Activity {
     activityName: l.activityName,
     descriptionSnippet: l.descriptionSnippet,
   });
-  const sourceUrl = l.sourceUrl ?? '#';
+  // Carried VERBATIM, null included — the same rule `startIso`, `distanceKm` and
+  // `lastCheckedIso` in this same mapper already follow. `?? '#'` used to sit here, and it is
+  // the same defect in a third place: a nullable column (source_url, migration 0004) meeting a
+  // non-nullable type, so the boundary made a value up. `'#'` is not an inert placeholder — it
+  // is a valid href, so every truthiness guard downstream passes and it renders as a live
+  // control. The hero cluster's "View official source" button carries target="_blank", so a
+  // parent tapping it got a BLANK NEW TAB; the sticky bar's primary CTA got no navigation at
+  // all. An empty or whitespace-only string states the same fact as null (the source carried no
+  // URL) and `href=""` resolves to the CURRENT page, so it collapses to null here too.
+  const sourceUrl = l.sourceUrl?.trim() || null;
   const slotCount = item.slots?.length ?? 1;
   // A collapsed card states the GROUP's cost, so the card formatter needs every member's own three
   // cost fields and not just the representative's (app/preview/_data/format.ts#formatCost). Carried
@@ -513,9 +522,9 @@ function timeOfDay(iso: string): TimeOfDay {
   return 'evening';
 }
 
-function hostLabel(url: string): string {
+function hostLabel(url: string | null): string {
   try {
-    return new URL(url).hostname.replace(/^www\./, '');
+    return new URL(url ?? '').hostname.replace(/^www\./, '');
   } catch {
     return 'fixture source';
   }
