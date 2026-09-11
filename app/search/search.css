@@ -871,12 +871,54 @@
      the sticky search module exactly as it is today. */
   .kf-sbar {
     position: static;
+    /* 14/12 was the desktop rhythm applied to a phone. Four pixels here and four there
+       is not a fix on its own — it is counted with the rest of the stack below. */
+    padding: 10px 16px;
   }
 
   /* Focus must never end up underneath the pinned bar (WCAG 2.4.11 Focus Not
      Obscured): reserve its height on every scroll-into-view. */
   html {
     scroll-padding-top: 76px;
+  }
+
+  /* ═══ THE SORT ROW IS A THUMB RAIL HERE, NOT A WRAPPING BLOCK ═══
+   *
+   * MEASURED at 390px, the width Playwright's own iPhone 12/13/14 descriptor uses: the
+   * "Sort" label plus four chips need ~456px of a 358px content box, so `flex-wrap: wrap`
+   * broke them over THREE lines — 94px of permanently-expanded control for a setting most
+   * parents never touch, sitting directly above the results and directly below a 48px
+   * query field. As a single-line rail the same four chips cost 32px.
+   *
+   * THE RAIL IS THIS DESIGN SYSTEM'S OWN ANSWER TO THIS EXACT SITUATION, not a new idea:
+   * `.kf-fgroup__rail` (preview.css) already lays every filter group out this way at this
+   * breakpoint, and the sheet's own CSS states the rule in as many words — a horizontal
+   * scroll-snap rail is "a thumb affordance for a rail squeezed into a results page", and
+   * it is overridden to WRAP only inside the bottom sheet, "in a sheet there is vertical
+   * room". On the results page there is not. The sort row is the one chip row on this
+   * surface that never got the treatment, because it lives in SearchBar rather than in
+   * FilterRail — a component boundary, not a design decision.
+   *
+   * NOTHING IS HIDDEN THAT WAS NOT ALREADY: every chip stays a real <a href> in the same
+   * DOM order, `aria-current` is untouched, and the selected option is the rail's first
+   * item on the default sort. Tab still reaches all four; this changes how they are
+   * PAINTED, not what they are. */
+  .kf-sbar__controls {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    margin-top: 8px;
+  }
+
+  .kf-sbar__controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* The label must not be the thing that shrinks when the rail overflows. */
+  .kf-sbar__controls-label {
+    flex: 0 0 auto;
   }
 
   /* ── Sticky filter bar (Elevation 200) ── */
@@ -1001,6 +1043,45 @@
     color: var(--anchor);
     text-decoration: underline;
     text-underline-offset: 2px;
+  }
+
+  /* ═══ THE STACK BETWEEN THE FILTER BAR AND THE FIRST CARD ═══
+   *
+   * Everything below this comment is spacing that was tuned on a desktop-width column and
+   * then inherited by the phone. It is grouped here rather than scattered because the
+   * defect is cumulative — no single value is wrong, and together they were 46px.
+   *
+   * Measured at 390px before the change: `.kf-results` opened at 410px, and the first card
+   * did not start until 617px. Of those 207px, only 54px were words (the source line and
+   * the distance explanation) and 46px were the List/Map toggle. The other ~107px were
+   * margins. */
+
+  .kf-results {
+    /* The 4px was breathing room under a heading block that is no longer directly above
+       it — QuerySummary carries its own bottom padding. */
+    padding-top: 2px;
+  }
+
+  .kf-viewtoggle {
+    margin: 2px 0 10px;
+  }
+
+  /* ── The first section heading was paying a margin it does not owe ──
+   *
+   * `.kf-section__head`'s `margin-top: 18px` (preview.css) is what separates one section
+   * from the PREVIOUS one — "Expected / not yet posted" from "Confirmed from approved
+   * sources", and so on down the page. The FIRST heading has no previous section. It
+   * follows the view toggle, which already carries its own bottom margin, so on a phone the
+   * page opened with 32px of dead space directly above the one heading a parent has to read
+   * to understand everything under it.
+   *
+   * SCOPED TO THIS BREAKPOINT DELIBERATELY. The double margin is equally pointless at
+   * desktop widths, and it is equally a real (if small) design change there — one this
+   * mobile fix has no business making on a surface it is not measuring. `:first-of-type`
+   * rather than `:first-child` because the notes and the toggle are siblings of these
+   * sections, so the confirmed section is the first SECTION but never the first child. */
+  .kf-results > section:first-of-type > .kf-section__head {
+    margin-top: 0;
   }
 
   /* ── The sheet ── */
