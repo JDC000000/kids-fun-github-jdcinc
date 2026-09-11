@@ -221,16 +221,26 @@ const GSM7_SUBSTITUTIONS: ReadonlyMap<string, string> = new Map([
  * on — so it can double the cost of a send with literally nothing to see in the diff. Mapping it
  * to the space it is already pretending to be involves no judgement at all. Zero-width characters
  * go to nothing for the same reason: they say nothing and cost everything.
+ *
+ * -- THE KEYS ARE ESCAPES, AND THAT IS NOT A STYLE CHOICE ------------------------------
+ * Written as the characters themselves, four of these eight entries read as `[' ', ' ']` on
+ * every screen: identical to each other and to a plain space. Nobody can review that, they
+ * can only trust the trailing comment. Worse, a key flattened to a plain space in transit
+ * would turn its entry into a harmless-looking identity mapping, and THAT character would
+ * silently stop being normalised with every test still green.
+ *
+ * That is the very failure this map exists to prevent, so it may not be committed in the
+ * form it warns about. `tests/sms/source_hygiene.test.ts` enforces it for the whole file.
  */
 const GSM7_INVISIBLE_SUBSTITUTIONS: ReadonlyMap<string, string> = new Map([
-  [' ', ' '], // no-break space
-  [' ', ' '], // figure space
-  [' ', ' '], // thin space
-  [' ', ' '], // narrow no-break space
-  ['​', ''], // zero-width space
-  ['‌', ''], // zero-width non-joiner
-  ['‍', ''], // zero-width joiner
-  ['﻿', ''], // byte-order mark / zero-width no-break space
+  ['\u00A0', ' '], // no-break space
+  ['\u2007', ' '], // figure space
+  ['\u2009', ' '], // thin space
+  ['\u202F', ' '], // narrow no-break space
+  ['\u200B', ''], // zero-width space
+  ['\u200C', ''], // zero-width non-joiner
+  ['\u200D', ''], // zero-width joiner
+  ['\uFEFF', ''], // byte-order mark / zero-width no-break space
 ]);
 
 /**
@@ -240,7 +250,7 @@ const GSM7_INVISIBLE_SUBSTITUTIONS: ReadonlyMap<string, string> = new Map([
  * ñ ü à are in it, and â ê î ô û á í ó ú ç ō are not. So "Café" is already free and "Français"
  * costs 2.28× — a distinction no reader could predict and no writer intended.
  *
- * This decomposes such a letter and drops its combining marks: ç → c, â → a, Sen̓áḵw → Senakw.
+ * This decomposes such a letter and drops its combining marks: c-cedilla to c, â → a, Senáḵw → Senakw.
  *
  *   !! THIS IS A CHANGE TO HOW A NAME IS SHOWN TO A PARENT, not a typographic tidy, and it wants
  *   !! the same confirmation the round-4 substitution wanted. It fires ONLY where the alternative
@@ -250,7 +260,7 @@ const GSM7_INVISIBLE_SUBSTITUTIONS: ReadonlyMap<string, string> = new Map([
 function foldUnsupportedDiacritic(ch: string): string {
   const folded = ch.normalize('NFD').replace(/\p{M}+/gu, '');
   // `folded` is EMPTY when `ch` was itself a lone combining mark — the tail of a cluster whose
-  // base letter GSM-7 could carry and has already been emitted, as in "Seṉ̓áḵw", where no
+  // base letter GSM-7 could carry and has already been emitted, as in "Senáḵw", where no
   // precomposed form exists to normalise to. Dropping it is the whole point, and `isGsm7('')` is
   // true, so the guard below already says so; it must not be special-cased back into the string.
   return isGsm7(folded) ? folded : ch;
