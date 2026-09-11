@@ -82,6 +82,22 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   // number) and also for the pathological "stored but undialable" case — one gate, because
   // both mean the same thing to a parent: there is no number to offer, so offer none.
   const phoneHref = activity.venuePhone ? telHref(activity.venuePhone) : null;
+  // The sticky bar's one control, decided before the bar exists (see the note at the bar).
+  // Null means there is no do-action to offer and no bar to put it in.
+  const barAction = isBlocked ? (
+    <button type="button" className="kf-btn kf-btn--ghost" style={{ flex: 1 }} disabled>
+      {meta.label} — not available
+    </button>
+  ) : sourceHref ? (
+    <a
+      className="kf-btn kf-btn--primary"
+      href={sourceHref}
+      target="_blank"
+      rel="noreferrer noopener"
+    >
+      {sourceLabel}
+    </a>
+  ) : null;
 
   return (
     <div className="kf-detail">
@@ -176,16 +192,26 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
               The class attribute is a single class on purpose. detail-hero-source-and-status
               .test.tsx matches the literal `class="kf-detail__source"`; restyle via the CSS
               selector rather than adding a companion class here. */}
-          <a
-            className="kf-detail__source"
-            href={heroSourceHref}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            {heroSourceLabel}
-            <span aria-hidden="true">↗</span>
-            <span className="kf-sr"> (opens in a new tab)</span>
-          </a>
+          {/* GUARDED ON A USABLE HREF, for exactly the reason the Maps control below is
+              (2026-09-11, QA). source_url is a nullable column and the admin listing form
+              writes null for a blank field, so a listing with no source URL is reachable.
+              The mapper used to substitute the literal `'#'`, which is a valid href: the
+              guard would have passed and this bordered control — carrying target="_blank" —
+              would have opened a blank new tab. sourceUrl now carries the null, and a source
+              control with no source is not rendered. Same rule as Maps: a button with no
+              destination is worse than no button. */}
+          {heroSourceHref && (
+            <a
+              className="kf-detail__source"
+              href={heroSourceHref}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              {heroSourceLabel}
+              <span aria-hidden="true">↗</span>
+              <span className="kf-sr"> (opens in a new tab)</span>
+            </a>
+          )}
 
           {/* "Maps", never "Directions". For 99.6% of listings locationUrl is a Google Maps
               text SEARCH built from an address string, not a verified pin — mapsUrlForAddress
@@ -351,22 +377,16 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
           which is a different question from "do the thing" and belongs with the venue name,
           address and phone that already answer it. The lone button is centred at >=768px
           (preview.css) so it does not sit flush-left in a bar three times its width. */}
-      <div className="kf-actionbar">
-        {isBlocked ? (
-          <button type="button" className="kf-btn kf-btn--ghost" style={{ flex: 1 }} disabled>
-            {meta.label} — not available
-          </button>
-        ) : (
-          <a
-            className="kf-btn kf-btn--primary"
-            href={sourceHref}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            {sourceLabel}
-          </a>
-        )}
-      </div>
+      {/* THE BAR IS ITS ACTION (2026-09-11, QA). Since this bar became a single-action bar it
+          had exactly one thing in it, and that thing was `href={sourceHref}` unguarded — so a
+          listing with neither a bookingUrl nor a sourceUrl rendered the page's ONE primary CTA
+          pointing at the mapper's `'#'`, a filled green button that silently did nothing. With
+          sourceUrl now carrying its null, the action is computed first and the bar renders only
+          if there is one: a sticky strip with nothing in it is a 45px bordered artefact, which
+          is not an improvement on a dead button. `.kf-detail`'s 88px padding-bottom stays and
+          simply reads as end-of-page whitespace in that case. The markup for every listing that
+          HAS an href is byte-identical to before. */}
+      {barAction && <div className="kf-actionbar">{barAction}</div>}
     </div>
   );
 }

@@ -212,3 +212,111 @@ describe('🔴 the source control is restyled, not double-styled', () => {
     expect(css).not.toMatch(/^\.kf-detail__(source|map)\s*[,{]/m);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// A LISTING WITH NO SOURCE URL (2026-09-11, QA hardening)
+//
+// The cluster above guards Maps on `locationUrl` and says why: "an admin-created listing can
+// carry neither a location URL nor an address, and a Maps button with no destination is worse
+// than no button." The control sitting immediately beside it had no such guard, and could not
+// have had a working one, because the mapper never delivered an absence to guard against:
+//
+//   search-api.ts   const sourceUrl = l.sourceUrl ?? '#'
+//
+// `source_url` is nullable (migration 0004) and the admin listing form writes null for a blank
+// field (app/admin/listings/_lib/vocab.ts -> optText), so the null is reachable in production.
+// `'#'` is a VALID href, not an inert placeholder, so it passed every truthiness check and
+// rendered as a live control twice over:
+//
+//   • the hero's bordered "View official source" button carries target="_blank" — tapping it
+//     opened a BLANK NEW TAB;
+//   • the sticky bar's filled primary CTA — the one do-action on the page — did nothing.
+//
+// `Activity.sourceUrl` now carries the null. These assertions pin the absence, and pin that
+// the fix did not leak into the overwhelmingly common case where a source URL exists.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/** The literal placeholder that must never reach the document again, in either href form. */
+const DEAD_HREFS = ['href="#"', "href='#'", 'href=""'];
+
+describe('🔴 no sourceUrl renders no source control — not a dead one', () => {
+  const html = render({ sourceUrl: null, bookingUrl: null });
+
+  it('drops the hero source control entirely', () => {
+    expect(cluster(html)).not.toContain('kf-detail__source');
+    expect(html).not.toContain('View official source');
+  });
+
+  it('renders no href that goes nowhere', () => {
+    for (const dead of DEAD_HREFS) expect(html, `must not render ${dead}`).not.toContain(dead);
+  });
+
+  it('renders no action bar at all rather than an empty sticky strip', () => {
+    // The bar became a single-action bar when Maps moved into the hero. With no action left to
+    // put in it, the bar is a 45px bordered artefact pinned to the bottom of the viewport.
+    expect(html).not.toContain('kf-actionbar');
+    expect(html).not.toContain('kf-btn--primary');
+  });
+
+  it('leaves the rest of the cluster intact — phone and Maps are unaffected', () => {
+    const row = cluster(html);
+    expect(row).toContain('kf-detail__contact');
+    expect(row).toContain('(604) 555-0142');
+    expect(row).toContain('class="kf-detail__map"');
+    expect(row).toContain('>Maps<');
+  });
+});
+
+describe('🔴 an empty-string sourceUrl is the same fact as none', () => {
+  // `href=""` resolves to the CURRENT page, so with target="_blank" it opens a duplicate of the
+  // activity page in a new tab. `??` let it straight through — only null was ever collapsed.
+  for (const blank of ['', '   ']) {
+    it(`${JSON.stringify(blank)} renders no control and no dead href`, () => {
+      const html = render({ sourceUrl: blank, bookingUrl: null });
+      expect(cluster(html)).not.toContain('kf-detail__source');
+      for (const dead of DEAD_HREFS) expect(html).not.toContain(dead);
+      expect(html).not.toContain('kf-actionbar');
+    });
+  }
+});
+
+describe('🔴 a BLOCKED listing with no sourceUrl never falls back to the booking URL', () => {
+  // The nastiest combination, and the one the shipped fix's own reasoning demands: a blocked
+  // session pins the hero to the SOURCE url, so a missing source url must render nothing —
+  // never quietly re-admit the dead booking page the blocked-state fix exists to remove.
+  for (const status of BLOCKED) {
+    it(`${status}: no hero control, and the dead booking URL is nowhere on the page`, () => {
+      const html = render({ statusState: status, sourceUrl: null, bookingUrl: BOOKING_URL });
+      expect(cluster(html)).not.toContain('kf-detail__source');
+      expect(html).not.toContain(BOOKING_URL);
+      for (const dead of DEAD_HREFS) expect(html).not.toContain(dead);
+    });
+
+    it(`${status}: the bar still renders and still refuses the action`, () => {
+      // The bar's disabled ghost does not depend on an href, so it must survive the guard —
+      // dropping it would delete the page's only statement that this session is not happening.
+      const html = render({ statusState: status, sourceUrl: null, bookingUrl: BOOKING_URL });
+      expect(html).toContain('kf-actionbar');
+      expect(actionbar(html)).toContain('not available');
+    });
+  }
+});
+
+describe('the guard does NOT over-apply', () => {
+  it('a listing with a real sourceUrl keeps its hero control and its primary CTA', () => {
+    const html = render();
+    expect(cluster(html)).toContain('class="kf-detail__source"');
+    expect(cluster(html)).toContain(SOURCE_URL);
+    expect(actionbar(html)).toContain('kf-btn--primary');
+    expect(actionbar(html)).toContain(SOURCE_URL);
+  });
+
+  it('a listing with no sourceUrl but a real bookingUrl still gets both', () => {
+    // sourceHref falls through to bookingUrl for a live status, so this listing is fully
+    // actionable and must be untouched by a guard aimed at listings with neither.
+    const html = render({ sourceUrl: null, bookingUrl: BOOKING_URL, statusState: 'bookable_open' });
+    expect(cluster(html)).toContain(BOOKING_URL);
+    expect(actionbar(html)).toContain(BOOKING_URL);
+    expect(actionbar(html)).toContain('kf-btn--primary');
+  });
+});

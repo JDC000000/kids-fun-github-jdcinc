@@ -143,7 +143,22 @@ export interface Activity {
   booking: BookingType;
   confidence: ConfidenceLabel;
   sourceName: string; // e.g. "vancouver.ca"
-  sourceUrl: string; // authoritative deep link (external)
+  /**
+   * The authoritative deep link (external). NULLABLE, and the null is the point.
+   *
+   * `activity_occurrence.source_url` is a nullable column (migration 0004), and the admin
+   * listing form writes null whenever the Source URL field is left blank
+   * (app/admin/listings/_lib/vocab.ts -> optText). "This listing has no source URL" is a real
+   * state a parent can land on, not a theoretical one.
+   *
+   * This used to be non-nullable, so the mapper had to invent a value to satisfy the type, and
+   * it invented the literal string `'#'` (search-api.ts) — the same boundary fabrication that
+   * `startIso`, `distanceKm` and `lastCheckedIso` above have each already had removed. A `'#'`
+   * href renders as a REAL control: the hero cluster's bordered "View official source" button
+   * carries `target="_blank"`, so tapping it opened a blank new tab, and the sticky bar's
+   * primary CTA did nothing at all. Callers guard on the null instead of linking to nowhere.
+   */
+  sourceUrl: string | null;
   /** Optional external detail fallback while live DB detail pages are not built. */
   detailUrl?: string;
   bookingUrl?: string;
