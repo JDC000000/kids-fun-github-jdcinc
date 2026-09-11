@@ -324,6 +324,70 @@ describe('foldTitleForComparison', () => {
       expect(foldTitleForComparison(name)).not.toBe('');
     }
   });
+
+  // ── 2026-09-10: the bare daypart and the non-initial weekday ──────────────────────────────
+  // Added with the two rules themselves, against rows measured on the live catalogue for the
+  // weekly-SMS venue/activity repetition fix. See the constants in three-things.ts for the
+  // reasoning; these pin the behaviour.
+
+  it('merges two sittings of one activity that differ only by daypart — the measured Pickleball case', () => {
+    const same = (a: string, b: string) => expect(foldTitleForComparison(a)).toBe(foldTitleForComparison(b));
+    // The headline case. Before this rule the two folded to DIFFERENT keys and their raw strings
+    // scored 0.750 — under every threshold in the repo — so nothing could see them as one thing.
+    same('Pickleball - Sun AM', 'Pickleball - Sun PM');
+    same('Pickleball - Sun AM', 'Pickleball');
+    same('Open Gym A.M.', 'Open Gym P.M.');
+    // A weekday that is neither trailing nor leading.
+    same('Indoor Soccer Wed Drop In', 'Indoor Soccer Drop In');
+    expect(foldTitleForComparison('Pickleball - Sun AM')).toBe('pickleball');
+  });
+
+  it('leaves a daypart-shaped WORD alone — the rule reads a token, not a substring', () => {
+    // `\b` and the trailing `(?![a-z0-9])` are the whole guard, and each one is load-bearing:
+    // "amazing"/"camp"/"program" have the letters and no token boundary around them.
+    expect(foldTitleForComparison('Amazing Race')).toBe('amazing race');
+    expect(foldTitleForComparison('Summer Camp Fun')).toBe('summer camp fun');
+    expect(foldTitleForComparison('Program Launch')).toBe('program launch');
+    expect(foldTitleForComparison('Jam Session Kids')).toBe('jam session kids');
+    // And a clock time is still TIME_RE's job, not the daypart rule's — "5pm" leaves nothing behind.
+    expect(foldTitleForComparison('Open Gym 5pm')).toBe('open gym');
+  });
+
+  it('keeps a LEADING weekday, because there it is the programme NAME and not a timetable note', () => {
+    // The existing `differ('Monday Funday', 'Funday')` case above is the reason the new rule is
+    // "non-initial" rather than "anywhere". Restated here from the other side so the POSITION is
+    // pinned as the evidence, not just the one string that exposed it.
+    expect(foldTitleForComparison('Monday Funday')).toBe('monday funday');
+    expect(foldTitleForComparison('Sunday Brunch Club')).toBe('sunday brunch club');
+    expect(foldTitleForComparison('Saturday Stories')).toBe('saturday stories');
+    // …while the same weekday AFTER the activity name is still noise, as it always was.
+    expect(foldTitleForComparison('Stories Saturday')).toBe('stories');
+    // A title that is NOTHING BUT a weekday still folds to the empty key — that is what stops a
+    // bare weekday becoming a grouping identity, and it is why the trailing rule is kept.
+    expect(foldTitleForComparison('Sunday')).toBe('');
+  });
+
+  it('does not disturb the LEGO Block Party fixture — the case the fold exists for', () => {
+    // The regression this file most needs to catch. The measured LEGO pair is the reason
+    // `foldTitleForComparison` exists at all, and neither new rule touches either string: same
+    // key before, same key after, and the three-card hero still collapses the pair to one card.
+    expect(foldTitleForComparison('LEGO® Block Party')).toBe('lego block party');
+    expect(foldTitleForComparison('LEGO Block Party')).toBe('lego block party');
+
+    const rows = [
+      listing({ id: 'lego-wpg', seriesId: 's1', activityName: 'LEGO® Block Party', venueName: 'West Point Grey Branch', ...FREE, ...INDOOR_TAGS, geo: NEAR_DOWNTOWN }),
+      listing({ id: 'lego-ren', seriesId: 's2', activityName: 'LEGO Block Party', venueName: 'Renfrew Branch', ...FREE, ...INDOOR_TAGS, geo: NEAR_DOWNTOWN }),
+    ];
+    const picked = filledSlots(selectThreeThings(input(rows))).map((s) => s.item.listing.id);
+    expect(picked).toHaveLength(1);
+    expect(['lego-wpg', 'lego-ren']).toContain(picked[0]);
+
+    // And every other title this file already measures folds to exactly what it did before.
+    expect(foldTitleForComparison('$3 Open Gym 8yrs+ Delbrook')).toBe('open gym delbrook');
+    expect(foldTitleForComparison('Play Palace - 0-12yrs')).toBe('play palace');
+    expect(foldTitleForComparison('Strong HIIT Conditioning - Set Two')).toBe('strong hiit conditioning');
+    expect(foldTitleForComparison('Public Swim  |  Teach Pool')).toBe('public swim teach pool');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
