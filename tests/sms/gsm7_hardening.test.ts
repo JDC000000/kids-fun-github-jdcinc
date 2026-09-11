@@ -167,7 +167,12 @@ describe('a venue name that is only invisible characters', () => {
     // the renderer is the only place this can be caught.
     const body = renderWeeklyMessage(pick(ch(0x200b))).body;
     expect(body).not.toContain('()');
-    expect(body).toContain('Story Time https://kidsfun.ca/s/7hK2pQmzN4wT');
+    // THE LAYOUT LITERAL MOVED, THE ASSERTION DID NOT WEAKEN. This was written against the
+    // one-line "name (venue) url" form; on this branch `linkOnOwnLine` puts the URL on its own
+    // line, which is the change Jon approved on 2026-09-11. Bounding the name with newlines makes
+    // this STRICTER than the original: the headline must be the name and nothing else, so an
+    // empty bracket pair, a lone bracket, or even a trailing space now fails it.
+    expect(body).toContain('\nStory Time\nhttps://kidsfun.ca/s/7hK2pQmzN4wT');
   });
 
   it('and for a venue of nothing but exotic spaces', () => {
