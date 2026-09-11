@@ -17,7 +17,7 @@
 // on 2026-09-11; the ORDER it names is unchanged, which is why only the quote moved here. That also
 // preserves his earlier ruling that the coverage check fires BEFORE consent: postal is first, the
 // consent box is last, so an out-of-area parent is told so before being asked to agree to anything.
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   legalFooterParts,
@@ -55,8 +55,35 @@ interface ChildRow {
   id: number;
   age: string;
 }
-let nextChildId = 1;
-const newChildRow = (): ChildRow => ({ id: nextChildId++, age: '' });
+/**
+ * Row identity is per-FORM-INSTANCE, never module-global.
+ *
+ * ⚠ THIS WAS A MODULE-LEVEL `let nextChildId = 1`, AND IT MADE SSR OUTPUT NON-DETERMINISTIC.
+ * These ids reach the DOM as the child-age input's `id` and its label's `htmlFor`. A module-scoped
+ * counter lives as long as the SERVER PROCESS, not as long as a request, so it kept counting
+ * across requests: the 2nd request to /sms/start server-rendered `kf-start-age-2`, the 3rd `-3`,
+ * while the freshly-loaded client bundle always starts at 1. The page is `dynamic =
+ * 'force-dynamic'`, so every request server-renders and every request after the first hit it.
+ *
+ * WHAT IT ACTUALLY COST, MEASURED RATHER THAN ASSUMED — because the honest answer is narrower
+ * than it first looks, and the next person deserves the real one. In a browser, hydrating that
+ * markup logs `Warning: Prop `htmlFor` did not match. Server: "kf-start-age-3" Client:
+ * "kf-start-age-1"` in development. It does NOT tear down the root: React leaves the server's
+ * attribute in place, and because the label and its input are rendered from the SAME server
+ * counter value they still point at each other, so the control kept working. So this was a
+ * correctness and hygiene defect — mutable module state leaking across requests, a permanent dev
+ * hydration warning, and SSR output that differs run to run — not a user-visible breakage.
+ *
+ * `useId()` is React's SSR-safe answer: one prefix per component instance, identical on both sides
+ * of hydration. The row counter is a `useRef`, so it restarts per mount instead of living forever
+ * in module scope. `child.id` stays the React `key` — stable row identity across add/remove —
+ * and the DOM id is derived from it rather than being it.
+ *
+ * >>> THE SAME PATTERN IS STILL PRESENT in app/sms/signup/_components/SmsSignupForm.tsx and
+ * app/u/[preferencesToken]/_components/PreferencesForm.tsx, which render DOM ids from their own
+ * module-level counters. Not changed here only because this branch was scoped to /sms/start. <<<
+ */
+const FIRST_CHILD_ROW_ID = 0;
 
 export interface StartFormProps {
   sparseRegionIds: readonly CoveredRegionId[];
@@ -226,7 +253,11 @@ export function SignupOutcomePanel({ outcome }: { outcome: SignupOutcome }) {
 
 export function StartForm({ sparseRegionIds }: StartFormProps) {
   const [postal, setPostal] = useState('');
-  const [children, setChildren] = useState<ChildRow[]>([newChildRow()]);
+  // SSR-safe, instance-scoped field ids — see FIRST_CHILD_ROW_ID for the hydration bug this ends.
+  const fieldIdPrefix = useId();
+  const nextChildId = useRef(FIRST_CHILD_ROW_ID + 1);
+  const [children, setChildren] = useState<ChildRow[]>(() => [{ id: FIRST_CHILD_ROW_ID, age: '' }]);
+  const childFieldId = (child: ChildRow) => `${fieldIdPrefix}age-${child.id}`;
   const [interests, setInterests] = useState<string[]>([]);
   const [phone, setPhone] = useState('');
   const [consent, setConsent] = useState(false); // UNCHECKED BY DEFAULT — PRD §1.3/§1.4.
@@ -477,11 +508,11 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
         <legend className="kf-start__label">{FIELD_COPY.childrenLabel}</legend>
         {children.map((child, i) => (
           <div className="kf-start__child" key={child.id}>
-            <label className="kf-start__child-label" htmlFor={`kf-start-age-${child.id}`}>
+            <label className="kf-start__child-label" htmlFor={childFieldId(child)}>
               {`Child ${i + 1}`}
             </label>
             <input
-              id={`kf-start-age-${child.id}`}
+              id={childFieldId(child)}
               name="childAge"
               className="kf-start__input kf-start__input--age"
               type="number"
@@ -532,7 +563,7 @@ export function StartForm({ sparseRegionIds }: StartFormProps) {
             type="button"
             className="kf-start__add"
             onClick={() => {
-              setChildren((rows) => [...rows, newChildRow()]);
+              setChildren((rows) => [...rows, { id: nextChildId.current++, age: '' }]);
               clearError('children');
             }}
           >
