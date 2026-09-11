@@ -52,10 +52,11 @@ import { AGE_BAND_ORDER } from '@/lib/search/filters/age';
 import { ageMonthsToBand } from '@/lib/profile/child-age-bands';
 import { RADIUS_OPTIONS_KM, DEFAULT_RADIUS_KM, distanceKm } from '@/lib/geo/radius';
 import { similarity } from '@/lib/search/text/trigram';
-import type { CollapsedListing } from '@/lib/search/collapse';
-// `capVenueRepetition` is CALLED WITH OPTIONS, never re-tuned. See `orderByVenueSpread` for the
-// three independent reasons the shared constants stay where they are.
-import { capVenueRepetition, venueIdentity } from '@/lib/search/venue-diversity';
+// The shared, key-agnostic cap. This module supplies the KEY and the PARAMETERS; the rounds, the
+// rank-preserving deferral and the reorder-never-drop contract all live in that file and are
+// shared with /search and the front door. See `orderByVenueSpread` for why the digest passes
+// options rather than the shared constants moving.
+import { capByGroupingKey, venueIdentity } from '@/lib/search/venue-diversity';
 import { relativeDate } from '@/lib/search/parse';
 import { addDaysIso, localIsoDate } from '@/lib/search/time/vancouver';
 // The front-door gate and the comparison fold, reused rather than mirrored. This module does not
@@ -107,6 +108,42 @@ export const COVERAGE_SWAP_REACH = 20;
  * options down in dense municipalities; `3` would reproduce today's behaviour exactly.
  */
 export const MAX_PICKS_PER_VENUE = 2;
+/**
+ * Most picks one text may carry from any ONE category (`primaryCategoryKey`).
+ *
+ * A SEPARATE, ORTHOGONAL CONSTRAINT — fixing venue repetition does NOT fix this. Measured: apply
+ * the venue rules alone to the Deep Cove profile's real list and it stays at NINE OF TEN
+ * `public_swim`; the slots the venue cap frees simply refill with more swim at different pools.
+ * A family with a 2-year-old and a 13-year-old got one skate and nine swims.
+ *
+ * WHY THE POOL SKEWS, because it decides how deep the cap has to reach. The digest searches with
+ * `q: ''` — browse mode — so `tsRank` (the heaviest ranking component) is inert here and cannot
+ * differentiate anything. What is left is four small, individually defensible biases that all
+ * point the same way: `dateProximity` favours an exact-date hit over open hours, `distanceDecay`
+ * favours the local pool over a destination, `statusConfidenceBoost` favours rows with published
+ * schedules, and `recency` decays curated content toward zero because nothing re-ingests it.
+ * Together they separate AUTOMATED, DATED, MUNICIPAL TIMETABLE content from MANUALLY CURATED
+ * DESTINATION content — and that axis maps almost one-to-one onto category. Category is a proxy
+ * for content provenance, which is why this is systemic rather than one family's bad luck.
+ */
+export const MAX_PICKS_PER_CATEGORY = 2;
+/**
+ * The catch-all category's looser allowance.
+ *
+ * `primaryCategoryKey` IS NOT UNIFORMLY GRANULAR, and pretending it is costs real choices.
+ * `public_swim` is specific; `class_program` is a catch-all. Measured on the Kitsilano profile:
+ * Tai Chi, Pickleball, Community Dancers and Line Dancing are ALL `class_program`, and they are
+ * genuinely four different things to do on a Saturday. Capping that key at 2 removed FIVE of that
+ * profile's seven picks — the category axis punishing a list whose monotony was never categorical.
+ *
+ * That profile's real problem is venue repetition, and the venue cap plus the same-offering
+ * collapse already carry it. So the category axis does not need to, and 3 rather than 2 is the
+ * honest allowance for a key holding four different activities. Named rather than special-cased
+ * inline so the unevenness stays visible and can be retired when the taxonomy gets granular.
+ */
+export const CLASS_PROGRAM_CAP = 3;
+/** The catch-all key itself. Named so the special case is greppable from both sides. */
+export const CLASS_PROGRAM_CATEGORY_KEY = 'class_program';
 /**
  * Total forced picks the coverage swap may make — 2 ACROSS ALL BANDS, not 2 per band (PRD v2.4
  * §2.2 step 4 made this explicit after the first draft asked the question).
@@ -240,10 +277,25 @@ export interface DiversitySummary {
    */
   sameOfferingCollapsed: number;
   /**
-   * How many candidates the venue cap pushed OUT of the ten that rank alone would have put in it.
-   * Never a removal — a deferred card is still in the list, further down (see `orderByVenueSpread`).
+   * How many candidates each cap pushed OUT of the ten that rank alone would have put in it.
+   * Never a removal — a deferred card is still in the list, further down.
+   *
+   * REPORTED PER KEY because the two answer different questions and can disagree: a week can be
+   * venue-diverse and category-monotonous (the Deep Cove case: nine swims across nine pools) or
+   * the reverse. One combined number would hide exactly the distinction the second cap exists for.
    */
   venueCapDeferred: number;
+  categoryCapDeferred: number;
+  /**
+   * Promotions the age-fit guard refused — a category promotion that would have served fewer of
+   * the subscriber's children than the pick it jumped.
+   *
+   * REPORTED RATHER THAN SILENT, because a guard nobody can see is a guard nobody can tune. A high
+   * number here on a wide-age household is the product working correctly (see the guard's header);
+   * a high number everywhere would mean the category cap is fighting the age filter and the reach
+   * or the cap needs to move.
+   */
+  ageFitBlocked: number;
   /** How many of the named slots hold a different pick than they would have without the spread. */
   namedSlotsPermuted: number;
   /** Every promotion, with what it cost in rank and distance. Empty on a normal send. */
@@ -818,12 +870,11 @@ export function applyCoverageSwap(
 
 /**
  * Reorder the candidates so no venue holds more than `MAX_PICKS_PER_VENUE` of the first
- * `maxPicks` — the shared cap, called at THIS SURFACE'S SIZE.
+ * `maxPicks` — the shared cap, called at THIS SURFACE'S SIZE and on THIS SURFACE'S KEY.
  *
- * ═══ WHY THIS PASSES OPTIONS INSTEAD OF CHANGING THE SHARED CONSTANTS ═══
- * `lib/search/venue-diversity.ts` already exports `VenueCapOptions` and until now NO CALLER
- * passed it — the seam exists and was built for exactly this. Three independent reasons to use it
- * rather than retune `MAX_CARDS_PER_VENUE` / `VENUE_CAP_WINDOW`:
+ * ═══ WHY THE DIGEST PASSES OPTIONS INSTEAD OF CHANGING THE SHARED CONSTANTS ═══
+ * `lib/search/venue-diversity.ts` exports the mechanism; this module supplies the numbers. Three
+ * independent reasons not to retune `MAX_CARDS_PER_VENUE` / `VENUE_CAP_WINDOW` instead:
  *
  *   1. THEY ARE A DIFFERENT REPORT'S ANSWER TO A DIFFERENT MEASURED DEFECT. "3 per 20" is the
  *      2026-08-18 independent report's remedy, adopted verbatim, for SEARCH PAGES whose top rows
@@ -831,58 +882,111 @@ export function applyCoverageSwap(
  *      digest changes /search for a problem /search does not have.
  *   2. COST, AND IT IS MEASURED IN THAT FILE RATHER THAN GUESSED HERE. The cap runs inside the
  *      broadening ladder's PROBE LOOP, so one search can pay for it ~10 times. Its rounds scale as
- *      ceil(the biggest venue's share ÷ maxPerVenue) — so LOWERING `maxPerVenue` globally makes it
- *      worse on precisely the pathological pages it was tuned for (5,000 cards of one venue:
- *      253 ms before that file's optimisation, 0.6 ms after). Passing options from one caller
- *      confines the smaller divisor to one list of ~tens, where it is arithmetically free.
- *   3. THREE OTHER CONSUMERS AND AN INVARIANT TEST DEPEND ON TODAY'S BEHAVIOUR. `engine.ts` calls
- *      it from `runPrimary` twice and from `runExpected`, which is /search, the three-card hero,
- *      this digest and the email digest; `invariants/card-honesty.test.ts` reasons about it.
- *      Changing a shared constant to fix ONE consumer's sizing problem is the wrong lever when
- *      the shared module already exports the right one.
+ *      ceil(the biggest group's share ÷ maxPerKey) — so LOWERING it globally makes it worse on
+ *      precisely the pathological pages it was tuned for (5,000 cards of one venue: 253 ms before
+ *      that file's optimisation, 0.6 ms after). Passing options from one caller confines the
+ *      smaller divisor to one list of ~tens, where it is arithmetically free.
+ *   3. FOUR OTHER CONSUMERS AND AN INVARIANT TEST DEPEND ON TODAY'S BEHAVIOUR. `engine.ts` calls
+ *      the venue wrapper from `runPrimary` twice and from `runExpected` — /search, the three-card
+ *      hero and both digests — and `invariants/card-honesty.test.ts` reasons about it.
  *
- * `venue-diversity.ts` is therefore not edited by this scope at all, and its diff is asserted
- * empty by review rather than by hope.
+ * What DID change in this scope is that the shared function now takes a key. That is a strict
+ * generalisation with a pinned-identical default path (see that file's property test), not a
+ * change to any answer it previously gave.
  *
- * ═══ THE ADAPTER, AND WHY IT IS NOT A CAST ═══
- * The shared cap deals in `CollapsedListing` (it reads `representative.candidate.listing.venueName`
- * through its own `venueKey`) while this module holds `SearchResultItem`. Every field it needs is
- * one this module already has, so each item is wrapped in a genuinely-typed `CollapsedListing` and
- * mapped back by object identity — the cap returns the same card objects reordered, never new
- * ones, which is what makes the round trip exact. A cast would compile and would be a lie about a
- * shape the cap is free to start reading more of.
+ * A REORDER, NEVER A FILTER — inherited, not re-argued. A card over the cap is DEFERRED to the
+ * next round, not removed, so this returns exactly the cards it was given. That is what makes it
+ * safe to run on the FULL candidate list before truncation, and it is why no cap in this file can
+ * thin a week.
  *
- * A REORDER, NEVER A FILTER — inherited, not re-argued. The shared module's own header states it:
- * a card over the cap is DEFERRED to the next round, not removed, so this returns exactly the
- * cards it was given. That is what makes it safe to run on the FULL candidate list before
- * truncation, and it is why no new stage in this file can thin a week.
+ * NO ADAPTER ANY MORE. The cap used to deal only in `CollapsedListing`, so this module wrapped
+ * every item to call it; now that the key is a parameter the wrapper is gone and the items are
+ * passed as they are.
  */
 function orderByVenueSpread(items: SearchResultItem[], maxPicks: number): SearchResultItem[] {
-  if (items.length === 0) return items;
-  const byCard = new Map<CollapsedListing, SearchResultItem>();
-  const cards = items.map((item) => {
-    const card: CollapsedListing = {
-      representative: {
-        candidate: { listing: item.listing, relevance: 0, matchedTerms: [], categoryHit: false },
-        score: item.score,
-        components: item.components,
-        distanceKm: item.distanceKm,
-      },
-      slots: item.slots,
-    };
-    byCard.set(card, item);
-    return card;
-  });
-
-  const ordered = capVenueRepetition(cards, {
-    maxPerVenue: MAX_PICKS_PER_VENUE,
+  return capByGroupingKey(items, (item) => venueIdentity(item.listing.venueName), {
+    maxPerKey: MAX_PICKS_PER_VENUE,
     windowSize: maxPicks,
   });
-  // `byCard.get` cannot miss: the cap is documented to return "exactly the same cards as the
-  // input". Falling back to the input order rather than asserting keeps a future change to that
-  // contract a reordering bug and not a crash in a Friday send.
-  const mapped = ordered.map((card) => byCard.get(card));
-  return mapped.every((item): item is SearchResultItem => item != null) ? mapped : items;
+}
+
+/** How many of the subscriber's requested bands this listing actually admits. */
+function bandsCovered(item: SearchResultItem, requestedBands: readonly AgeBandKey[]): number {
+  if (requestedBands.length === 0) return 0;
+  return requestedBands.filter((band) => item.listing.ageBandMatches.includes(band)).length;
+}
+
+/**
+ * Reorder the candidates so no CATEGORY holds more than its allowance of the first `maxPicks`,
+ * bounded by `COVERAGE_SWAP_REACH` and subject to the age-fit guard.
+ *
+ * ═══ WHY THIS RUNS AFTER THE VENUE PASS, AND NOT BEFORE ═══
+ * Venue is the higher-cardinality, cheaper constraint: it satisfies itself a few positions deep,
+ * so running it first costs almost nothing and hands the category pass a list that is ALREADY
+ * venue-spread. Reversed, the category pass would happily seat two swims at the same pool and the
+ * venue pass would then have to undo work the category pass had just justified — two passes over
+ * one list, each able to defeat the other. The order is a decision, and a test fails if it is
+ * swapped.
+ *
+ * ═══ WHY THIS KEY NEEDS A BOUNDED REACH AND THE VENUE KEY DOES NOT ═══
+ * Venues are high-cardinality; categories number about ten. Measured: an UNBOUNDED cap of 2 on a
+ * stratified pool reached original rank #92 to find its sixth category — which is exactly the
+ * objection this scope has to answer ("don't show a family a worse, farther rock-climbing gym
+ * just to hit a quota"). `COVERAGE_SWAP_REACH` bounds it, and it is REUSED rather than duplicated
+ * under a new name on purpose: it is the same already-approved discipline at the same value, and
+ * its own header gives the reasoning verbatim — past the reach, "a 'representative' is just a
+ * low-relevance listing wearing a band label." Swap "band" for "category" and it still holds.
+ *
+ * Measured with the reach in place: a swim-only week (22 swims, one alternative at rank #23) comes
+ * back BYTE-IDENTICAL to baseline. The alternative sits outside the reach and is never promoted.
+ * That is the line, as a number rather than a promise.
+ *
+ * ═══ THE AGE-FIT GUARD — THE MOST IMPORTANT RULE IN THIS FILE ═══
+ * See `canPromote` below. Category variety may never be bought with age fit.
+ */
+function orderByCategorySpread(
+  items: SearchResultItem[],
+  maxPicks: number,
+  requestedBands: readonly AgeBandKey[],
+  onBlocked: () => void
+): SearchResultItem[] {
+  return capByGroupingKey(items, (item) => item.listing.primaryCategoryKey?.trim().toLowerCase() || null, {
+    maxPerKey: (key) => (key === CLASS_PROGRAM_CATEGORY_KEY ? CLASS_PROGRAM_CAP : MAX_PICKS_PER_CATEGORY),
+    windowSize: maxPicks,
+    reach: COVERAGE_SWAP_REACH,
+    /**
+     * ═══ THE AGE-FIT GUARD (the finding that shaped this whole design) ═══
+     * A promotion may NEVER reduce age-band coverage. If the candidate about to jump the queue
+     * admits FEWER of this subscriber's children than something it would jump over, the promotion
+     * does not happen and the candidate is deferred alongside them instead.
+     *
+     * WHY THIS IS A HARD GUARD AND NOT A PREFERENCE. A large part of the swim monoculture is the
+     * product answering a hard question CORRECTLY. Scored with the real ranker, `Open Gym 8yrs+`
+     * is joint-first for a household of 9- and 15-year-olds and FOURTH for a household of 2- and
+     * 13-year-olds — not because of a category bug, but because it does not admit a 2-year-old.
+     * `ageMatchScore` returns covered/bands, so fitting 1 of 2 costs 0.3. Public swim, skating and
+     * museums are among the few things that genuinely serve a toddler and a teenager at once, so a
+     * wide-age household's swim-heavy list is partly just true.
+     *
+     * Without this guard, a category rule "fixing" that list would promote the open gym over the
+     * swim and hand a parent of a 2-year-old something their toddler cannot attend — trading
+     * monotony for IRRELEVANCE, which is worse. It would also be spending one mechanism to defeat
+     * another: it is the exact inverse of what `applyCoverageSwap` exists to guarantee.
+     *
+     * Variety is found among things that fit the whole family, or it is not found this week.
+     *
+     * Equal coverage still promotes — the guard only ever blocks a STRICT reduction, so it costs
+     * nothing when the two candidates serve the family equally well. With no bands requested there
+     * is no coverage to reduce and the guard is inert.
+     */
+    canPromote: (candidate, deferred) => {
+      if (requestedBands.length === 0) return true;
+      const fit = bandsCovered(candidate, requestedBands);
+      const blocked = deferred.some((other) => fit < bandsCovered(other, requestedBands));
+      if (blocked) onBlocked();
+      return !blocked;
+    },
+  });
 }
 
 // ── (f) Named-slot venue spread ──────────────────────────────────────────────
@@ -1058,10 +1162,22 @@ function selectFrom(
   //
   // `maxPicks` is read from the INPUT rather than the constant, so the cap tracks the list size
   // automatically if a future per-subscriber preference changes it.
-  const ordered = orderByVenueSpread(fresh, maxPicks);
-  const beforeCap = new Set(fresh.slice(0, maxPicks).map((item) => item.listing.id));
+  const venueOrdered = orderByVenueSpread(fresh, maxPicks);
+  const beforeVenueCap = new Set(fresh.slice(0, maxPicks).map((item) => item.listing.id));
+  const venueCapDeferred = venueOrdered
+    .slice(0, maxPicks)
+    .filter((item) => !beforeVenueCap.has(item.listing.id)).length;
+
+  // ── CATEGORY CAP, BOUNDED (2026-09-10) ──────────────────────────────────────────────
+  // AFTER the venue pass — see `orderByCategorySpread` for why that order is a decision and not
+  // an accident, and for the age-fit guard that bounds what it may promote.
+  let ageFitBlocked = 0;
+  const ordered = orderByCategorySpread(venueOrdered, maxPicks, bands, () => {
+    ageFitBlocked += 1;
+  });
+  const beforeCategoryCap = new Set(venueOrdered.slice(0, maxPicks).map((item) => item.listing.id));
   const afterCap = ordered.slice(0, maxPicks);
-  const venueCapDeferred = afterCap.filter((item) => !beforeCap.has(item.listing.id)).length;
+  const categoryCapDeferred = afterCap.filter((item) => !beforeCategoryCap.has(item.listing.id)).length;
 
   // `ordered` is the single ranked list from here on — it is what the selection is taken from AND
   // what the coverage swap reaches into, so "the top 20" means one thing rather than two.
@@ -1082,7 +1198,14 @@ function selectFrom(
     forced,
     collapsed,
     novelExcluded,
-    diversity: { sameOfferingCollapsed, venueCapDeferred, namedSlotsPermuted: promoted.length, promoted },
+    diversity: {
+      sameOfferingCollapsed,
+      venueCapDeferred,
+      categoryCapDeferred,
+      ageFitBlocked,
+      namedSlotsPermuted: promoted.length,
+      promoted,
+    },
   };
 }
 
