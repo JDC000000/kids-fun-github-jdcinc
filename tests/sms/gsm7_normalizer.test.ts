@@ -110,7 +110,12 @@ describe('normalizeForGsm7', () => {
     expect(normalizeForGsm7('Café')).toBe('Café'); // untouched — the accent survives
     expect(isGsm7('Français')).toBe(false);
     expect(normalizeForGsm7('Français')).toBe('Francais');
-    expect(normalizeForGsm7('Sen̓áḵw')).toBe('Senakw'); // combining marks, no precomposed form
+    // Built from CODEPOINTS, never typed. If the combining marks were pasted literally and
+    // later flattened, the input would already read 'Senakw' and this assertion would pass
+    // while testing nothing -- exactly how the no-break-space case above once rotted.
+    const senakw = 'Sen\u0313a\u0301k\u0331w'.normalize('NFC');
+    expect(senakw).not.toBe('Senakw'); // the input really does carry marks
+    expect(normalizeForGsm7(senakw)).toBe('Senakw'); // combining marks, no precomposed form
   });
 
   it('LEAVES a character it cannot fold, rather than handing a parent mojibake', () => {

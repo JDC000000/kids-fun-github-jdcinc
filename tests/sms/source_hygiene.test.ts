@@ -1,0 +1,101 @@
+// tests/sms/source_hygiene.test.ts — no invisible characters in the SMS source, ever.
+//
+// ── WHY THIS EXISTS ─────────────────────────────────────────────────────────────────────
+// An invisible character in a source literal is unreviewable and it rots silently. Both halves
+// of that matter, and this repo has now been bitten by both:
+//
+//   * UNREVIEWABLE. `GSM7_INVISIBLE_SUBSTITUTIONS` in lib/sms/message.ts shipped with its eight
+//     keys written as the raw characters. Four of them rendered as `[' ', ' ']` — identical to
+//     each other and to a plain space on every screen. The map whose whole job is handling
+//     invisible characters could not itself be read.
+//
+//   * ROTS SILENTLY. A U+00A0 in a test literal was flattened to a plain space while the file was
+//     being edited. The assertion inverted and the test went green while checking nothing. A
+//     combining-mark literal had the same defect: strip the marks and the input already equals the
+//     expected output, so it passes for the wrong reason.
+//
+// Neither is caught by a compiler, a linter, a type check or a passing suite. Careful review does
+// not catch them either, because the whole problem is that there is nothing to see. So it is a
+// test, and it covers the source rather than the behaviour.
+//
+// THE RULE: any character that cannot be SEEN must be written as a `\uXXXX` escape. Visible
+// non-ASCII is fine and is not the target here — an em dash, a curly quote and a CJK venue name
+// are all legible, and those are the fixtures these suites are made of.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+/** Files this workstream owns. Cheap to extend; deliberately not a whole-repo walk. */
+const FILES = [
+  'lib/sms/message.ts',
+  'lib/sms/weekly-send.ts',
+  'tests/sms/gsm7_normalizer.test.ts',
+  'tests/sms/gsm7_render_equivalence.test.ts',
+  'tests/sms/source_hygiene.test.ts',
+];
+
+/**
+ * Is this character invisible — present in the bytes, absent from the screen?
+ *
+ * Tab and newline are structure and are excluded. Everything else here is either a control, a
+ * format character, an exotic space, or a combining mark that attaches to whatever precedes it.
+ */
+function isInvisible(ch: string): boolean {
+  const cp = ch.codePointAt(0) as number;
+  if (ch === '\t' || ch === '\n' || ch === '\r') return false;
+  if (ch === ' ') return false;
+  if (cp < 0x20 || cp === 0x7f) return true; // C0 controls, including a literal NUL
+  if (cp >= 0x80 && cp <= 0x9f) return true; // C1 controls
+  return (
+    /\p{Cf}/u.test(ch) || // format: zero-widths, BOM, bidi overrides
+    /\p{Zs}/u.test(ch) || // any space that is not U+0020
+    /\p{Zl}|\p{Zp}/u.test(ch) || // line/paragraph separators
+    /\p{M}/u.test(ch) // combining marks
+  );
+}
+
+describe('SMS source files carry no invisible characters', () => {
+  it.each(FILES)('%s', (relative) => {
+    const text = readFileSync(join(process.cwd(), relative), 'utf8');
+    const offences: string[] = [];
+
+    text.split('\n').forEach((line, index) => {
+      [...line].forEach((ch, column) => {
+        if (!isInvisible(ch)) return;
+        const cp = (ch.codePointAt(0) as number).toString(16).toUpperCase().padStart(4, '0');
+        offences.push(
+          `${relative}:${index + 1}:${column + 1} contains U+${cp} as a literal. ` +
+            `Write it as '\\u${cp}' instead — see this file's header.`
+        );
+      });
+    });
+
+    expect(offences).toEqual([]);
+  });
+
+  it('detects a literal it is meant to detect, so a green result means something', () => {
+    // The guard is only worth having if it can fail. Checked directly rather than trusted.
+    //
+    // EVERY PROBE IS BUILT FROM A CODEPOINT, not typed. This file is in FILES above and is held to
+    // its own rule — a detector for invisible characters that had to smuggle invisible characters
+    // into itself to be tested would be self-refuting, and exempting it would be worse.
+    const ch = (cp: number) => String.fromCodePoint(cp);
+    for (const cp of [
+      0x00a0, // no-break space
+      0x200b, // zero-width space
+      0xfeff, // byte-order mark
+      0x0000, // NUL, which turns a file binary
+      0x0313, // lone combining mark
+      0x202e, // right-to-left override
+      0x2007, // figure space
+    ]) {
+      expect(isInvisible(ch(cp))).toBe(true);
+    }
+
+    // And that it does NOT fire on legible text, including the non-ASCII these suites depend on.
+    // An em dash and a curly quote are the whole subject of the normaliser; they must stay readable.
+    for (const visible of [' ', '\n', '\t', 'a', '-', '\u2014', '\u2019', '\u00E9', '\u6D77']) {
+      expect(isInvisible(visible)).toBe(false);
+    }
+  });
+});
