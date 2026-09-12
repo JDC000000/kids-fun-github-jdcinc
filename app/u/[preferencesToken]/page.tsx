@@ -1,6 +1,7 @@
 import './preferences.css';
 import {
   CARRIER_DISCLOSURES,
+  LEGAL_FOOTER_SUMMARY,
   SENDER_IDENTITY,
   SENDER_IDENTITY_LEAD,
   SUPPORT_LINE,
@@ -193,7 +194,13 @@ export default async function PreferencesPage({
                 // "activity unavailable" interstitial instead of a bare 404.
                 // `attributed` is false only when no token could be minted; the link still works.
                 <li key={pick.occurrenceId} data-attributed={pick.attributed}>
-                  <a href={pick.href}>Activity {pick.rank}</a>
+                  {/* The name of what was actually sent, not a placeholder (fix, 2026-09-12) —
+                      this used to read "Activity 1", "Activity 2" unconditionally, because
+                      nothing joined the name past `picks_snapshot`'s bare {occurrence_id, rank}.
+                      `activityName` is null in exactly the case `attributed` is false (the
+                      occurrence was archived since the send and has no live row to name itself
+                      from), so the generic label only shows for a pick that's genuinely gone. */}
+                  <a href={pick.href}>{pick.activityName ?? `Activity ${pick.rank}`}</a>
                 </li>
               ))}
             </ol>
@@ -209,38 +216,45 @@ export default async function PreferencesPage({
           editable={!view.purged && view.status !== 'stopped'}
         />
 
-        {/* ── CASL sender identification (§1.4), Jon-approved 2026-08-26. ──
-            This block and the support line REPLACED a visible draft banner that stood here while
-            the legal name, mailing address and support contact did not exist. They exist now.
-            Shared from lib/sms/consent-copy.ts with the other surface that needs them, so the
-            address can never be right in one place and stale in the other. */}
-        <section className="kf-prefs__identity">
-          <p className="kf-prefs__identity-lead">{SENDER_IDENTITY_LEAD}</p>
-          <address className="kf-prefs__identity-block">
-            {SENDER_IDENTITY.legalName}, operating as {SENDER_IDENTITY.operatingAs}
-            <br />
-            {SENDER_IDENTITY.mailingAddress}
-            <br />
-            {SENDER_IDENTITY.businessRegistration}
-          </address>
-          <p className="kf-prefs__identity-support">
-            {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[0]}
-            <a href={SUPPORT_PHONE_HREF}>{SENDER_IDENTITY.supportPhone}</a>
-            {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[1]}
+        {/* ── CASL sender identification (§1.4) + carrier disclosures + legal links. ──
+            COLLAPSED (Jon, 2026-09-12): "simplify the copy on this page, collapse where you can" —
+            same native <details> pattern already used on /sms/start for the identical reason
+            (Jon, 2026-09-02). No JS, works with scripting disabled. Every required statement stays
+            IN THE DOM whether open or closed, so view-source/curl/archive tooling still reach all
+            of it — closing it changes what's RENDERED on screen by default, not what's disclosed.
+            Unlike /sms/start, this page carries no Toll-Free Verification screenshot obligation
+            (that pin is specifically on the signup surface — see that file's own comment), so
+            there is no compliance reason to keep it open here. */}
+        <details className="kf-prefs__legal-details">
+          <summary>{LEGAL_FOOTER_SUMMARY}</summary>
+          <section className="kf-prefs__identity">
+            <p className="kf-prefs__identity-lead">{SENDER_IDENTITY_LEAD}</p>
+            <address className="kf-prefs__identity-block">
+              {SENDER_IDENTITY.legalName}, operating as {SENDER_IDENTITY.operatingAs}
+              <br />
+              {SENDER_IDENTITY.mailingAddress}
+              <br />
+              {SENDER_IDENTITY.businessRegistration}
+            </address>
+            <p className="kf-prefs__identity-support">
+              {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[0]}
+              <a href={SUPPORT_PHONE_HREF}>{SENDER_IDENTITY.supportPhone}</a>
+              {SUPPORT_LINE.split(SENDER_IDENTITY.supportPhone)[1]}
+            </p>
+          </section>
+
+          <ul className="kf-prefs__disclosures">
+            {CARRIER_DISCLOSURES.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+
+          <p className="kf-prefs__legal">
+            <a href="/privacy">Privacy Policy</a>
+            {' · '}
+            <a href="/terms">Terms of Service</a>
           </p>
-        </section>
-
-        <ul className="kf-prefs__disclosures">
-          {CARRIER_DISCLOSURES.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-
-        <p className="kf-prefs__legal">
-          <a href="/privacy">Privacy Policy</a>
-          {' · '}
-          <a href="/terms">Terms of Service</a>
-        </p>
+        </details>
       </div>
     </main>
   );

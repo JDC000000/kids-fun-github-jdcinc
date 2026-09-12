@@ -332,8 +332,15 @@ describe('findLastWeek', () => {
     });
     const week = await findLastWeek(s.id);
     expect(week.kind).toBe('weekly');
+    // 'Stage C Fixture Occurrence' is the occurrence() helper's own activity_name (above) — the
+    // fix this pins: the hub panel used to show "Activity 1" here regardless of what was sent.
     expect(week.picks).toEqual([
-      { occurrenceId: occ.id, rank: 1, occurrenceShortRef: occ.shortRef },
+      {
+        occurrenceId: occ.id,
+        rank: 1,
+        occurrenceShortRef: occ.shortRef,
+        activityName: 'Stage C Fixture Occurrence',
+      },
     ]);
   });
 
@@ -351,6 +358,9 @@ describe('findLastWeek', () => {
     const week = await findLastWeek(s.id);
     expect(week.picks).toHaveLength(1);
     expect(week.picks[0].occurrenceShortRef).toBeNull();
+    // Degrades in step with the ref — an archived occurrence has no live row to name itself
+    // from either, so the page falls back to "Activity {rank}" rather than showing a stale name.
+    expect(week.picks[0].activityName).toBeNull();
   });
 
   it('reports "none" for a subscriber who has never been sent anything', async () => {

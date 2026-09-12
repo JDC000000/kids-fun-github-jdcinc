@@ -271,7 +271,12 @@ export function PreferencesForm({ token, view, editable }: PreferencesFormProps)
         <h2 className="kf-prefs__subheading">{PREFS_DELETE_HEADING}</h2>
         <p className="kf-prefs__help">{PREFS_DELETE_BODY}</p>
         {!confirmingDelete ? (
-          <Button type="button" variant="danger" onClick={() => setConfirmingDelete(true)}>
+          <Button
+            type="button"
+            variant="danger"
+            className="kf-prefs__delete-btn"
+            onClick={() => setConfirmingDelete(true)}
+          >
             {PREFS_DELETE}
           </Button>
         ) : (
@@ -279,6 +284,7 @@ export function PreferencesForm({ token, view, editable }: PreferencesFormProps)
             <Button
               type="button"
               variant="danger"
+              className="kf-prefs__delete-btn"
               disabled={phase === 'saving'}
               onClick={() => post('delete')}
             >

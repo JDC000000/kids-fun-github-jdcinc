@@ -163,6 +163,30 @@
   flex-wrap: wrap;
 }
 
+/* Delete button, RED (Jon, 2026-09-12) — deliberately overrides the shared `--kf-danger` token's
+ * "factual, not alarming" red-brown (Button.tsx §Brand spec, Workbook V2 §3) for THIS control
+ * only. Scoped to this page rather than changing `--kf-danger` itself: that token is shared with
+ * app/account's own delete button, which nobody asked to change, and a page-local variable keeps
+ * this file's own "every colour is a token" rule (see this file's header) rather than hardcoding
+ * a hex on the selector. #c0392b/white clears WCAG AA at 5.4:1 (well past the 4.5:1 floor) — see
+ * components/ui/__tests__/contrast.test.ts for the formula this was checked against; it is not
+ * itself a --kf-* token so that test's scan of design-tokens.css does not need to know about it. */
+.kf-prefs {
+  --kf-prefs-delete-red: #c0392b;
+  --kf-prefs-delete-red-hover: #a5311f;
+}
+/* [data-variant="danger"] added to the selector deliberately, not just the class — Button.tsx
+ * sets that attribute itself, so this beats Button.module.css's `.danger` on specificity (2
+ * selectors vs 1) rather than depending on which stylesheet the bundler happens to emit last. */
+.kf-prefs__delete-btn[data-variant='danger'] {
+  background: var(--kf-prefs-delete-red);
+  border-color: var(--kf-prefs-delete-red);
+}
+.kf-prefs__delete-btn[data-variant='danger']:hover {
+  background: var(--kf-prefs-delete-red-hover);
+  border-color: var(--kf-prefs-delete-red-hover);
+}
+
 .kf-prefs__err {
   margin: 0;
   color: var(--kf-danger);
@@ -200,14 +224,28 @@
   color: var(--kf-anchor);
 }
 
-/* ── CASL sender identification (§1.4). ──
- * Quiet but not hidden: this is the block a regulator or a Toll-Free Verification reviewer looks
- * for, so it must be legible and unambiguous, while not competing with the controls above it.
- * It replaced a loud amber draft banner that stood here while these facts did not exist. */
-.kf-prefs__identity {
+/* Collapsed legal block (Jon, 2026-09-12) — same pattern as .kf-start__legal-details on
+ * /sms/start (Jon, 2026-09-02). The summary is a real interactive control, so it gets a pointer
+ * and inherits the same muted colour the content below it uses, rather than reading as a heading. */
+.kf-prefs__legal-details {
   margin-top: var(--kf-space-5);
   padding-top: var(--kf-space-4);
   border-top: 1px solid var(--kf-hairline);
+}
+.kf-prefs__legal-details > summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--kf-ink-muted);
+}
+
+/* ── CASL sender identification (§1.4). ──
+ * Quiet but not hidden: this is the block a regulator or a Toll-Free Verification reviewer looks
+ * for, so it must be legible and unambiguous, while not competing with the controls above it.
+ * It replaced a loud amber draft banner that stood here while these facts did not exist. Its own
+ * top border/margin moved to `.kf-prefs__legal-details` above (2026-09-12) — it is now the first
+ * thing inside that wrapper, right after the summary, so a second separator here would double up. */
+.kf-prefs__identity {
+  margin-top: var(--kf-space-3);
   font-size: 0.8125rem;
   line-height: 1.6;
   color: var(--kf-ink-muted);

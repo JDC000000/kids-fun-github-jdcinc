@@ -77,16 +77,26 @@ export interface PreferencesRow extends ConsentRow {
 }
 
 /**
- * One line of last week's picks as READ — `picks_snapshot` plus the occurrence's `short_ref`.
+ * One line of last week's picks as READ — `picks_snapshot` plus the occurrence's `short_ref` and
+ * `activity_name`.
  *
  * `occurrenceShortRef` is not in the snapshot itself (0035 stores `[{occurrence_id, rank}]`), so
  * `findLastWeek` joins for it. Nullable per pick: an occurrence archived since the send has no
  * live row to join to, and that must degrade one link rather than fail the panel.
+ *
+ * `activityName` joins from the SAME row for the SAME reason `occurrenceShortRef` does — the
+ * snapshot is `{occurrence_id, rank}` and nothing else (2026-09-12 fix): the hub panel was
+ * rendering "Activity 1", "Activity 2" instead of what was actually sent, because nothing in the
+ * pipeline ever carried the name past the snapshot write. Nullable in step with
+ * `occurrenceShortRef` — an archived occurrence has no live row to name itself from either, and
+ * the panel degrades the SAME pick (unattributed link, generic label) rather than two different
+ * picks disagreeing about whether it exists.
  */
 export interface PreferencesPick {
   occurrenceId: string;
   rank: number;
   occurrenceShortRef: number | null;
+  activityName: string | null;
 }
 
 /**
@@ -104,6 +114,9 @@ export interface PreferencesViewPick {
    * full of them is the exact failure this round exists to end.
    */
   attributed: boolean;
+  /** What was actually sent, straight from `activity_occurrence`. Null in step with `attributed`
+   *  being false for the archived case — the page falls back to "Activity {rank}" only then. */
+  activityName: string | null;
 }
 
 /** What the most recent weekly attempt produced — mirrors `sms_send_log.send_type`. */
@@ -243,13 +256,14 @@ export const findLastWeek: LastWeekLookup = async (subscriberId) => {
   // that has since been cancelled.
   const ids = snapshot.map((p) => p.occurrence_id).filter((id) => typeof id === 'string');
   const refRows = ids.length
-    ? await query<{ id: string; short_ref: string | number }>(
-        `SELECT id, short_ref FROM activity_occurrence
+    ? await query<{ id: string; short_ref: string | number; activity_name: string }>(
+        `SELECT id, short_ref, activity_name FROM activity_occurrence
           WHERE id = ANY($1::uuid[]) AND archived_at IS NULL`,
         [ids]
       )
     : [];
   const refs = new Map(refRows.map((r) => [r.id, Number(r.short_ref)]));
+  const names = new Map(refRows.map((r) => [r.id, r.activity_name]));
 
   return {
     kind: row.send_type,
@@ -261,6 +275,7 @@ export const findLastWeek: LastWeekLookup = async (subscriberId) => {
         occurrenceId: p.occurrence_id,
         rank: p.rank,
         occurrenceShortRef: refs.get(p.occurrence_id) ?? null,
+        activityName: names.get(p.occurrence_id) ?? null,
       })),
     sentAt: row.created_at,
   };
@@ -417,6 +432,7 @@ export function hubPickLinks(
       rank: pick.rank,
       href: activityPath(pick.occurrenceId),
       attributed: false,
+      activityName: pick.activityName,
     };
     if (subscriberShortRef == null || pick.occurrenceShortRef == null) return unattributed;
     try {
@@ -425,6 +441,7 @@ export function hubPickLinks(
         rank: pick.rank,
         href: hubClickPath(encodeShortLink(pick.occurrenceShortRef, subscriberShortRef)),
         attributed: true,
+        activityName: pick.activityName,
       };
     } catch {
       // A missing secret or an out-of-range ref. `encodeShortLink` throws rather than truncating,

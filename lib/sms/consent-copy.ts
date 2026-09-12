@@ -586,10 +586,15 @@ export const PREFS_DELETE_HEADING = 'Delete my data';
  *
  * See `decideDelete` in lib/sms/preferences.ts for why immediate rather than 30 days, and for the
  * fact that it is a reading of §1.3's intent that needs confirming.
+ *
+ * SIMPLIFIED (Jon, 2026-09-12): the body used to end "It can't be undone — you'd have to sign up
+ * again from scratch." Dropped, not lost — the two-step confirm control right below this text
+ * already says the same thing in the moment it matters ("Yes, delete it all" / "Cancel"), so the
+ * body's job is just to state what happens, not to also carry the warning a second time.
  */
 export const PREFS_DELETE_BODY =
   'This unsubscribes you and immediately erases your phone number, postal code, kids’ ages and ' +
-  'interests. It can’t be undone — you’d have to sign up again from scratch.';
+  'interests.';
 export const PREFS_DELETE = 'Delete everything';
 export const PREFS_DELETE_CONFIRM = 'Yes, delete it all';
 export const PREFS_DELETE_CANCEL = 'Cancel';

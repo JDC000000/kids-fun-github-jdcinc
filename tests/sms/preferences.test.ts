@@ -198,7 +198,7 @@ describe('what the page renders', () => {
 
   it('shows last week, including the empty and paused states', async () => {
     for (const kind of ['weekly', 'empty_week', 'pause_notice', 'none'] as const) {
-      const { deps } = store(BOTH, { kind, picks: kind === 'weekly' ? [{ occurrenceId: 'o1', rank: 1, occurrenceShortRef: 42 }] : [], sentAt: NOW });
+      const { deps } = store(BOTH, { kind, picks: kind === 'weekly' ? [{ occurrenceId: 'o1', rank: 1, occurrenceShortRef: 42, activityName: 'Fixture Pick' }] : [], sentAt: NOW });
       const result = await resolvePreferences(ALICE_TOKEN, NOW, deps);
       if (result.outcome !== 'found') throw new Error('expected found');
       expect(result.view.lastWeek.kind).toBe(kind);
@@ -419,8 +419,8 @@ describe('failures never leak and never half-apply', () => {
 
 describe("last week's pick links", () => {
   const PICKS = [
-    { occurrenceId: 'occ-1', rank: 1, occurrenceShortRef: 5601 },
-    { occurrenceId: 'occ-2', rank: 2, occurrenceShortRef: 5602 },
+    { occurrenceId: 'occ-1', rank: 1, occurrenceShortRef: 5601, activityName: 'Fixture Pick One' },
+    { occurrenceId: 'occ-2', rank: 2, occurrenceShortRef: 5602, activityName: 'Fixture Pick Two' },
   ];
 
   afterEach(() => {
@@ -467,6 +467,7 @@ describe("last week's pick links", () => {
     expect(serialized).not.toContain('shortRef');
     expect(serialized).not.toContain('5601');
     expect(Object.keys(result.view.lastWeek.picks[0]).sort()).toEqual([
+      'activityName',
       'attributed',
       'href',
       'occurrenceId',
@@ -511,7 +512,7 @@ describe("last week's pick links", () => {
     withSecret();
     const { deps } = store(BOTH, {
       kind: 'weekly',
-      picks: [PICKS[0], { occurrenceId: 'occ-gone', rank: 2, occurrenceShortRef: null }],
+      picks: [PICKS[0], { occurrenceId: 'occ-gone', rank: 2, occurrenceShortRef: null, activityName: null }],
       sentAt: NOW,
     });
     const result = await resolvePreferences(ALICE_TOKEN, NOW, deps);
