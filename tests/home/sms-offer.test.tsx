@@ -8,6 +8,46 @@
 // wrong by default, and right only while an environment variable happens to be set. That is
 // the wrong way round for the product's front door, and it is why the branch below is the
 // first thing asserted rather than an edge case at the end.
+// ═══ T1.8 — THE MUTATION MATRIX, AND WHY IT IS WRITTEN DOWN ═══
+// The TSD's standing F-4 lesson is that a guard does not count as done until one deliberate
+// regression run proves a test actually catches it. That pass was run over every guard this
+// milestone adds — 22 mutations, each applied to the real source, the suite run, the source
+// restored. All 22 turned the suite red. The harness itself is deliberately NOT in the repo
+// (it is a throwaway, and a checked-in mutation runner is the kind of thing that rots into
+// a job nobody runs); what is kept is the inventory, because the useful artefact is knowing
+// WHICH guard each assertion is standing under.
+//
+//  #   guard                                                        killed by
+//  G1  `sms_signup_cta_clicked` ∈ CLIENT_EVENT_TYPES                analytics/catalog.test.ts
+//  G2  `sms_offer_viewed` ∉ CLIENT_EVENT_TYPES                      analytics/catalog.test.ts
+//  G3  catalog entries name an emit source                          analytics/catalog.test.ts
+//  G4  catalog wiring is 'wired' once the emits exist               analytics/catalog.test.ts
+//  G5  SMS_SIGNUP_PATH is the reachable path, not the 308           sms/signup_availability
+//  G6  signupUrl() composes from that constant                      sms/signup_availability
+//  G7  the flag comparison is `=== 'true'`, not truthy              sms/signup_availability
+//  G8  the unavailable branch carries no href                       sms/signup_availability
+//  G9  availability is not hardcoded available                      sms/signup_availability
+//  G10 the page BRANCHES rather than always offering                THIS FILE
+//  G11 the degraded branch still renders a statement                THIS FILE
+//  G12 `sms_offer_viewed` is emitted only when the offer shows      THIS FILE
+//  G13 it is emitted at all                                         THIS FILE
+//  G14 the recorder's best-effort try/catch                         THIS FILE
+//  G15 the unbackfillable `surface` label                           THIS FILE
+//  G16 the CTA really wires onClick  ← found BY this pass, see below  home/sms-cta-click
+//  G17 exactly one emit per click                                   home/sms-cta-click
+//  G18 the island's try/catch (a broken emit ≠ a dead CTA)          home/sms-cta-click
+//  G19 the handler is synchronous and unawaitable                   home/sms-cta-click
+//  G20 the event type emitted is the right one                      home/sms-cta-click
+//  G21 the CTA is a link, not a button owning the navigation        home/sms-cta-click
+//  G22 the 'use client' directive                                   home/sms-cta-click
+//
+// 🔴 THE PASS EARNED ITS KEEP ON G16. Deleting `onClick={emitSmsSignupCtaClick}` from the
+// component left the ENTIRE unit lane green: the handler tests call the function directly, and
+// the markup tests read SSR HTML, where a React event handler is not serialised. Nothing
+// connected the two, so the CTA could have shipped emitting nothing with every assertion
+// passing. tests/home/sms-cta-click.test.tsx now asserts the wiring on the React element.
+// The e2e spec was mutation-tested too, against a real build: removing that same onClick turns
+// both of its transport tests red, so it is not a toothless smoke test either.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactElement } from 'react';

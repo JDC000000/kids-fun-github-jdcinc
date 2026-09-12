@@ -88,6 +88,22 @@ describe('<SmsSignupCta /> — the affordance itself', () => {
     expect(html).toMatch(/href="\/sms\/start"/);
   });
 
+  it('🔴 actually WIRES the handler to onClick — found by the T1.8 mutation pass', () => {
+    // THIS TEST EXISTS BECAUSE THE MUTATION PASS CAUGHT ITS ABSENCE. Deleting
+    // `onClick={emitSmsSignupCtaClick}` from the component left the entire unit lane green:
+    // the handler tests call the function directly, and the markup tests read SSR HTML, where
+    // a React event handler is not serialised at all. So nothing here connected the two, and
+    // the CTA could have shipped emitting nothing while every assertion above still passed.
+    //
+    // Asserted on the ELEMENT rather than the HTML, because the element is where the wiring
+    // exists. Identity, not merely "is a function" — a different handler would emit a
+    // different event or nothing, and would satisfy a typeof check.
+    const element = SmsSignupCta({ href: '/sms/start', children: 'Go' }) as {
+      props: { onClick?: unknown };
+    };
+    expect(element.props.onClick).toBe(emitSmsSignupCtaClick);
+  });
+
   it('🔴 is a client island — the directive is load-bearing, not cosmetic', () => {
     // lib/analytics/client.ts is itself `use client`. Drop the directive here and this
     // component becomes a server component importing a client module, which is a build
