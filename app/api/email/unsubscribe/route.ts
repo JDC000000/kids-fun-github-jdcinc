@@ -42,6 +42,27 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * and an opt-out confirmation promising a re-subscribe route that does not exist is worse than
  * saying nothing. It deliberately does NOT pitch the SMS product either: somebody who has just
  * opted out of one channel should not be sold another on the confirmation page.
+ *
+ * ── "OR EXPIRED" WAS REMOVED BECAUSE IT WAS FALSE (QA wording review, 2026-09-12) ────────
+ * The invalid-link page used to read "The link may be incomplete or expired". This token CANNOT
+ * expire: lib/email/unsubscribe.ts signs an HMAC over the user id ALONE — no timestamp, no nonce
+ * — and its own docstring says "Stable per (userId, secret) so a link keeps working across
+ * sends". The only ways a link fails are an email client truncating it, the secret being
+ * rotated, or the URL being edited. Two of those three are OURS.
+ *
+ * So "expired" was not just inaccurate, it was inaccurate in the costly direction: it is the one
+ * word on this page that makes a person conclude they are too late and stop, rather than retry or
+ * write to us — and it says so at the exact moment their opt-out has just failed, while quietly
+ * putting the fault on them. Replaced with the real and far more likely cause, stated as ours.
+ *
+ * The "from the address you want removed" clause is there because a mailto with no addressing
+ * instruction leaves us unable to act on the ones who write from a different account — which, on
+ * an opt-out route, means the request arrives and cannot be honoured.
+ *
+ * ⚠ BOTH CHANGES ARE SCOPED TO THE INVALID-LINK BODY, NOT TO `MAILTO`. That constant is shared
+ * with the success page, and QA specifically asked that the success wording be left alone — its
+ * "if any still arrive" line already covers the already-queued-send edge case gracefully. Putting
+ * either clause in the shared constant would have silently rewritten the page they protected.
  */
 const SUPPORT_EMAIL = 'joncartwright00@gmail.com';
 const MAILTO = `<a href="mailto:${SUPPORT_EMAIL}" style="color:#2f6b45;">${SUPPORT_EMAIL}</a>`;
@@ -76,9 +97,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     return html(
       page(
         'This unsubscribe link isn’t valid',
-        'The link may be incomplete or expired. Email us at ' +
+        'The link may be incomplete — email clients sometimes cut long links short. Email us at ' +
           MAILTO +
-          ' and we’ll unsubscribe you.'
+          ' from the address you want removed and we’ll unsubscribe you.'
       ),
       400
     );

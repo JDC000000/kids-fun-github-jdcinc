@@ -51,6 +51,27 @@ describe('the invalid-link page — the failed-opt-out fallback', () => {
     expect(body).toMatch(/mailto:/);
   });
 
+  it('⚠ never says the link "expired" — this token has no expiry (QA wording review)', async () => {
+    // lib/email/unsubscribe.ts signs an HMAC over the user id ALONE — no timestamp, no nonce —
+    // and its docstring says "Stable per (userId, secret) so a link keeps working across sends".
+    // "Expired" was therefore false, and false in the costly direction: it is the word that makes
+    // someone conclude they are too late and stop, at the exact moment their opt-out has failed,
+    // while implying the fault is theirs. The real causes are a truncating mail client or a
+    // rotated secret — ours, not theirs.
+    const body = await (await GET(req('?u=not-a-uuid&t=nope'))).text();
+    expect(body).not.toMatch(/expired/i);
+    // …and it should name a cause the reader can act on rather than just asserting failure.
+    expect(body).toMatch(/incomplete/i);
+  });
+
+  it('tells people which address to write from, so the request can actually be honoured', () => {
+    // A mailto with no addressing instruction leaves us unable to action anyone who writes from a
+    // different account — on an opt-out route that means the request arrives and cannot be met.
+    return GET(req('?u=not-a-uuid&t=nope'))
+      .then((r) => r.text())
+      .then((body) => expect(body).toMatch(/from the address you want removed/i));
+  });
+
   it('does not touch the database when the token fails to verify', async () => {
     await GET(req('?u=not-a-uuid&t=nope'));
     expect(applied, 'a bad token must never reach the UPDATE').toHaveLength(0);
@@ -75,6 +96,21 @@ describe('the success page', () => {
     vi.stubEnv('WEEKLY_EMAIL_UNSUBSCRIBE_SECRET', 'test-secret-value');
     await GET(req(`?u=${USER}&t=${signUnsubscribeToken(USER)}`));
     expect(applied, 'the confirmation must not be shown without the write').toEqual([USER]);
+  });
+
+  it('⚠ QA asked that this wording be LEFT ALONE — asserted so a future edit has to be deliberate', async () => {
+    // The success copy was reviewed and deliberately kept: the "if any still arrive" line already
+    // covers the already-queued-send edge case gracefully, so it needs no hedging about timing.
+    // Pinned literally because the shared MAILTO constant makes it easy to rewrite this page by
+    // accident while editing the invalid-link one — which is exactly what this test exists to stop.
+    vi.stubEnv('WEEKLY_EMAIL_UNSUBSCRIBE_SECRET', 'test-secret-value');
+    const body = await (await GET(req(`?u=${USER}&t=${signUnsubscribeToken(USER)}`))).text();
+    expect(body).toContain(
+      'You won’t get any more weekly update emails from KIDS FUN. If any still arrive, email us at'
+    );
+    // The invalid-link page's clauses must NOT have leaked here via the shared constant.
+    expect(body).not.toMatch(/from the address you want removed/i);
+    expect(body).not.toMatch(/cut long links short/i);
   });
 
   it('⚠ does not pitch the SMS product on a CASL opt-out confirmation', () => {
