@@ -30,8 +30,10 @@ import { fileURLToPath } from 'node:url';
 // (CSS-parse convention follows tests/ui/freshness-stamp-mobile.test.ts.)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Mutable so one file can render the bar on several routes — the account-nav exclusion is
-// route-dependent and asserting it needs both an excluded and a non-excluded path.
+// Mutable so one file can render the bar on several routes. It was introduced for the
+// route-dependent account-nav exclusion (now removed with the pill itself, 2026-09-12) and
+// is still needed: the pill's absence is asserted on every route, and `aria-current` is
+// route-dependent too.
 let currentPath = '/';
 vi.mock('next/navigation', () => ({
   usePathname: () => currentPath,
@@ -61,7 +63,7 @@ function renderAt(path: string): string {
   return renderToStaticMarkup(<SiteNav />);
 }
 
-/** The home page: not an SMS surface, so the full bar including the account pill. */
+/** The home page. (It used to be the one route that still rendered the account pill.) */
 const html = renderAt('/');
 
 /** Declaration body of an exact rule. `selector` is matched literally. */
@@ -195,23 +197,29 @@ describe('the open panel is reachable, tappable and correctly layered', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════
-// THE ACCOUNT-NAV EXCLUSION MUST SURVIVE THE REWRITE.
-// lib/sms/surfaces.ts hides the "Sign in with Google" pill on the SMS surfaces and on the
-// pages a parent reaches from a text (/activity/, /preview/, /search, /u/). The compact menu
-// rewrote this component's JSX, and re-introducing the pill on those routes would undo a
-// Jon ruling — "capture the least data we need to provide value" — silently. Asserted in
-// BOTH directions so a mechanism that simply stopped rendering the pill anywhere would fail.
+// THE SIGN-IN PILL IS GONE FROM EVERY ROUTE, AND MUST STAY GONE.
+//
+// This block used to assert the pill's route-dependent EXCLUSION: present on '/', hidden on
+// the SMS surfaces and on the pages a parent reaches from a text (/activity/, /preview/,
+// /search, /u/), via lib/sms/surfaces.ts `hidesAccountNav`. Jon removed the control outright
+// on 2026-09-12 — "the only product i want to promote is the SMS product. we don't want
+// people to sign in with google. this functionality adds no value. remove it." — so the
+// exclusion has no remaining "present" case to assert and the direction of the test flips:
+// the pill must now be absent EVERYWHERE, '/' included.
+//
+// Kept as a test rather than deleted, because "absent everywhere" is the invariant that can
+// silently regress. AccountNav was mounted globally in SiteNav; anything that re-adds a
+// sign-in affordance to the bar — or re-introduces the component — fails here rather than
+// shipping. The destinations are re-asserted alongside so a component that regressed to
+// rendering NOTHING could not pass this by being empty.
 // ═══════════════════════════════════════════════════════════════════════════════════════
-describe('the sign-in pill exclusion still holds after the rewrite', () => {
-  it('renders the account touchpoint where it belongs', () => {
-    expect(renderAt('/')).toContain('kf-account');
-  });
-
-  for (const path of ['/search', '/preview/abc123', '/activity/abc123', '/u/tok3n']) {
-    it(`hides it on ${path}`, () => {
+describe('the Google sign-in pill is gone from the nav on every route', () => {
+  for (const path of ['/', '/search', '/preview/abc123', '/activity/abc123', '/u/tok3n']) {
+    it(`renders no account touchpoint on ${path}`, () => {
       const out = renderAt(path);
       expect(out).not.toContain('kf-account');
       expect(out).not.toContain('Sign in');
+      expect(out).not.toContain('/auth/signin');
       // …and the destinations are still all there on those pages.
       expect(out).toContain('kf-nav__menu');
       expect(out).toContain('kf-nav__list');

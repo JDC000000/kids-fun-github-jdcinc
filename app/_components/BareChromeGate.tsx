@@ -9,7 +9,8 @@ import { hidesSiteChrome } from '@/lib/sms/surfaces';
  *
  * ═══ WHY A WRAPPER RATHER THAN A CHECK INSIDE EACH COMPONENT ═══
  * SiteNav and ChildProfileBar are client components and could ask `usePathname()` themselves, the
- * way SiteNav already does for `hidesAccountNav`. SiteFooter CANNOT — it is a Server Component,
+ * way SiteNav used to for `hidesAccountNav` (that call site went with the account pill,
+ * 2026-09-12). SiteFooter CANNOT — it is a Server Component,
  * and there is no pathname on the server in the App Router.
  *
  * One gate handles all three uniformly instead of two mechanisms for the same decision, and it

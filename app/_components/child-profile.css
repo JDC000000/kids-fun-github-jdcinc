@@ -1,6 +1,6 @@
 /* child-profile.css — the ask-once prompt (home) and the header profile bar (every route).
  *
- * Self-contained and NOT scoped under `.kf`, matching site-nav.css/account-nav.css and for the
+ * Self-contained and NOT scoped under `.kf`, matching site-nav.css (and the deleted account-nav.css) and for the
  * same reason: the bar renders in the root layout, on routes that never load the search or
  * preview stylesheets. Every colour comes from the canonical --kf-* tokens (app/design-tokens.css)
  * so nothing here restates a hex.

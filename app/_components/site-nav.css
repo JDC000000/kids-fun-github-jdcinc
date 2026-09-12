@@ -1,13 +1,14 @@
 /* site-nav.css — the global navigation bar (Round 31).
  *
- * Self-contained and NOT scoped under `.kf`, matching account-nav.css: this bar renders on
+ * Self-contained and NOT scoped under `.kf`, as the deleted account-nav.css was: this bar renders on
  * every route, including ones that never load the preview/search stylesheets. Colours come
  * from the canonical global --kf-* tokens (app/design-tokens.css) so it stays in step with
  * the rest of the chrome without restating any hex.
  *
- * The bar it replaces was 50px of a single Sign-in button. This one carries a home link, a
- * row of real destinations and the same account control — in the same vertical budget, so
- * the nav costs the results no additional space above the fold. */
+ * The bar it replaces was 50px of a single Sign-in button. This one carries a home link and
+ * a row of real destinations in the same vertical budget, so the nav costs the results no
+ * additional space above the fold. It carried the account control too until 2026-09-12, when
+ * Jon removed Google sign-in outright; the bar is back to 50px on a phone as a result. */
 
 .kf-nav {
   background: var(--kf-warm-paper);
@@ -118,22 +119,15 @@
   outline-offset: 2px;
 }
 
-/* The account control keeps its own landmark and styling; it only loses the border it used
-   to draw as the whole bar, which this container now owns. */
-.kf-nav .kf-account {
-  flex: 0 0 auto;
-  padding: 0.4rem 0;
-  background: transparent;
-  border-bottom: 0;
-  min-height: 0;
-}
-
 /* ── The compact menu (<768px only; .kf-nav__more is display:none above that). ──────────
    Native <details>, so it opens with no JavaScript. The panel is absolutely positioned, so
    a CLOSED menu adds NO height to the bar and an OPEN one overlays the page instead of
-   pushing it down — measured at 68.4px in both states, which is exactly what the bar
-   already was. That is what lets this replace the scrolling strip without spending any of
-   the above-the-fold budget the strip was chosen to protect. */
+   pushing it down — measured at 68.4px in both states, which is exactly what the bar already
+   was WHEN THE SIGN-IN PILL SET THAT HEIGHT. With the pill removed (2026-09-12) the phone bar
+   measures 50px in both states; the invariant this comment asserts is unchanged — opening the
+   menu still costs zero height — only the absolute number moved down. That is what lets this
+   replace the scrolling strip without spending any of the above-the-fold budget the strip was
+   chosen to protect. */
 .kf-nav__more {
   display: none;
   flex: 0 0 auto;
@@ -143,9 +137,11 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  /* 44px is the WCAG 2.2 target-size floor, matching the one .kf-account__link already
-     takes below 768px. It costs the bar no height: that same sign-in target had already
-     set the measured mobile bar to 68.4px before this control existed. */
+  /* 44px is the WCAG 2.2 target-size floor. This used to be described as "matching the one
+     .kf-account__link already takes", and as costing the bar no height because the sign-in
+     target had already set the phone bar to 68.4px. Both halves died with the pill
+     (2026-09-12): this is now the ONLY 44px target in the bar, and the bar is 50px tall
+     because this control — not a sign-in pill — is what sets its height. */
   min-height: 44px;
   padding: 0 10px;
   border-radius: 9999px;
@@ -235,30 +231,24 @@
   box-shadow: inset 3px 0 0 var(--kf-park-moss);
 }
 
-/* A phone has no room for a session email beside the destinations; the account controls
-   themselves stay, so signing in/out is never more than the same one tap it was. */
 @media (max-width: 767px) {
   .kf-nav__inner {
     gap: 10px;
     padding: 0 12px;
   }
-  .kf-nav .kf-account__who {
-    display: none;
-  }
 
-  /* ═══ THE SIGN-IN PILL WAS EATING THE NAV (design audit, 2026-09-03) ═══
-     `.kf-account { flex: 0 0 auto }` meant a ~149px fixed-width text pill never shrank, crushing
-     the nav list to ~73px — five of six destinations scrolled off-screen with nothing to signal
-     the strip scrolled at all. Shedding "with Google" returns ~80px to the list. The full wording
-     stays in aria-label, so nothing is lost to a screen reader; only the pixels shrink. */
-  .kf-account__provider {
-    display: none;
-  }
-  .kf-nav .kf-account__link {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-  }
+  /* ═══ THE SIGN-IN PILL IS GONE, AND WITH IT THE RULES THAT FOUGHT IT (2026-09-12) ═══
+     Three rules used to live here: `.kf-account__who{display:none}`, `.kf-account__provider
+     {display:none}` (the 2026-09-03 audit's "shed 'with Google' to return ~80px to the list")
+     and a 44px tap-target floor on `.kf-account__link`. All three existed to make a ~149px
+     fixed-width pill survive a 390px viewport. Jon removed the pill itself, so they now match
+     nothing — deleting them rather than leaving them is the point: a rule that styles an element
+     no longer rendered is exactly the thing that makes a stylesheet lie about the product.
+
+     MEASURED CONSEQUENCE, not an assumption: the pill was 67.4px wide and set the phone bar to
+     68.4px tall (its 44px target plus padding). Without it the bar is 50px and that width returns
+     to the destinations. The compact <details> menu keeps its own 44px floor, so the WCAG 2.2
+     target-size guarantee this block used to carry is unaffected. */
 
   /* ═══ THE STRIP IS GONE BELOW 768px — MEASURED, NOT TUNED ═══
      What used to be here was a right-edge fade mask over a horizontally scrolling row, added

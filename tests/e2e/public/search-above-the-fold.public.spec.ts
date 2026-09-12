@@ -148,9 +148,11 @@ test.describe('the mainstream phone sees a USABLE amount of the first result', (
   //
   // Filtering adds three blocks the bare landing does not have, and NONE of them is the
   // filter-chrome this change was scoped to:
-  //     +108px  `.kf-savebar` — the signed-out "Save this search" control and its
+  //     (+108px  `.kf-savebar` — the signed-out "Save this search" control and its
   //             "Sign in with Google to save searches…" explanation, rendered ABOVE the
-  //             page's own <h1>;
+  //             page's own <h1>. REMOVED 2026-09-12 with Google sign-in, so this block no
+  //             longer exists and the budgets below are met with 108px to spare. The line is
+  //             kept because the measured totals it explains were taken with it present.)
   //     + 26px  the sticky bar's applied-filter summary line;
   //     + 22px  the applied-filter token row inside QuerySummary.
   // And on a thin-coverage query the honesty notices stack on top of that: the coverage
