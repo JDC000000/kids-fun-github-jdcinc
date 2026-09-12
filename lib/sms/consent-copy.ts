@@ -547,17 +547,18 @@ export const PREFS_EDIT_HEADING = 'What we use to find your kids’ activities';
  * header's own carve-out, preferences-page copy shown after consent does NOT move the version,
  * so this constant is correctly version-free.
  *
- * ⚠ VERBATIM, INCLUDING "kids age". Jon supplied this exact string and the instruction was not
- * to adjust it. Note the rest of this file uses a curly apostrophe for the possessive ("kids’
- * ages", "kids’ activities"); this line has no apostrophe at all. Left as given deliberately —
- * flagged for a copy decision rather than silently corrected, because changing a string a human
- * dictated is not a typo fix.
+ * ⚠ APOSTROPHE: ASKED, ANSWERED, NOT ASSUMED. Jon's original string was "We use your kids age
+ * to find relevant activities" — no apostrophe, where the rest of this file writes the possessive
+ * with a curly one ("kids’ ages", "kids’ activities"). It shipped verbatim and the discrepancy was
+ * raised as a question rather than silently corrected, because editing a sentence a human dictated
+ * is not a typo fix. Jon answered on 2026-09-12: use "kids’ ages", matching the rest of the page.
+ * Applied here, with the same U+2019 curly apostrophe the surrounding copy uses — not an ASCII '.
  *
  * It replaces BOTH halves of what this section used to say (`FIELD_COPY.childrenLabel` +
  * `FIELD_COPY.childrenHelp`), so it is rendered as the fieldset's `<legend>`: the group of age
  * inputs keeps a real accessible name, which simply deleting the label would have cost.
  */
-export const PREFS_CHILDREN_LABEL = 'We use your kids age to find relevant activities';
+export const PREFS_CHILDREN_LABEL = 'We use your kids’ ages to find relevant activities';
 export const PREFS_SAVE = 'Save changes';
 export const PREFS_SAVING = 'Saving…';
 export const PREFS_SAVED = 'Saved — your next Friday SMS will use these.';

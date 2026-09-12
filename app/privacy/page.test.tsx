@@ -52,10 +52,26 @@ describe('/privacy page', () => {
   });
 
   it('names the service providers and the OPC complaint route', () => {
-    for (const provider of ['Google', 'Supabase', 'Resend', 'Sentry']) {
+    for (const provider of ['Supabase', 'Resend', 'Sentry', 'Twilio']) {
       expect(text).toContain(provider);
     }
     expect(text).toContain('Office of the Privacy Commissioner of Canada');
+  });
+
+  it('no longer names Google as a sign-in provider — the capability is gated', () => {
+    // Google was in the list above until 2026-09-12, when sign-in was gated
+    // (lib/auth/google-signin-gate.ts). A privacy policy naming a provider we no longer use for a
+    // capability visitors no longer have is not a harmless leftover: it is the page telling
+    // someone their data goes somewhere it does not, and the one page they are entitled to
+    // believe. Asserted as an absence so re-adding it needs a deliberate edit here too.
+    expect(text).not.toContain('Google');
+  });
+
+  it('routes every PIPEDA right somewhere a visitor can actually reach with no login', () => {
+    // The rights section used to send people to "your Account page", which now 404s. A right that
+    // resolves to a dead page is not a right. These must point at the SMS preferences page.
+    expect(text).not.toContain('Account page');
+    expect(text).toContain('preferences page');
   });
 
   it('exposes a working (interim) contact channel as a mailto link', () => {

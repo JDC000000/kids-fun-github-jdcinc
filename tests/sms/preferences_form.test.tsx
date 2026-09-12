@@ -54,6 +54,21 @@ describe('the children field copy is preferences-scoped, not the signup form’s
     expect(html).toContain(esc(PREFS_CHILDREN_LABEL));
   });
 
+  it('uses the CURLY apostrophe in "kids’ ages" — asserted literally, not via the constant', () => {
+    // Jon shipped this sentence without an apostrophe ("your kids age"), was asked, and ruled on
+    // 2026-09-12: use "kids’ ages", matching the rest of the page. Asserted as a LITERAL rather
+    // than through PREFS_CHILDREN_LABEL, because a test that compares the constant to itself
+    // passes for any value and would not have caught the original wording either.
+    //
+    // The character matters: U+2019 (’), not an ASCII '. The surrounding copy is all curly, and a
+    // straight quote here would render as a visibly different glyph mid-sentence. It would also
+    // escape differently — react-dom/server turns ' into &#x27; and leaves ’ alone — so this
+    // assertion pins the escaping too.
+    expect(PREFS_CHILDREN_LABEL).toBe('We use your kids\u2019 ages to find relevant activities');
+    expect(PREFS_CHILDREN_LABEL).not.toContain("'");
+    expect(html).toContain('We use your kids\u2019 ages to find relevant activities');
+  });
+
   it('does NOT render the signup form’s question or help text', () => {
     // The old copy was FIELD_COPY.childrenLabel + FIELD_COPY.childrenHelp. Both are gone from
     // THIS page and both must stay exactly as they are on the signup form.
