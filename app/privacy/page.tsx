@@ -243,7 +243,6 @@ export default function PrivacyPage() {
 
           <h2>How long we keep it</h2>
           <ul>
-
             <li>
               <strong>Anonymous usage events:</strong> automatically deleted after{' '}
               <strong>about 13 months.</strong>
