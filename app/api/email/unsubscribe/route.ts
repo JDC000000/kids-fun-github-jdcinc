@@ -20,6 +20,32 @@ export const runtime = 'nodejs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * The fallback opt-out route, for BOTH pages below (QA F3, 2026-09-12).
+ *
+ * ── WHY THIS REPLACED "your KIDS FUN account" ───────────────────────────────────────────
+ * These two pages used to send people to their account — the invalid-link page said "you can
+ * manage email preferences from your KIDS FUN account", the success page said "you can turn them
+ * back on any time from your account settings". /account is now a 404 (nobody can sign in, so
+ * nobody has an account), which made the INVALID-LINK page the serious one: it is the fallback
+ * for somebody whose opt-out just FAILED, and it was pointing them at a dead page. CASL's test is
+ * not "was a mechanism offered" but "could they use it", so a broken link there is the one thing
+ * on this route that actually matters. The digest footer got this fix in 8d7e117; these pages sat
+ * one hop further down the same path and were out of that change's scope.
+ *
+ * A mailto, not a page: it is the only opt-out channel that is certain to work regardless of what
+ * happens to the account area, and it matches the contact address /privacy and /terms already
+ * publish. Those two hardcode the same string; a shared constant would be tidier, but both files
+ * are mid legal-review and a third copy is the smaller sin than reopening them for a refactor.
+ *
+ * The success page no longer offers to turn the emails back on. There is no way to do that now,
+ * and an opt-out confirmation promising a re-subscribe route that does not exist is worse than
+ * saying nothing. It deliberately does NOT pitch the SMS product either: somebody who has just
+ * opted out of one channel should not be sold another on the confirmation page.
+ */
+const SUPPORT_EMAIL = 'joncartwright00@gmail.com';
+const MAILTO = `<a href="mailto:${SUPPORT_EMAIL}" style="color:#2f6b45;">${SUPPORT_EMAIL}</a>`;
+
 function page(title: string, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" /><title>${title}</title></head>
@@ -48,12 +74,22 @@ export async function GET(request: Request): Promise<NextResponse> {
   const ok = await applyUnsubscribe(new URL(request.url));
   if (!ok) {
     return html(
-      page('This unsubscribe link isn’t valid', 'The link may be incomplete or expired. You can manage email preferences from your KIDS FUN account.'),
+      page(
+        'This unsubscribe link isn’t valid',
+        'The link may be incomplete or expired. Email us at ' +
+          MAILTO +
+          ' and we’ll unsubscribe you.'
+      ),
       400
     );
   }
   return html(
-    page('You’re unsubscribed', 'You won’t get any more weekly update emails from KIDS FUN. You can turn them back on any time from your account settings.'),
+    page(
+      'You’re unsubscribed',
+      'You won’t get any more weekly update emails from KIDS FUN. If any still arrive, email us at ' +
+        MAILTO +
+        '.'
+    ),
     200
   );
 }
