@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '../../../lib/db/auth';
+import { GOOGLE_SIGN_IN_ENABLED, googleSignInGoneResponse } from '@/lib/auth/google-signin-gate';
 
-// G-T6-1 — Google OAuth initiation (TSD §3A.1 FR-18; <L3>). Starts the PKCE
+// G-T6-1 — Google OAuth initiation (TSD §3A.1 FR-18; <L3>).
+//
+// ⚠ THIS ROUTE IS GATED OFF. See lib/auth/google-signin-gate.ts. The code below is intact and
+// was verified working against production on 2026-09-12 — it is switched off by product
+// decision, not broken or unfinished. Everything after the guard describes how it behaves WHEN
+// RE-ENABLED, which is why it has not been deleted.
+//
+// Starts the PKCE
 // flow: builds the Supabase `/auth/v1/authorize?provider=google` URL (storing
 // the code_verifier cookie) and redirects the browser to it. Google consent →
 // Supabase callback → app `/auth/callback` (see ../callback/route.ts) exchanges
@@ -11,6 +19,11 @@ import { createSupabaseServerClient } from '../../../lib/db/auth';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request): Promise<Response> {
+  // GATED (Jon, 2026-09-12): "nobody can sign in with google." Checked FIRST — before the URL is
+  // parsed and before any Supabase client is constructed — so a disabled build cannot start a
+  // PKCE flow, cannot set a code_verifier cookie, and cannot reach the provider at all.
+  if (!GOOGLE_SIGN_IN_ENABLED) return googleSignInGoneResponse();
+
   const { origin, searchParams } = new URL(request.url);
   const next = searchParams.get('next') ?? '/';
 

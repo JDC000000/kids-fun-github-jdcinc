@@ -132,7 +132,16 @@ export function renderWeeklyDigest(digest: WeeklyDigest, opts: RenderOptions): R
     digest.totalActivities === 1 ? 'activity' : 'activities'
   } matching what you saved.`;
   const searchAllUrl = appUrl('/search');
-  const accountUrl = appUrl('/account');
+  // The "Manage your account" link that used to live in the footer pointed at /account, which is
+  // now a 404 (lib/auth/google-signin-gate.ts — nobody can sign in, so nobody has an account to
+  // manage). Removed rather than repointed: there is no equivalent destination in a no-account
+  // product, and a footer link to a dead page is worse than one fewer link.
+  //
+  // ⚠ THIS DOES NOT TOUCH THE UNSUBSCRIBE MECHANISM, which is the compliance-relevant one.
+  // `opts.unsubscribeUrl` is an independent HMAC-token link (lib/email/unsubscribe.ts) that needs
+  // no session and is unaffected — it still appears in the body AND the RFC 8058
+  // List-Unsubscribe header. Checked before removing this, because if the account link HAD been
+  // the only opt-out path, deleting it would have turned a tidy-up into a CASL problem.
 
   const html = `<!doctype html>
 <html lang="en">
@@ -181,8 +190,6 @@ export function renderWeeklyDigest(digest: WeeklyDigest, opts: RenderOptions): R
             You're getting this because you opted in to weekly updates and saved at least one search on KIDS FUN.
           </p>
           <p style="color:${C.moss};font-size:13px;line-height:1.6;margin:10px 0 0 0;">
-            <a href="${escapeAttr(accountUrl)}" style="color:${C.moss};text-decoration:underline;">Manage your account</a>
-            &nbsp;·&nbsp;
             <a href="${escapeAttr(opts.unsubscribeUrl)}" style="color:${C.moss};text-decoration:underline;">Unsubscribe</a>
           </p>
         </td></tr>
@@ -193,14 +200,14 @@ export function renderWeeklyDigest(digest: WeeklyDigest, opts: RenderOptions): R
 </body>
 </html>`;
 
-  const text = renderText(digest, opts, { searchAllUrl, accountUrl });
+  const text = renderText(digest, opts, { searchAllUrl });
   return { subject, html, text };
 }
 
 function renderText(
   digest: WeeklyDigest,
   opts: RenderOptions,
-  urls: { searchAllUrl: string; accountUrl: string }
+  urls: { searchAllUrl: string }
 ): string {
   const lines: string[] = [];
   lines.push('KIDS FUN — your weekly kid-friendly finds');
@@ -235,7 +242,6 @@ function renderText(
   lines.push('');
   lines.push('—');
   lines.push("You're getting this because you opted in to weekly updates and saved at least one search on KIDS FUN.");
-  lines.push(`Manage your account: ${urls.accountUrl}`);
   lines.push(`Unsubscribe: ${opts.unsubscribeUrl}`);
   return lines.join('\n');
 }

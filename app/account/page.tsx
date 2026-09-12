@@ -1,4 +1,5 @@
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
+import { GOOGLE_SIGN_IN_ENABLED } from '@/lib/auth/google-signin-gate';
 import { getRequestUser } from '@/lib/db/session-user';
 import { ensureUserProfile, getUserProfile, type UserProfile } from '@/lib/db/user-profile';
 import { listSavedSearches } from '@/lib/db/saved-search';
@@ -25,9 +26,24 @@ export const metadata = {
 };
 
 export default async function AccountPage() {
+  // GATED (Jon, 2026-09-12): "nobody can sign in with google."
+  //
+  // This page's only route to an authenticated session was the Google OAuth flow, which is now
+  // switched off (lib/auth/google-signin-gate.ts). Without that, `getRequestUser()` can never
+  // return a user, so every line below this guard is unreachable and the redirect underneath it
+  // would have sent anonymous visitors to a route that is itself now a 404 — a loop into nothing.
+  // 404 here rather than that.
+  //
+  // ⚠ EVERYTHING BELOW IS INTENTIONALLY LEFT INTACT AND IS NOW UNREACHABLE. Whether this whole
+  // area (profile, saved searches, the weekly-email opt-in, the data export and delete endpoints)
+  // should be RETIRED is an open product question that Jon has not answered — it is flagged, not
+  // decided here. Deleting it would also delete the PIPEDA export/delete endpoints, which is not
+  // a call to make as a side effect of turning off a sign-in button.
+  if (!GOOGLE_SIGN_IN_ENABLED) notFound();
+
   const user = await getRequestUser();
   if (!user) {
-    // Reuse the existing OAuth initiation route; come back here after sign-in.
+    // Unreachable while the gate above is closed. Kept for the re-enabled case.
     redirect('/auth/signin?next=/account');
   }
 
