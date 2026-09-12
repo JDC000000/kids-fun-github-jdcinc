@@ -9,6 +9,7 @@ import {
 import { ThreeThings } from './_components/ThreeThings';
 import { ChildProfilePrompt } from './_components/ChildProfilePrompt';
 import { smsSignupAvailability } from '@/lib/sms/availability';
+import { recordSmsOfferViewed } from '@/lib/analytics/record';
 
 // Home / front door (M3 Screen 1, Visual Blueprint v0.2). The first thing a
 // first-time parent sees: it introduces KIDS FUN in the civic field-guide voice,
@@ -57,7 +58,7 @@ export const metadata = {
  */
 const CATEGORIES = liveCategoryDestinations();
 
-export default function Home() {
+export default async function Home() {
   /*
    * ═══ THE FAIL-SAFE, EVALUATED PER REQUEST (AC-12) ═══
    * SMS_SIGNUP_ENABLED defaults to FALSE and app/sms/start/page.tsx calls `notFound()` unless it
@@ -75,6 +76,24 @@ export default function Home() {
    * baked in at build time and would have lied for as long as the deployment lived.
    */
   const signup = smsSignupAvailability();
+
+  /*
+   * ═══ MEASURE THE OFFER, NOT THE RENDER (AC-09, T1.5) ═══
+   * Guarded on `signup.available` rather than emitted unconditionally, and the guard is the
+   * whole point rather than an optimisation. This event is the DENOMINATOR of the signup
+   * conversion rate; the branch above renders no offer at all whenever the flag is off, which —
+   * given it defaults to FALSE — is the state the product spends most of its life in. Counting
+   * those renders would silently depress the rate with impressions that never had a chance to
+   * convert, and the result would read as a product finding rather than as a bug.
+   *
+   * AWAITED, matching recordSearchPerformed on /search: on a serverless runtime a floating
+   * promise can be cut off when the response finishes, so "fire and forget" here would mean
+   * "sometimes fire". Best-effort in the only sense that matters — the recorder cannot throw
+   * and cannot change what is rendered.
+   */
+  if (signup.available) {
+    await recordSmsOfferViewed('home');
+  }
 
   return (
     <div className="kf">

@@ -40,9 +40,13 @@ describe('analytics event catalog', () => {
     }
   });
 
-  it('the two proof-of-concept events are wired; the rest are capture-ready', () => {
+  it('names exactly the events with a real emit call site today', () => {
+    // Was "the two proof-of-concept events"; the SMS front-door pair joined them in TSD §9 M1.
+    // An exact list rather than a contains-check, because the value of `wiring` is entirely in
+    // what it EXCLUDES — it is what makes the admin dashboard print "Not yet instrumented"
+    // instead of a structural zero, and a list that could only grow would stop doing that job.
     const wired = EVENT_CATALOG.filter((e) => e.wiring === 'wired').map((e) => e.type).sort();
-    expect(wired).toEqual(['listing_viewed', 'search_performed']);
+    expect(wired).toEqual(['listing_viewed', 'search_performed', 'sms_offer_viewed']);
   });
 
   it('formally defers search_autocomplete_selected (PRD §9, autocomplete not built)', () => {

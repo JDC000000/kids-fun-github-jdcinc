@@ -112,7 +112,7 @@ export const EVENT_CATALOG: readonly EventCatalogEntry[] = [
   {
     type: 'sms_offer_viewed',
     origin: 'server',
-    wiring: 'capture_ready',
+    wiring: 'wired',
     firedFrom: 'app/page.tsx (server component; recordSmsOfferViewed) — ONLY when the offer is actually presented',
     provenance: 'TSD §9 M1 T1.5 / AC-09 (impression half); denominator of the S-03 signup conversion rate',
     description:

@@ -18,6 +18,7 @@
 // pass quietly, and which is itself asserted so it cannot silently widen.
 import { describe, expect, it, vi, afterAll } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import type { ReactElement } from 'react';
 
 // SiteNav reads usePathname, and the home page's ChildProfilePrompt island reads useRouter.
 // Neither has an app-router context under renderToStaticMarkup; both are irrelevant to what
@@ -138,9 +139,18 @@ describe('nav destinations agree with the search engine', () => {
   );
 });
 
+// <Home /> became an ASYNC server component when it started emitting `sms_offer_viewed` during
+// render (TSD §9 M1 T1.5), exactly as /search already was. renderToStaticMarkup is the legacy
+// synchronous renderer, so the component is invoked and AWAITED and its element tree handed
+// over — the same accommodation this file already makes for the async <ThreeThings /> above,
+// and cheaper than stubbing out a page this file exists to render. It sits at MODULE scope
+// because a `describe` callback may not be async (esbuild rejects the await outright), and this
+// file already uses top-level await for its imports.
+const HOME_HTML = renderToStaticMarkup((await Home()) as ReactElement);
+
 describe('every surface renders the one shared list', () => {
   const navHtml = renderToStaticMarkup(<SiteNav />);
-  const homeHtml = renderToStaticMarkup(<Home />);
+  const homeHtml = HOME_HTML;
   const footerHtml = renderToStaticMarkup(<SiteFooter />);
   const live = liveCategoryDestinations();
   const retired = CATEGORY_DESTINATIONS.filter((d) => d.status === 'retired');

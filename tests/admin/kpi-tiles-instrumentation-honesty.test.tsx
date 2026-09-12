@@ -161,11 +161,9 @@ describe('the honesty label is driven by the catalog, not a hard-coded list', ()
         'account_signed_in',
         'correction_report_submitted',
         'listing_status_changed',
-        // The SMS front-door pair (TSD §9 M1). Catalogued at T1.2 with a named emit
-        // source but no emit call yet — `capture_ready`, which is what this list means.
-        // They LEAVE this set at T1.5/T1.6, when the two emits actually land and the
-        // entries flip to 'wired'; that edit is the mechanism working, not a regression.
-        'sms_offer_viewed',
+        // The click half of the SMS front-door pair. `sms_offer_viewed` LEFT this set at
+        // T1.5, when app/page.tsx started emitting it — the mechanism working exactly as
+        // this block's comment describes. The click follows at T1.6.
         'sms_signup_cta_clicked',
       ]),
     );

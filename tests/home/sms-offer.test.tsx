@@ -27,8 +27,23 @@ vi.mock('../../app/_components/ThreeThings', () => ({
   ThreeThings: () => <div data-testid="three-things-stub" />,
 }));
 
+// The analytics emitter is mocked at the emit seam — one level ABOVE the pg-backed
+// writer — so this file observes exactly what the page asks for without opening a
+// database connection, and stays in the parallel `unit` lane.
+const emitEvent = vi.hoisted(() =>
+  // Typed with rest args rather than emitEvent's real signature so the assertions below can
+  // read positional arguments without importing the module this file is mocking away.
+  vi.fn(async (..._args: unknown[]) => ({ ok: true })),
+);
+vi.mock('../../lib/analytics/emit', () => ({ emitEvent }));
+
 const { default: Home } = await import('../../app/page');
 const { SMS_SIGNUP_PATH } = await import('../../lib/sms/config');
+
+/** The `sms_offer_viewed` calls made during the last render. */
+function offerViewedCalls(): unknown[][] {
+  return emitEvent.mock.calls.filter((c) => c[0] === 'sms_offer_viewed');
+}
 
 /** Render the home page the way Next does — it is an async server component. */
 async function renderHome(): Promise<string> {
@@ -66,6 +81,8 @@ function signupOff(value = 'false'): void {
 
 beforeEach(() => {
   vi.stubEnv('SMS_SENDING_ENABLED', 'false');
+  emitEvent.mockReset();
+  emitEvent.mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
@@ -138,5 +155,95 @@ describe('AC-12 — the home page never advertises a destination that 404s', () 
     expect(offerBlock(off)).not.toMatch(/<a |<button |<form |role="button"/);
     // The enabled branch, by contrast, really does carry one.
     expect(offerBlock(on)).toMatch(/<a /);
+  });
+});
+
+describe('AC-09 (impression half) — sms_offer_viewed counts offers, not renders', () => {
+  it('emits exactly one event when the offer is presented', async () => {
+    signupOn();
+    await renderHome();
+    expect(offerViewedCalls()).toHaveLength(1);
+  });
+
+  it('🔴 emits NOTHING on the degraded render — the denominator stays honest', async () => {
+    // THIS IS THE ASSERTION THE WHOLE EVENT IS FOR. `sms_offer_viewed` is the denominator
+    // of the signup conversion rate. A render with no offer on it is not an offer seen, so
+    // counting it would add rows that never had any chance of converting and would depress
+    // the measured rate from day one — and because the flag defaults to FALSE, the degraded
+    // render is the state the product spends most of its life in. The corruption would look
+    // exactly like a product result, and would not be fixable afterwards.
+    signupOff();
+    await renderHome();
+    expect(offerViewedCalls()).toHaveLength(0);
+    expect(emitEvent).not.toHaveBeenCalled();
+  });
+
+  it('emits nothing for any non-`true` flag value, matching the render branch exactly', async () => {
+    for (const value of ['', 'TRUE', '1', 'yes']) {
+      vi.unstubAllEnvs();
+      vi.stubEnv('SMS_SENDING_ENABLED', 'false');
+      emitEvent.mockClear();
+      signupOff(value);
+      await renderHome();
+      expect(offerViewedCalls(), `flag=${JSON.stringify(value)}`).toHaveLength(0);
+    }
+  });
+
+  it('attributes the row to an anonymous session, and to the surface it was shown on', async () => {
+    signupOn();
+    await renderHome();
+    const [type, searchContext, resultSummary, actor] = offerViewedCalls()[0];
+    expect(type).toBe('sms_offer_viewed');
+    // No search context — this is an impression, not a query.
+    expect(searchContext).toBeNull();
+    // `surface` is the thing that cannot be backfilled: when M2/M3 add a second place the
+    // offer appears, rows written before that point are unattributable without it.
+    expect(resultSummary).toMatchObject({ surface: 'home' });
+    // An actor, so the event can join the anon session — and a NON-EMPTY one, since a null
+    // actor would silently make every impression unattributable to a visit.
+    expect(typeof actor).toBe('string');
+    expect((actor as string).length).toBeGreaterThan(0);
+  });
+
+  it('🔴 carries no PII — only a surface label and the anon id', async () => {
+    signupOn();
+    await renderHome();
+    const [, searchContext, resultSummary] = offerViewedCalls()[0];
+    expect(Object.keys(resultSummary as object)).toEqual(['surface']);
+    expect(searchContext).toBeNull();
+  });
+});
+
+describe('best-effort — analytics cannot break the front door', () => {
+  it('🔴 renders byte-identical HTML when the write REJECTS', async () => {
+    signupOn();
+    const healthy = await renderHome();
+    emitEvent.mockResolvedValue({ ok: false });
+    expect(await renderHome()).toBe(healthy);
+  });
+
+  it('🔴 renders byte-identical HTML when the emitter THROWS', async () => {
+    // writeAnalyticsEvent promises never to throw, and this asserts the home page does not
+    // DEPEND on that promise. The contract is one module away and one refactor from being
+    // broken by someone who has never seen this file; the blast radius of believing it here
+    // is a 500 on the product's front door, which is not a trade worth making for a row in
+    // an analytics table.
+    signupOn();
+    emitEvent.mockResolvedValue({ ok: true });
+    const healthy = await renderHome();
+    emitEvent.mockRejectedValue(new Error('pool exhausted'));
+    await expect(renderHome()).resolves.toBe(healthy);
+  });
+
+  it('🔴 still renders when the emitter throws SYNCHRONOUSLY', async () => {
+    // A synchronous throw escapes a bare `await` differently from a rejected promise and is
+    // what an import-time/config failure inside the analytics stack actually looks like.
+    signupOn();
+    emitEvent.mockResolvedValue({ ok: true });
+    const healthy = await renderHome();
+    emitEvent.mockImplementation(() => {
+      throw new Error('analytics module is broken');
+    });
+    await expect(renderHome()).resolves.toBe(healthy);
   });
 });
