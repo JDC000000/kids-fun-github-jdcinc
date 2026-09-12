@@ -254,3 +254,56 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* ── The SMS offer (TSD §9 M1) ────────────────────────────────────────────────
+ * Two states, ONE footprint. The unavailable state keeps the same box and the same
+ * vertical rhythm as the available one and drops only the action — so a flag flip
+ * changes what a parent can DO, never how the page is laid out. An offer that
+ * vanished entirely would move everything below it and read as a rendering fault.
+ *
+ * Leaf is the brand's one-action colour and is spent here, on the CTA, deliberately.
+ * PROVISIONAL: M2 rebuilds this into the hero. The class names are the contract the
+ * tests hold; the visual treatment is not. */
+.kf-home__sms {
+  margin-top: 22px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--r-card);
+}
+.kf-home__sms-title {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.3;
+  font-weight: 700;
+  color: var(--ink);
+}
+.kf-home__sms-sub {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-secondary);
+}
+.kf-home__sms-cta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px; /* the shared tap-target floor — this is a phone-first surface */
+  margin-top: 12px;
+  padding: 0 18px;
+  border-radius: var(--r-chip);
+  background: var(--leaf);
+  /* --forest-ink on --leaf is the brand's documented one-action pairing (preview.css's
+     own note), not a colour picked here. AA-checked as a pair by that convention. */
+  color: var(--forest-ink);
+  font-size: 15px;
+  font-weight: 700;
+}
+.kf-home__sms-cta:hover {
+  background: var(--leaf-hover);
+}
+/* Quieter when there is nothing to click: the box states a fact rather than inviting an
+   action, and should not compete with the controls that DO work. */
+.kf-home__sms--unavailable {
+  background: var(--canvas);
+  border-style: dashed;
+}
