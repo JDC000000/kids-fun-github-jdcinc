@@ -48,6 +48,14 @@ test-results/
 .citycalendar-recon*.json
 .citycalendar-feed*.json
 
+# M1 §3h withheld-correction (scripts/backfill-scope/m1-withheld-backfill.sh): the esbuild
+# output DIRECTORY — this build uses --splitting so the write surface is a separate chunk, which
+# means an outdir rather than a single .mjs — and the run's plan artefact, which carries per-row
+# production occurrence ids and activity names. Same reason as .backfill-scope.json above: this
+# repository is public.
+.m1-withheld-backfill-bundle/
+.m1-withheld-backfill*.json
+
 # §3h title-gate REVIEW-CANDIDATE queue (scripts/backfill-scope/review-batch.sh): 633 rows of
 # live parent-facing catalogue data — activity names and occurrence ids pulled from production.
 # This repository is PUBLIC. The generator and its tests are source and are committed; the
