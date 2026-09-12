@@ -10,6 +10,7 @@
 //   1. the children copy on THIS page diverged from the signup form's on purpose;
 //   2. the two danger sections' explanations moved behind a collapsed <details> — and the text
 //      must still be IN the DOM, not conditionally rendered.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { PreferencesForm } from '@/app/u/[preferencesToken]/_components/PreferencesForm';
@@ -18,6 +19,7 @@ import {
   PREFS_CHILDREN_LABEL,
   PREFS_DELETE,
   PREFS_DELETE_BODY,
+  PREFS_DELETE_CONFIRM_CONSEQUENCE,
   PREFS_DELETE_DETAILS_SUMMARY,
   PREFS_UNSUBSCRIBE,
   PREFS_UNSUBSCRIBE_BODY,
@@ -129,6 +131,34 @@ describe('the danger sections: button visible, explanation collapsed', () => {
     const details = html.match(/<details[^>]*class="kf-prefs__section-details"[^>]*>/g) ?? [];
     expect(details).toHaveLength(2);
     for (const d of details) expect(d).not.toContain('open');
+  });
+
+  it('⚠ the delete CONFIRM step states what gets erased, not just that it is final', () => {
+    // QA, 2026-09-12. Collapsing PREFS_DELETE_BODY into the <details> left a path where someone
+    // could irreversibly erase their number, postal code and children's ages without the page
+    // ever saying so: "Yes, delete it all" / "Cancel" convey FINALITY, not CONSEQUENCE.
+    //
+    // Asserted at SOURCE level rather than by rendering, deliberately and with its limits stated:
+    // the confirm step is behind `confirmingDelete` useState, renderToStaticMarkup only produces
+    // the initial state, and this repo has no @testing-library to click with. So this guards
+    // against the line being deleted or decoupled from the button — the regression that actually
+    // happened — while the rendered behaviour is verified in a real browser instead.
+    const src = readFileSync(
+      new URL('../../app/u/[preferencesToken]/_components/PreferencesForm.tsx', import.meta.url),
+      'utf8'
+    );
+    expect(src).toContain('PREFS_DELETE_CONFIRM_CONSEQUENCE');
+    // It must live in the confirm branch, not merely be imported.
+    expect(src).toMatch(/kf-prefs__confirm-consequence[\s\S]*?PREFS_DELETE_CONFIRM_CONSEQUENCE/);
+    // And it must be announced with the destructive button, not just painted near it.
+    expect(src).toContain('aria-describedby="kf-prefs-delete-consequence"');
+    expect(src).toContain('id="kf-prefs-delete-consequence"');
+    // The copy has to name what goes, or it is finality wearing a consequence's clothes.
+    for (const thing of ['number', 'postal code', 'ages', 'interests']) {
+      expect(PREFS_DELETE_CONFIRM_CONSEQUENCE.toLowerCase()).toContain(thing);
+    }
+    // Must NOT re-add the irreversibility clause Jon deliberately dropped the same day.
+    expect(PREFS_DELETE_CONFIRM_CONSEQUENCE.toLowerCase()).not.toContain('undone');
   });
 
   it('reuses the page’s existing toggle idiom rather than inventing a second one', () => {

@@ -156,6 +156,17 @@
 
 /* The delete confirmation puts its two buttons side by side, with Cancel last so the destructive
  * one is not the one under a thumb resting at the end of a row. */
+/* The consequence line in the delete confirm step (QA, 2026-09-12). Sits ABOVE the button row
+ * rather than inside it: `.kf-prefs__confirm` is a wrapping flex row, so a <p> in there would lay
+ * out as a third inline item beside the two buttons and wrap unpredictably at narrow widths — the
+ * one place this sentence must not be easy to skip. Full-width block, stated, then the choice. */
+.kf-prefs__confirm-consequence {
+  margin: 0 0 var(--kf-space-2);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--kf-ink);
+}
+
 .kf-prefs__confirm {
   display: flex;
   gap: var(--kf-space-3);

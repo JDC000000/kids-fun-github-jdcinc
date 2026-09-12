@@ -28,6 +28,7 @@ import {
   PREFS_DELETE_BODY,
   PREFS_DELETE_CANCEL,
   PREFS_DELETE_CONFIRM,
+  PREFS_DELETE_CONFIRM_CONSEQUENCE,
   PREFS_DELETE_DETAILS_SUMMARY,
   PREFS_DELETE_HEADING,
   PREFS_DELETED,
@@ -293,24 +294,51 @@ export function PreferencesForm({ token, view, editable }: PreferencesFormProps)
             {PREFS_DELETE}
           </Button>
         ) : (
-          <div className="kf-prefs__confirm">
-            <Button
-              type="button"
-              variant="danger"
-              className="kf-prefs__delete-btn"
-              disabled={phase === 'saving'}
-              onClick={() => post('delete')}
-            >
-              {PREFS_DELETE_CONFIRM}
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => setConfirmingDelete(false)}>
-              {PREFS_DELETE_CANCEL}
-            </Button>
-          </div>
+          <>
+            {/* THE CONSEQUENCE, RESTORED TO THE CONFIRM STEP (QA finding, 2026-09-12).
+                Collapsing PREFS_DELETE_BODY into the <details> below left a route through this
+                flow where someone could irreversibly erase their number, postal code and
+                children's ages without the page ever saying so — the two buttons convey FINALITY
+                ("Yes, delete it all" / "Cancel"), which is not the same as CONSEQUENCE.
+
+                Rendered only in the confirm state, so the section at rest is still the heading,
+                the button and the quiet toggle that Jon asked for. `aria-describedby` ties it to
+                the destructive button rather than relying on a live region: a role="status" that
+                mounts at the same moment as its own content is announced inconsistently, whereas
+                a description on the button is read when a screen-reader user reaches the thing it
+                describes. Same device app/account/_components/AccountData.tsx already uses for
+                its equivalent control. */}
+            <p className="kf-prefs__confirm-consequence" id="kf-prefs-delete-consequence">
+              {PREFS_DELETE_CONFIRM_CONSEQUENCE}
+            </p>
+            <div className="kf-prefs__confirm">
+              <Button
+                type="button"
+                variant="danger"
+                className="kf-prefs__delete-btn"
+                disabled={phase === 'saving'}
+                aria-describedby="kf-prefs-delete-consequence"
+                onClick={() => post('delete')}
+              >
+                {PREFS_DELETE_CONFIRM}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setConfirmingDelete(false)}>
+                {PREFS_DELETE_CANCEL}
+              </Button>
+            </div>
+          </>
         )}
-        {/* Same collapse as the unsubscribe section. The two-step confirm above is untouched and
-            still states the consequence at the moment it matters, so this text is an explanation
-            on demand rather than the only guard in front of a destructive action. */}
+        {/* Same collapse as the unsubscribe section.
+            ⚠ THIS COMMENT USED TO CLAIM A SAFEGUARD THAT DID NOT EXIST. It read: "the two-step
+            confirm above is untouched and still states the consequence at the moment it matters,
+            so this text is an explanation on demand rather than the only guard". The first half
+            was true — the confirm control is untouched — and the conclusion drawn from it was
+            false: the confirm step said "Yes, delete it all" / "Cancel", which states FINALITY,
+            never what is erased. Collapsing this body therefore did make it the only place the
+            consequence appeared, which is exactly what the comment asserted was not happening.
+            Caught by QA. The confirm step now carries its own one-line consequence
+            (PREFS_DELETE_CONFIRM_CONSEQUENCE above), so the claim is true as written — but it is
+            true because it was FIXED, not because it was ever checked. */}
         <details className="kf-prefs__section-details">
           <summary>{PREFS_DELETE_DETAILS_SUMMARY}</summary>
           <p className="kf-prefs__help">{PREFS_DELETE_BODY}</p>

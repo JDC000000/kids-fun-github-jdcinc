@@ -642,6 +642,29 @@ export const PREFS_DELETE = 'Delete everything';
  *  PREFS_UNSUBSCRIBE_DETAILS_SUMMARY above; the two-step confirm is unchanged and still carries
  *  the warning at the moment it matters. */
 export const PREFS_DELETE_DETAILS_SUMMARY = 'What gets deleted';
+/**
+ * Shown in the ALWAYS-VISIBLE confirm step, beside "Yes, delete it all" (QA, 2026-09-12).
+ *
+ * ── WHY THIS EXISTS: A GAP THE COLLAPSE OPENED ──────────────────────────────────────────
+ * PREFS_DELETE_BODY used to sit in an always-visible <p> above the delete button, so anyone
+ * walking into this flow read what deleting actually erases before they could reach it. Moving
+ * it behind the collapsed <details> (Jon's "the details … can be minimized/hidden/toggle") left
+ * a path where a person could complete an IRREVERSIBLE delete of their phone number, postal
+ * code and children's ages without the page ever telling them what was about to go. The two
+ * buttons say "Yes, delete it all" / "Cancel" — those convey FINALITY, which is a different
+ * thing from CONSEQUENCE, and the comment in PreferencesForm.tsx wrongly claimed otherwise.
+ *
+ * So this restores the consequence at the only moment it has to be there, without undoing the
+ * simplification: the section at rest is still just a heading, a button and a quiet toggle.
+ * This line appears only after the first click.
+ *
+ * DELIBERATELY DOES NOT SAY "it can't be undone". Jon dropped that clause from PREFS_DELETE_BODY
+ * earlier the same day, on the reasoning that the confirm buttons already carry it. He is right,
+ * and re-adding it here would reverse his edit while claiming to fix something else. The gap was
+ * never finality — it was WHAT GETS ERASED. That, and only that, is what this says.
+ */
+export const PREFS_DELETE_CONFIRM_CONSEQUENCE =
+  'This erases your number, postal code, kids’ ages and interests.';
 export const PREFS_DELETE_CONFIRM = 'Yes, delete it all';
 export const PREFS_DELETE_CANCEL = 'Cancel';
 export const PREFS_DELETED = 'Deleted — nothing about you is stored any more.';
