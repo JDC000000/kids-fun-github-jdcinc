@@ -161,10 +161,6 @@ describe('the honesty label is driven by the catalog, not a hard-coded list', ()
         'account_signed_in',
         'correction_report_submitted',
         'listing_status_changed',
-        // The click half of the SMS front-door pair. `sms_offer_viewed` LEFT this set at
-        // T1.5, when app/page.tsx started emitting it — the mechanism working exactly as
-        // this block's comment describes. The click follows at T1.6.
-        'sms_signup_cta_clicked',
       ]),
     );
     expect(catalogEntry('search_performed')?.wiring).toBe('wired');

@@ -46,7 +46,12 @@ describe('analytics event catalog', () => {
     // what it EXCLUDES — it is what makes the admin dashboard print "Not yet instrumented"
     // instead of a structural zero, and a list that could only grow would stop doing that job.
     const wired = EVENT_CATALOG.filter((e) => e.wiring === 'wired').map((e) => e.type).sort();
-    expect(wired).toEqual(['listing_viewed', 'search_performed', 'sms_offer_viewed']);
+    expect(wired).toEqual([
+      'listing_viewed',
+      'search_performed',
+      'sms_offer_viewed',
+      'sms_signup_cta_clicked',
+    ]);
   });
 
   it('formally defers search_autocomplete_selected (PRD §9, autocomplete not built)', () => {

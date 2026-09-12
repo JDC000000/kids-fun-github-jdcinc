@@ -8,6 +8,7 @@ import {
 } from './_lib/nav-destinations';
 import { ThreeThings } from './_components/ThreeThings';
 import { ChildProfilePrompt } from './_components/ChildProfilePrompt';
+import { SmsSignupCta } from './_components/SmsSignupCta';
 import { smsSignupAvailability } from '@/lib/sms/availability';
 import { recordSmsOfferViewed } from '@/lib/analytics/record';
 
@@ -154,9 +155,7 @@ export default async function Home() {
                   Things to do with your kids across Metro Vancouver, sent to your phone once a
                   week. No app, no account.
                 </p>
-                <Link className="kf-home__sms-cta" href={signup.href}>
-                  Get the weekly text
-                </Link>
+                <SmsSignupCta href={signup.href}>Get the weekly text</SmsSignupCta>
               </section>
             ) : (
               <section

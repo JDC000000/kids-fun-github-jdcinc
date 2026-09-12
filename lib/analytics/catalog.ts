@@ -121,7 +121,7 @@ export const EVENT_CATALOG: readonly EventCatalogEntry[] = [
   {
     type: 'sms_signup_cta_clicked',
     origin: 'client',
-    wiring: 'capture_ready',
+    wiring: 'wired',
     firedFrom: 'app/_components/SmsSignupCta.tsx (client island; trackEvent) — rendered by app/page.tsx',
     provenance: 'TSD §9 M1 T1.6 / AC-09 (click half); numerator of the S-03 signup conversion rate',
     description:
