@@ -528,6 +528,36 @@ export const PREFS_LAST_WEEK_EMPTY =
   'Nothing near your kids matched last week, so we said so rather than padding the list.';
 
 export const PREFS_EDIT_HEADING = 'What we use to find your kids’ activities';
+
+/**
+ * The children field's label ON THE PREFERENCES PAGE ONLY (Jon, 2026-09-12, verbatim:
+ * "We use your kids age to find relevant activities").
+ *
+ * ── WHY THIS IS A SEPARATE CONSTANT AND NOT AN EDIT TO `FIELD_COPY.childrenHelp` ──────────
+ * `FIELD_COPY` is rendered by THREE surfaces: this page, `/sms/signup` and `/sms/start`. The
+ * first is shown only to somebody who has already consented; the other two are the consent act
+ * itself. Editing `FIELD_COPY` to satisfy a preferences-page request would therefore have:
+ *   1. silently reworded the SIGNUP form, which nobody asked for, and
+ *   2. required a CONSENT_TEXT_VERSION bump under this file's own rule ("field labels and help
+ *      text around it" MOVES IT), stamping every future subscriber with a new version for a
+ *      change made to a different page, and
+ *   3. altered the signup form's pixels — which are the opt-in evidence for the Twilio Canadian
+ *      Toll-Free Verification submission (see this file's header).
+ * Scoping the new wording here keeps the consent artefact and its version untouched. Per the
+ * header's own carve-out, preferences-page copy shown after consent does NOT move the version,
+ * so this constant is correctly version-free.
+ *
+ * ⚠ VERBATIM, INCLUDING "kids age". Jon supplied this exact string and the instruction was not
+ * to adjust it. Note the rest of this file uses a curly apostrophe for the possessive ("kids’
+ * ages", "kids’ activities"); this line has no apostrophe at all. Left as given deliberately —
+ * flagged for a copy decision rather than silently corrected, because changing a string a human
+ * dictated is not a typo fix.
+ *
+ * It replaces BOTH halves of what this section used to say (`FIELD_COPY.childrenLabel` +
+ * `FIELD_COPY.childrenHelp`), so it is rendered as the fieldset's `<legend>`: the group of age
+ * inputs keeps a real accessible name, which simply deleting the label would have cost.
+ */
+export const PREFS_CHILDREN_LABEL = 'We use your kids age to find relevant activities';
 export const PREFS_SAVE = 'Save changes';
 export const PREFS_SAVING = 'Saving…';
 export const PREFS_SAVED = 'Saved — your next Friday SMS will use these.';
@@ -575,6 +605,17 @@ export const PREFS_UNSUBSCRIBE_BODY =
   'You’ll stop getting activities straight away. Everything we store about you is deleted ' +
   '30 days later.';
 export const PREFS_UNSUBSCRIBE = 'Unsubscribe';
+/**
+ * Summary for the collapsed explanation beneath the Unsubscribe button (Jon, 2026-09-12:
+ * "STOP THE SMS simplify have an UNSUBSCRIBE button. The details you'll stop getting activities
+ * straight away etc can be minimized/hidden/toggle").
+ *
+ * The body text is NOT removed and NOT conditionally rendered — it stays in the DOM inside a
+ * closed <details>, so curl/view-source/archival tooling and assistive tech still reach it. Only
+ * what is painted by default changes. That distinction is the same one the legal block on this
+ * page relies on, and it is what keeps a CASL-relevant statement disclosed while collapsed.
+ */
+export const PREFS_UNSUBSCRIBE_DETAILS_SUMMARY = 'What happens when you unsubscribe';
 export const PREFS_UNSUBSCRIBED = 'Done — you won’t get any more SMS from us.';
 
 export const PREFS_DELETE_HEADING = 'Delete my data';
@@ -596,6 +637,10 @@ export const PREFS_DELETE_BODY =
   'This unsubscribes you and immediately erases your phone number, postal code, kids’ ages and ' +
   'interests.';
 export const PREFS_DELETE = 'Delete everything';
+/** Summary for the collapsed explanation beneath the Delete button. Same reasoning as
+ *  PREFS_UNSUBSCRIBE_DETAILS_SUMMARY above; the two-step confirm is unchanged and still carries
+ *  the warning at the moment it matters. */
+export const PREFS_DELETE_DETAILS_SUMMARY = 'What gets deleted';
 export const PREFS_DELETE_CONFIRM = 'Yes, delete it all';
 export const PREFS_DELETE_CANCEL = 'Cancel';
 export const PREFS_DELETED = 'Deleted — nothing about you is stored any more.';

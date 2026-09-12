@@ -24,9 +24,11 @@ import { Button, Input } from '@/components/ui';
 import {
   FIELD_COPY,
   PREFS_DELETE,
+  PREFS_CHILDREN_LABEL,
   PREFS_DELETE_BODY,
   PREFS_DELETE_CANCEL,
   PREFS_DELETE_CONFIRM,
+  PREFS_DELETE_DETAILS_SUMMARY,
   PREFS_DELETE_HEADING,
   PREFS_DELETED,
   PREFS_EDIT_HEADING,
@@ -35,6 +37,7 @@ import {
   PREFS_SAVING,
   PREFS_UNSUBSCRIBE,
   PREFS_UNSUBSCRIBE_BODY,
+  PREFS_UNSUBSCRIBE_DETAILS_SUMMARY,
   PREFS_UNSUBSCRIBE_HEADING,
   PREFS_UNSUBSCRIBED, maxChildrenNotice } from '@/lib/sms/consent-copy';
 import { SMS_INTEREST_OPTIONS } from '@/lib/sms/interests';
@@ -159,8 +162,11 @@ export function PreferencesForm({ token, view, editable }: PreferencesFormProps)
             </div>
 
             <fieldset className="kf-prefs__field kf-prefs__fieldset">
-              <legend className="kf-prefs__label">{FIELD_COPY.childrenLabel}</legend>
-              <p className="kf-prefs__help">{FIELD_COPY.childrenHelp}</p>
+              {/* Jon's wording (2026-09-12) replaces both the old question and its help
+                  paragraph. It is the <legend>, not a <p>, so the age inputs keep an accessible
+                  group name — see PREFS_CHILDREN_LABEL for why this is preferences-scoped and
+                  does NOT touch the signup form's consent copy. */}
+              <legend className="kf-prefs__label">{PREFS_CHILDREN_LABEL}</legend>
               {children.map((child, index) => (
                 <div className="kf-prefs__child" key={child.id}>
                   <label className="kf-prefs__child-label" htmlFor={`kf-prefs-child-${child.id}`}>
@@ -254,7 +260,6 @@ export function PreferencesForm({ token, view, editable }: PreferencesFormProps)
           an obstacle in front of the one control a regulator cares most about. ── */}
       <section className="kf-prefs__section kf-prefs__section--danger">
         <h2 className="kf-prefs__subheading">{PREFS_UNSUBSCRIBE_HEADING}</h2>
-        <p className="kf-prefs__help">{PREFS_UNSUBSCRIBE_BODY}</p>
         <Button
           type="button"
           variant="secondary"
@@ -263,13 +268,21 @@ export function PreferencesForm({ token, view, editable }: PreferencesFormProps)
         >
           {PREFS_UNSUBSCRIBE}
         </Button>
+        {/* COLLAPSED (Jon, 2026-09-12). The button is the section now; the explanation sits
+            behind the same native <details> this page already uses for its legal block — no JS,
+            works with scripting disabled, and the text stays IN THE DOM when closed, so nothing
+            is undisclosed. Placed BELOW the button on purpose: the ask was for the button to be
+            the immediately-visible element, and anything between the heading and it demotes it. */}
+        <details className="kf-prefs__section-details">
+          <summary>{PREFS_UNSUBSCRIBE_DETAILS_SUMMARY}</summary>
+          <p className="kf-prefs__help">{PREFS_UNSUBSCRIBE_BODY}</p>
+        </details>
       </section>
 
       {/* ── Delete. TWO steps, and the second is not decoration: see this file's header and
           `decideDelete`. The immediate-erasure argument depends on the request being explicit. ── */}
       <section className="kf-prefs__section kf-prefs__section--danger">
         <h2 className="kf-prefs__subheading">{PREFS_DELETE_HEADING}</h2>
-        <p className="kf-prefs__help">{PREFS_DELETE_BODY}</p>
         {!confirmingDelete ? (
           <Button
             type="button"
@@ -295,6 +308,13 @@ export function PreferencesForm({ token, view, editable }: PreferencesFormProps)
             </Button>
           </div>
         )}
+        {/* Same collapse as the unsubscribe section. The two-step confirm above is untouched and
+            still states the consequence at the moment it matters, so this text is an explanation
+            on demand rather than the only guard in front of a destructive action. */}
+        <details className="kf-prefs__section-details">
+          <summary>{PREFS_DELETE_DETAILS_SUMMARY}</summary>
+          <p className="kf-prefs__help">{PREFS_DELETE_BODY}</p>
+        </details>
       </section>
     </>
   );

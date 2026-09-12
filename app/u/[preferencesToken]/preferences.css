@@ -227,6 +227,61 @@
 /* Collapsed legal block (Jon, 2026-09-12) — same pattern as .kf-start__legal-details on
  * /sms/start (Jon, 2026-09-02). The summary is a real interactive control, so it gets a pointer
  * and inherits the same muted colour the content below it uses, rather than reading as a heading. */
+/* ── Collapsed explanation inside the two danger sections (Jon, 2026-09-12). ──
+ * Deliberately the SAME summary treatment as `.kf-prefs__legal-details` below — quiet, small,
+ * muted — so the page has ONE toggle idiom rather than two that look subtly different. It does
+ * NOT take that rule's top border/padding: this sits inside a section that already has its own
+ * boundary, where a second separator would read as a divider within the card.
+ *
+ * The margin-top is what keeps the button, not the toggle, reading as the section's primary
+ * element: the summary is a footnote under the action rather than a second control beside it. */
+.kf-prefs__section-details {
+  margin-top: var(--kf-space-3);
+}
+.kf-prefs__section-details > summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--kf-ink-muted);
+}
+
+/* ═══ TAP TARGET: 24px, NOT THE 18px THIS PATTERN SHIPPED WITH ═══
+ * MEASURED on the real page at 390px: a bare 13px <summary> lays out 18px tall, which fails
+ * WCAG 2.2 SC 2.5.8 Target Size (Minimum, AA — 24×24 CSS px). That was already true of the
+ * "Legal & support info" toggle before this change; collapsing the two danger sections would
+ * have taken the page from one such target to three, and these two now gate CASL/PIPEDA text
+ * (what unsubscribing does, what deleting erases), so being able to actually hit them matters
+ * more here than it did for a footer.
+ *
+ * Applied to BOTH classes from one rule so all three toggles stay visually identical — the
+ * point of reusing the pattern was that the page has one toggle idiom, and fixing only the new
+ * two would have quietly created a second. Padding only: no font, colour or behaviour change,
+ * and `min-height` with centred content so the 6px is symmetric.
+ *
+ * Safe on the legal block specifically: a LARGER target cannot make a disclosure less legible,
+ * and this page carries no Toll-Free Verification screenshot obligation — that pin is on the
+ * signup surface (see page.tsx's own note on the legal block).
+ *
+ * ⚠ PADDING, NOT `display: flex` — AND THAT IS THE WHOLE POINT OF THIS COMMENT.
+ * The obvious way to centre text in a 24px box is `display:flex; align-items:center`. Doing that
+ * here SILENTLY DELETES THE DISCLOSURE TRIANGLE: any `display` other than `list-item` drops the
+ * UA `::marker` in Blink/WebKit, so the summary renders as plain grey text with nothing to say it
+ * expands. Caught in a screenshot, not in the measurements — the heights read a correct 24px
+ * while the affordance was gone. site-nav.css documents the same engine behaviour from the other
+ * direction (it USES inline-flex there precisely to suppress a marker it does not want).
+ * Vertical padding buys the same 24px and leaves `display: list-item` — and the triangle — alone. */
+.kf-prefs__section-details > summary,
+.kf-prefs__legal-details > summary {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  min-height: 24px;
+  box-sizing: border-box;
+}
+/* The body text inside carries the section's own help styling; it only needs separating from
+   the summary it just came out from under. */
+.kf-prefs__section-details > .kf-prefs__help {
+  margin-top: var(--kf-space-2);
+}
+
 .kf-prefs__legal-details {
   margin-top: var(--kf-space-5);
   padding-top: var(--kf-space-4);
