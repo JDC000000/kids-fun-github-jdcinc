@@ -24,8 +24,22 @@
 //     `GOOGLE_SIGN_IN_ENABLED=true` in a dashboard would silently restore a capability that was
 //     removed for product-trust reasons, with no diff and no review;
 //   · a constant means re-enabling is a code change, which is the correct gate for reversing it.
-// Reversing is still one line. If the Operator prefers the env-flag shape for consistency, this
-// is the only place that changes.
+// Reversing is still one line, and this file is the only place that would change.
+//
+// ── RULED ON, NOT LEFT OPEN (Operator, 2026-09-12) ───────────────────────────────────────
+// This paragraph used to end "if the Operator prefers the env-flag shape for consistency, this is
+// the only place that changes" — an open question, raised because departing from the house
+// pattern deserved a second opinion. It was put to the Operator and decided. Verbatim:
+//
+//   "given Jon's explicit 'full stop, nobody signs in with Google' instruction, a hard-coded
+//    constant that requires an actual code change and review to reverse is a MORE faithful
+//    implementation of his intent than an env flag... keep the constant."
+//
+// Recorded here rather than left in a message thread, because the deviation from
+// lib/sms/config.ts's env-flag idiom is exactly the kind of thing a later reader "fixes" for
+// consistency — and an env flag is precisely what was considered and rejected. If you are here
+// to make this match the house pattern: that has been decided against, on the grounds above.
+// Changing it needs a new ruling, not a tidy-up.
 //
 // ── TYPED `boolean`, NOT INFERRED `false` ────────────────────────────────────────────────
 // Annotated so TypeScript does not narrow it to the literal `false` and report every guarded
