@@ -30,7 +30,10 @@ export type AnalyticsEventType =
   | 'weekly_email_opt_in' // parent opted in to the weekly digest email
   | 'account_signed_in' // a Google account sign-in completed (returning-user KPI)
   | 'correction_report_submitted' // a "wrong info" correction was filed (trust KPI)
-  | 'listing_status_changed'; // an occurrence's status_state transitioned (ingestion)
+  | 'listing_status_changed' // an occurrence's status_state transitioned (ingestion)
+  | 'sms_offer_viewed' // the home page PRESENTED the SMS signup offer (the funnel denominator)
+  // ── the one client-fireable half of the SMS front-door funnel ──
+  | 'sms_signup_cta_clicked'; // a parent tapped the home page's primary signup action
 
 export const KNOWN_EVENT_TYPES: readonly AnalyticsEventType[] = [
   'search_performed',
@@ -41,6 +44,8 @@ export const KNOWN_EVENT_TYPES: readonly AnalyticsEventType[] = [
   'account_signed_in',
   'correction_report_submitted',
   'listing_status_changed',
+  'sms_offer_viewed',
+  'sms_signup_cta_clicked',
 ];
 
 /**
@@ -49,13 +54,35 @@ export const KNOWN_EVENT_TYPES: readonly AnalyticsEventType[] = [
  * harmless. Everything else is SERVER-ONLY: it is emitted from trusted server
  * code (auth callback, corrections API, ingestion worker, saved-search API) and
  * must never be injectable by an untrusted client, so the validator rejects it.
+ *
+ * ═══ THE SMS FRONT-DOOR PAIR IS SPLIT ACROSS THIS LINE, DELIBERATELY ═══
+ * `sms_offer_viewed` and `sms_signup_cta_clicked` measure the two ends of ONE
+ * funnel, so the ratio between them IS the conversion rate the homepage pivot is
+ * judged on. That makes which side of this line each one sits on a data-integrity
+ * decision, not a filing one:
+ *   • the CLICK is here, because it happens in a browser and the server never sees
+ *     it — the CTA is an internal <Link>, not a form post, so there is no
+ *     server-side vantage point to fire it from. A spoofed row over-counts the
+ *     NUMERATOR, which is the cheap direction: it inflates a number already read
+ *     as an upper bound.
+ *   • the IMPRESSION is NOT here. It is the DENOMINATOR, and it is emitted during
+ *     the home page's own render, where whether the offer was actually presented
+ *     is a fact only the server holds (see lib/sms/availability.ts). Accepting it
+ *     from a browser would let anything inflate the denominator and silently
+ *     DEPRESS the measured conversion rate — a corruption that looks like a
+ *     product result and cannot be untangled after the fact.
  */
-export type ClientEventType = 'search_performed' | 'listing_viewed' | 'outbound_source_click';
+export type ClientEventType =
+  | 'search_performed'
+  | 'listing_viewed'
+  | 'outbound_source_click'
+  | 'sms_signup_cta_clicked';
 
 export const CLIENT_EVENT_TYPES: readonly ClientEventType[] = [
   'search_performed',
   'listing_viewed',
   'outbound_source_click',
+  'sms_signup_cta_clicked',
 ];
 
 /** Events that are only ever written by trusted server code (the complement of CLIENT_EVENT_TYPES). */

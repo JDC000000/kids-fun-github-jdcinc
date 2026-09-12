@@ -104,6 +104,29 @@ export const EVENT_CATALOG: readonly EventCatalogEntry[] = [
     provenance: 'PRD/TSD §9 named event `listing_status_changed`',
     description: 'An occurrence status_state transitioned (from/to states + occurrence ref; no PII).',
   },
+  // ── the homepage → SMS front door funnel (TSD §9 M1 / AC-09) ──────────────
+  // Two entries, one measurement. `sms_offer_viewed` is the denominator and
+  // `sms_signup_cta_clicked` the numerator of the conversion rate the pivot is
+  // judged on, which is why they are the only pair here whose client/server split
+  // is argued in lib/analytics/types.ts rather than merely stated.
+  {
+    type: 'sms_offer_viewed',
+    origin: 'server',
+    wiring: 'capture_ready',
+    firedFrom: 'app/page.tsx (server component; recordSmsOfferViewed) — ONLY when the offer is actually presented',
+    provenance: 'TSD §9 M1 T1.5 / AC-09 (impression half); denominator of the S-03 signup conversion rate',
+    description:
+      'The home page presented the SMS signup offer. NOT emitted on the fail-safe degraded render (AC-12) — a render with no offer on it is not an offer seen, and counting it would depress the conversion rate with rows that never had a chance to convert.',
+  },
+  {
+    type: 'sms_signup_cta_clicked',
+    origin: 'client',
+    wiring: 'capture_ready',
+    firedFrom: 'app/_components/SmsSignupCta.tsx (client island; trackEvent) — rendered by app/page.tsx',
+    provenance: 'TSD §9 M1 T1.6 / AC-09 (click half); numerator of the S-03 signup conversion rate',
+    description:
+      "A parent tapped the home page's primary SMS signup action. Fired from the browser because the CTA is an internal <Link> the server never observes; best-effort, and it never delays or blocks the navigation it measures.",
+  },
 ];
 
 /**
