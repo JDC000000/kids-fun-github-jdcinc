@@ -9,6 +9,28 @@
 // runs a REAL search for every entry, through the real /api/search route, and fails if the
 // flag and the engine disagree in either direction.
 //
+// ═══ T3.4 — THE MUTATION MATRIX (standing F-4 lesson) ═══
+// The nav contract changed by design, so these assertions were REWRITTEN rather than relaxed —
+// and a rewritten assertion is exactly the kind that can come back weaker than it went in. Every
+// new guard below was therefore mutation-tested: the regression applied to the real source, the
+// suite run, the source restored. All seven turned this lane red.
+//
+//  #   guard                                                     mutation that kills it
+//  N1  the SMS entry LEADS the bar, not merely appears in it     move it to the end of LINKS
+//  N2  the nav points at /sms/start, never the /sms/signup 308   swap the href for the redirect
+//  N3  the wide row and the compact menu cannot drift apart      render LINKS.slice(1) in the row
+//  N4  the SMS marker renders on BOTH surfaces, one renderer     drop the --sms class
+//  N5  the marker is WEIGHT, not its Leaf dot alone (WCAG 1.4.1) set font-weight back to 400
+//  N6  the entry is DROPPED when signup is unavailable (AC-12)  default smsSignupHref to the path
+//  N7  …and the bar degrades to the search list, not to nothing return [] from navLinks()
+//
+// 🔴 N6 EARNED THE PASS. The first cut of T3.1 built the SMS entry at module scope from
+// SMS_SIGNUP_PATH, unconditionally. Every assertion in both nav files was green, because none of
+// them knew the flag existed — and tests/home/sms-offer.test.tsx renders <Home /> alone, so the
+// nav was outside its AC-12 sweep too. Loading the BUILT page with SMS_SIGNUP_ENABLED=false still
+// returned `href="/sms/start"`, from the bar, on the one page whose entire fail-safe branch exists
+// to prevent exactly that. The guard is here because the gap was between two files, not inside one.
+//
 // WHICH ENGINE THIS ACTUALLY MEASURES, STATED PLAINLY
 // With KIDS_FUN_SEARCH_BACKEND unset (the default, and what CI runs) the route serves the
 // FIXTURE catalogue, not the staging database. So this file proves the flags against the
@@ -46,6 +68,7 @@ const { GET } = await import('../app/api/search/route');
 const { FIXTURE_NOW } = await import('../lib/search/__fixtures__/engine');
 const { CATEGORY_DESTINATIONS, QUICK_START_FILTERS, SEARCH_SHORTCUTS, destinationHref, liveCategoryDestinations } =
   await import('../app/_lib/nav-destinations');
+const { SMS_SIGNUP_PATH } = await import('../lib/sms/config');
 const { SiteNav } = await import('../app/_components/SiteNav');
 const { SiteFooter } = await import('../app/_components/SiteFooter');
 const { default: Home } = await import('../app/page');
@@ -149,11 +172,35 @@ describe('nav destinations agree with the search engine', () => {
 const HOME_HTML = renderToStaticMarkup((await Home()) as ReactElement);
 
 describe('every surface renders the one shared list', () => {
-  const navHtml = renderToStaticMarkup(<SiteNav />);
+  const navHtml = renderToStaticMarkup(<SiteNav smsSignupHref={SMS_SIGNUP_PATH} />);
   const homeHtml = HOME_HTML;
   const footerHtml = renderToStaticMarkup(<SiteFooter />);
   const live = liveCategoryDestinations();
   const retired = CATEGORY_DESTINATIONS.filter((d) => d.status === 'retired');
+
+  /**
+   * ═══ THE NAV CONTRACT, AFTER THE SMS FRONT-DOOR REBUILD (TSD v1.2 T3.1 / T3.4) ═══
+   *
+   * The bar used to be "what's on now + the live categories + free". It now LEADS WITH THE SMS
+   * OFFER and keeps that whole run behind it. Both halves of that sentence are asserted, and
+   * neither was weakened to make the suite pass:
+   *
+   *   · the SMS entry is FIRST, not merely present — the ordering IS the requirement. A nav that
+   *     carried the offer last would satisfy "renders the SMS offer" and defeat the point.
+   *   · the category run is unchanged, in its original order, still read from the shared list.
+   *
+   * DERIVED FROM THE SOURCES, NEVER TYPED OUT. A literal array of seven strings here would pass
+   * while the shared list said something else, which is the exact drift this file exists to
+   * catch. `SMS_SIGNUP_PATH` is imported from lib/sms/config for the same reason — it is the one
+   * constant `signupUrl()` composes from and lib/sms/availability.ts hands the home page, so a
+   * nav link written by hand could disagree with the product's own idea of where signup lives.
+   */
+  const NAV_HREFS = [
+    SMS_SIGNUP_PATH,
+    SEARCH_SHORTCUTS.onNow.href,
+    ...live.map(destinationHref),
+    SEARCH_SHORTCUTS.free.href,
+  ];
 
   it('has at least one retired destination to exclude, so the exclusion tests are not vacuous', () => {
     // The `DEAD_CATEGORY` constant this replaced filtered an href that was never in the list,
@@ -163,14 +210,55 @@ describe('every surface renders the one shared list', () => {
     expect(live.length).toBeGreaterThan(0);
   });
 
-  it('SiteNav renders exactly what is on now + the live categories + free, in that order', () => {
-    const expected = [
-      SEARCH_SHORTCUTS.onNow.href,
-      ...live.map(destinationHref),
-      SEARCH_SHORTCUTS.free.href,
-    ];
+  it('SiteNav renders exactly the SMS offer + what is on now + the live categories + free, in that order', () => {
     // '/' is the wordmark link, which is not a destination.
-    expect(hrefsIn(navHtml).filter((h) => h !== '/')).toEqual([...expected, ...expected]);
+    expect(hrefsIn(navHtml).filter((h) => h !== '/')).toEqual([...NAV_HREFS, ...NAV_HREFS]);
+  });
+
+  it('🔴 the SMS offer LEADS the bar — being present is not the requirement', () => {
+    // T3.1 is an ORDERING change as much as an addition: "reordered so the SMS offer leads".
+    // Asserted separately from the list comparison above so that a future edit which moves it
+    // to the end fails HERE, with a message that says what the rule is, rather than as an
+    // opaque array diff.
+    expect(NAV_HREFS[0]).toBe(SMS_SIGNUP_PATH);
+    const rendered = hrefsIn(navHtml).filter((h) => h !== '/');
+    expect(rendered[0]).toBe(SMS_SIGNUP_PATH);
+    expect(rendered.indexOf(SEARCH_SHORTCUTS.onNow.href)).toBeGreaterThan(0);
+  });
+
+  it('🔴 AC-12 — with signup unavailable the bar drops the entry rather than linking to a 404', () => {
+    // `SMS_SIGNUP_ENABLED` defaults to FALSE and /sms/start `notFound()`s unless it is exactly
+    // 'true', so an unconditional entry would be a link to a 404 on EVERY chromed page in the
+    // state the product spends most of its life in — including the home page, whose whole
+    // fail-safe branch exists to prevent that. Caught by loading the built page with the flag
+    // off: the M1 unit test renders <Home /> alone, so the nav sat outside every assertion.
+    const degraded = renderToStaticMarkup(<SiteNav smsSignupHref={null} />);
+    expect(hrefsIn(degraded)).not.toContain(SMS_SIGNUP_PATH);
+    expect(degraded).not.toContain('kf-nav__link--sms');
+    expect(textOf(degraded)).not.toContain('Get the weekly text');
+    // …and it degrades to the bar the product had before, not to nothing: every search
+    // destination is still there, in order, on both surfaces.
+    expect(hrefsIn(degraded).filter((h) => h !== '/')).toEqual([
+      ...NAV_HREFS.slice(1),
+      ...NAV_HREFS.slice(1),
+    ]);
+  });
+
+  it('🔴 the nav points at the reachable signup path, never the 308', () => {
+    // /sms/signup is a permanent redirect to /sms/start (next.config.mjs). A nav link routed
+    // through it would spend a redirect hop on every tap, and would read as a second signup
+    // page to anyone auditing the funnel. The redirect stays (already-printed QR codes depend
+    // on it, AC-08b) — nothing in the product's own navigation may use it.
+    expect(SMS_SIGNUP_PATH).toBe('/sms/start');
+    expect(hrefsIn(navHtml)).not.toContain('/sms/signup');
+  });
+
+  it('🔴 the bar is the SMS offer plus the WHOLE shared list, with nothing dropped to make room', () => {
+    // Length derived from the sources, not a magic 7: the three fixed entries (the SMS offer,
+    // "What's on now", "Free") plus every live category. Adding a category must widen this
+    // automatically, and quietly dropping one to fit the new entry must fail.
+    expect(NAV_HREFS).toHaveLength(3 + live.length);
+    expect(new Set(NAV_HREFS).size).toBe(NAV_HREFS.length); // no entry listed twice
   });
 
   // ═══ SiteNav EMITS THE LIST TWICE, AND THAT IS THE POINT OF THIS TEST ═══
@@ -193,18 +281,30 @@ describe('every surface renders the one shared list', () => {
       if (!m) throw new Error(`SiteNav no longer renders <ul class="${cls}">`);
       return m[1];
     };
-    const expected = [
-      SEARCH_SHORTCUTS.onNow.href,
-      ...live.map(destinationHref),
-      SEARCH_SHORTCUTS.free.href,
-    ];
-
     it('the ≥768px inline row carries the whole list, in order', () => {
-      expect(hrefsIn(listNamed('kf-nav__list'))).toEqual(expected);
+      expect(hrefsIn(listNamed('kf-nav__list'))).toEqual(NAV_HREFS);
     });
 
     it('the <768px compact menu carries the whole list, in the same order', () => {
-      expect(hrefsIn(listNamed('kf-nav__menu'))).toEqual(expected);
+      expect(hrefsIn(listNamed('kf-nav__menu'))).toEqual(NAV_HREFS);
+    });
+
+    it('🔴 the two containers are byte-identical to each other, not merely each correct', () => {
+      // Strictly stronger than the two assertions above, and it survives a future change to
+      // NAV_HREFS itself: whatever the bar decides to carry, the phone must get the same thing.
+      expect(hrefsIn(listNamed('kf-nav__menu'))).toEqual(hrefsIn(listNamed('kf-nav__list')));
+    });
+
+    it('🔴 the SMS entry is marked on BOTH surfaces, from the one renderer', () => {
+      // SiteNav renders the row and the menu through a single `renderLink`, which is what stops
+      // them drifting. A marker that appeared on only one of them would mean a second renderer
+      // had been introduced — the drift itself, wearing a class name.
+      expect(listNamed('kf-nav__list')).toContain('kf-nav__link--sms');
+      expect(listNamed('kf-nav__menu')).toContain('kf-nav__link--sms');
+      // …and it marks exactly one entry per surface, not the whole row.
+      for (const cls of ['kf-nav__list', 'kf-nav__menu']) {
+        expect(listNamed(cls).match(/kf-nav__link--sms/g)).toHaveLength(1);
+      }
     });
 
     it('the menu opens without JavaScript — a native <details>/<summary>, not a button', () => {

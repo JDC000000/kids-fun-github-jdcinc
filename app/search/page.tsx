@@ -23,6 +23,7 @@ import { QuerySummary } from './_components/QuerySummary';
 import { SearchResultsView } from './_components/SearchResultsView';
 import { ResumeSearch } from './_components/ResumeSearch';
 import { ProfileAgeDefault } from './_components/ProfileAgeDefault';
+import { ChildProfilePrompt } from '../_components/ChildProfilePrompt';
 import { buildMarkers, geoIndex } from './_lib/markers';
 import { distanceAvailability, distanceNote } from './_lib/distance-note';
 import { groupActivitiesByDay, buildDayIndex, formatRangeLabel, type DayGroup } from './_lib/day-groups';
@@ -479,6 +480,10 @@ export default async function SearchPage({
             countsKnown={result.ok}
           />
 
+
+          {/* The capture panel that FEEDS the island below — "Make this yours" — is mounted at
+              the FOOT of this column, not here. It cannot sit above the results: see the note at
+              its render site for the measurement that decided it. */}
           {/* The on-device child profile's age default (design §5c option 2a). A client island:
               it reads localStorage after mount and, ONLY when the URL says nothing about age,
               replaces it with the same `age=` URL a chip tap would produce — so every consumer
@@ -661,6 +666,46 @@ export default async function SearchPage({
           </>
         )}
           </div>
+
+          {/* ═══ "MAKE THIS YOURS" — RELOCATED HERE FROM THE HOME PAGE (TSD v1.2 T2.5 / F-2) ═══
+              The ask-once child-profile panel. It rendered on app/page.tsx and NOWHERE ELSE, and
+              the SMS front-door rebuild removes it from there (Delta 4, AC-06).
+
+              THIS IS NOT A CONVENIENCE MOVE — WITHOUT IT, DELTA 4 SILENTLY BREAKS /search.
+              `ChildProfilePrompt` is the product's ONLY profile-CAPTURE surface. `ChildProfileBar`
+              (app/layout.tsx) only DISPLAYS an existing profile, and `ProfileAgeDefault` above
+              only CONSUMES one. Delete the capture and the chain collapses: no new visitor can
+              ever create a profile, the bar renders nothing for all of them, ProfileAgeDefault
+              never fires, and /search quietly loses age personalisation for every new visitor —
+              a change to "the search product's own behavior", which the Modification Spec §4
+              explicitly places OUT OF SCOPE. Approved by the Operator as decision D-2, option (a).
+
+              ═══ 🔴 WHY IT IS BELOW THE RESULTS AND NOT ABOVE THEM — MEASURED ═══
+              The obvious mount is directly above `<ProfileAgeDefault />`, next to the thing that
+              consumes it. That placement was built, measured and rejected: the panel is 317px
+              tall and it moved the first result card from 557px to 874px on a 390x664 phone —
+              316px BELOW the fold, against a chrome budget of 560px with 3px of headroom.
+              tests/e2e/public/search-above-the-fold.public.spec.ts turned red on all six phone
+              descriptors, and it is right to: "the first result is on the first screen" is a
+              shipped guarantee of the search product with its own spec, and a capture panel for
+              a DIFFERENT product may not spend it. No compact variant closes a 317px gap against
+              3px of room, so the choice was placement, not sizing.
+
+              Below the results is therefore where it can exist without taking anything: a parent
+              who has scrolled the generic list is also the parent for whom "activities that fit
+              your kids" is worth answering.
+
+              ⚠ FLAGGED FOR A PRODUCT RULING, NOT SETTLED HERE. This trades DISCOVERABILITY for
+              the above-fold guarantee, and the TSD anticipated neither the conflict nor the
+              trade. If capture rate matters more than the fold on /search, the alternatives are
+              (a) a slim one-line bar variant above the results, which is a design change and has
+              not been through a gate, or (b) accepting the fold regression deliberately, which
+              needs the search spec's thresholds re-agreed. Both are somebody's decision, not
+              this scope's.
+
+              The component itself is unchanged — it still renders nothing once a profile exists,
+              once dismissed for the session, or when storage is unavailable. */}
+          <ChildProfilePrompt />
         </div>
       </div>
     </>

@@ -1,326 +1,776 @@
 /*
- * KIDS FUN — home / front-door styles (`/`).
+ * KIDS FUN — home / front-door styles (`/`). M2 T2.10 rework.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════
  * Additive, scoped under `.kf` so it composes with the shared design system in
- * app/preview/preview.css (Brand Workbook V2 + Visual Blueprint v0.2) without
- * touching it. New `.kf-home*` classes only — the namespace exists nowhere else.
- * Civic field-guide: warm-paper canvas, evergreen hero, Leaf reserved for the one
- * action, hairline rules, tabular numerals inherited from `.kf`. Dark mode is free —
- * every colour is a semantic token that already flips via `prefers-color-scheme`.
+ * app/preview/preview.css (Brand Workbook V2 + Visual Blueprint v0.2) without touching it.
+ * New `.kf-home*` classes ONLY — the namespace exists nowhere else.
+ *
+ * ═══ THIS FILE IS THE APPROVED PHASE-3B DESIGN, LIFTED — WITH TWO RECONCILIATIONS ═══
+ * Source of truth: the pack Jon approved at gate G2 (2026-09-13),
+ * public/downloads/designs/final/kids-fun-sms-home/ — `kf-page.css` + `_raw-home.html`.
+ * Geometry, hierarchy, grounds, type ramp, states and the density asymmetry are that pack's,
+ * not re-derived here. Two things could not be copied verbatim, and both are mechanical:
+ *
+ *   1. CLASS NAMES ARE NAMESPACED. The pack is a standalone page and uses bare names —
+ *      `.kf-tile`, `.kf-chip`, `.kf-link`, `.kf-terms`, `.kf-fact(s)`. Every one of those
+ *      ALREADY EXISTS in this product (preview.css / search.css) and would collide. The
+ *      1:1 map is in the section headers below, so the pack stays traceable.
+ *
+ *   2. VALUES ARE LITERAL px, NOT THE PACK'S TOKEN NAMES. The pack ships its own
+ *      `design-tokens.css` whose scale DISAGREES with this app's: the pack's
+ *      `--kf-space-5` is 20px, this app's is 24px, and its `--kf-text-*` ramp does not
+ *      exist here at all. Importing the names would silently resolve to different numbers
+ *      or to nothing. Literal px is also this file's own long-standing convention.
+ *      COLOURS are the exception and go the other way — see below.
+ *
+ * ═══ COLOUR: THE PACK IS LIGHT-ONLY; THIS PRODUCT FLIPS ═══
+ * The pack has no dark mode. This app does (design-tokens.css D12), and a home page that
+ * stayed light while its own nav and footer went dark would read as a rendering fault. So the
+ * pack's grounds are mapped onto this app's FLIPPING semantic roles, chosen because each
+ * one's LIGHT value is the value the pack specified and measured:
+ *
+ *   pack --kf-ground-page    #FFFFFF  → var(--surface)         (dark: #183b24)
+ *   pack --kf-ground-utility #F4F5F4  → var(--surface-subtle)  (dark: #223f30)
+ *   pack --kf-ground-thread  #F7F2E8  → var(--canvas)          (dark: #102316)
+ *   pack --kf-ink-muted      #535B52  → var(--ink-secondary)   (#4d604c light — STRICTLY
+ *                                       darker than the pack's value, so no AA regression;
+ *                                       it is this repo's already-remediated muted token)
+ *
+ * THE HERO IS THE DELIBERATE EXCEPTION AND STAYS FIXED IN BOTH SCHEMES. `--forest-ink`
+ * background + `--warm-paper` text is a FIXED/FIXED pair, which design-tokens.css's own rule
+ * says is the only safe use of raw palette tokens ("safe only against a background that is
+ * equally fixed — which is why .primary can pair --kf-forest-ink with a --kf-leaf fill").
+ * 14.77:1 in light and dark alike, which is exactly what the pack measured.
+ *
+ * ═══ ⚠ SPECIFICITY LANDMINE — READ BEFORE EDITING ANY ANCHOR RULE ═══
+ * preview.css:102 ships `.kf a { color: inherit; text-decoration: none }` at (0,1,1). ANY
+ * anchor styled by a bare single class — (0,1,0) — loses, and its `color` silently never
+ * applies. Every anchor rule below is therefore written `.kf a.kf-home__x` = (0,2,1).
+ * Do not "tidy" them back to single-class selectors. The same trap, with the same remedy, is
+ * documented at `.kf a.kf-detail__source` (preview.css:707) — and it has already shipped a
+ * dark-mode 1.94:1 failure on this page's CTA once.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════
  */
 
-/* ── Hero: give the evergreen anchor room for the embedded search control ── */
-.kf-home__hero {
-  padding-bottom: 20px;
+/* ── Page root. `.kf-home` sits on the shell's `.kf-app`, so `--kf-gutter` (16 / 28 / 40 / 64px
+      per breakpoint, defined once in preview.css) is already in scope and every horizontal
+      inset below keys off it instead of restating the pack's fixed 16/40. ── */
+.kf-home {
+  /* The one link colour on this page, and the one thing the pack could not supply: it uses
+     evergreen (#183b24, 12.43:1 on white), which IS this app's `--kf-surface` in dark mode —
+     i.e. 1:1, invisible. So the token flips, and the dark step is the palette's own accent
+     (7.10:1 on #183b24). A fixed evergreen here would have been a dark-mode-only failure,
+     invisible to every light-mode review and to every unit test. */
+  --kf-home-link: var(--kf-evergreen);
+}
+@media (prefers-color-scheme: dark) {
+  .kf-home {
+    --kf-home-link: var(--kf-dark-accent);
+  }
 }
 
-/* ── Primary search module, embedded in the hero (the front door's main action) ── */
-.kf-home__search {
-  margin-top: 16px;
+/* UA margin reset, scoped to this page. `<figure>` is the one that bites: its 40px inline
+   margins silently narrowed the message frame by 80px in the design pack itself and wrapped
+   every pick title. `<dd>` carries a 40px inline-start margin for the same reason. */
+.kf-home h1,
+.kf-home h2,
+.kf-home h3,
+.kf-home p,
+.kf-home figure,
+.kf-home dl,
+.kf-home dd {
+  margin: 0;
 }
-.kf-home__search-label {
-  display: block;
+
+/* ── Skip link — the first tab stop, and the only above-the-fold route to search that costs
+      the fold no height. Off-screen until focused, so it renders no VISIBLE search affordance
+      in the first screen (the hard half of the 90/10 test, TSD §6.2). ── */
+.kf a.kf-home__skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 99;
+  padding: 12px 16px;
+  background: var(--forest-ink);
+  color: var(--warm-paper);
+  font-weight: 700;
+  border-radius: 0 0 4px 0;
+}
+.kf a.kf-home__skip:focus {
+  left: 0;
+}
+
+/* ═══ 1 · THE OFFER — the hero, and the whole first screen ═════════════════════════════════
+   pack `.kf-offer` → `.kf-home__sms`          ⚠ the section class is a TEST CONTRACT: both
+   pack `.kf-offer__inner` → `.kf-home__sms-inner`   tests/home/sms-offer.test.tsx (which finds
+   pack `.kf-offer__h1` → `.kf-home__sms-title`      the offer by its opening tag in both flag
+   pack `.kf-offer__sub` → `.kf-home__sms-sub`       states) and the e2e CTA spec (`a.kf-home__
+   pack `.kf-facts/.kf-fact` → `.kf-home__facts/__fact`   sms-cta`) depend on these two names.
+   pack `.kf-actions` → `.kf-home__actions`
+   pack `.kf-cta` → `.kf-home__sms-cta`
+   pack `.kf-offer__micro` → `.kf-home__sms-micro`
+   pack `.kf-offer__paused` → `.kf-home__sms-paused`
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.kf-home__sms {
+  background: var(--forest-ink);
+  color: var(--warm-paper);
+  padding: 32px var(--kf-gutter);
+}
+.kf-home__sms-inner {
+  max-width: 660px;
+}
+.kf-home__sms-title {
+  font-size: 28px;
+  line-height: 1.18;
+  letter-spacing: -0.022em;
+  font-weight: 800;
+  color: var(--warm-paper);
+  text-wrap: balance;
+}
+.kf-home__sms-sub {
+  margin-top: 12px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--kf-dark-muted); /* 9.21:1 on forest ink; fixed, like the ground it sits on */
+  max-width: 52ch;
+}
+
+/* ── The four facts (C-02…C-05): a spec sheet, not marketing. A label column beside a value
+      column is both denser than stacked rows and more scannable in the two seconds the first
+      screen gets — and it makes a MISSING answer obvious rather than absorbed into prose. ── */
+.kf-home__facts {
+  margin-top: 20px;
+  border-top: 1px solid rgba(247, 242, 232, 0.16);
+}
+.kf-home__fact {
+  display: grid;
+  grid-template-columns: 94px 1fr;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(247, 242, 232, 0.16);
+}
+.kf-home__fact-k {
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.085em;
   text-transform: uppercase;
-  color: var(--rainy-fog);
-  margin-bottom: 6px;
+  color: var(--kf-dark-muted);
+  line-height: 1.5;
+  padding-top: 2px;
+}
+.kf-home__fact-v {
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 500;
+  color: var(--warm-paper);
+}
+
+/* ── The action cluster. EXACTLY ONE PRIMARY ACTION (AC-03).
+      A FLOW CONTAINER, NOT A ONE-SLOT LAYOUT (DC-01 / AC-18): a second, clearly secondary
+      action could be added later without re-laying-out the fold — it stacks below on a phone
+      and joins the row on desktop, and the design pack MEASURED that the fold still holds at
+      every viewport when one is added (390: 242px spare · 360: 28px · 430: 330px). Nothing is
+      built or reserved for it now; this is a constraint on how the container is written. ── */
+.kf-home__actions {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+
+/* ⚠ SELECTOR IS (0,2,1) — `.kf a.` — AND THAT IS LOAD-BEARING, NOT STYLE. See this file's
+ * header. Written the obvious way, this rule's `color` is stripped by `.kf a { color: inherit }`
+ * and the anchor inherits the page ink. That failed in ONE scheme only, which is what made it
+ * expensive: in light mode the inherited ink is dark and looks entirely correct on the Leaf
+ * fill; in DARK mode it is warm paper on Leaf — 1.94:1, a serious WCAG 1.4.3 failure that is
+ * invisible to a light-mode review, to every unit test, and to the whole SSR-markup layer.
+ * Caught by the axe audit and pinned by a computed-style assertion in
+ * tests/e2e/public/sms-cta-analytics.public.spec.ts, because CSS specificity is not something
+ * any amount of TypeScript can check.
+ *
+ * --forest-ink on --leaf is the brand's documented one-action pairing (Workbook V2 §7, and
+ * components/ui/Button.module.css `.primary`), not a colour chosen here. Both are aliases of
+ * FIXED raw palette tokens that never flip between schemes, so the pair is 7.61:1 in light and
+ * dark alike. LEAF IS SPENT HERE AND NOWHERE ELSE ON THIS PAGE — that is what makes the single
+ * primary action unmistakable rather than merely first. */
+.kf a.kf-home__sms-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 0 24px;
+  border-radius: var(--r-chip);
+  background: var(--leaf);
+  color: var(--forest-ink);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  text-align: center;
+  transition: background var(--motion), transform var(--motion);
+}
+.kf a.kf-home__sms-cta:hover {
+  background: var(--leaf-hover);
+}
+.kf a.kf-home__sms-cta:active {
+  transform: translateY(1px);
+}
+.kf a.kf-home__sms-cta:focus-visible {
+  outline: 3px solid var(--leaf);
+  outline-offset: 3px;
+}
+
+.kf-home__sms-micro {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--kf-dark-muted);
+}
+
+/* ── AC-12 fail-safe: SAME SLOT, SAME FOOTPRINT, NO ACTION.
+      DELIBERATELY NOT A DISABLED BUTTON. A greyed button still invites a tap, and a parent who
+      taps it learns nothing. This is a statement occupying the action's place, so the page does
+      not reflow and the offer does not silently vanish — the flag changes what a parent can DO,
+      never what the page IS. ── */
+.kf-home__sms-paused {
+  min-height: 56px;
+  background: var(--kf-dark-elevated); /* 10.33:1 for its text; fixed, on a fixed ground */
+  border: 1px solid rgba(247, 242, 232, 0.22);
+  border-radius: var(--r-card);
+  padding: 16px;
+}
+.kf-home__sms-paused b {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--warm-paper);
+}
+.kf-home__sms-paused span {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--kf-dark-muted);
+}
+
+/* ═══ 2 · PROOF — a sample of the weekly text ══════════════════════════════════════════════
+   pack `.kf-proof` → `.kf-home__proof` · `.kf-h2` → `.kf-home__h2` · `.kf-note` →
+   `.kf-home__note` · `.kf-msg*` → `.kf-home__msg*` · `.kf-pick*` → `.kf-home__pick*`
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.kf-home__proof {
+  background: var(--surface);
+  padding: 32px var(--kf-gutter);
+}
+.kf-home__proof-inner {
+  max-width: 760px;
+}
+.kf-home__h2 {
+  font-size: 19px;
+  line-height: 1.35;
+  letter-spacing: -0.012em;
+  font-weight: 700;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.kf-home__note {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-secondary);
+  max-width: 58ch;
+}
+
+/* ── THE MESSAGE FRAME. The framing is STRUCTURAL, not editorial: sender, timestamp, a lead-in
+      bubble, the picks inside the thread. A heading can be edited back to "browse activities"
+      in one commit; a rendered SMS thread cannot. That is what keeps this block on the SMS side
+      of the 90/10 ratio (TSD §6.3) rather than reading as search content. ── */
+.kf-home__msg {
+  margin-top: 20px;
+  background: var(--canvas);
+  border-radius: var(--r-sheet);
+  padding: 16px;
+}
+.kf-home__msg-chrome {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px 12px;
+}
+.kf-home__msg-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 50%;
+  background: var(--leaf);
+  color: var(--forest-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.kf-home__msg-from {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.kf-home__msg-when {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-secondary);
+  line-height: 1.4;
+  margin-top: 1px;
+}
+/* bubble 1 — the lead-in */
+.kf-home__msg-bubble {
+  background: var(--surface);
+  border-radius: 18px 18px 18px 5px;
+  padding: 12px 16px;
+  max-width: 92%;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(16, 35, 22, 0.06);
+}
+/* bubble 2 — the picks. ONE bubble containing three entries, not three cards. Cards imply
+   tappability; a bubble does not. The single-bubble treatment is what makes "non-interactive"
+   read as intentional rather than broken. */
+.kf-home__msg-list {
+  margin-top: 8px;
+  background: var(--surface);
+  border-radius: 18px 18px 18px 5px;
+  max-width: 100%;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(16, 35, 22, 0.06);
+}
+.kf-home__pick {
+  padding: 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.kf-home__pick:last-child {
+  border-bottom: none;
+}
+.kf-home__pick-slot {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.085em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+.kf-home__pick-title {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.kf-home__pick-meta {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink-secondary);
+}
+.kf-home__pick-prov {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink-secondary);
+}
+/* the honest empty slot — the component never pads with a broadened result */
+.kf-home__pick--empty .kf-home__pick-title {
+  font-weight: 400;
+  color: var(--ink-secondary);
+  font-size: 13px;
+}
+
+/* ★ NON-INTERACTIVE GUARD — LOCKED AT GATE G1 (Operator ruling, Q1).
+     Nothing in the thread is a control, so nothing in the thread gets a pointer, a hover, or a
+     focus ring. This is the ONLY block on the page with no interaction state, and that absence
+     is the signal: it is what makes "this is a picture of a text message" legible instead of
+     reading as three broken cards. The rule is a guard as much as a style — a link added here
+     later looks wrong rather than looking finished.
+     Companion assertion for the M4 e2e suite: `expect(page.locator('.kf-home__msg a')).toHaveCount(0)`. */
+.kf-home__msg,
+.kf-home__msg * {
+  cursor: default;
+}
+.kf-home__msg *:hover {
+  text-decoration: none;
+}
+
+/* ═══ 3 · TRUST AND THE OFFER'S TERMS ══════════════════════════════════════════════════════
+   pack `.kf-trust` → `.kf-home__trust` · `.kf-link` → `.kf-home__link` · `.kf-terms*` →
+   `.kf-home__terms*`
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.kf-home__trust {
+  background: var(--surface);
+  padding: 0 var(--kf-gutter) 32px;
+}
+.kf-home__trust-inner {
+  max-width: 760px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 32px;
+}
+.kf-home__h2--lead {
+  font-size: 17px;
+}
+.kf-home__trust-line {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+  max-width: 62ch;
+}
+
+/* (0,2,1) — see this file's header. */
+.kf a.kf-home__link {
+  color: var(--kf-home-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  font-weight: 500;
+}
+.kf a.kf-home__link:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* The offer's terms. LINK OR REUSE — NEVER RESTATE. Every string in this container is an import
+   of an exported constant from lib/sms/consent-copy.ts; a second copy on the home page is a copy
+   that can drift from the version stamped on real consent records (AC-14). This stylesheet
+   styles the container and authors none of the words in it. */
+.kf-home__terms {
+  margin-top: 16px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  padding: 16px;
+}
+.kf-home__terms-k {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.085em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+.kf-home__terms-body {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.kf-home__terms-links {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+/* Standalone links in a row are NOT covered by the WCAG 2.2 §2.5.8 inline exception — they get
+   the full 44px target. Links sitting inside a sentence (the coverage link in the trust line,
+   the support number in the identity line) DO qualify and are left inline. */
+.kf-home__terms-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+}
+
+/* ═══ 4 · THE WEIGHT BOUNDARY + SEARCH — the whole 10% ═════════════════════════════════════
+   pack `.kf-utility` → `.kf-home__utility` · `.kf-search*` → `.kf-home__search*` ·
+   `.kf-tiles`/`.kf-tile` → `.kf-home__tiles`/`.kf-home__tile`
+
+   THE BOUNDARY IS NOT AN ANNOTATION. The ground leaves brand paper for a cool neutral, the type
+   steps down, and the internal rhythm tightens (22px section padding and a 12px stack, against
+   32px and 20px above it). Three simultaneous signals, none of them a label saying "this matters
+   less" — which is the density asymmetry the 90/10 ratio is expressed as.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.kf-home__utility {
+  background: var(--surface-subtle);
+  border-top: 1px solid var(--hairline);
+  padding: 22px var(--kf-gutter);
+}
+.kf-home__utility-inner {
+  max-width: 760px;
+}
+.kf-home__utility-h2 {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.008em;
+  color: var(--ink);
+}
+
+.kf-home__search {
+  margin-top: 12px;
+}
+/* The label is for assistive tech only — the heading above states the section's subject, and a
+   visible second label would re-inflate the block this budget is trying to keep small. */
+.kf-home__search-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .kf-home__search-row {
   display: flex;
   gap: 8px;
   align-items: stretch;
 }
-/* Layout only: the visual styling of these two controls now comes from the
- * canonical Input/Button primitives (components/ui). These classes just size
- * them within the search row (input grows, button hugs its label). */
-.kf-home__search-input {
+
+/* ⚠ TWO-CLASS SELECTORS (0,2,0), DELIBERATELY. Input and Button carry CSS-module classes at
+   (0,1,0); a bare `.kf-home__search-input` would tie with them and be decided by bundle order,
+   which is not a thing this file can see or control. The primitives still own the type, the
+   focus ring and the token plumbing — only the geometry below the boundary is this page's. */
+.kf-home__search-row .kf-home__search-input {
   flex: 1 1 auto;
-}
-.kf-home__search-btn {
-  flex: 0 0 auto;
-}
-
-/* ── Main column ── */
-.kf-home__main {
-  flex: 1;
-  /* Bottom was 4px. The closing trust sentence sat almost against the viewport edge while every
-     other gap on this page is 22px, so it read as clipped rather than as the end of the page.
-     22px is this file's own large step — see .kf-home__section. Deliberately NOT --kf-space-*:
-     this stylesheet uses raw px throughout (4/6/8/12/14/16/22) and a single tokenised value here
-     would be the only one, which is how a scale quietly ends up with two competing definitions. */
-  padding: 8px 16px 22px;
-}
-.kf-home__section {
-  margin-top: 22px;
-}
-.kf-home__note {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--ink-secondary);
-  margin: 8px 0 12px;
-}
-
-/* ── Category tiles: two-up grid of glyph + label into real /search results ── */
-.kf-home__tiles {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-.kf-home__tile {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  height: 100%;
-  min-height: 44px;
-  padding: 14px;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
+  min-width: 0;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--park-moss-text); /* 4.68:1 — clears WCAG 1.4.11 for a control edge */
   border-radius: var(--r-card);
-  box-shadow: var(--e-100);
-  transition: border-color var(--motion), transform var(--motion);
-}
-.kf-home__tile:hover {
-  border-color: var(--park-moss);
-}
-.kf-home__tile:active {
-  transform: translateY(1px);
-}
-.kf-home__tile .kf-tile {
-  width: 52px;
-  height: 52px;
-}
-.kf-home__tile-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.kf-home__tile-label {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-.kf-home__tile-caption {
-  font-size: 12.5px;
-  line-height: 1.4;
-  color: var(--ink-secondary);
-}
-
-/* ── Quick starts: concrete saved-filter search chips ── */
-.kf-home__quick {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.kf-home__quick-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 8px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
   background: var(--surface);
-  border: 1px solid var(--neutral-300);
-  border-radius: var(--r-chip);
-  transition: border-color var(--motion), background var(--motion);
-}
-.kf-home__quick-chip:hover {
-  border-color: var(--park-moss);
-  background: var(--canvas);
-}
-
-/* ── "Three things you could do today" (cards bring their own .kf-card styles) ──
-   One column on a phone; the two breakpoints below widen it. Each slot is labelled, and a
-   slot that could not be filled still occupies its place in the list — the block claims three
-   things, so it has to account for three (ruling 7.5). */
-.kf-three__slots {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.kf-three__slot {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.kf-three__slot-label {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--ink-muted, var(--ink));
-}
-/* An unfilled slot is a sentence, not a hole: same footprint as a card so the row does not
-   collapse around it, and visibly quieter so it never reads as a listing. */
-.kf-three__slot-empty {
-  margin: 0;
-  padding: 12px;
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 15px;
   color: var(--ink);
-  background: var(--canvas);
-  border: 1px dashed var(--neutral-300);
-  border-radius: var(--r-card, 8px);
 }
-.kf-three__slot-link {
-  font-weight: 700;
-  color: var(--leaf-hover);
+/* DELIBERATELY NOT the Leaf `primary` variant: Leaf is the brand's ONE action colour and it is
+   spent on the signup CTA above. An ink-filled submit reads as this section's action without
+   becoming a second primary of equal weight, which is what AC-03 rules out. */
+.kf-home__search-row .kf-home__search-btn {
+  flex: 0 0 auto;
+  min-height: 52px;
+  padding: 0 20px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-card);
+  background: var(--ink);
+  color: var(--canvas);
+  font-size: 15px;
+  font-weight: 600;
   white-space: nowrap;
 }
-.kf-three__slot-link:hover {
-  text-decoration: underline;
-}
-.kf-home__more {
-  display: inline-block;
-  margin-top: 4px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--leaf-hover);
-}
-.kf-home__more:hover {
-  text-decoration: underline;
+.kf-home__search-row .kf-home__search-btn:hover {
+  background: var(--anchor);
+  border-color: var(--anchor);
+  color: var(--anchor-text);
 }
 
-/* ── Evidence line (replaces the old three-card trust section) ──
- * Small print by design: it is a pointer to something checkable, not a banner asserting
- * we are trustworthy. The link carries the emphasis because the link is the point. */
-.kf-home__evidence {
-  /* 4px from the chip above it — the sentence read as attached to the chip rather than as the
-     page's closing line. Same 22px step as everything else here. */
-  margin: 22px 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--ink-secondary);
+/* ── Compact category tiles — LABEL ONLY. The captions and glyphs are what made these tall, and
+      height is the entire budget down here. They still read `liveCategoryDestinations()` from
+      app/_lib/nav-destinations.ts: only the layout is local, never the list. ── */
+.kf-home__tiles {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
-.kf-home__evidence-link {
-  font-weight: 700;
-  color: var(--leaf-hover);
+.kf-home__tiles::-webkit-scrollbar {
+  display: none;
 }
-.kf-home__evidence-link:hover {
-  text-decoration: underline;
-}
-
-/* ── Desktop / tablet layer ───────────────────────────────────────────────────
- * Breakpoint scale and --kf-gutter are defined once in preview.css; this file
- * only keys off them. The home grid was authored two-up for a 440px phone
- * shell, so on a wide shell two 500px tiles and a single column of trust cards
- * just stretch. These rules let the content use the width instead. */
-
-@media (min-width: 768px) {
-  .kf-home__hero,
-  .kf-home__main {
-    padding-left: var(--kf-gutter);
-    padding-right: var(--kf-gutter);
-  }
-  /* auto-fit lets the category tiles reflow 2 -> 3 -> 5 on their own rather
-     than hard-coding a column count per breakpoint (and without coupling the
-     CSS to how many categories there happen to be). 160px is chosen so all
-     five current tiles clear one row at lg and up instead of leaving a single
-     orphan on a second row. */
-  .kf-home__tiles {
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 12px;
-  }
-  .kf-home__search-input {
-    max-width: 480px;
-  }
-  .kf-three__slots {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    align-items: start;
-  }
-  .kf-three__slot,
-  .kf-three__slot-empty {
-    height: 100%;
-  }
-  .kf-three__slot .kf-card {
-    margin-bottom: 0;
-    height: 100%;
-  }
-}
-
-@media (min-width: 1280px) {
-  .kf-three__slots {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-/* ── The SMS offer (TSD §9 M1) ────────────────────────────────────────────────
- * Two states, ONE footprint. The unavailable state keeps the same box and the same
- * vertical rhythm as the available one and drops only the action — so a flag flip
- * changes what a parent can DO, never how the page is laid out. An offer that
- * vanished entirely would move everything below it and read as a rendering fault.
- *
- * Leaf is the brand's one-action colour and is spent here, on the CTA, deliberately.
- * PROVISIONAL: M2 rebuilds this into the hero. The class names are the contract the
- * tests hold; the visual treatment is not. */
-.kf-home__sms {
-  margin-top: 22px;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--neutral-300);
-  border-radius: var(--r-card);
-}
-.kf-home__sms-title {
-  margin: 0;
-  font-size: 17px;
-  line-height: 1.3;
-  font-weight: 700;
-  color: var(--ink);
-}
-.kf-home__sms-sub {
-  margin: 6px 0 0;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--ink-secondary);
-}
-/* ⚠ SELECTOR IS (0,2,1) — `.kf a.` — AND THAT IS LOAD-BEARING, NOT STYLE.
- * preview.css:102 carries `.kf a { color: inherit; text-decoration: none }`, which is (0,1,1)
- * and therefore BEATS a bare `.kf-home__sms-cta` class. Written the obvious way, this rule's
- * `color` was silently stripped and the anchor inherited the page ink instead.
- *
- * That failed in ONE scheme only, which is what made it worth a comment. In light mode the
- * inherited ink is dark, lands on the Leaf fill at a passing ratio, and looks entirely correct.
- * In DARK mode the inherited ink is warm paper (#f7f2e8) on the same Leaf fill — 1.94:1, a
- * serious WCAG 1.4.3 failure that renders as pale-on-pale and is invisible to anyone testing in
- * light mode, to every unit test, and to the whole SSR-markup layer.
- *
- * Caught by the axe audit (tests/e2e/a11y) and pinned by a computed-style assertion in
- * tests/e2e/public/sms-cta-analytics.public.spec.ts, because CSS specificity is not something
- * any amount of TypeScript can check. Same remedy, same reason, as `.kf a.kf-detail__source`
- * at preview.css:707 — whose own comment describes this exact trap. */
-.kf a.kf-home__sms-cta {
+.kf a.kf-home__tile {
   display: inline-flex;
   align-items: center;
-  min-height: 44px; /* the shared tap-target floor — this is a phone-first surface */
-  margin-top: 12px;
-  padding: 0 18px;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--park-moss-text);
   border-radius: var(--r-chip);
-  background: var(--leaf);
-  /* --forest-ink on --leaf is the brand's documented one-action pairing (Workbook V2 §7, and
-     components/ui/Button.module.css `.primary`), not a colour chosen here. Both are aliases of
-     FIXED raw palette tokens that never flip between schemes, so the pair is 7.61:1 in light
-     and dark alike. */
-  color: var(--forest-ink);
-  font-size: 15px;
-  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background var(--motion), border-color var(--motion);
 }
-.kf a.kf-home__sms-cta:hover {
-  background: var(--leaf-hover);
-}
-/* Quieter when there is nothing to click: the box states a fact rather than inviting an
-   action, and should not compete with the controls that DO work. */
-.kf-home__sms--unavailable {
+.kf a.kf-home__tile:hover {
   background: var(--canvas);
-  border-style: dashed;
+  border-color: var(--ink);
+}
+
+/* ═══ SMALL PHONES ════════════════════════════════════════════════════════════════════════
+   MEASURED IN THE DESIGN PACK, NOT TUNED BY EYE: before these two blocks the action cluster
+   ended at 599px of a 640px screen. Inside the fold, but with 41px of slack — not enough for
+   AC-18 ("the fold could take a second action") to be honestly true at that width. These buy
+   the headroom back from leading and padding. Nothing is removed and no control goes below its
+   44px floor.
+
+   ⚠ BASE RULES ARE STATED ABOVE, MEDIA QUERIES BELOW. Same specificity means SOURCE ORDER
+   decides, and this repo has shipped that bug the other way round once already — see
+   tests/ui/site-nav-mobile.test.tsx, which pins the ordering for the nav's compact menu.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 429px) {
+  .kf a.kf-home__tile {
+    padding: 0 8px;
+    font-size: 12.5px;
+  }
+  .kf-home__tiles {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 379px) {
+  .kf-home__sms {
+    padding-top: 24px;
+    padding-bottom: 24px;
+  }
+  .kf-home__sms-title {
+    font-size: 25px;
+  }
+  .kf-home__sms-sub {
+    font-size: 14px;
+    margin-top: 8px;
+  }
+  .kf-home__facts {
+    margin-top: 16px;
+  }
+  .kf-home__fact {
+    padding: 10px 0;
+    grid-template-columns: 72px 1fr;
+    gap: 8px;
+  }
+  .kf-home__actions {
+    margin-top: 20px;
+  }
+  .kf-home__sms-micro {
+    margin-top: 12px;
+  }
+}
+
+/* ═══ DESKTOP ═════════════════════════════════════════════════════════════════════════════
+   The pack's single 1024px step, kept as a single step. The shell's own 768/1024/1280 ladder
+   (preview.css) already widens `.kf-app` and steps `--kf-gutter`, so nothing here restates a
+   max-width or a horizontal inset — the two layers compose instead of competing.
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 1024px) {
+  .kf-home__sms {
+    padding: 96px var(--kf-gutter) 56px;
+  }
+  .kf-home__sms-inner {
+    max-width: 100%;
+  }
+  .kf-home__sms-title {
+    font-size: 44px;
+    max-width: 19ch;
+  }
+  .kf-home__sms-sub {
+    font-size: 17px;
+    margin-top: 16px;
+  }
+
+  /* The four facts become ONE ROW — the spec sheet reads across at this width. Columns are
+     sized to their content rather than equally: "what you get" is the long one. */
+  .kf-home__facts {
+    display: grid;
+    grid-template-columns: 0.85fr 1.3fr 0.75fr 1fr;
+    gap: 0;
+    margin-top: 40px;
+    border-bottom: 1px solid rgba(247, 242, 232, 0.16);
+    max-width: none;
+  }
+  .kf-home__fact {
+    display: block;
+    padding: 20px 20px 20px 0;
+    border-bottom: none;
+  }
+  .kf-home__fact + .kf-home__fact {
+    border-left: 1px solid rgba(247, 242, 232, 0.16);
+    padding-left: 20px;
+  }
+  .kf-home__fact-k {
+    padding-top: 0;
+  }
+  .kf-home__fact-v {
+    margin-top: 8px;
+    font-size: 15px;
+  }
+
+  /* The cluster becomes a row, so a future secondary action costs no height at all here. */
+  .kf-home__actions {
+    flex-direction: row;
+    align-items: center;
+    gap: 16px;
+    margin-top: 40px;
+  }
+  .kf a.kf-home__sms-cta {
+    flex: 0 0 auto;
+    min-width: 300px;
+  }
+  .kf-home__sms-paused {
+    flex: 0 0 auto;
+    min-width: 360px;
+  }
+  .kf-home__sms-micro {
+    margin-top: 20px;
+  }
+
+  .kf-home__proof {
+    padding-top: 56px;
+    padding-bottom: 56px;
+  }
+  .kf-home__trust {
+    padding-bottom: 56px;
+  }
+  .kf-home__trust-inner {
+    padding-top: 56px;
+  }
+  .kf-home__proof-inner,
+  .kf-home__trust-inner,
+  .kf-home__utility-inner {
+    max-width: 100%;
+  }
+  .kf-home__h2 {
+    font-size: 24px;
+  }
+  .kf-home__h2--lead {
+    font-size: 19px;
+  }
+  .kf-home__note {
+    font-size: 15px;
+  }
+  /* Bounded so it still reads as a FIGURE of a message rather than as a page band. */
+  .kf-home__msg {
+    padding: 24px;
+    max-width: 920px;
+  }
+  .kf-home__msg-bubble {
+    max-width: 620px;
+    font-size: 15px;
+  }
+  /* The three picks read across at desktop width — still ONE bubble. */
+  .kf-home__msg-list {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-radius: 18px;
+  }
+  .kf-home__pick {
+    border-bottom: none;
+    border-right: 1px solid var(--hairline);
+  }
+  .kf-home__pick:last-child {
+    border-right: none;
+  }
+
+  .kf-home__trust-line {
+    font-size: 15px;
+  }
+
+  /* Below the boundary desktop packs TIGHTER still — the ratio is the point. */
+  .kf-home__utility {
+    padding-top: 28px;
+    padding-bottom: 28px;
+  }
+  .kf-home__utility-h2 {
+    font-size: 19px;
+  }
+  .kf-home__search {
+    max-width: 620px;
+  }
 }

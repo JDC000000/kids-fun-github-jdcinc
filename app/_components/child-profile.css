@@ -155,29 +155,49 @@
 /* Secondary text actions ("Not now" / "Cancel" / "Forget my children"), matching the
    .kf-resume__btn contract they are modelled on — WCAG 44px target, real focus ring,
    never colour-only state. */
+/* ⚠ --kf-ink, NOT --kf-anchor / --kf-forest-ink — AND THAT IS THE WHOLE POINT OF THIS COMMENT.
+ * This control sits on TWO flipping grounds: --kf-confirmed-bg (the prompt card) and
+ * --kf-surface-subtle (the header bar). `--kf-anchor` flips to --kf-neutral-1000 (#0e110e) in
+ * dark mode and landed on the dark confirmed panel (#1c3a24) at 1.52:1 — a serious WCAG 1.4.3
+ * failure, MEASURED by axe, not estimated. `--kf-forest-ink` on :hover was the same bug by the
+ * other mechanism: a FIXED dark value on a surface that had already gone dark (#102316 on
+ * #1c3a24 ≈ 1.3:1).
+ *
+ * This is design-tokens.css's own documented trap — "text on any surface that flips must use a
+ * SEMANTIC token which flips with it" — and the same fix, for the same reason, as
+ * components/ui/Button.module.css `.outline`. --kf-ink resolves to --kf-forest-ink in light
+ * mode, so the light appearance is byte-identical to what shipped; it flips with the ground in
+ * dark, where it measures 11.2:1 on the panel and 10.3:1 on the bar.
+ *
+ * The affordance was never carried by colour anyway — it is the underline plus 600 weight — so
+ * :hover thickens the underline instead of restating a colour, which is what the rest of the
+ * product's text links now do. */
 .kf-cprof__btn {
   min-height: 44px;
   padding: var(--kf-space-1) var(--kf-space-2);
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
-  color: var(--kf-anchor);
+  color: var(--kf-ink);
   background: none;
   border: 0;
   border-radius: var(--kf-r-control);
   text-decoration: underline;
+  text-underline-offset: 2px;
   cursor: pointer;
 }
 
 .kf-cprof__btn:hover {
-  color: var(--kf-forest-ink);
+  text-decoration-thickness: 2px;
 }
 
 .kf-cprof__btn--muted {
   color: var(--kf-ink-muted);
 }
 
+/* Same trap as the colour above: a focus indicator must clear 3:1 against what surrounds it
+ * (WCAG 2.4.11), and --kf-anchor's dark value did not. */
 .kf-cprof__btn:focus-visible {
-  outline: 2px solid var(--kf-anchor);
+  outline: 2px solid var(--kf-ink);
   outline-offset: 2px;
 }

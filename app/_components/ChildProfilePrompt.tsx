@@ -2,12 +2,22 @@
 
 // ChildProfilePrompt — the ask-once "who are you looking for" panel (design §5a / §9-Q7; U1).
 //
-// HOME PAGE ONLY, by ruling (Jon 2026-08-19). Not on /search, not on /preview, not as a header
-// chip. The front door is the one surface with room to ask a question rather than interrupt a
-// task, and a parent who arrives on a shared /search link is mid-errand — the design doc's own
-// options list (§5a) treats a bar on /search as the "broader, more intrusive" variant, and it is
-// not what was approved. If adoption turns out to need a second surface, that is a later
-// iteration with its own decision, not a quiet addition here.
+// ═══ IT RENDERS ON /search. IT USED TO RENDER ON THE HOME PAGE, AND ONLY THERE. ═══
+// COMMENT CORRECTED 2026-09-13 (TSD v1.2 T2.5). What follows used to read "HOME PAGE ONLY, by
+// ruling (Jon 2026-08-19). Not on /search…", on the reasoning that the front door was the one
+// surface with room to ask a question rather than interrupt a task. That ruling was about a page
+// that no longer exists in that form: the home page is now the SMS front door (Delta 4 / AC-06
+// removes this panel from it), so "home page only" would have meant "nowhere at all".
+//
+// It is on /search because that is where the answer is USED — `ProfileAgeDefault` consumes the
+// profile there, and saving from here pushes `/search?age=…`, which takes effect on the screen
+// the parent is already looking at. Keeping the panel home-page-only while removing it from the
+// home page would have deleted the product's only profile-CAPTURE surface and silently stripped
+// age personalisation from /search for every new visitor (Operator decision D-2, option (a)).
+//
+// NOTHING BELOW THIS COMMENT CHANGED. The behaviour is exactly what the 2026-08-19 ruling
+// approved — an ask-once, dismissible panel that renders nothing once answered; only the surface
+// it is mounted on moved, and it moved by a later ruling rather than by a quiet addition.
 //
 // STRUCTURALLY MODELLED ON ResumeSearch.tsx, which already solved this exact interaction for the
 // other on-device store: an EXPLICIT, DISMISSIBLE suggestion, never a silent auto-apply, with the

@@ -8,6 +8,7 @@ import { SiteNav } from './_components/SiteNav';
 import { SiteFooter } from './_components/SiteFooter';
 import { ChildProfileBar } from './_components/ChildProfileBar';
 import { BareChromeGate } from './_components/BareChromeGate';
+import { smsSignupAvailability } from '@/lib/sms/availability';
 
 /**
  * ═══ MANROPE IS SELF-HOSTED. IT USED TO NOT LOAD AT ALL. ═══
@@ -76,8 +77,23 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${manrope.variable} ${fraunces.variable}`}>
       <body>
+        {/* ═══ THE NAV'S SMS ENTRY IS FAIL-SAFE FOR THE SAME REASON THE HOME PAGE IS (AC-12) ═══
+            `SMS_SIGNUP_ENABLED` defaults to FALSE and /sms/start `notFound()`s unless it is
+            exactly 'true'. The bar leads with "Get the weekly text" on every chromed page, so an
+            unconditional entry would be a link to a 404 on EVERY page of the product in the
+            state it spends most of its life in — and on the home page, whose whole fail-safe
+            branch exists to prevent precisely that.
+
+            ASKED HERE, IN A SERVER COMPONENT, BECAUSE SiteNav IS A CLIENT ONE. Next inlines
+            `process.env.X` into the client bundle only for NEXT_PUBLIC_ names, so a read inside
+            the bar would be TRUE on the server and UNDEFINED after hydration — the entry would
+            flicker out in front of the parent. One reader of the flag, one place, handed down.
+
+            `.href` is `null` when unavailable (lib/sms/availability.ts returns a discriminated
+            union precisely so the unavailable branch has no path to render), and the bar drops
+            the entry rather than rendering a dead one. */}
         <BareChromeGate>
-          <SiteNav />
+          <SiteNav smsSignupHref={smsSignupAvailability().href} />
         </BareChromeGate>
         {/* "Showing activities for a 3-year-old and a 7-year-old", with the controls that change
             or erase it (U2). Renders nothing until a profile exists, so it costs no chrome to a

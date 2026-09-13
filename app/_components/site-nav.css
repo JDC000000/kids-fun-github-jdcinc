@@ -106,6 +106,36 @@
   color: var(--kf-evergreen);
 }
 
+/* ── THE SMS OFFER, WHICH IS A PRODUCT RATHER THAN A DESTINATION (T3.1, design gate G2) ──
+   It leads the row, so it also has to READ as leading it: the rest of the bar is a list of
+   places this product can take you, and this one entry is the thing the product is now selling.
+
+   THE DOT IS NOT DECORATION, AND IT IS NOT THE ONLY CUE. Weight carries the emphasis; the dot
+   is the brand's one action colour appearing exactly where the one action is, which is what ties
+   this entry to the Leaf CTA on the home page. Leaf is used as a BACKGROUND here, never as text
+   (it is 2.17:1 on white and would be a contrast failure as a label), and it is `aria-hidden` by
+   construction — a CSS ::after pseudo-element is not in the accessibility tree, so a screen
+   reader gets the label and nothing invented. Status is never colour-ONLY: the label already
+   says what it is.
+
+   RENDERED ON BOTH SURFACES from the single `renderLink` in SiteNav.tsx — see the note there on
+   why this is a CSS marker rather than the design's menu-only "SMS" badge. */
+.kf-nav__link--sms {
+  font-weight: 700;
+  color: var(--kf-evergreen);
+}
+
+.kf-nav__link--sms::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: var(--kf-leaf);
+  vertical-align: 1px;
+}
+
 /* Current page is weight + an underline rule, never colour alone (D10 / WCAG 1.4.1). */
 .kf-nav__link[aria-current='page'],
 .kf-nav__word[aria-current='page'] {

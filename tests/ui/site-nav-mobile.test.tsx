@@ -28,6 +28,28 @@ import { fileURLToPath } from 'node:url';
 // (the Playwright lane is report-only — see vitest.workspace.ts and the e2e job's header),
 // so the regression has a gate and not only a report.
 // (CSS-parse convention follows tests/ui/freshness-stamp-mobile.test.ts.)
+//
+// ═══ T3.4 — THE MUTATION MATRIX (standing F-4 lesson) ═══
+// The nav contract changed by design, so these assertions were REWRITTEN rather than relaxed —
+// and a rewritten assertion is exactly the kind that can come back weaker than it went in. Every
+// new guard below was therefore mutation-tested: the regression applied to the real source, the
+// suite run, the source restored. All seven turned this lane red.
+//
+//  #   guard                                                     mutation that kills it
+//  N1  the SMS entry LEADS the bar, not merely appears in it     move it to the end of LINKS
+//  N2  the nav points at /sms/start, never the /sms/signup 308   swap the href for the redirect
+//  N3  the wide row and the compact menu cannot drift apart      render LINKS.slice(1) in the row
+//  N4  the SMS marker renders on BOTH surfaces, one renderer     drop the --sms class
+//  N5  the marker is WEIGHT, not its Leaf dot alone (WCAG 1.4.1) set font-weight back to 400
+//  N6  the entry is DROPPED when signup is unavailable (AC-12)  default smsSignupHref to the path
+//  N7  …and the bar degrades to the search list, not to nothing return [] from navLinks()
+//
+// 🔴 N6 EARNED THE PASS. The first cut of T3.1 built the SMS entry at module scope from
+// SMS_SIGNUP_PATH, unconditionally. Every assertion in both nav files was green, because none of
+// them knew the flag existed — and tests/home/sms-offer.test.tsx renders <Home /> alone, so the
+// nav was outside its AC-12 sweep too. Loading the BUILT page with SMS_SIGNUP_ENABLED=false still
+// returned `href="/sms/start"`, from the bar, on the one page whose entire fail-safe branch exists
+// to prevent exactly that. The guard is here because the gap was between two files, not inside one.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Mutable so one file can render the bar on several routes. It was introduced for the
@@ -44,6 +66,7 @@ const { SiteNav } = await import('../../app/_components/SiteNav');
 const { SEARCH_SHORTCUTS, destinationHref, liveCategoryDestinations } = await import(
   '../../app/_lib/nav-destinations'
 );
+const { SMS_SIGNUP_PATH } = await import('../../lib/sms/config');
 
 const cssRaw = readFileSync(
   fileURLToPath(new URL('../../app/_components/site-nav.css', import.meta.url)),
@@ -58,9 +81,9 @@ const cssRaw = readFileSync(
  * backwards. Every check in this file reads `css`, never `cssRaw`.
  */
 const css = cssRaw.replace(/\/\*[\s\S]*?\*\//g, '');
-function renderAt(path: string): string {
+function renderAt(path: string, smsSignupHref: string | null = SMS_SIGNUP_PATH): string {
   currentPath = path;
-  return renderToStaticMarkup(<SiteNav />);
+  return renderToStaticMarkup(<SiteNav smsSignupHref={smsSignupHref} />);
 }
 
 /** The home page. (It used to be the one route that still rendered the account pill.) */
@@ -87,20 +110,56 @@ function narrowBlock(): string {
 }
 
 describe('the compact menu carries every destination below 768px', () => {
+  /**
+   * ═══ THE LIST GREW BY ONE, AT THE FRONT (TSD v1.2 T3.1 / T3.4) ═══
+   * The bar now leads with the SMS offer and keeps the whole search run behind it. On a phone
+   * that entry is inside this menu like every other, which is the reason the menu matters more
+   * than it did: the home page is 90% SMS offer and its search block is deliberately at the
+   * bottom of a long page, so this panel is the only above-the-fold route to search a phone has.
+   * A menu that clipped anything would now cost a parent the search product outright.
+   *
+   * DERIVED, NEVER TYPED OUT — a literal list here would pass while the shared vocabulary said
+   * something else, which is the drift both nav test files exist to catch.
+   */
   const expected = [
+    SMS_SIGNUP_PATH,
     SEARCH_SHORTCUTS.onNow.href,
     ...liveCategoryDestinations().map(destinationHref),
     SEARCH_SHORTCUTS.free.href,
   ];
 
-  it('renders all six destinations inside the menu, not a subset', () => {
-    // The failure being guarded is a nav that shows two destinations and hides four. A menu
-    // that carried only the "overflow" would leave the same split, just behind a control.
+  const menuHrefs = (): string[] => {
     const menu = html.match(/<ul class="kf-nav__menu">(.*?)<\/ul>/s);
     expect(menu, 'SiteNav must render <ul class="kf-nav__menu">').not.toBeNull();
-    const hrefs = [...menu![1].matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
-    expect(hrefs).toEqual(expected);
-    expect(hrefs).toHaveLength(6);
+    return [...menu![1].matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
+  };
+
+  it('renders every destination inside the menu, not a subset', () => {
+    // The failure being guarded is a nav that shows two destinations and hides the rest. A menu
+    // that carried only the "overflow" would leave the same split, just behind a control.
+    expect(menuHrefs()).toEqual(expected);
+    // Count derived from the sources — the three fixed entries plus every live category — so
+    // adding a category widens it automatically and dropping one to make room fails here.
+    expect(menuHrefs()).toHaveLength(3 + liveCategoryDestinations().length);
+  });
+
+  it('🔴 AC-12 — the phone menu drops the SMS row when signup is unavailable', () => {
+    // The compact menu is the ONLY above-the-fold route the phone has, so a dead row in it is
+    // the whole product's first tap. `smsSignupHref` is null when SMS_SIGNUP_ENABLED is not
+    // exactly 'true' — which is its DEFAULT — and the bar must degrade to the search list it
+    // has always carried rather than to a link that 404s, or to nothing.
+    const degraded = renderAt('/', null);
+    const menu = degraded.match(/<ul class="kf-nav__menu">(.*?)<\/ul>/s)![1];
+    const hrefs = [...menu.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
+    expect(hrefs).toEqual(expected.slice(1));
+    expect(hrefs).not.toContain(SMS_SIGNUP_PATH);
+    expect(degraded).not.toContain('kf-nav__link--sms');
+  });
+
+  it('🔴 the SMS offer is the first row, and is marked as the one non-search entry', () => {
+    expect(menuHrefs()[0]).toBe(SMS_SIGNUP_PATH);
+    const menu = html.match(/<ul class="kf-nav__menu">(.*?)<\/ul>/s)![1];
+    expect(menu.match(/kf-nav__link--sms/g)).toHaveLength(1);
   });
 
   it('opens with no JavaScript — native <details>, server-rendered', () => {
@@ -193,6 +252,18 @@ describe('the open panel is reachable, tappable and correctly layered', () => {
 
   it('current-page is still marked by more than colour (D10 / WCAG 1.4.1)', () => {
     expect(ruleBody(".kf-nav__menu .kf-nav__link[aria-current='page']")).toMatch(/box-shadow/);
+  });
+
+  it('🔴 the SMS entry is distinguished by WEIGHT, not by its Leaf dot alone (D10 / WCAG 1.4.1)', () => {
+    // The dot is the brand's action colour appearing where the one action is. It is a ::after
+    // pseudo-element, so it is not in the accessibility tree and carries no meaning on its own —
+    // which is exactly why the entry must also differ in a channel that survives colour being
+    // unavailable. Font weight is that channel. Leaf is used as a BACKGROUND here and never as
+    // text: it is 2.17:1 on white and would be a contrast failure as a label.
+    expect(ruleBody('.kf-nav__link--sms')).toMatch(/font-weight:\s*700/);
+    const dot = ruleBody('.kf-nav__link--sms::after');
+    expect(dot).toMatch(/background:\s*var\(--kf-leaf\)/);
+    expect(dot).toMatch(/content:\s*''/);
   });
 });
 
