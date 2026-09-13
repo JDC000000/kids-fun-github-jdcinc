@@ -7,6 +7,8 @@ import {
   correctionParams,
   activityIdFromSourceRecordId,
   CORRECTION_UPDATE_SQL,
+  MANUFACTURED_MIN_MONTHS,
+  MANUFACTURED_NOTES,
   REASON,
   type StoredAgeRow,
 } from '../../scripts/backfill-scope/activenet-age-backfill-lib';
@@ -370,5 +372,42 @@ describe('every table the backfill names really exists in the schema', () => {
     expect(defined.has('series')).toBe(false);
     expect(CANDIDATE_SQL).toMatch(/FROM activity_occurrence/);
     expect(CANDIDATE_SQL).toMatch(/JOIN activity_series/);
+  });
+});
+
+
+// ── SCOPE IS A SAFETY PROPERTY, NOT A PERFORMANCE ONE ────────────────────────────────────
+//
+// This query originally filtered on family alone, which selected EVERY ActiveNet occurrence
+// carrying any age row — 13,748 rows / 6,974 distinct activities against production — while
+// planRow writes a correction for ANY disagreement with the source. That is a materially larger
+// action than "correct the rows one parsing bug manufactured" (~227 rows / ~135 activities), and
+// it is not the action that was reviewed. Verified end-to-end on a real schema: of five seeded
+// ActiveNet rows, only the two carrying the manufactured triple are selected.
+describe('the candidate query selects ONLY the manufactured-all-ages population', () => {
+  it('pins all three parts of the pattern predicate', () => {
+    expect(CANDIDATE_SQL).toMatch(/age_min_months\s*=\s*0/);
+    expect(CANDIDATE_SQL).toMatch(/age_max_months\s+IS\s+NULL/i);
+    expect(CANDIDATE_SQL).toMatch(/age_notes\s*=\s*'all-ages'/);
+  });
+
+  it('does not select on source family alone — the defect this guards', () => {
+    // Strip the pattern predicate and what remains must NOT be a complete filter. Expressed as a
+    // count so that removing ANY one of the three conditions fails, not just all three.
+    const patternConditions = [
+      /age_min_months\s*=\s*0/,
+      /age_max_months\s+IS\s+NULL/i,
+      /age_notes\s*=\s*'all-ages'/,
+    ].filter((re) => re.test(CANDIDATE_SQL)).length;
+    expect(patternConditions, 'all three pattern conditions must be present').toBe(3);
+  });
+
+  it('the constants the predicate is built from match the documented triple', () => {
+    expect(MANUFACTURED_MIN_MONTHS).toBe(0);
+    expect(MANUFACTURED_NOTES).toBe('all-ages');
+  });
+
+  it('still scopes to the activenet family', () => {
+    expect(CANDIDATE_SQL).toMatch(/src\.family\s*=\s*'activenet'/);
   });
 });

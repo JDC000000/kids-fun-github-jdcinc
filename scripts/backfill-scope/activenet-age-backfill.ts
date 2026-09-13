@@ -43,9 +43,16 @@ import { computeAgeBandMatches, type AgeBandRow } from '../../worker/core/age';
  *  thousands hits this and stops instead of running. */
 const DEFAULT_MAX_ROWS = 800;
 
-/** Ceiling on portal requests while planning. The gate makes this generous in practice
- *  (measured: ~1.3% of activities carry an all-ages mention at all), but a cap is what stops a
- *  logic change turning a correction into a crawl. */
+/**
+ * Ceiling on portal requests while planning.
+ *
+ * THIS COMMENT USED TO CITE THE ADAPTER'S 1.3% GATE RATE AS THE REASON THE CAP WAS GENEROUS, AND
+ * THAT WAS THE BUG. The adapter only looks an activity up when allAgesInPlay() says an all-ages
+ * claim is at stake; this tool's candidate query has no such gate, so the adapter's cost model
+ * never applied here. Importing the cost model without importing the filter is how a 135-activity
+ * job was sized at 600 while actually selecting 6,974. The cap is now sized against the real
+ * population the CANDIDATE_ROWS_SQL predicate selects, and the predicate is what bounds the work.
+ */
 const DEFAULT_MAX_LOOKUPS = 600;
 
 interface Args {

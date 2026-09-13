@@ -256,6 +256,28 @@ export function activityIdFromSourceRecordId(sourceRecordId: string): number {
   return Number.isFinite(n) ? n : Number.NaN;
 }
 
+/**
+ * THE POPULATION THIS TOOL IS ALLOWED TO TOUCH — the exact triple the parser manufactured:
+ * age_min_months 0, age_max_months NULL, age_notes 'all-ages'. Written by precisely one branch
+ * (worker/core/age.ts's ALL_AGES_RE), which is what makes it a reliable identifier rather than a
+ * heuristic.
+ *
+ * WHY THIS IS A SCOPE BOUNDARY AND NOT AN OPTIMISATION, stated plainly because its absence was a
+ * real defect: without it the query selects EVERY ActiveNet occurrence carrying any age row —
+ * measured against production, 13,748 rows across 6,974 distinct activities — and planRow writes a
+ * correction for ANY disagreement with the source, for any reason. That is a different and far
+ * larger action than "correct the rows one parsing bug manufactured", and it is not the action
+ * that was reviewed or approved. The approved population is ~227 rows / ~135 activities.
+ *
+ * THE WIDER BUG CLASS IS DELIBERATELY OUT OF SCOPE HERE. The same root cause also produced wrong
+ * NARROWER bands (a 19+ class published as 12-18, and so on — see the write-up's §12 measurement).
+ * Those rows are real and worth correcting, but they are a separate population needing their own
+ * sizing and their own approval. Widening this predicate to reach them is a decision for the
+ * Operator, not a convenience for whoever edits this next.
+ */
+export const MANUFACTURED_MIN_MONTHS = 0;
+export const MANUFACTURED_NOTES = 'all-ages';
+
 export const CANDIDATE_ROWS_SQL = `
   SELECT o.id                         AS occurrence_id,
          o.source_record_id           AS source_record_id,
@@ -271,6 +293,11 @@ export const CANDIDATE_ROWS_SQL = `
     LEFT JOIN occurrence_age oa ON oa.occurrence_id = o.id
    WHERE src.family = 'activenet'
      AND oa.occurrence_id IS NOT NULL
+     -- THE MANUFACTURED PATTERN, AND ONLY IT. See MANUFACTURED_* below for why this predicate
+     -- is the scope boundary rather than a performance filter.
+     AND oa.age_min_months = ${MANUFACTURED_MIN_MONTHS}
+     AND oa.age_max_months IS NULL
+     AND oa.age_notes = '${MANUFACTURED_NOTES}'
    ORDER BY o.id
 `;
 
