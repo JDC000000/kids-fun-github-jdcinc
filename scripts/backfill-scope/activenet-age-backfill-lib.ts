@@ -320,6 +320,12 @@ export const CANDIDATE_ROWS_SQL = `
     LEFT JOIN occurrence_age oa ON oa.occurrence_id = o.id
    WHERE src.family = 'activenet'
      AND oa.occurrence_id IS NOT NULL
+     -- ARCHIVED ROWS ARE NOT PARENT-REACHABLE AND ARE NOT IN SCOPE. m1-withheld-backfill-lib.ts
+     -- carries this same filter; omitting it here was an oversight, not a decision, and it let
+     -- the candidate set include soft-deleted occurrences no search result can ever surface.
+     -- Correcting them is harmless but it is work nobody can see: every one costs a portal
+     -- request and a production write for a row that is already invisible.
+     AND o.archived_at IS NULL
      -- THE MANUFACTURED PATTERN, AND ONLY IT. See MANUFACTURED_* below for why this predicate
      -- is the scope boundary rather than a performance filter.
      AND oa.age_min_months = $1

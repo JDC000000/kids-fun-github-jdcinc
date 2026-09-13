@@ -427,6 +427,13 @@ describe('the candidate query selects ONLY the manufactured-all-ages population'
     expect(ALL_AGES_NOTES_PROXY).toBe(M1_ALL_AGES_NOTES_PROXY);
   });
 
+  it('excludes archived rows, matching m1-withheld-backfill-lib', () => {
+    // Archived occurrences are soft-deleted and unreachable from search. Correcting them is
+    // harmless but pointless: a portal request and a production write for a row no parent can
+    // see. M1's reference implementation filters these; omitting it inflated the candidate set.
+    expect(CANDIDATE_SQL).toMatch(/o\.archived_at\s+IS\s+NULL/i);
+  });
+
   it('still scopes to the activenet family', () => {
     expect(CANDIDATE_SQL).toMatch(/src\.family\s*=\s*'activenet'/);
   });
