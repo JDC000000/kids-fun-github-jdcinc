@@ -284,7 +284,22 @@
   line-height: 1.5;
   color: var(--ink-secondary);
 }
-.kf-home__sms-cta {
+/* ⚠ SELECTOR IS (0,2,1) — `.kf a.` — AND THAT IS LOAD-BEARING, NOT STYLE.
+ * preview.css:102 carries `.kf a { color: inherit; text-decoration: none }`, which is (0,1,1)
+ * and therefore BEATS a bare `.kf-home__sms-cta` class. Written the obvious way, this rule's
+ * `color` was silently stripped and the anchor inherited the page ink instead.
+ *
+ * That failed in ONE scheme only, which is what made it worth a comment. In light mode the
+ * inherited ink is dark, lands on the Leaf fill at a passing ratio, and looks entirely correct.
+ * In DARK mode the inherited ink is warm paper (#f7f2e8) on the same Leaf fill — 1.94:1, a
+ * serious WCAG 1.4.3 failure that renders as pale-on-pale and is invisible to anyone testing in
+ * light mode, to every unit test, and to the whole SSR-markup layer.
+ *
+ * Caught by the axe audit (tests/e2e/a11y) and pinned by a computed-style assertion in
+ * tests/e2e/public/sms-cta-analytics.public.spec.ts, because CSS specificity is not something
+ * any amount of TypeScript can check. Same remedy, same reason, as `.kf a.kf-detail__source`
+ * at preview.css:707 — whose own comment describes this exact trap. */
+.kf a.kf-home__sms-cta {
   display: inline-flex;
   align-items: center;
   min-height: 44px; /* the shared tap-target floor — this is a phone-first surface */
@@ -292,13 +307,15 @@
   padding: 0 18px;
   border-radius: var(--r-chip);
   background: var(--leaf);
-  /* --forest-ink on --leaf is the brand's documented one-action pairing (preview.css's
-     own note), not a colour picked here. AA-checked as a pair by that convention. */
+  /* --forest-ink on --leaf is the brand's documented one-action pairing (Workbook V2 §7, and
+     components/ui/Button.module.css `.primary`), not a colour chosen here. Both are aliases of
+     FIXED raw palette tokens that never flip between schemes, so the pair is 7.61:1 in light
+     and dark alike. */
   color: var(--forest-ink);
   font-size: 15px;
   font-weight: 700;
 }
-.kf-home__sms-cta:hover {
+.kf a.kf-home__sms-cta:hover {
   background: var(--leaf-hover);
 }
 /* Quieter when there is nothing to click: the box states a fact rather than inviting an

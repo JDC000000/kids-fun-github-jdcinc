@@ -146,6 +146,69 @@ test.describe('the SMS CTA emits through the real transport', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The CTA is legible in BOTH colour schemes — a regression guard for a real bug.
+//
+// WHAT HAPPENED, BECAUSE THE SHAPE OF IT IS THE REASON THIS BLOCK EXISTS
+// `.kf-home__sms-cta` set `color: var(--forest-ink)` on a Leaf fill — the brand's documented
+// one-action pairing, 7.61:1, correct. It did nothing. preview.css:102 carries
+// `.kf a { color: inherit }`, which at (0,1,1) BEATS a bare class at (0,1,0), so the
+// declaration was silently dropped and the anchor inherited the page ink.
+//
+// In LIGHT mode the inherited ink is dark, sits on Leaf at a passing ratio, and looks exactly
+// right. In DARK mode it is warm paper on Leaf: 1.94:1, a serious WCAG 1.4.3 failure. Nothing
+// else in this milestone could see it — not the type system, not the unit lane, not the SSR
+// markup assertions, and not a light-mode eyeball. A rendering browser is the only thing that
+// evaluates a cascade, which is why the guard lives here rather than anywhere cheaper.
+//
+// Asserted as a COMPUTED RATIO rather than a colour string: pinning the literal hex would pass
+// just as well if the token were redefined to something illegible, and would fail noisily on a
+// harmless palette refresh. The thing that must stay true is legibility.
+// ─────────────────────────────────────────────────────────────────────────────
+function contrastRatio(fg: [number, number, number], bg: [number, number, number]): number {
+  const channel = (v: number): number => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const lum = ([r, g, b]: [number, number, number]): number =>
+    0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+function rgb(value: string): [number, number, number] {
+  const m = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  expect(m, `could not parse a colour from ${JSON.stringify(value)}`).toBeTruthy();
+  return [Number(m![1]), Number(m![2]), Number(m![3])];
+}
+
+for (const scheme of ['light', 'dark'] as const) {
+  test.describe(`the CTA is legible in ${scheme} mode`, () => {
+    test.use({ colorScheme: scheme });
+
+    test(`🔴 meets WCAG AA on the Leaf fill in ${scheme} mode`, async ({ page }) => {
+      await gotoHomeWithCta(page);
+      const { color, background } = await page.evaluate(() => {
+        const el = document.querySelector('a.kf-home__sms-cta') as HTMLElement;
+        const cs = getComputedStyle(el);
+        return { color: cs.color, background: cs.backgroundColor };
+      });
+
+      // The fill must actually be the brand action colour — if the background fell back to
+      // transparent, a contrast check against it would be measuring the wrong thing.
+      expect(background, 'the CTA should carry the Leaf action fill').toBe('rgb(72, 199, 116)');
+
+      const ratio = contrastRatio(rgb(color), rgb(background));
+      expect(
+        ratio,
+        `CTA label ${color} on ${background} is ${ratio.toFixed(2)}:1 in ${scheme} mode — ` +
+          'WCAG AA needs 4.5:1. The usual cause is a bare-class colour declaration losing to ' +
+          '`.kf a { color: inherit }` (0,1,1); see the comment on .kf a.kf-home__sms-cta.',
+      ).toBeGreaterThanOrEqual(4.5);
+    });
+  });
+}
+
 test.describe('the emit never gets in the way of the navigation', () => {
   test('🔴 navigates anyway when the analytics endpoint is dead', async ({ page }) => {
     await gotoHomeWithCta(page);
