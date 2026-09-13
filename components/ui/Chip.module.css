@@ -58,7 +58,7 @@
  * primary Search CTA (Workbook §7). Text is --kf-ink on --kf-surface (AA both schemes). */
 .rail.action {
   color: var(--kf-ink);
-  border-color: var(--kf-anchor);
+  border-color: var(--kf-link);
   border-width: 1.5px;
 }
 .rail.action:hover {

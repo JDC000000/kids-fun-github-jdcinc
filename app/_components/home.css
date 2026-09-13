@@ -58,15 +58,16 @@
 .kf-home {
   /* The one link colour on this page, and the one thing the pack could not supply: it uses
      evergreen (#183b24, 12.43:1 on white), which IS this app's `--kf-surface` in dark mode —
-     i.e. 1:1, invisible. So the token flips, and the dark step is the palette's own accent
-     (7.10:1 on #183b24). A fixed evergreen here would have been a dark-mode-only failure,
-     invisible to every light-mode review and to every unit test. */
-  --kf-home-link: var(--kf-evergreen);
-}
-@media (prefers-color-scheme: dark) {
-  .kf-home {
-    --kf-home-link: var(--kf-dark-accent);
-  }
+     i.e. 1:1, invisible. So the token has to flip; a fixed evergreen here would have been a
+     dark-mode-only failure, invisible to every light-mode review and to every unit test.
+
+     THIS PAGE WORKED THAT OUT ON ITS OWN AND DEFINED ITS OWN FLIPPING PAIR (evergreen →
+     --kf-dark-accent). Three days later the same bug was reported on the preferences page and
+     the same pair was promoted to a global role, --kf-link (design-tokens.css). The values were
+     identical, so this is an alias rather than a change — but two definitions of one colour is
+     how they drift, and the global one is the one with the regression guard behind it. The local
+     name stays so the twelve usages below do not churn. */
+  --kf-home-link: var(--kf-link);
 }
 
 /* UA margin reset, scoped to this page. `<figure>` is the one that bites: its 40px inline

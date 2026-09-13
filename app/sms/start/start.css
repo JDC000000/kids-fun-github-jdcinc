@@ -65,7 +65,7 @@
   font-size: 1rem;
 }
 .kf-start__input:focus-visible {
-  outline: 2px solid var(--kf-anchor);
+  outline: 2px solid var(--kf-link);
   outline-offset: 1px;
 }
 .kf-start__input--age {
@@ -99,7 +99,7 @@
   background: none;
   border: 0;
   padding: 0.25rem 0;
-  color: var(--kf-anchor);
+  color: var(--kf-link);
   text-decoration: underline;
   cursor: pointer;
   align-self: flex-start;
@@ -147,9 +147,11 @@
   border: 0;
   border-radius: var(--kf-r-control);
   /* ═══ THE PRIMARY ACTION USES THE PRIMARY-ACTION ROLE (design audit, 2026-09-03) ═══
-     This was `--kf-anchor`, the LINK colour. It looked plausible in light mode, which is why it
-     survived — but in dark mode --kf-anchor resolves near-black, so the one button this page
-     exists for rendered as a near-invisible dark rectangle on a dark card. Canonical values are
+     This was `--kf-anchor` — which the author took for the link colour, and which is in fact the
+     hero FILL (design-tokens.css now says so out loud, and links moved to --kf-link). It looked
+     plausible in light mode, which is why it survived — but in dark mode --kf-anchor resolves
+     near-black, so the one button this page exists for rendered as a near-invisible dark
+     rectangle on a dark card. A fill is still the right answer here. Canonical values are
      components/ui/Button.module.css .primary: --kf-leaf fill, --kf-forest-ink text. */
   background: var(--kf-leaf);
   color: var(--kf-forest-ink);
@@ -195,7 +197,7 @@
   margin: 0 0 var(--kf-space-2);
 }
 .kf-start__legal a {
-  color: var(--kf-anchor);
+  color: var(--kf-link);
 }
 
 .kf-start__done-heading {
@@ -238,8 +240,8 @@
 .kf-start__submit--secondary {
   margin-top: var(--kf-space-2);
   background: transparent;
-  color: var(--kf-anchor);
-  border: 1px solid var(--kf-anchor);
+  color: var(--kf-link);
+  border: 1px solid var(--kf-link);
   /* Reads as secondary rather than merely un-filled: lighter weight and slightly tighter padding
      than the primary above it. Combined with the shortened label this removes the 49% height
      difference that made the fallback action the largest control on the page. */

@@ -110,7 +110,7 @@
   line-height: 1.8;
 }
 .kf-prefs__picks a {
-  color: var(--kf-anchor);
+  color: var(--kf-link);
 }
 
 .kf-prefs__child {
@@ -198,9 +198,18 @@
   border-color: var(--kf-prefs-delete-red-hover);
 }
 
+/* ═══ THE ERROR MESSAGE USED --kf-danger, WHICH DOES NOT FLIP (found 2026-09-13) ═══
+ * --kf-danger (#853b20) is a FILL colour — the red-brown Button `danger` paints behind WHITE
+ * text, where it measures 7.94:1. As TEXT it was landing on --kf-surface, which goes dark:
+ * 1.56:1 in dark mode. The message telling a parent their save FAILED was the one message on
+ * this page they could not read, while the success message right beside it uses the flipping
+ * confirmed pair and was fine — so the page was legible exactly when nothing had gone wrong.
+ * --kf-cancelled-text is the semantic text half of the same red family and is ALSO #853b20 in
+ * light mode, so this is byte-identical light and 7.18:1 dark. Matches the pattern
+ * app/sms/start/start.css `.kf-start__error` already used correctly. */
 .kf-prefs__err {
   margin: 0;
-  color: var(--kf-danger);
+  color: var(--kf-cancelled-text);
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.5;
@@ -232,7 +241,7 @@
   color: var(--kf-ink-muted);
 }
 .kf-prefs__legal a {
-  color: var(--kf-anchor);
+  color: var(--kf-link);
 }
 
 /* Collapsed legal block (Jon, 2026-09-12) — same pattern as .kf-start__legal-details on
@@ -334,7 +343,7 @@
 }
 
 .kf-prefs__identity-support a {
-  color: var(--kf-anchor);
+  color: var(--kf-link);
 }
 
 /* The recovery action on a dead-token page (design audit, 2026-09-03). Previously shared
@@ -347,7 +356,7 @@
   line-height: 1.5;
 }
 .kf-prefs__recover a {
-  color: var(--kf-anchor);
+  color: var(--kf-link);
   font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 2px;

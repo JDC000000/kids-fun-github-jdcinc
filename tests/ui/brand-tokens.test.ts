@@ -152,9 +152,26 @@ const TEXT_PAIRINGS: Pairing[] = [
   { label: 'link/CTA (info-text) on card surface', fg: '--kf-info-text', bg: '--kf-surface' },
   { label: 'link/CTA (info-text) in MUTED card (×0.9)', fg: '--kf-info-text', bg: '--kf-surface', alpha: MUTED_CARD },
 
-  // ── Hero anchor — warm-paper text on the Evergreen anchor; wordmark is 0.85. ──
-  { label: 'hero anchor text on Evergreen', fg: '--kf-anchor-text', bg: '--kf-anchor' },
-  { label: 'hero wordmark (×0.85) on Evergreen', fg: '--kf-anchor-text', bg: '--kf-anchor', alpha: HERO_WORDMARK },
+  // ── Hero anchor FILL — warm-paper text on the anchor band; wordmark is 0.85. This pair is
+  //    a fill + the ink that sits ON it (preview.css .kf-hero), which is why --kf-anchor is
+  //    allowed to be near-black in dark mode and why links must NOT use it. ──
+  { label: 'hero anchor text on anchor fill', fg: '--kf-anchor-text', bg: '--kf-anchor' },
+  { label: 'hero wordmark (×0.85) on anchor fill', fg: '--kf-anchor-text', bg: '--kf-anchor', alpha: HERO_WORDMARK },
+
+  // ── Link role (--kf-link, split out of --kf-anchor on 2026-09-13) — on EVERY surface a link
+  //    actually renders on. The bug this encodes: --kf-anchor's dark value is the hero fill
+  //    (#0e110e), so every link that borrowed it measured 1.15–1.65:1 in dark mode — verified
+  //    in Chromium on /u/…, /sms/start, /sms/signup, /link-unavailable, /activity-unavailable
+  //    before the fix. Checking all three surfaces, not just the canvas, is deliberate: the
+  //    preferences page's links are on --kf-surface (5.74:1), not the canvas (7.61:1). ──
+  { label: 'link on canvas', fg: '--kf-link', bg: '--kf-canvas' },
+  { label: 'link on card surface', fg: '--kf-link', bg: '--kf-surface' },
+  { label: 'link on subtle surface', fg: '--kf-link', bg: '--kf-surface-subtle' },
+  { label: 'link in MUTED card (×0.9)', fg: '--kf-link', bg: '--kf-surface', alpha: MUTED_CARD },
+  // Links sit inside the preferences status panel and the start-page notices, which are
+  // status fills rather than plain surfaces.
+  { label: 'link on confirmed fill', fg: '--kf-link', bg: '--kf-confirmed-bg' },
+  { label: 'link on expected fill', fg: '--kf-link', bg: '--kf-expected-bg' },
 
   // ── Status text tokens as text on their paired fills (both schemes). The
   //    sibling primitive guard checks these on plain badges; here they also go
@@ -179,6 +196,25 @@ describe('Brand V2 text tokens are AA-safe (WCAG 1.4.3, ≥4.5:1) — locks in R
       }
     });
   }
+
+  /**
+   * THE ROOT-CAUSE GUARD, not a contrast one.
+   *
+   * --kf-anchor (a fill) and --kf-link (text) were ONE token, and the reason the conflation
+   * survived five separate reviews is that in LIGHT mode they are legitimately the same colour —
+   * Evergreen is both a fine band and a fine link. It is only in dark mode that a fill must go
+   * darker than the canvas while a link must go lighter. So: same value in light is fine and
+   * expected; the same value in DARK means somebody has re-merged the roles.
+   */
+  it('the link role and the anchor FILL role stay separate in dark mode', () => {
+    expect(resolve(light, '--kf-link')).toBe(resolve(light, '--kf-anchor'));
+    expect(resolve(dark, '--kf-link')).not.toBe(resolve(dark, '--kf-anchor'));
+    // And the direction is not arbitrary: on the dark canvas the fill is DARKER and the link
+    // is LIGHTER. A link that resolves darker than its own canvas is the shipped bug.
+    const canvas = luminance(resolve(dark, '--kf-canvas'));
+    expect(luminance(resolve(dark, '--kf-link'))).toBeGreaterThan(canvas);
+    expect(luminance(resolve(dark, '--kf-anchor'))).toBeLessThan(canvas);
+  });
 
   it('the two Task Y tokens hold their darkened light-mode values', () => {
     // Guards against a silent revert of the specific hexes Task Y landed. If the

@@ -60,7 +60,7 @@
 }
 
 .plot:focus-visible {
-  outline: 2px solid var(--kf-anchor, var(--kf-info-text));
+  outline: 2px solid var(--kf-link, var(--kf-info-text));
   outline-offset: 2px;
 }
 

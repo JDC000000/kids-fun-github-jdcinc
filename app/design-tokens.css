@@ -110,8 +110,27 @@
   --kf-ink-secondary: var(--kf-park-moss-text);
   --kf-ink-muted: var(--kf-tertiary-text);
   --kf-hairline: var(--kf-neutral-200);
+  /* ── TWO DIFFERENT ROLES, AND CONFLATING THEM IS A BUG THAT HAS SHIPPED FIVE TIMES ──
+   *
+   * --kf-anchor is a FILL: the dark band the hero sits on (app/preview/preview.css .kf-hero),
+   * with --kf-anchor-text as the cream that sits ON that fill. It is NOT a link colour, and
+   * "anchor" here means a visual anchor, not <a>.
+   *
+   * --kf-link is the TEXT/BORDER role for links and link-like affordances on a page surface.
+   *
+   * The two were one token until 2026-09-13. Because --kf-anchor's LIGHT value (Evergreen) is a
+   * perfectly plausible link colour, every misuse looked correct in light mode and reviewed
+   * clean — and then resolved to a near-black fill in dark mode, where a link on the dark-green
+   * card measured 1.53:1 IN A REAL BROWSER (not estimated). Three files had already worked
+   * around it one at a time (DataHealth/ProductHealth .backLink, child-profile .kf-cprof__btn,
+   * start.css .kf-start__submit) and left comments saying so; the fourth report came from Jon
+   * looking at the live preferences page on his phone. Splitting the roles is what actually ends
+   * it — a link token whose dark value is a link colour cannot flip into a fill.
+   *
+   * Light values are unchanged, so light mode renders byte-identically to what shipped. */
   --kf-anchor: var(--kf-evergreen);
   --kf-anchor-text: var(--kf-warm-paper);
+  --kf-link: var(--kf-evergreen);
 
   /* ── Typography ── */
   /* Manrope comes from next/font (app/layout.tsx), self-hosted and applied as a variable on
@@ -187,8 +206,15 @@
     --kf-ink-secondary: var(--kf-dark-muted);
     --kf-ink-muted: #9fb09d;
     --kf-hairline: var(--kf-dark-elevated);
+    /* The hero FILL goes darker than the canvas so the band still reads as a band; the cream
+     * on it measures 17.03:1. Correct for a fill, catastrophic for the link text this token
+     * used to double as — see the light block above. */
     --kf-anchor: var(--kf-neutral-1000);
     --kf-anchor-text: var(--kf-dark-text);
+    /* Measured in Chromium at 390px, not cited: 7.61:1 on --kf-canvas (#102316), 5.74:1 on
+     * --kf-surface (#183b24), 5.32:1 on --kf-surface-subtle (#223f30), and >=5.7:1 on every
+     * dark status fill a link renders over. AA everywhere links actually appear. */
+    --kf-link: var(--kf-dark-accent);
 
     --kf-confirmed-bg: #1c3a24;
     --kf-confirmed-text: #a6e6b4;

@@ -104,9 +104,16 @@ export function InstantPicks({ token }: { token: string }) {
       <h3 className="kf-prefs__instant-heading">{PREFS_INSTANT_HEADING}</h3>
       <p className="kf-prefs__help">{PREFS_INSTANT_BODY}</p>
 
+      {/* PRIMARY, NOT SECONDARY (Jon, 2026-09-13, from a phone screenshot). `secondary` is a
+          --kf-surface fill, which in dark mode is #183b24 against a #102316 canvas — a 1.3:1
+          step. The one control this whole section exists for rendered as a hairline outline
+          rather than a thing to press. `primary` is --kf-leaf on --kf-forest-ink (7.61:1,
+          measured), and this IS the primary action of its section: the page's other primary,
+          "Save changes", is in a different section and a different job. No new CSS — the
+          variant already exists and is already contrast-checked. */}
       <Button
         type="button"
-        variant="secondary"
+        variant="primary"
         size="sm"
         onClick={press}
         disabled={phase.kind === 'loading'}

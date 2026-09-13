@@ -63,7 +63,7 @@
 
 .kf-interstitial__support a,
 .kf-interstitial__onward a {
-  color: var(--kf-anchor);
+  color: var(--kf-link);
 }
 
 /* THE ONWARD LINK IS THE ONE USEFUL ACTION ON THE PAGE AND IS SIZED AS ONE. It sits below a

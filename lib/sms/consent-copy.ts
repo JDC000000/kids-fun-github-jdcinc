@@ -494,7 +494,10 @@ export const SUBMITTED_BODY: readonly string[] = [
 // them — the legal sender name, mailing address and support contact are the same facts on both
 // surfaces, and two hand-written copies would eventually be two different addresses.
 
-export const PREFS_HEADING = 'Your KIDS FUN SMS';
+// Names what the page IS, not what it is about (Jon, 2026-09-13). The previous heading,
+// 'Your KIDS FUN SMS', read as a label for the messages rather than for the page a parent
+// had just tapped into from one of them — clarity is worth the extra two words here.
+export const PREFS_HEADING = 'Your Kids Fun Subscription Page';
 
 /** Shown when the subscription is live. */
 export const PREFS_STATUS_ACTIVE =
