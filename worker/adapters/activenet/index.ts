@@ -160,6 +160,10 @@ export class ActiveNetAdapter implements Adapter {
   /** Per-run, lazily created so a fixture run never builds one. Caches per activity id. */
   private ageResolver: ActivityAgeResolver | null = null;
 
+  /** Set when the portal tells us to stop (budget exhausted, 403, 429). Once true, this run
+   *  makes no further age lookups — it does NOT keep asking a source that just refused. */
+  private ageLookupsHalted = false;
+
   /**
    * `clientOverrides` is the same test seam ClientOptions already documents for `fetchImpl` —
    * forwarded into the real request path, never used to bypass it. Unset in production.
@@ -240,7 +244,7 @@ export class ActiveNetAdapter implements Adapter {
    */
   async normalizeHook(record: StructuredRecord): Promise<StructuredRecord> {
     const event = record.raw as ActiveNetEvent | undefined;
-    if (!event || !this.isLiveFetchEnabled() || !allAgesInPlay(event)) return record;
+    if (!event || this.ageLookupsHalted || !this.isLiveFetchEnabled() || !allAgesInPlay(event)) return record;
 
     if (!this.ageResolver) {
       // Its own budget: a verification lookup must not be able to eat the crawl's request cap
@@ -253,8 +257,24 @@ export class ActiveNetAdapter implements Adapter {
       this.ageResolver = new ActivityAgeResolver(this.tenant, { budget, ...this.clientOverrides });
     }
 
-    const bounds = await this.ageResolver.resolve(event.event_item_id);
-    return bounds ? { ...record, ageBounds: bounds } : record;
+    try {
+      const bounds = await this.ageResolver.resolve(event.event_item_id);
+      return bounds ? { ...record, ageBounds: bounds } : record;
+    } catch (err) {
+      // resolve() rethrows ONLY the fatal portal errors — budget exhausted, 403, 429. Policy for
+      // them lives here rather than in the resolver because the two callers want opposite
+      // things: the backfill runner wants to stop and report an honest partial plan, whereas an
+      // ingest run must not lose an entire municipality's drop-in listings over an age
+      // verification. So this run stops ASKING and carries on INGESTING, and every later record
+      // keeps whatever the parser derived — which, for an unattributed all-ages phrase, is no
+      // claim at all. Degrading to silence is the safe direction.
+      this.ageLookupsHalted = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[activenet] ${this.tenant.tenantKey} age verification halted for this run: ${(err as Error).message}`
+      );
+      return record;
+    }
   }
 
   extract(raw: unknown[]): StructuredRecord[] {

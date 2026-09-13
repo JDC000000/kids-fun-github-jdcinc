@@ -5,15 +5,22 @@
 // own API (/rest/activity/detail/<id> and /rest/activities/list, fetched 2026-09-12), not
 // invented. The prose beside them is the real catalog_description that was being trusted instead.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { activityAgeToBounds, ActivityAgeResolver } from '../../worker/adapters/activenet/activity-age';
+import { activityAgeToBounds, ActivityAgeResolver, isFatalPortalError } from '../../worker/adapters/activenet/activity-age';
 import { resolveRecordAge } from '../../worker/core/age';
 import { allAgesInPlay } from '../../worker/adapters/activenet/parse';
 import { ActiveNetAdapter } from '../../worker/adapters/activenet';
 import { getTenantConfig } from '../../worker/adapters/activenet/config';
 import type { StructuredRecord } from '../../worker/core/adapter';
+import { clearPolicyState } from '../../worker/health/policy';
 
 const VANCOUVER = getTenantConfig('vancouver')!;
 const NO_SLEEP = { sleepImpl: async () => {} };
+
+// The portal circuit-breaker is MODULE-level state keyed by tenant, so one test's 403 trips it
+// and every later test in this file is short-circuited before it makes a request — which is
+// exactly how three passing assertions here turned into "expected undefined" once a 403 test was
+// added above them. Reset it per test so each one exercises the path it claims to.
+beforeEach(() => clearPolicyState());
 
 /** A portal stub that answers activity/detail/<id> from a table and counts the calls. */
 function stubDetails(table: Record<number, Record<string, unknown> | null>) {
@@ -128,11 +135,66 @@ describe('ActivityAgeResolver', () => {
     expect(calls).toEqual([1]);
   });
 
-  it('a failed lookup is survivable — it returns null rather than killing the run', async () => {
+  it('a non-fatal failure is UNDEFINED — "no answer", never "no age"', async () => {
+    // The distinction is load-bearing downstream: the backfill planner maps null to
+    // LEAVE_SOURCE_SILENT (the source confidently has no age) and undefined to AMBIGUOUS.
+    // Returning null here would make a row we never successfully asked about look verified.
     const { impl } = stubDetails({});
     const r = new ActivityAgeResolver(VANCOUVER, { budget: new (await import('../../worker/adapters/activenet/client')).RequestBudget('v', 50), fetchImpl: impl, ...NO_SLEEP });
-    await expect(r.resolve(999)).resolves.toBeNull();
+    await expect(r.resolve(999)).resolves.toBeUndefined();
     expect(r.stats.failures).toBe(1);
+  });
+
+  it('NULL is reserved for "the source answered and has no age"', async () => {
+    const { impl } = stubDetails({ 5: { activity_name: 'answered, but no age field' } });
+    const r = new ActivityAgeResolver(VANCOUVER, { budget: new (await import('../../worker/adapters/activenet/client')).RequestBudget('v', 50), fetchImpl: impl, ...NO_SLEEP });
+    await expect(r.resolve(5)).resolves.toBeNull();
+    expect(r.stats.failures).toBe(0);
+  });
+
+  it('caches an UNDEFINED result too — the .has() check, not get() !== undefined', async () => {
+    // With `get(id) !== undefined` as the membership test, a cached undefined is indistinguishable
+    // from a cache miss and the resolver re-asks the portal on every occurrence of that activity.
+    const { calls, impl } = stubDetails({});
+    const r = new ActivityAgeResolver(VANCOUVER, { budget: new (await import('../../worker/adapters/activenet/client')).RequestBudget('v', 50), fetchImpl: impl, ...NO_SLEEP });
+    await r.resolve(777);
+    await r.resolve(777);
+    await r.resolve(777);
+    expect(calls).toEqual([777]);
+  });
+
+  describe('fatal portal errors must interrupt, not be folded into a result', () => {
+    const status = (code: number) =>
+      (async () => new Response('no', { status: code })) as unknown as typeof fetch;
+
+    it('classifies only the stop-the-run errors as fatal', async () => {
+      const { PortalBlockedError, PortalRateLimitedError, RequestCapExceededError, PortalProtocolError } =
+        await import('../../worker/adapters/activenet/client');
+      expect(isFatalPortalError(new RequestCapExceededError('v', 10))).toBe(true);
+      expect(isFatalPortalError(new PortalBlockedError('v', 'activityDetail'))).toBe(true);
+      expect(isFatalPortalError(new PortalRateLimitedError('v', 'activityDetail', 30))).toBe(true);
+      expect(isFatalPortalError(new PortalProtocolError('v', 'weird body'))).toBe(false);
+      expect(isFatalPortalError(new Error('something else'))).toBe(false);
+    });
+
+    it('rethrows a 403 block instead of reporting it as "no age"', async () => {
+      const { RequestBudget } = await import('../../worker/adapters/activenet/client');
+      const r = new ActivityAgeResolver(VANCOUVER, { budget: new RequestBudget('v', 50), fetchImpl: status(403), ...NO_SLEEP });
+      await expect(r.resolve(1)).rejects.toThrow();
+    });
+
+    it('rethrows a 429 rate-limit instead of reporting it as "no age"', async () => {
+      const { RequestBudget } = await import('../../worker/adapters/activenet/client');
+      const r = new ActivityAgeResolver(VANCOUVER, { budget: new RequestBudget('v', 50), fetchImpl: status(429), ...NO_SLEEP });
+      await expect(r.resolve(1)).rejects.toThrow();
+    });
+
+    it('rethrows budget exhaustion — the runner\'s break can only work if this propagates', async () => {
+      const { RequestBudget } = await import('../../worker/adapters/activenet/client');
+      const { impl } = stubDetails({ 1: { age_description: '19 yrs +,', age_min_year: 19 } });
+      const r = new ActivityAgeResolver(VANCOUVER, { budget: new RequestBudget('v', 0), fetchImpl: impl, ...NO_SLEEP });
+      await expect(r.resolve(1)).rejects.toThrow(/budget|cap/i);
+    });
   });
 });
 
@@ -192,6 +254,23 @@ describe('normalizeHook — the source overrides our reading', () => {
     const { out, calls } = await hook({}, record('Bootcamp Circuits', '<p>Bring your own mat.</p>', 1));
     expect(calls).toEqual([]);
     expect(out.ageBounds).toBeUndefined();
+  });
+
+  it('a FATAL portal error does not fail the ingest run, and stops further asking', async () => {
+    // Opposite policy to the backfill runner, deliberately: an ingest run must not lose a
+    // municipality's drop-in listings over an age verification, so it degrades to silence.
+    let calls = 0;
+    const impl = (async () => {
+      calls += 1;
+      return new Response('blocked', { status: 403 });
+    }) as unknown as typeof fetch;
+    const adapter = new ActiveNetAdapter(VANCOUVER, { fetchImpl: impl, ...NO_SLEEP });
+    const first = await adapter.normalizeHook(record('|Public Skate|', '<p>all ages</p>', 900));
+    expect(first.ageBounds).toBeUndefined();
+    // and it does not keep hammering a portal that just refused
+    const second = await adapter.normalizeHook(record('|Public Skate|', '<p>all ages</p>', 901));
+    expect(second.ageBounds).toBeUndefined();
+    expect(calls).toBe(1);
   });
 
   it('a failed lookup leaves the record exactly as parsed — never upgrades it', async () => {

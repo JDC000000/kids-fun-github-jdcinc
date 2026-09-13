@@ -18,7 +18,14 @@
 //
 // Measured 2026-09-12 on a 400-activity random sample spread across the catalogue: 400/400
 // carry a usable structured age.
-import { fetchActivityDetail, type ActiveNetActivityDetail, type ClientOptions } from './client';
+import {
+  fetchActivityDetail,
+  PortalBlockedError,
+  PortalRateLimitedError,
+  RequestCapExceededError,
+  type ActiveNetActivityDetail,
+  type ClientOptions,
+} from './client';
 import type { ActiveNetTenantConfig } from './config';
 
 const MONTHS_PER_YEAR = 12;
@@ -68,16 +75,47 @@ export function activityAgeToBounds(detail: ActiveNetActivityDetail | null): Act
 }
 
 /**
+ * Errors that mean STOP TALKING TO THIS PORTAL, as opposed to "no answer about this activity".
+ *
+ * The distinction is the difference between a report that is honest about what it did not ask
+ * and one that quietly claims a clean pass: a budget exhaustion or a 403/429 does not become
+ * more true by being retried on the next id, so it must interrupt the caller rather than be
+ * folded into that id's result.
+ */
+export function isFatalPortalError(err: unknown): boolean {
+  return (
+    err instanceof RequestCapExceededError ||
+    err instanceof PortalBlockedError ||
+    err instanceof PortalRateLimitedError
+  );
+}
+
+/**
  * Fetches an activity's structured age at most ONCE per run, per activity.
+ *
+ * ── THE THREE OUTCOMES ARE THREE DIFFERENT FACTS AND MUST NOT COLLAPSE ───────────────────
+ *   bounds     the source answered and stated an age
+ *   null       the source answered and has NO age for this activity
+ *   undefined  we never got an answer — the lookup failed, or was never made
+ *
+ * An earlier cut of this returned `null` for every failure, which made "the source says there
+ * is no age" indistinguishable from "we never asked". Downstream that is not cosmetic: the
+ * backfill planner maps `null` to LEAVE_SOURCE_SILENT and `undefined` to AMBIGUOUS, so a run
+ * that got rate-limited half way through would have reported every remaining row as
+ * confidently source-silent and claimed a clean complete pass. It also made the fatal errors
+ * unreachable by the callers written to handle them. Caught in review; the lesson is the same
+ * one as the vacuous test block in tests/adapters/activenet-activity-age.test.ts — a branch
+ * written for an input the real code can no longer produce is not a safety net.
  *
  * The cache is the whole reason this is a class. `event_item_id` is the ACTIVITY id and repeats
  * across every date the activity runs (measured: Vancouver, 3,072 distinct ids across 10,146
  * occurrences), so an uncached lookup would pay ~3x for the same answer. Misses are cached too —
  * a null is as worth remembering as a hit, and re-asking a source that had nothing to say is how
- * a polite crawl turns impolite.
+ * a polite crawl turns impolite. Membership is tested with `.has()`, NOT `get() !== undefined`,
+ * because `undefined` is now one of the three real values.
  */
 export class ActivityAgeResolver {
-  private readonly cache = new Map<number, ActivityAgeBounds | null>();
+  private readonly cache = new Map<number, ActivityAgeBounds | null | undefined>();
   private fetches = 0;
   private failures = 0;
 
@@ -90,27 +128,29 @@ export class ActivityAgeResolver {
     return { lookups: this.fetches, cached: this.cache.size, failures: this.failures };
   }
 
-  async resolve(activityId: number | undefined): Promise<ActivityAgeBounds | null> {
-    if (!Number.isFinite(activityId)) return null;
+  /** Throws on a fatal portal error (see isFatalPortalError) so the caller can stop; every
+   *  other failure is reported as `undefined` — "no answer", never "no age". */
+  async resolve(activityId: number | undefined): Promise<ActivityAgeBounds | null | undefined> {
+    if (!Number.isFinite(activityId)) return undefined;
     const id = activityId as number;
-    const hit = this.cache.get(id);
-    if (hit !== undefined) return hit;
+    if (this.cache.has(id)) return this.cache.get(id);
 
-    let bounds: ActivityAgeBounds | null = null;
+    let result: ActivityAgeBounds | null | undefined;
     try {
       this.fetches += 1;
       const { detail } = await fetchActivityDetail(this.tenant, id, this.clientOpts);
-      bounds = activityAgeToBounds(detail);
+      // No detail at all is not the source saying "no age" — it is the source not answering
+      // about this activity, which is the ambiguous outcome.
+      result = detail ? activityAgeToBounds(detail) : undefined;
     } catch (err) {
-      // A verification lookup must never fail the run. Not knowing the age is a survivable
-      // outcome — the caller falls back to making NO claim, which is the safe direction —
-      // whereas throwing here would lose an entire municipality's drop-in listings over one
-      // activity record. The budget/circuit-breaker errors that SHOULD stop a run are raised by
-      // the shared client on the next call anyway.
+      if (isFatalPortalError(err)) throw err;
+      // A single unreadable activity record is survivable and must not fail an ingest run.
+      // It is still an ABSENCE OF AN ANSWER, so it is undefined rather than null.
       this.failures += 1;
-      bounds = null;
+      result = undefined;
     }
-    this.cache.set(id, bounds);
-    return bounds;
+    this.cache.set(id, result);
+    return result;
   }
+
 }
