@@ -29,11 +29,14 @@ import {
 import {
   RequestBudget,
   fetchTenant,
+  type ActiveNetEvent,
+  type ClientOptions,
   type CalendarFetchResult,
   type EventWindow,
   type TenantFetchResult,
 } from './client';
-import { parseTenantCalendars, type ParseResult } from './parse';
+import { parseTenantCalendars, allAgesInPlay, type ParseResult } from './parse';
+import { ActivityAgeResolver } from './activity-age';
 import { buildVenueIndex, applyVenues } from './venues';
 import { assessRunHealth, type ActiveNetHealthVerdict } from './health';
 
@@ -154,7 +157,17 @@ export class ActiveNetAdapter implements Adapter {
   /** Populated by the last extract(); the runner/health board reads it. */
   private report: ActiveNetRunReport | null = null;
 
-  constructor(private readonly tenant: ActiveNetTenantConfig) {}
+  /** Per-run, lazily created so a fixture run never builds one. Caches per activity id. */
+  private ageResolver: ActivityAgeResolver | null = null;
+
+  /**
+   * `clientOverrides` is the same test seam ClientOptions already documents for `fetchImpl` —
+   * forwarded into the real request path, never used to bypass it. Unset in production.
+   */
+  constructor(
+    private readonly tenant: ActiveNetTenantConfig,
+    private readonly clientOverrides: Partial<Omit<ClientOptions, 'budget'>> = {}
+  ) {}
 
   isLiveFetchEnabled(): boolean {
     return (
@@ -206,6 +219,42 @@ export class ActiveNetAdapter implements Adapter {
         unrecognisedKeys: result.unrecognisedKeys,
       } satisfies ActiveNetRawPayload,
     ];
+  }
+
+  /**
+   * Replace a guess about age with the source's own answer — for the few records where the
+   * guess is worth a request.
+   *
+   * RUNS HERE, NOT IN extract(), for two reasons. extract() is a pure, synchronous parse over a
+   * captured payload and is worth keeping that way: every fixture assertion in the suite depends
+   * on running it without a network. And ingest already awaits this hook per record
+   * (worker/core/ingest.ts), which is exactly the shape a cached, gated lookup wants.
+   *
+   * The verdict is three-way, and the third arm is the point:
+   *   • source states bounds     -> publish them exactly (`ageBounds`, highest authority)
+   *   • source says "All ages,"  -> publish all-ages, now ATTRIBUTABLE rather than inferred
+   *   • lookup fails / no answer -> leave the record exactly as parsed, which for an
+   *                                 unattributed all-ages phrase means no claim at all
+   * A failed lookup must never upgrade a record's confidence, so there is no fallback that
+   * invents a bound.
+   */
+  async normalizeHook(record: StructuredRecord): Promise<StructuredRecord> {
+    const event = record.raw as ActiveNetEvent | undefined;
+    if (!event || !this.isLiveFetchEnabled() || !allAgesInPlay(event)) return record;
+
+    if (!this.ageResolver) {
+      // Its own budget: a verification lookup must not be able to eat the crawl's request cap
+      // and silently truncate the listing fetch — that would trade a municipality's coverage
+      // for an age correction.
+      const budget = new RequestBudget(
+        `${this.tenant.tenantKey}:activity-age`,
+        this.tenant.maxRequestsPerRun
+      );
+      this.ageResolver = new ActivityAgeResolver(this.tenant, { budget, ...this.clientOverrides });
+    }
+
+    const bounds = await this.ageResolver.resolve(event.event_item_id);
+    return bounds ? { ...record, ageBounds: bounds } : record;
   }
 
   extract(raw: unknown[]): StructuredRecord[] {

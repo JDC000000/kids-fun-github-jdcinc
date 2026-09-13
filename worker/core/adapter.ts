@@ -60,6 +60,25 @@ export interface StructuredRecord {
   costStatus?: 'known' | 'free' | 'unknown' | 'check_source';
   ageText?: string; // raw free-text age wording — ambiguous, resolved by normalizeHook / T13
   /**
+   * The source's OWN machine-readable age bounds, already in months. HIGHEST authority —
+   * ingest prefers this over `ageAudienceLabels` and `ageText`, because it is the only one of
+   * the three that is not an interpretation.
+   *
+   * A THIRD FIELD RATHER THAN A SYNTHESISED PHRASE, for the same reason `ageAudienceLabels` is
+   * not joined into `ageText`: round-tripping exact numbers through prose so the free-text
+   * parser can turn them back into numbers is lossy and invents failure modes that the source
+   * never had. ActiveNet states `age_min_year: 19` / `age_max_year: 0`; rendering that as
+   * "19 yrs +" so MIN_ONLY_RE can re-derive 228 months is strictly worse than carrying 228.
+   *
+   * Set ONLY from a genuinely structured field. Never from a number scraped out of a sentence —
+   * that is what `ageText` is for, and the distinction is the whole point of this field:
+   * ActiveNet's 19+ karate class describes itself as "for all ages and levels" in prose while
+   * its own age field says 19. Only one of those is evidence.
+   *
+   * Convention matches worker/core/age.ts exactly: min INCLUSIVE, max EXCLUSIVE, null = open.
+   */
+  ageBounds?: { minMonths: number; maxMonths: number | null; notes?: string };
+  /**
    * The source's OWN structured audience tags, verbatim and unfiltered (e.g. VPL's
    * ["Storytimes", "Preschool Age Children", "Toddlers", "English"]). Set ONLY when the
    * source publishes an audience taxonomy as discrete tags — never a prose keyword scraped

@@ -402,6 +402,31 @@ export function extractAgeText(event: ActiveNetEvent): string | undefined {
   return parts.length ? parts.join(' — ') : undefined;
 }
 
+/** The wording that puts an all-ages claim in play. Intentionally the loose, colloquial form —
+ *  this selects what to VERIFY, so a false positive costs one cached request while a false
+ *  negative costs a wrong age on a child-facing listing. */
+const ALL_AGES_MENTION_RE = /\ball[-\s]?ages?\b/i;
+
+/**
+ * Is an all-ages claim IN PLAY for this event — either about to be published, or refused?
+ *
+ * This gates the source lookup, and it is deliberately wider than "we are about to claim
+ * all-ages". Both sides of that line are wrong often enough to be worth one cached request:
+ *
+ *   • ABOUT TO CLAIM. The title says "all ages", so the attributability carve-out publishes
+ *     [0, infinity). Measured wrong on real listings — "Ukulele - Jam Circle (All ages)" is a
+ *     55+ seniors group, "Music with Marnie All Ages/Siblings" is under-6s.
+ *   • ABOUT TO REFUSE. Only the description says it, so nothing is published. Correct for the
+ *     19+ karate class; a needless loss for |Public Skate|, which really is all-ages and is
+ *     120 of the 227 affected occurrences.
+ *
+ * One field settles both, so the gate covers both. Every other event — the overwhelming
+ * majority, whose copy never mentions age at all — costs nothing.
+ */
+export function allAgesInPlay(event: ActiveNetEvent): boolean {
+  return ALL_AGES_MENTION_RE.test(`${event.title ?? ''} ${stripHtml(event.description)}`);
+}
+
 // ── category ────────────────────────────────────────────────────────────────────────
 
 /** Calendar names are a clean, structured category signal on this platform — far better

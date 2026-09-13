@@ -234,11 +234,21 @@ export async function ingestSource(
         // by a different rule (union of every tag, not first-keyword-wins) — see
         // StructuredRecord.ageAudienceLabels. The adapter has already decided which signal
         // won for this record, so there is no precedence logic here beyond "structured first".
-        const ageParse = record.ageAudienceLabels?.length
-          ? parseAudienceLabels(record.ageAudienceLabels)
-          : record.ageText
-            ? parseAgeText(record.ageText)
-            : null;
+        // Precedence is an authority ordering, not a convenience: the source's own numeric
+        // bounds beat its tag taxonomy, which beats our reading of its prose. Only the first
+        // is free of interpretation, so nothing derived may override it.
+        const ageParse = record.ageBounds
+          ? {
+              ageMinMonths: record.ageBounds.minMonths,
+              ageMaxMonths: record.ageBounds.maxMonths,
+              resolved: true,
+              notes: record.ageBounds.notes,
+            }
+          : record.ageAudienceLabels?.length
+            ? parseAudienceLabels(record.ageAudienceLabels)
+            : record.ageText
+              ? parseAgeText(record.ageText)
+              : null;
 
         // BR-13: real confidence = authority × parse_quality × freshness × volatility.
         // The gate routes low/unscored records to needs_review (hidden until reviewed)

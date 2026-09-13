@@ -40,6 +40,9 @@ export const ENDPOINTS = {
   filters: '/onlinecalendar/filters',
   events: '/onlinecalendar/multicenter/events',
   centerDetails: '/onlinecalendar/centerdetails',
+  /** The ACTIVITY record behind a calendar occurrence. Carries the structured age the
+   *  calendar payload does not: `${activityDetail}/<activity_id>`. */
+  activityDetail: '/activity/detail',
 } as const;
 
 const LOCALE = 'en-US';
@@ -291,6 +294,7 @@ const KNOWN_BODY_KEYS: Record<keyof typeof ENDPOINTS, string[]> = {
   ],
   events: ['center_events'],
   centerDetails: ['center_details'],
+  activityDetail: ['detail'],
 };
 
 function unrecognisedBodyKeys(endpoint: keyof typeof ENDPOINTS, body: unknown): string[] {
@@ -526,6 +530,50 @@ export async function fetchCalendarEvents(
     opts
   );
   return { centreEvents: body.center_events ?? [], unrecognised };
+}
+
+/** The activity record's structured age, verbatim. Every field is the vendor's own. */
+export interface ActiveNetActivityDetail {
+  activity_id?: number;
+  activity_name?: string;
+  category?: string;
+  sub_category?: string;
+  /** "19 yrs +," / "Age at least 6 yrs but less than 13y 11m 4w," / "All ages," */
+  age_description?: string;
+  age_min_year?: number;
+  age_min_month?: number;
+  age_min_week?: number;
+  age_max_year?: number;
+  age_max_month?: number;
+  age_max_week?: number;
+  min_grade?: number | null;
+  max_grade?: number | null;
+  [k: string]: unknown;
+}
+
+/**
+ * One activity's own record, for the structured age the drop-in calendar does not carry.
+ *
+ * WHY THIS EXISTS AT ALL. The calendar endpoint returns 17 keys and none of them is an age
+ * (measured across every captured fixture event). The age IS published — on this endpoint,
+ * keyed by the same `event_item_id` the calendar already gives us — and reading it is the
+ * difference between an exact bound and a guess at the venue's marketing copy.
+ */
+export async function fetchActivityDetail(
+  tenant: ActiveNetTenantConfig,
+  activityId: number,
+  opts: ClientOptions
+): Promise<{ detail: ActiveNetActivityDetail | null; unrecognised: string[] }> {
+  const url = new URL(`${restBaseUrl(tenant)}${ENDPOINTS.activityDetail}/${activityId}`);
+  url.searchParams.set('locale', LOCALE);
+  const { body, unrecognised } = await request<{ detail?: ActiveNetActivityDetail }>(
+    tenant,
+    'activityDetail',
+    url,
+    { headers: JSON_GET_HEADERS },
+    opts
+  );
+  return { detail: body.detail ?? null, unrecognised };
 }
 
 export async function fetchCentreDetails(
