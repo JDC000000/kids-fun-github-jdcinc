@@ -717,15 +717,31 @@ describe('G-T7R-3 parse against real captured payloads', () => {
       expect(parseAgeText(ageText)).toMatchObject({ ageMinMonths: 144, ageMaxMonths: 216, resolved: true });
     });
 
-    it('still publishes an all-ages claim the TITLE attributes', () => {
-      // The carve-out that keeps this a targeted fix: the venue put the claim in the activity
-      // name, so it is the venue's statement rather than our inference.
+    it('NO LONGER publishes an all-ages claim from the title alone', () => {
+      // This assertion is the inverse of what it was, deliberately. The carve-out trusted a
+      // venue that named the claim in its own activity title. Measured against the source's own
+      // age field it was wrong every time it mattered — "Ukulele - Jam Circle (All ages)" is a
+      // 55+ group, "Music with Marnie All Ages/Siblings" is under-6, and "Reserve In Advance:
+      // Table Tennis All Ages" is ONE generic booking-category title spanning individually
+      // age-gated sessions (670 rows in production). An all-ages claim now needs the structured
+      // field; without it the honest answer is no claim.
       const ageText = extractAgeText({
         title: 'Reserve In Advance: All Ages Badminton',
         description: '<p>All ages programs, children 6-12 years must be accompanied by a participating adult.</p>',
       });
-      expect(ageText).toBe('Reserve In Advance: All Ages Badminton');
-      expect(parseAgeText(ageText)).toMatchObject({ ageMinMonths: 0, ageMaxMonths: null, notes: 'all-ages' });
+      expect(ageText).toBeUndefined();
+      expect(parseAgeText(ageText)).toMatchObject({ ageMinMonths: null, ageMaxMonths: null, resolved: false });
+    });
+
+    it('still publishes a NUMERIC age the title states — only all-ages lost its carve-out', () => {
+      // The scope of the change, pinned: "Youth (13-18yrs)" and friends are untouched.
+      expect(parseAgeText(extractAgeText({ title: 'Youth (13-18yrs) Open Gym', description: '' }))).toMatchObject({
+        resolved: true,
+      });
+      expect(parseAgeText(extractAgeText({ title: 'Adult Open Gym (19+)', description: '' }))).toMatchObject({
+        ageMinMonths: 228,
+        resolved: true,
+      });
     });
 
     it('still publishes a stated age that nothing disqualifies', () => {
@@ -754,10 +770,11 @@ describe('G-T7R-3 parse against real captured payloads', () => {
         'FALSE_SUPERVISION (participating adult)',
         'Reserve In Advance: Table Tennis All Ages',
         'Please arrive early to claim your reservation. For all ages programs, children 6-12 years must be accompanied by a participating adult. Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity.',
-        // The description's "all ages" no longer travels: prose cannot carry an all-ages claim
-        // (see AGE_PHRASE_KEYWORD). The TITLE still states it, so the published age is unchanged
-        // — [0, null) + notes 'all-ages'. Only the redundant echo is gone.
-        'Reserve In Advance: Table Tennis All Ages',
+        // Neither half can carry an all-ages claim now: not the description (AGE_PHRASE_KEYWORD)
+        // and no longer the title (TITLE_STATES_AGE_RE). This exact title is the 670-row generic
+        // booking category that made the title carve-out untenable, so it resolving to NO CLAIM
+        // is the point of the change rather than a casualty of it.
+        undefined,
       ],
       [
         'FALSE_SUPERVISION (supervised on the ice)',

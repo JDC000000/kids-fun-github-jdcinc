@@ -323,9 +323,24 @@ const AGE_UNIT = '(?:\\s*(?:yrs?|years?|mos?|months?))';
  * A title is an activity NAME, and a name is not an age claim: "Youth Basketball" says what
  * the drop-in is called, not who may attend. Titles that genuinely assert an age do exist on
  * this platform and are used — "Youth (13-18yrs) Open Gym", "Play Palace - 0-12 yrs",
- * "Adult Open Gym (19+)", "Badminton All Ages" — so the disqualifier is the age-adjacent
- * WORD, not the title. Explicit numeric ranges, minimums and the literal "all ages" pass;
- * "Youth"/"Baby"/"Family"/"Preschool" on their own do not.
+ * "Adult Open Gym (19+)" — so the disqualifier is the age-adjacent WORD, not the title.
+ * Explicit numeric ranges and minimums pass; "Youth"/"Baby"/"Family"/"Preschool" do not.
+ *
+ * "ALL AGES" NO LONGER PASSES, AND THAT IS THE SECOND HALF OF THE SAME LESSON. It was
+ * admitted here on the reasoning that a venue naming the claim in its own activity title is
+ * making the claim itself. Measured against the source's own age field, that reasoning failed
+ * every time it mattered:
+ *   Ukulele - Jam Circle (All ages)           source: 55+        a SENIORS group
+ *   Music with Marnie All Ages/Siblings       source: under 6
+ *   Reserve In Advance: Table Tennis All Ages source: varies     ONE generic booking-category
+ *                                                               title across individually
+ *                                                               age-gated sessions (670 rows)
+ * Three cases where the title manufactured a false claim; ZERO where it was the only thing
+ * producing a correct one — |Public Skate| is genuinely all-ages and its title never said so,
+ * it is confirmed by the structured field. So an all-ages claim now requires that structured
+ * confirmation, and a failed lookup degrades to NO CLAIM (age-unconfirmed, still reachable in
+ * search) rather than to "suitable for a newborn". Making the FALLBACK safe is the fix;
+ * making verification more reliable never could be, because verification can always fail.
  *
  * THE UNIT IS OPTIONAL AND THAT IS THE POINT. The first version of this gate required the
  * number to be IMMEDIATELY followed by its `+` or `-`, so a unit token in between defeated it:
@@ -336,7 +351,7 @@ const AGE_UNIT = '(?:\\s*(?:yrs?|years?|mos?|months?))';
  */
 const TITLE_STATES_AGE_RE = new RegExp(
   `\\bages?\\s*\\d|${AGE_NUMBER}${AGE_UNIT}?\\s*\\+` +
-    `|${AGE_NUMBER}${AGE_UNIT}?\\s*(?:-|–|—|to)\\s*${AGE_NUMBER}${AGE_UNIT}?|\\ball\\s+ages\\b`,
+    `|${AGE_NUMBER}${AGE_UNIT}?\\s*(?:-|–|—|to)\\s*${AGE_NUMBER}${AGE_UNIT}?`,
   'i'
 );
 
