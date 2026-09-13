@@ -71,7 +71,7 @@ JS when used in Server Components.
 These streams hand-rolled buttons before primitives existed and will refactor
 onto them once this lands on main:
 
-- **Saved-search save bar** (`app/search/**`, `kf-savebar__btn`) → `Button variant="primary"` + `Input` for naming a search.
+- ~~**Saved-search save bar** (`app/search/**`, `kf-savebar__btn`)~~ — removed 2026-09-12 with Google sign-in.
 - **Account deletion / export** (`app/account/**`, `kf-account-data__btn`) → `Button variant="danger"` for delete, `variant="secondary"`/`"primary"` for export. (This is why the `danger` variant exists.)
 
 Pattern for consumers: keep your layout class, add the primitive —

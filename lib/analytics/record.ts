@@ -50,6 +50,41 @@ export async function recordListingView(
   );
 }
 
+/**
+ * `sms_offer_viewed` — the home page PRESENTED the SMS signup offer (TSD §9 M1 T1.5, AC-09).
+ *
+ * ═══ CALL THIS ONLY WHEN THE OFFER IS ACTUALLY ON THE PAGE ═══
+ * This is the DENOMINATOR of the signup conversion rate, so "one per render" and "one per
+ * offer" are not the same metric and only the second one is meaningful. The home page's
+ * fail-safe branch (AC-12) renders without any signup action whenever SMS_SIGNUP_ENABLED is
+ * not exactly 'true' — which, because that flag defaults to FALSE, is the state the product
+ * spends most of its life in. Counting those renders would add rows that never had a chance
+ * to convert, depress the measured rate from the first day, and look exactly like a product
+ * result rather than an instrumentation bug. The guard lives at the call site (app/page.tsx)
+ * because that is the only place that knows which branch was taken.
+ *
+ * `surface` is recorded because it is the thing that cannot be backfilled: when M2/M3 add a
+ * second place the offer appears, every row written before then is unattributable without it.
+ * Nothing else is captured — an impression has no query, no result, and no user beyond the
+ * anonymous session id every other recorder here uses.
+ *
+ * ═══ THE try/catch IS NOT DISTRUST OF emitEvent, IT IS BLAST RADIUS ═══
+ * writeAnalyticsEvent already swallows everything and promises never to throw, and the other
+ * recorders in this file rely on that promise without a second layer. This one does not,
+ * because it is the only recorder on the product's FRONT DOOR: that promise lives two modules
+ * away and is one refactor from being broken by someone who never sees this call site, and the
+ * cost of being wrong here is a 500 on the page every new visitor lands on. A row in an
+ * analytics table is not worth that trade. tests/home/sms-offer.test.tsx forces both a
+ * rejection and a synchronous throw and asserts the rendered HTML is byte-identical.
+ */
+export async function recordSmsOfferViewed(surface: 'home'): Promise<void> {
+  try {
+    await emitEvent('sms_offer_viewed', null, { surface }, currentAnonId());
+  } catch (err) {
+    console.warn('[analytics] sms_offer_viewed emit failed:', (err as Error)?.message ?? err);
+  }
+}
+
 /** Cap the free-text query stored on a search event — a defensive bound on the
  *  jsonb blob, well under MAX_JSON_FIELD_BYTES. Not a PII scrub: the query text is
  *  intentionally captured (product signal), but nothing beyond it is. */

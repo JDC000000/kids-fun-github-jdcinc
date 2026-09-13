@@ -1,10 +1,11 @@
 /* site-footer.css — styling for the global footer chrome (Round 27, PIPEDA F-1).
  *
  * Self-contained (not scoped under .kf) so it renders consistently on every route,
- * mirroring account-nav.css. Colours consume the canonical global --kf-* tokens
+ * mirroring the (now-deleted) account-nav.css. Colours consume the canonical --kf-* tokens
  * (app/design-tokens.css). Fixed brand palette tokens (warm paper / evergreen) are
  * used intentionally — not the flipping surface roles — so this bar keeps its warm-
- * paper look on every colour scheme, exactly like the AccountNav bar at the top. */
+ * paper look on every colour scheme, exactly like the AccountNav bar that used to sit at
+ * the top (removed 2026-09-12 with Google sign-in). */
 
 .kf-site-footer {
   font-family: var(--kf-font-ui);

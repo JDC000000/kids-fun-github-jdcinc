@@ -2,9 +2,11 @@
 //
 // GET  /api/me  — Task 21 (M4): the session-check probe. Reports whether the
 //   request is signed in and, if so, self-heals + reports the user_profile row.
-//   AccountNav polls it, so it must NEVER 500: a missing/misconfigured auth or DB
-//   reads as "not signed in" / "profile unknown", never a crash (mirrors the
-//   never-load-bearing posture of app/api/analytics/event/route.ts).
+//   It was written to be polled by AccountNav, which was deleted with Google
+//   sign-in (2026-09-12) — so GET currently has NO caller. The never-500 posture
+//   is kept anyway (a missing/misconfigured auth or DB reads as "not signed in" /
+//   "profile unknown", never a crash; mirrors app/api/analytics/event/route.ts).
+//   PATCH below is still live: /account's AccountForm calls it.
 //
 // PATCH /api/me — Task 24 (M4): let the signed-in user edit their own profile
 //   (home_postal / saved_child_ages / email_opt_in). Unlike GET this is a

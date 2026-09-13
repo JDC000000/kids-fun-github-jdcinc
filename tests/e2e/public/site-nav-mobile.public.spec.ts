@@ -47,11 +47,7 @@ function readRepoFile(rel: string): string {
 
 const NAV_SRC = readRepoFile('app/_components/SiteNav.tsx');
 const CSS =
-  readRepoFile('app/design-tokens.css') +
-  '\n' +
-  readRepoFile('app/_components/account-nav.css') +
-  '\n' +
-  readRepoFile('app/_components/site-nav.css');
+  readRepoFile('app/design-tokens.css') + '\n' + readRepoFile('app/_components/site-nav.css');
 
 // The REAL destination list, imported rather than restated, so a category added or retired
 // in app/_lib/nav-destinations.ts is measured here automatically.
@@ -65,7 +61,13 @@ const MOBILE = [320, 360, 390, 414];
 const DESKTOP = [768, 1024, 1440];
 const TOL = 0.6;
 
-/** Pre-fix bar height on a phone, measured: the 44px sign-in target already set it. */
+/**
+ * Pre-fix bar height on a phone. This was MEASURED at 68.5px back when a 44px "Sign in with
+ * Google" target set it. That pill was removed on 2026-09-12 and the bar now measures 50px,
+ * so this is no longer a description of the current bar — it is deliberately KEPT as the
+ * ceiling the compact menu must never push the bar back up to. The assertion below is
+ * `<=`, so the 18.5px the removal freed is headroom, not a failure.
+ */
 const BASELINE_MOBILE_BAR = 68.5;
 
 const items = LINKS.map(
@@ -93,9 +95,6 @@ html,body{margin:0}
       <ul class="kf-nav__menu">${items}</ul>
     </details>
   </nav>
-  <nav class="kf-account" aria-label="Account">
-    <a class="kf-account__link kf-account__link--primary" href="/auth/signin" aria-label="Sign in with Google">Sign in<span class="kf-account__provider"> with Google</span></a>
-  </nav>
 </div></header>
 <main>${sticky ? '<div class="sbar">Search</div>' : ''}<p style="padding:16px">page content</p><div style="height:1600px"></div></main>
 </body></html>`;
@@ -108,6 +107,18 @@ test.describe('mobile nav: every destination is reachable below 768px', () => {
     expect(NAV_SRC, 'the menu toggle').toContain('<summary className="kf-nav__more-toggle">');
     expect(NAV_SRC, 'the menu list').toContain('<ul className="kf-nav__menu">');
     expect(LINKS.length, 'the shared destination list should be non-trivial').toBeGreaterThan(3);
+    // The hand-built DOM above no longer contains an account pill, because SiteNav no longer
+    // renders one (Jon, 2026-09-12). If it comes back, this spec would silently be measuring a
+    // bar that is narrower than the real one — so fail here instead.
+    //
+    // Matched against COMMENT-STRIPPED source, the same discipline tests/ui/site-nav-mobile
+    // .test.tsx applies to the stylesheet: SiteNav's own prose explains why the pill was
+    // removed and necessarily names it (and `hidesAccountNav`), so a raw substring check
+    // fails against the explanation rather than the code.
+    const navCode = NAV_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(navCode, 'the account pill must stay removed').not.toMatch(/<AccountNav\b/);
+    expect(navCode, 'AccountNav must not be re-imported').not.toMatch(/from\s+'\.\/AccountNav'/);
+    expect(navCode, 'no sign-in affordance in the bar').not.toContain('/auth/signin');
   });
 
   for (const width of MOBILE) {
@@ -126,7 +137,6 @@ test.describe('mobile nav: every destination is reachable below 768px', () => {
           barHeight: +document.querySelector('.kf-nav__inner')!.getBoundingClientRect().height.toFixed(2),
           summaryHeight: +sum.height.toFixed(2),
           summaryRight: +sum.right.toFixed(2),
-          accountRight: +document.querySelector('.kf-account__link')!.getBoundingClientRect().right.toFixed(2),
           pageHScroll: +(document.documentElement.scrollWidth - window.innerWidth).toFixed(2),
         };
       });
@@ -137,7 +147,6 @@ test.describe('mobile nav: every destination is reachable below 768px', () => {
       expect(r.barHeight, 'a closed menu must cost the bar no extra height').toBeLessThanOrEqual(BASELINE_MOBILE_BAR);
       expect(r.summaryHeight, 'WCAG 2.2 target size').toBeGreaterThanOrEqual(44);
       expect(r.summaryRight, 'the control sits inside the viewport').toBeLessThanOrEqual(width + TOL);
-      expect(r.accountRight, 'the sign-in pill sits inside the viewport').toBeLessThanOrEqual(width + TOL);
       expect(r.pageHScroll, 'the page must not scroll horizontally').toBeLessThanOrEqual(TOL);
     });
 

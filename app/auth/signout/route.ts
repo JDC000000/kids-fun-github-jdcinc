@@ -11,8 +11,11 @@ import { createSupabaseServerClient } from '../../../lib/db/auth';
 // removes that: a bare image/link tag cannot issue a POST, and browsers will not
 // attach the SameSite=Lax session cookies to a cross-site, non-top-level POST,
 // so a cross-origin form auto-submit can't carry an authenticated session
-// either. The account nav reaches this route with a same-site
-// `<form method="post">` (see app/_components/AccountNav.tsx).
+// either. This route USED to be reached by the account nav's same-site
+// `<form method="post">`; that component was deleted with Google sign-in
+// (2026-09-12), so the route currently has no caller in the UI. It is left in
+// place deliberately — retiring the auth subsystem is a separate, flagged
+// decision — but note it is now unreachable by any rendered control.
 //
 // GET is intentionally NOT exported — Next returns 405 (Allow: POST) for it, so
 // the old image-tag attack is inert.

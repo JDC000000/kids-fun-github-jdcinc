@@ -291,22 +291,40 @@ export function shortLinkUrl(token: string): string {
 }
 
 /**
- * The public signup form: `{site}/sms/signup` (PRD §2.1).
+ * The signup page's PATH — the one source of truth for where a parent is sent to subscribe.
  *
- * Written down once here rather than at each call site, for the same reason `SUPPORT_PHONE_E164`
- * is: a path typed in two places is a path that will eventually be two different paths. Used by
- * the inbound webhook's unknown-keyword reply, which is the one message that has to give somebody
+ * POINTS AT /sms/start, NOT /sms/signup, and that is deliberate rather than a rename artefact.
+ * /sms/signup 308s here (next.config.mjs, 2026-09-01), so the old path would still work — but
+ * every address in this product is composed BY US, and a link we write ourselves should not spend
+ * a redirect hop on a phone with one bar. Also one character shorter, which is free segment
+ * budget in a GSM-7 body.
+ *
+ * ═══ A CONSTANT, BECAUSE THE TWO CALL SITES NEED DIFFERENT SHAPES OF THE SAME ANSWER ═══
+ * `signupUrl()` below needs it ABSOLUTE: it goes into an SMS body, where a relative path is
+ * meaningless. `lib/sms/availability.ts` needs it RELATIVE: it goes into an internal <Link href>,
+ * where an absolute url would force a full document load instead of a client-side transition and
+ * would point at `siteUrl()` rather than the parent's actual origin on a preview deployment.
+ *
+ * Sharing the FUNCTION would have forced one of those two to be wrong. Sharing the PATH costs
+ * nothing and leaves exactly one place where "/sms/start" is written down — which is the property
+ * that actually matters, and the reason this is a constant rather than a second literal.
+ */
+export const SMS_SIGNUP_PATH = '/sms/start';
+
+/**
+ * The public signup form, absolute: `{site}/sms/start` (PRD §2.1).
+ *
+ * Written down once rather than at each call site, for the same reason `SUPPORT_PHONE_E164` is:
+ * a path typed in two places is a path that will eventually be two different paths. Used by the
+ * inbound webhook's unknown-keyword reply, which is the one message that has to give somebody
  * with no subscription somewhere to go.
+ *
+ * Composes from SMS_SIGNUP_PATH. Output is unchanged — tests/sms/signup_availability.test.ts
+ * pins it against the literal pre-refactor string, since a builder refactor is allowed to change
+ * how a link is assembled and never what it is.
  */
 export function signupUrl(): string {
-  // POINTS AT /sms/start, NOT /sms/signup, and that is deliberate rather than a rename artefact.
-  // /sms/signup 308s here (next.config.mjs), so the old path would still work — but this URL is
-  // composed BY US and pasted into outbound SMS bodies (the unknown-keyword reply, the
-  // STOP-then-restart invite, and the waitlist notification). A link we write ourselves should not
-  // spend a redirect hop on a phone with one bar, and tests/sms/site_url.test.ts calls these
-  // builders "what actually appear in a message" for exactly that reason.
-  // Also one character shorter, which is free segment budget in a GSM-7 body.
-  return `${siteUrl()}/sms/start`;
+  return `${siteUrl()}${SMS_SIGNUP_PATH}`;
 }
 
 /**

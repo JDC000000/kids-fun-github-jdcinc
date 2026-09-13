@@ -20,6 +20,27 @@ import './privacy.css';
 // source document's own reasoning. See the source document's amendment log for
 // the full history of this revision.
 //
+// 2026-09-12: GOOGLE SIGN-IN GATED — this page described a capability the product no longer has.
+// Jon: "nobody can sign in with google." The sign-in is now closed at the route layer
+// (lib/auth/google-signin-gate.ts), so every statement here that assumed a user account was, as
+// of that change, inaccurate rather than merely out of date. Removed: Google as a sign-in service
+// provider; the four account-only rows of the collection table (email address, home postal code,
+// email-updates preference, saved searches); the account-information retention line; and the
+// account-page routes for the PIPEDA rights, which now correctly point at the no-login SMS
+// preferences page — the only place those rights can actually be exercised.
+//
+// NOT CHANGED, DELIBERATELY: the /account code and its export/delete endpoints still exist and are
+// unreachable. Whether that area is retired is an open product question. This page describes what
+// a visitor can actually do, which is the right standard for a privacy policy, and does not
+// depend on that answer.
+//
+// ⚠ NOT ADDED, AND SOMEONE SHOULD DECIDE: this page still does not disclose the email address
+// collected by the "email me when this area is live" form (`region_notify_signup`, POST
+// /api/notify/region). That is a PRE-EXISTING gap, not something this change introduced — the
+// table has never listed it — and it is left alone on purpose: writing a disclosure means stating
+// a purpose and a retention period, and inventing those for a legal page is not a developer's
+// call. Flagged to the Operator. Note the table's own preamble says "everything we collect".
+//
 // Server component: static, zero client JS, same convention as /preview and the
 // home front door. Styling uses the canonical global --kf-* design tokens so the
 // page is dark-mode aware and meets the same WCAG-AA bar as the rest of the site.
@@ -30,6 +51,15 @@ export const metadata = {
     'How KIDS FUN collects, uses, shares, and protects your personal information under Canada’s PIPEDA.',
 };
 
+// ⚠⚠ THE EFFECTIVE DATE BELOW IS STALE AS OF 2026-09-12 AND MUST BE BUMPED BEFORE PUBLISH. ⚠⚠
+// This page was materially changed on 2026-09-12 (Google sign-in gated — see the amendment note
+// in the header comment above). A privacy policy whose substance moved while its effective date
+// did not is worse than one that was never updated: it asserts that the OLD text was in force on
+// a date the NEW text describes. This is flagged here rather than fixed because the effective
+// date is explicitly a publish-time value set by the orchestrator, not an implementation detail
+// (see the note directly below) — but it is NOT optional, and it is the one line in this file
+// that a reviewer must not wave through.
+//
 // Effective date is the ONE value the approved doc says is set at publish time
 // ("no reason to guess it now"). It is not a policy decision left open — it is a
 // publish-time stamp. Until the page is actually published (this branch is handed
@@ -70,8 +100,10 @@ export default function PrivacyPage() {
 
           <h2 id="kf-privacy-collect">What we collect, and why</h2>
           <p>
-            You can browse and search KIDS FUN <strong>without an account</strong>. If you choose to
-            create an account or use certain features, here is everything we collect:
+            KIDS FUN has <strong>no user accounts</strong>. There is nothing to sign up for to browse
+            or search, no password, and no sign-in. The one optional service that identifies you is the{' '}
+            <strong>weekly SMS</strong>, described in its own section below — and that is by mobile
+            number alone. Here is everything we collect through the website itself:
           </p>
 
           <table className="kf-privacy__table" aria-labelledby="kf-privacy-collect">
@@ -84,38 +116,6 @@ export default function PrivacyPage() {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <th scope="row">Your email address</th>
-                <td data-label="When">When you sign in with Google</td>
-                <td data-label="Why we need it">
-                  To create and secure your account, and — only if you opt in — to send you the weekly
-                  activities email
-                </td>
-                <td data-label="Required?">Required to have an account (sign-in is via Google)</td>
-              </tr>
-              <tr>
-                <th scope="row">A home postal code</th>
-                <td data-label="When">Only if you enter it on your Account page</td>
-                <td data-label="Why we need it">
-                  To remember your area so we can show &quot;near me&quot; results and, if you opt in,
-                  tailor your weekly email to your area
-                </td>
-                <td data-label="Required?">Optional — you can leave it blank</td>
-              </tr>
-              <tr>
-                <th scope="row">Email updates preference</th>
-                <td data-label="When">
-                  On your Account page (a checkbox, <strong>off by default</strong>)
-                </td>
-                <td data-label="Why we need it">To know whether you want the occasional weekly email about new activities</td>
-                <td data-label="Required?">Optional — off unless you turn it on</td>
-              </tr>
-              <tr>
-                <th scope="row">Searches you save</th>
-                <td data-label="When">Only when you click &quot;Save&quot; on a search</td>
-                <td data-label="Why we need it">To let you re-run a search you chose to keep</td>
-                <td data-label="Required?">Optional — only what you explicitly save</td>
-              </tr>
               <tr>
                 <th scope="row">Anonymous usage events</th>
                 <td data-label="When">As you use the site</td>
@@ -149,9 +149,10 @@ export default function PrivacyPage() {
             <strong>random, anonymous browser identifier</strong> (a cookie called{' '}
             <code>kf_anon_id</code>), <strong>not to your name or email</strong>. They deliberately{' '}
             <strong>exclude</strong> your precise &quot;near me&quot; location, your email, and any
-            free-text you type beyond the search terms themselves. Because these events are anonymous and
-            cannot be reliably linked back to your account, they are not included in your account data
-            export. They are <strong>automatically deleted after about 13 months.</strong>
+            free-text you type beyond the search terms themselves. Because these events are anonymous, they
+            cannot be reliably linked back to any individual — which is also why they cannot be included
+            in the data you can download from the SMS preferences page. They are{' '}
+            <strong>automatically deleted after about 13 months.</strong>
           </p>
 
           <h2>Weekly SMS messages</h2>
@@ -203,10 +204,10 @@ export default function PrivacyPage() {
 
           <h2>How we use your information</h2>
           <p>
-            We use your information only to run and improve KIDS FUN: to sign you in, remember your area
-            and saved searches, send the weekly email or weekly SMS if you asked for it, keep listings
-            accurate, and understand overall usage. <strong>We do not sell your personal information,
-            and we do not share it for advertising.</strong>
+            We use your information only to run and improve KIDS FUN: to send the weekly SMS if you
+            asked for it and choose activities near you, to keep listings accurate, and to understand
+            overall usage. <strong>We do not sell your personal information, and we do not share it for
+            advertising.</strong>
           </p>
 
           <h2>Who we share it with (our service providers)</h2>
@@ -216,14 +217,13 @@ export default function PrivacyPage() {
           </p>
           <ul>
             <li>
-              <strong>Google</strong> — sign-in (you authenticate with your Google account).
+              <strong>Supabase</strong> — secure hosting of our database.
             </li>
             <li>
-              <strong>Supabase</strong> — secure hosting of your account data and our database.
-            </li>
-            <li>
-              <strong>Resend</strong> — sends the weekly email, <strong>only if you opted in</strong>{' '}
-              (receives your email address and the email content).
+              <strong>Resend</strong> — our email provider. It is listed here because we have it
+              configured, not because it currently sends you anything: the weekly <em>email</em>
+              required an account, and accounts no longer exist. If we ever email you — for example to
+              say your area has gone live, if you asked us to — this is who would deliver it.
             </li>
             <li>
               <strong>Twilio</strong> — sends and receives the weekly SMS messages,{' '}
@@ -232,7 +232,7 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Sentry</strong> — error monitoring, configured to <strong>strip out</strong>{' '}
-              personal details (we mask postal codes and remove cookies, sign-in tokens, and IP
+              personal details (we mask postal codes and remove cookies, access tokens, and IP
               addresses before anything is recorded).
             </li>
           </ul>
@@ -243,11 +243,6 @@ export default function PrivacyPage() {
 
           <h2>How long we keep it</h2>
           <ul>
-            <li>
-              <strong>Your account information</strong> (email, postal code, email preference, saved
-              searches): kept until <strong>you delete it or delete your account.</strong> You are in
-              control.
-            </li>
             <li>
               <strong>Anonymous usage events:</strong> automatically deleted after{' '}
               <strong>about 13 months.</strong>
@@ -277,40 +272,39 @@ export default function PrivacyPage() {
           <h2>How we protect it</h2>
           <p>
             Your data is stored in a secured database with strict access controls (owner-only access
-            rules, server-side-only access, encrypted connections). Sign-in cookies are protected (
-            <code>httpOnly</code>, same-site). We limit what we collect in the first place, and we redact
-            personal details from our error monitoring.
+            rules, server-side-only access, encrypted connections). The link that opens your SMS
+            preferences page carries a long, unguessable token, which is why it needs no password. We
+            limit what we collect in the first place, and we redact personal details from our error
+            monitoring.
           </p>
 
           <h2>Your choices and rights</h2>
           <p>Under PIPEDA you can:</p>
           <ul>
             <li>
-              <strong>See your data</strong> — download everything we hold about your account from your
-              Account page (<strong>Export my data</strong>). This covers your account information
-              (email, postal code, preference, saved searches). It does <strong>not</strong> include the
+              <strong>See your data</strong> — if you subscribe to the weekly SMS, your{' '}
+              <strong>preferences page</strong> shows everything we store about you. The link is in every
+              message, and it needs <strong>no login</strong>. It does <strong>not</strong> include the
               anonymous usage events described above, because those aren&apos;t linked to your identity.
             </li>
             <li>
-              <strong>Correct your data</strong> — edit your postal code, email preference, and saved
-              searches at any time on your Account page.
+              <strong>Correct your data</strong> — change your area, your children&apos;s ages and your
+              interests at any time on that same preferences page.
             </li>
             <li>
-              <strong>Delete your data</strong> — delete individual saved searches, or{' '}
-              <strong>delete your whole account</strong> from your Account page. Deleting your account
-              permanently removes your profile and saved searches. We also request removal of your
-              sign-in identity from our authentication provider; where that is not yet automated this is
-              done on a best-effort basis.
+              <strong>Delete your data</strong> — <strong>Delete everything</strong> on the preferences
+              page immediately erases your mobile number, postal code, children&apos;s ages and
+              interests.
             </li>
             <li>
-              <strong>Withdraw consent</strong> — turn off the weekly email at any time (from the
-              email&apos;s unsubscribe link or your Account page).
+              <strong>Withdraw consent</strong> — unsubscribe at any time: reply{' '}
+              <strong>STOP</strong> to any message, or use <strong>Unsubscribe</strong> on the
+              preferences page. Both stop the messages straight away.
             </li>
             <li>
-              <strong>If you subscribe to the weekly SMS</strong>, all four of these live on your{' '}
-              <strong>preferences page</strong> instead — the link in every message. No login. You can
-              see everything we store, change your area, children&apos;s ages and interests,
-              unsubscribe, or delete everything.
+              <strong>If you only browse the site</strong>, we hold nothing that identifies you, so
+              there is nothing to export, correct or delete. The anonymous usage events described above
+              are not linked to you and expire on their own.
             </li>
           </ul>
 

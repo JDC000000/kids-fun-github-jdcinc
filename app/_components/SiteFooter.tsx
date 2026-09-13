@@ -10,7 +10,7 @@ import { requiredGeoAttributions } from '@/worker/adapters/activenet/venue-geo';
 // the root layout so a site-wide Privacy Policy link is reachable from every route.
 //
 // Server component, zero client JS. Styling is self-contained (not scoped under .kf)
-// and consumes the canonical global --kf-* tokens, mirroring AccountNav's chrome bar
+// and consumes the canonical global --kf-* tokens, mirroring the chrome bar AccountNav used to draw
 // so the top (account) and bottom (footer) chrome are consistent. Deliberately small:
 // a wordmark, a legal link, and the data-licence notices — not a redesign.
 //

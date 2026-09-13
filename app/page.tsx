@@ -8,6 +8,9 @@ import {
 } from './_lib/nav-destinations';
 import { ThreeThings } from './_components/ThreeThings';
 import { ChildProfilePrompt } from './_components/ChildProfilePrompt';
+import { SmsSignupCta } from './_components/SmsSignupCta';
+import { smsSignupAvailability } from '@/lib/sms/availability';
+import { recordSmsOfferViewed } from '@/lib/analytics/record';
 
 // Home / front door (M3 Screen 1, Visual Blueprint v0.2). The first thing a
 // first-time parent sees: it introduces KIDS FUN in the civic field-guide voice,
@@ -56,7 +59,43 @@ export const metadata = {
  */
 const CATEGORIES = liveCategoryDestinations();
 
-export default function Home() {
+export default async function Home() {
+  /*
+   * ═══ THE FAIL-SAFE, EVALUATED PER REQUEST (AC-12) ═══
+   * SMS_SIGNUP_ENABLED defaults to FALSE and app/sms/start/page.tsx calls `notFound()` unless it
+   * is exactly 'true'. So the DEFAULT state of this product is a signup page that 404s, and a
+   * front door that advertised it unconditionally would not be "usually right" — it would be
+   * wrong by default and right only while an environment variable happened to be set.
+   *
+   * Asked HERE rather than inside the offer component so the branch is visible on the page that
+   * owns the decision, and asked through lib/sms/availability.ts rather than process.env so this
+   * file never learns which variable governs signup.
+   *
+   * `force-dynamic` above is what makes this cheap and correct at the same time: the page already
+   * re-renders per request for <ThreeThings />, so the flag is re-read every time and flipping it
+   * takes effect WITHOUT A REBUILD. On a statically prerendered page this check would have been
+   * baked in at build time and would have lied for as long as the deployment lived.
+   */
+  const signup = smsSignupAvailability();
+
+  /*
+   * ═══ MEASURE THE OFFER, NOT THE RENDER (AC-09, T1.5) ═══
+   * Guarded on `signup.available` rather than emitted unconditionally, and the guard is the
+   * whole point rather than an optimisation. This event is the DENOMINATOR of the signup
+   * conversion rate; the branch above renders no offer at all whenever the flag is off, which —
+   * given it defaults to FALSE — is the state the product spends most of its life in. Counting
+   * those renders would silently depress the rate with impressions that never had a chance to
+   * convert, and the result would read as a product finding rather than as a bug.
+   *
+   * AWAITED, matching recordSearchPerformed on /search: on a serverless runtime a floating
+   * promise can be cut off when the response finishes, so "fire and forget" here would mean
+   * "sometimes fire". Best-effort in the only sense that matters — the recorder cannot throw
+   * and cannot change what is rendered.
+   */
+  if (signup.available) {
+    await recordSmsOfferViewed('home');
+  }
+
   return (
     <div className="kf">
       <div className="kf-page">
@@ -95,6 +134,44 @@ export default function Home() {
           </header>
 
           <main className="kf-home__main">
+            {/* ── The SMS offer (TSD §9 M1 / Deltas 1-2). ───────────────────────────────────
+                PLACEMENT AND COPY ARE PROVISIONAL AND OWNED BY M2, not by this block: the home
+                page rebuild moves the offer into the hero and confirms the wording at G2. What
+                is NOT provisional is the branch — the mechanism below is the fail-safe itself,
+                and M2 changes where this renders without changing whether it may render.
+
+                TWO BRANCHES, AND THE UNAVAILABLE ONE IS A SENTENCE RATHER THAN NOTHING. Removing
+                the block entirely would read as a layout bug to the next person to open the page
+                and would tell a parent nothing about a thing that genuinely exists and is nearly
+                ready. Removing only the ACTION is the actual requirement, and it is what the
+                absence of `signup.href` in that branch enforces — there is no path to link to,
+                so there is nothing to accidentally render as a button. ── */}
+            {signup.available ? (
+              <section className="kf-home__sms" aria-labelledby="kf-home-sms">
+                <h2 className="kf-home__sms-title" id="kf-home-sms">
+                  Get one text a week
+                </h2>
+                <p className="kf-home__sms-sub">
+                  Things to do with your kids across Metro Vancouver, sent to your phone once a
+                  week. No app, no account.
+                </p>
+                <SmsSignupCta href={signup.href}>Get the weekly text</SmsSignupCta>
+              </section>
+            ) : (
+              <section
+                className="kf-home__sms kf-home__sms--unavailable"
+                aria-labelledby="kf-home-sms"
+              >
+                <h2 className="kf-home__sms-title" id="kf-home-sms">
+                  One text a week, soon
+                </h2>
+                <p className="kf-home__sms-sub">
+                  We&apos;re getting ready to send one text a week with things to do with your
+                  kids across Metro Vancouver. It isn&apos;t open for sign-ups yet.
+                </p>
+              </section>
+            )}
+
             {/* ── Ask once: "who are you looking for" (U1). The HOME PAGE ONLY, by ruling
                 (design §9-Q7). Renders nothing once answered, once dismissed for the session,
                 or when storage is unavailable — so it is a first-visit question, not chrome. ── */}

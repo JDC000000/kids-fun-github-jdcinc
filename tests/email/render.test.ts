@@ -40,6 +40,34 @@ function digest(overrides: Partial<WeeklyDigest> = {}): WeeklyDigest {
   };
 }
 
+describe('the weekly email in a no-account world', () => {
+  // /account is gated (lib/auth/google-signin-gate.ts — nobody can sign in, so nobody has an
+  // account to manage) and the footer's "Manage your account" link pointed straight at it. The
+  // link was removed rather than repointed.
+  const rendered = () =>
+    renderWeeklyDigest(digest(), { unsubscribeUrl: 'https://app.example/unsub?u=1&t=abc' });
+
+  it('no longer links to /account in either the HTML or the text part', () => {
+    const { html, text } = rendered();
+    expect(html).not.toContain('/account');
+    expect(html).not.toContain('Manage your account');
+    expect(text).not.toContain('/account');
+    expect(text).not.toContain('Manage your account');
+  });
+
+  it('⚠ STILL carries the unsubscribe link — removing the account link must not touch it', () => {
+    // These are two different mechanisms and only one of them is compliance-relevant. The
+    // unsubscribe URL is an independent HMAC token (lib/email/unsubscribe.ts) that needs no
+    // session, so it survives the account system being gated. If a future tidy-up of this footer
+    // takes the unsubscribe link with it, CASL's question stops having a good answer — hence a
+    // test that states the dependency out loud rather than trusting the next reader to notice.
+    const { html, text } = rendered();
+    expect(html).toContain('https://app.example/unsub?u=1&amp;t=abc');
+    expect(html).toContain('Unsubscribe');
+    expect(text).toContain('Unsubscribe: https://app.example/unsub?u=1&t=abc');
+  });
+});
+
 describe('renderWeeklyDigest', () => {
   it('subject reflects the activity count and pluralizes', () => {
     expect(renderWeeklyDigest(digest(), { unsubscribeUrl: 'https://app.example/u' }).subject).toBe(

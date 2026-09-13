@@ -599,6 +599,37 @@ export const PREFS_INSTANT_UNAVAILABLE =
 export const PREFS_INSTANT_THROTTLED = 'Just a moment — you can do that again shortly.';
 
 export const PREFS_EDIT_HEADING = 'What we use to find your kids’ activities';
+
+/**
+ * The children field's label ON THE PREFERENCES PAGE ONLY (Jon, 2026-09-12, verbatim:
+ * "We use your kids age to find relevant activities").
+ *
+ * ── WHY THIS IS A SEPARATE CONSTANT AND NOT AN EDIT TO `FIELD_COPY.childrenHelp` ──────────
+ * `FIELD_COPY` is rendered by THREE surfaces: this page, `/sms/signup` and `/sms/start`. The
+ * first is shown only to somebody who has already consented; the other two are the consent act
+ * itself. Editing `FIELD_COPY` to satisfy a preferences-page request would therefore have:
+ *   1. silently reworded the SIGNUP form, which nobody asked for, and
+ *   2. required a CONSENT_TEXT_VERSION bump under this file's own rule ("field labels and help
+ *      text around it" MOVES IT), stamping every future subscriber with a new version for a
+ *      change made to a different page, and
+ *   3. altered the signup form's pixels — which are the opt-in evidence for the Twilio Canadian
+ *      Toll-Free Verification submission (see this file's header).
+ * Scoping the new wording here keeps the consent artefact and its version untouched. Per the
+ * header's own carve-out, preferences-page copy shown after consent does NOT move the version,
+ * so this constant is correctly version-free.
+ *
+ * ⚠ APOSTROPHE: ASKED, ANSWERED, NOT ASSUMED. Jon's original string was "We use your kids age
+ * to find relevant activities" — no apostrophe, where the rest of this file writes the possessive
+ * with a curly one ("kids’ ages", "kids’ activities"). It shipped verbatim and the discrepancy was
+ * raised as a question rather than silently corrected, because editing a sentence a human dictated
+ * is not a typo fix. Jon answered on 2026-09-12: use "kids’ ages", matching the rest of the page.
+ * Applied here, with the same U+2019 curly apostrophe the surrounding copy uses — not an ASCII '.
+ *
+ * It replaces BOTH halves of what this section used to say (`FIELD_COPY.childrenLabel` +
+ * `FIELD_COPY.childrenHelp`), so it is rendered as the fieldset's `<legend>`: the group of age
+ * inputs keeps a real accessible name, which simply deleting the label would have cost.
+ */
+export const PREFS_CHILDREN_LABEL = 'We use your kids’ ages to find relevant activities';
 export const PREFS_SAVE = 'Save changes';
 export const PREFS_SAVING = 'Saving…';
 export const PREFS_SAVED = 'Saved — your next Friday SMS will use these.';
@@ -646,6 +677,17 @@ export const PREFS_UNSUBSCRIBE_BODY =
   'You’ll stop getting activities straight away. Everything we store about you is deleted ' +
   '30 days later.';
 export const PREFS_UNSUBSCRIBE = 'Unsubscribe';
+/**
+ * Summary for the collapsed explanation beneath the Unsubscribe button (Jon, 2026-09-12:
+ * "STOP THE SMS simplify have an UNSUBSCRIBE button. The details you'll stop getting activities
+ * straight away etc can be minimized/hidden/toggle").
+ *
+ * The body text is NOT removed and NOT conditionally rendered — it stays in the DOM inside a
+ * closed <details>, so curl/view-source/archival tooling and assistive tech still reach it. Only
+ * what is painted by default changes. That distinction is the same one the legal block on this
+ * page relies on, and it is what keeps a CASL-relevant statement disclosed while collapsed.
+ */
+export const PREFS_UNSUBSCRIBE_DETAILS_SUMMARY = 'What happens when you unsubscribe';
 export const PREFS_UNSUBSCRIBED = 'Done — you won’t get any more SMS from us.';
 
 export const PREFS_DELETE_HEADING = 'Delete my data';
@@ -667,6 +709,33 @@ export const PREFS_DELETE_BODY =
   'This unsubscribes you and immediately erases your phone number, postal code, kids’ ages and ' +
   'interests.';
 export const PREFS_DELETE = 'Delete everything';
+/** Summary for the collapsed explanation beneath the Delete button. Same reasoning as
+ *  PREFS_UNSUBSCRIBE_DETAILS_SUMMARY above; the two-step confirm is unchanged and still carries
+ *  the warning at the moment it matters. */
+export const PREFS_DELETE_DETAILS_SUMMARY = 'What gets deleted';
+/**
+ * Shown in the ALWAYS-VISIBLE confirm step, beside "Yes, delete it all" (QA, 2026-09-12).
+ *
+ * ── WHY THIS EXISTS: A GAP THE COLLAPSE OPENED ──────────────────────────────────────────
+ * PREFS_DELETE_BODY used to sit in an always-visible <p> above the delete button, so anyone
+ * walking into this flow read what deleting actually erases before they could reach it. Moving
+ * it behind the collapsed <details> (Jon's "the details … can be minimized/hidden/toggle") left
+ * a path where a person could complete an IRREVERSIBLE delete of their phone number, postal
+ * code and children's ages without the page ever telling them what was about to go. The two
+ * buttons say "Yes, delete it all" / "Cancel" — those convey FINALITY, which is a different
+ * thing from CONSEQUENCE, and the comment in PreferencesForm.tsx wrongly claimed otherwise.
+ *
+ * So this restores the consequence at the only moment it has to be there, without undoing the
+ * simplification: the section at rest is still just a heading, a button and a quiet toggle.
+ * This line appears only after the first click.
+ *
+ * DELIBERATELY DOES NOT SAY "it can't be undone". Jon dropped that clause from PREFS_DELETE_BODY
+ * earlier the same day, on the reasoning that the confirm buttons already carry it. He is right,
+ * and re-adding it here would reverse his edit while claiming to fix something else. The gap was
+ * never finality — it was WHAT GETS ERASED. That, and only that, is what this says.
+ */
+export const PREFS_DELETE_CONFIRM_CONSEQUENCE =
+  'This erases your number, postal code, kids’ ages and interests.';
 export const PREFS_DELETE_CONFIRM = 'Yes, delete it all';
 export const PREFS_DELETE_CANCEL = 'Cancel';
 export const PREFS_DELETED = 'Deleted — nothing about you is stored any more.';

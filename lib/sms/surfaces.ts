@@ -148,7 +148,17 @@ export function hidesSiteChrome(pathname: string | null | undefined): boolean {
   return BARE_CHROME_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
-/** Should the account touchpoint be hidden on this path? See the list above for why it differs. */
+/**
+ * Should the account touchpoint be hidden on this path? See the list above for why it differs.
+ *
+ * ⚠ NO PRODUCTION CALLER AS OF 2026-09-12. Jon removed Google sign-in and the `AccountNav`
+ * component outright — "we don't want people to sign in with google. this functionality adds
+ * no value. remove it." — so SiteNav no longer asks this question and the pill is absent on
+ * every route, not just these. The predicate is kept rather than deleted because it is the SMS
+ * product's own map of itself and is still covered by tests/sms/surfaces.test.ts; retiring it
+ * is a separate decision from removing the pill. The narrative above is therefore HISTORY: the
+ * `AccountNav` and `SaveSearchButton` it describes no longer exist.
+ */
 export function hidesAccountNav(pathname: string | null | undefined): boolean {
   if (!pathname) return false;
   return ACCOUNT_NAV_HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(p));

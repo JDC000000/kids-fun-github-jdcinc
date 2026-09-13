@@ -3,8 +3,6 @@
 import Link from 'next/link';
 import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { AccountNav } from './AccountNav';
-import { hidesAccountNav } from '@/lib/sms/surfaces';
 import {
   SEARCH_SHORTCUTS,
   destinationHref,
@@ -23,10 +21,11 @@ import './site-nav.css';
  * experience" than the filter layout, and a cheaper one to close.
  *
  * WHAT IT IS
- * One bar: wordmark → home, a row of real destinations, and the pre-existing account
- * touchpoint on the right. AccountNav is rendered inside it unchanged — it keeps its own
- * `<nav aria-label="Account">` landmark, which is a legitimate second navigation region
- * beside this one's "Main", and its /api/me probe and sign-out POST are untouched.
+ * One bar: wordmark → home and a row of real destinations. It used to also carry the account
+ * touchpoint (AccountNav, with its own `<nav aria-label="Account">` landmark and a /api/me
+ * probe); that was removed on 2026-09-12 along with Google sign-in, so this bar now has a
+ * single navigation region and makes no authenticated request. See the note at the render
+ * site below.
  *
  * WHY THE DESTINATIONS ARE SEARCH QUERIES
  * `/search?q=…` free text is the only category mechanism /search actually supports — there
@@ -178,28 +177,27 @@ export function SiteNav() {
         </nav>
 
         {/*
-          HIDDEN ON THE SMS SURFACES (PRD §8 item 4, Jon-approved). An SMS subscriber has no
-          account — that is the product's premise — so offering "Sign in with Google" on the page
-          where somebody is signing up by phone number invites a data relationship the product
-          deliberately does not need. Jon's own framing: "let's emphasize capturing the least
-          amount of data we need to provide value."
+          THE ACCOUNT TOUCHPOINT IS GONE ENTIRELY (Jon, 2026-09-12): "the only product i want to
+          promote is the SMS product. we don't want people to sign in with google. this
+          functionality adds no value. remove it."
 
-          The route list lives in lib/sms/surfaces.ts rather than here, so the SMS product's own
-          map of itself stays with the SMS product. This file only asks the question.
+          This is the END of a trajectory rather than a reversal. The pill was already hidden on
+          every SMS surface and on /activity/…, /preview/…, /search and /u/… (lib/sms/surfaces.ts
+          `hidesAccountNav`), on Jon's reasoning that "an SMS subscriber has no account — that is
+          the product's premise" and "let's emphasize capturing the least amount of data we need
+          to provide value". The route list had grown to cover nearly everything a parent actually
+          visits; this removes the remainder, so there is no longer a route-dependent question to
+          ask and `hidesAccountNav` no longer has a caller here.
 
-          WHERE THIS STILL APPLIES: /activity/…, /preview/…, /search and /u/… — pages a person
-          browses or manages something on. The rest of the bar stays there, and only the account
-          touchpoint goes.
+          `hidesAccountNav` is deliberately LEFT IN PLACE in lib/sms/surfaces.ts: it is the SMS
+          product's own map of itself, it is still covered by tests/sms/surfaces.test.ts, and
+          retiring it is a separate decision from removing this bar's pill.
 
-          SUPERSEDED FOR THE TWO SIGNUP PAGES (Jon, 2026-09-01). This comment used to read "the
-          rest of the bar stays: a parent who lands on the signup form from a QR code should still
-          be able to reach the catalogue. It is the ACCOUNT touchpoint that does not belong, not
-          the navigation." That was true of /sms/signup until Jon reweighed it against conversion
-          focus and ruled the nav friction there too. /sms/signup and /sms/start now render with no
-          chrome at all via BARE_CHROME_PREFIXES, so on those two routes this component never
-          renders and the question below is moot rather than answered differently.
+          WHAT WAS NOT REMOVED HERE: the /auth/* routes, /account, /api/me and the saved-search
+          backend still exist and are unreferenced by any navigation. Deleting that subsystem is a
+          product-scope call (it also owns the PIPEDA export/delete endpoints), so it is flagged
+          for review rather than folded into a nav change.
         */}
-        {!hidesAccountNav(pathname) && <AccountNav />}
       </div>
     </header>
   );

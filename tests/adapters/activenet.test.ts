@@ -628,6 +628,122 @@ describe('G-T7R-3 parse against real captured payloads', () => {
     }
   });
 
+  // ── G-AN-AGE-2: prose cannot manufacture an age claim ────────────────────────────────
+  //
+  // 227 live Vancouver occurrences carried age_min_months=0 / age_max_months=NULL /
+  // age_notes='all-ages' — "suitable for a newborn" — on adults-only and seniors-only
+  // programming. Two independent holes produced it, both in statedAgePhrase(), and both because
+  // AGE_CLAIM_DISQUALIFIER_RE was consulted only for phrases competing to OVERRIDE a leading
+  // keyword, never for the phrase actually returned.
+  //
+  // Every description below is VERBATIM from the source's own API (/rest/activity/detail/<id>,
+  // fetched 2026-09-12), paired with that activity's own structured age field — which is the
+  // thing the prose contradicts and the thing this adapter does not yet read.
+  describe('an age claim must be attributable, not inferred from prose', () => {
+    const noClaim: Array<[string, string, string]> = [
+      [
+        // id 622061 · age_min_year 19 · sub_category "6 - Adult". The phrase describes the
+        // INSTRUCTORS' teaching range, not the class's audience.
+        'Karate (Adults), source says 19 yrs +',
+        'Karate - Ku Yu Kai Go-Ju Ryu (Adults)',
+        'Find your inner karate kid! Learn Go Ju Ryu karate, the style featured in the original Karate Kid movies. These are the principles of Ku Yu Kai. Shihan George Chan (8th degree black belt) and Sensei Julie Zilber (6th degree black belt) teaches classes for all ages and levels in a friendly environment.',
+      ],
+      [
+        // id 617239 · age_min_year 50 · sub_category "7 - Senior".
+        "Wu's Tai Chi, source says 50 yrs +",
+        "Wu's Tai Chi",
+        'A gentle art of health and well being for people of all ages and health conditions.  The Tai Chi exercise helps to develop strength and balance.',
+      ],
+      [
+        // id 622738 · age_min_year 19 · sub_category "6 - Adult".
+        'Bootcamp Circuits, source says 19 yrs +',
+        'Bootcamp Circuits',
+        "Join us on Fridays for the perfect lunch hour workout. This all ages, circuit-based class involves strength, cardio, and core stations. Adaptations and progressions are available for each station. Drop in $9, space permitting.",
+      ],
+      [
+        // HOLE 1: the policy sentence. Its own number was already discarded as a supervision
+        // rule; the word four tokens earlier was trusted.
+        'policy boilerplate on an adult class',
+        'Tai Chi Chuan - Beginners',
+        'All ages programs, children 6-12 years must be accompanied by a participating adult.',
+      ],
+      [
+        // HOLE 2, never previously reported: the SAME sentence with no audience word in front
+        // of it. A numeric leftmost match used to return immediately, unvetted, publishing ages
+        // 6-12 on an adults-only class. The disqualifier had simply never run on this path.
+        'supervision rule with no audience word before it',
+        'Bootcamp Circuits',
+        'Children 6-12 years must be accompanied by a participating adult.',
+      ],
+      [
+        'supervision rule naming a guardian, no audience word',
+        'Recreational Line Dancing',
+        'Participants 8-17 years must be supervised by a guardian at all times.',
+      ],
+      [
+        // The source flattens its own structured detail block into the description HTML, so
+        // "All Ages" arrives as a FIELD VALUE in a run-on table rather than as prose.
+        'source-flattened metadata block',
+        'Pickleball Accelerator: Intermediate Clinic (3.0+)',
+        'Date &amp; Time Mon 6:00pm Sessions Sep 2 - Dec 15 , 2026 All Ages No Pre Registration Required Admission Fees',
+      ],
+      [
+        // A staff job title is not the audience.
+        'audience word inside a staffing note',
+        'Bootcamp Circuits',
+        'Sessions are supervised by a Youth Program Assistant I/II. Advanced adult circuit training.',
+      ],
+    ];
+    for (const [label, title, description] of noClaim) {
+      it(`makes no age claim: ${label}`, () => {
+        const ageText = extractAgeText({ title, description: `<p>${description}</p>` });
+        expect(ageText, label).toBeUndefined();
+        expect(parseAgeText(ageText), label).toMatchObject({
+          ageMinMonths: null,
+          ageMaxMonths: null,
+          resolved: false,
+        });
+      });
+    }
+
+    it('still keeps looking past a disqualified word for a clean one', () => {
+      // Verbatim, vancouver.events.calendar-5.json. The first "Youth" is the supervising staff
+      // member's job title; the genuine audience word is the next sentence. Keeping the claim
+      // here is what makes this a targeted fix rather than a blanket refusal.
+      const description =
+        'Sessions are supervised by a Youth Program Assistant I/II or Community Youth Worker, but there is no instructor for this program Welcome back to youth open gym at Killarney Community Centre!';
+      const ageText = extractAgeText({ title: 'Pre-Teen and Teen Open Gym', description: `<p>${description}</p>` });
+      expect(ageText).toBe('youth');
+      expect(parseAgeText(ageText)).toMatchObject({ ageMinMonths: 144, ageMaxMonths: 216, resolved: true });
+    });
+
+    it('still publishes an all-ages claim the TITLE attributes', () => {
+      // The carve-out that keeps this a targeted fix: the venue put the claim in the activity
+      // name, so it is the venue's statement rather than our inference.
+      const ageText = extractAgeText({
+        title: 'Reserve In Advance: All Ages Badminton',
+        description: '<p>All ages programs, children 6-12 years must be accompanied by a participating adult.</p>',
+      });
+      expect(ageText).toBe('Reserve In Advance: All Ages Badminton');
+      expect(parseAgeText(ageText)).toMatchObject({ ageMinMonths: 0, ageMaxMonths: null, notes: 'all-ages' });
+    });
+
+    it('still publishes a stated age that nothing disqualifies', () => {
+      const ageText = extractAgeText({
+        title: 'Aikido',
+        description: '<p>A friendly club for beginners. This class is for ages 5-8.</p>',
+      });
+      expect(parseAgeText(ageText)).toMatchObject({ ageMinMonths: 60, ageMaxMonths: 108, resolved: true });
+    });
+
+    // KNOWN, UNFIXED BY THIS CHANGE — needs the structured age field, not another prose rule:
+    //   "Ukulele - Jam Circle (All ages)"      source: at least 55 yrs  (a SENIORS group)
+    //   "Music with Marnie All Ages/Siblings"  source: less than 5y 11m (UNDER-6s)
+    // Both put "All ages" in the TITLE, so the carve-out above admits them and both are wrong.
+    // The venue uses "All ages" to mean "any skill level" while stating a real bound in its own
+    // age field. No title or prose rule can catch this; reading age_min_*/age_max_* can.
+  });
+
   it('does not promote a number that is a rule about supervision, money or paperwork', () => {
     // One per FALSE_* class in the scope document's §2 taxonomy, each description verbatim and
     // each expectation the value this adapter produced BEFORE the precedence change — these
@@ -638,20 +754,35 @@ describe('G-T7R-3 parse against real captured payloads', () => {
         'FALSE_SUPERVISION (participating adult)',
         'Reserve In Advance: Table Tennis All Ages',
         'Please arrive early to claim your reservation. For all ages programs, children 6-12 years must be accompanied by a participating adult. Customers with a 10 Visit Be Active Pass will be required to pay the drop-in rate at the time of registration for a reserve in advance activity.',
-        'Reserve In Advance: Table Tennis All Ages — all ages',
+        // The description's "all ages" no longer travels: prose cannot carry an all-ages claim
+        // (see AGE_PHRASE_KEYWORD). The TITLE still states it, so the published age is unchanged
+        // — [0, null) + notes 'all-ages'. Only the redundant echo is gone.
+        'Reserve In Advance: Table Tennis All Ages',
       ],
       [
         'FALSE_SUPERVISION (supervised on the ice)',
         '|Public Skate|',
         'Date & Time Sundays, 1:45-3:15pm Sessions June 28 - August 30, 2026 Open skate for all ages Children under 8 years MUST be supervised on the ice by an individual 16 years old or over *Monthly Flexipass and 10-Visit passes are accepted for this program .',
-        'all ages',
+        // THE ONE DELIBERATE COVERAGE LOSS IN THIS CHANGE, and it is a loss of a CORRECT claim.
+        // Public Skate really is all-ages — the source's own structured field says "All ages," —
+        // but it says so in a field this adapter does not fetch, and in prose that is
+        // indistinguishable from the prose on a 19+ karate class ("teaches classes for all ages
+        // and levels") or a 50+ tai chi class ("for people of all ages and health conditions").
+        // No rule over description text can separate them, so the honest answer is no claim.
+        // The listing is NOT hidden: a null age row files it under the age-unconfirmed section
+        // (lib/search/engine.ts splitAgeUnconfirmed), so it stays reachable while it stops
+        // asserting suitability for a newborn. Reading the structured age field restores it
+        // properly and is the immediate follow-up.
+        undefined,
       ],
       [
         // The "range" here is a row of the admission fee table, not an audience.
         'FALSE_PRICE (fee table)',
         'Play Palace - 0-12yrs',
         'Date &amp; Time Monday - Thursday, 12:00pm - 4:30pm Sessions April 10 - Aug 21, 2026 All Ages No Pre Registration Required Admission Fees Age 1 Visit 10-visit card Under 6mos FREE FREE 6-23mos $4.94 $44.92 2-5yrs $6.35 $57.17 6-12yrs $7.06 $63.50 For detailed admission fees, rental fee and discount information please visit: Vancouver.ca/PlayPalace',
-        'Play Palace - 0-12yrs — All Ages',
+        // Same as Table Tennis: the title carries the numbers, the description's "All Ages" no
+        // longer travels, and the published age is unchanged at [0, 156).
+        'Play Palace - 0-12yrs',
       ],
       [
         'FALSE_PRICE (under-N is free)',

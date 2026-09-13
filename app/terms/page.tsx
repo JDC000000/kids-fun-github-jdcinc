@@ -52,6 +52,12 @@ export const metadata = {
 // publish-time stamp, not a decision. The line is omitted entirely while null rather
 // than rendering a visible unresolved placeholder, and the "Changes to these Terms"
 // wording below is true whether or not a date is showing.
+// ⚠⚠ STALE AS OF 2026-09-12 — MUST BE BUMPED BEFORE PUBLISH, same as /privacy's. ⚠⚠
+// The "Your account" section was materially rewritten on 2026-09-12 because Google sign-in was
+// gated (Jon: "nobody can sign in with google") and this page described accounts that can no
+// longer exist. Terms whose substance moved while their effective date did not assert that the
+// OLD text was in force on a date the NEW text describes. Publish-time value, not a developer's
+// to set — but not optional either.
 const EFFECTIVE_DATE: string | null = '2026-08-11';
 
 export default function TermsPage() {
@@ -149,13 +155,18 @@ export default function TermsPage() {
             listing. Corrections from parents are a large part of how the directory stays useful.
           </p>
 
-          <h2>Your account</h2>
+          <h2>Accounts, and the weekly SMS</h2>
           <p>
-            You can browse and search KIDS FUN without an account. If you create one (sign-in is
-            through Google), you are responsible for keeping access to it secure and for what happens
-            under it. Accounts are for personal, non-commercial use by adults; if you are under the
-            age of majority where you live, please use the site with a parent or guardian. You can
-            delete your account at any time from your Account page.
+            KIDS FUN has <strong>no user accounts</strong>. You can browse and search it without
+            signing up for anything, and there is no password to keep secure.
+          </p>
+          <p>
+            The one optional service is the <strong>weekly SMS</strong>. If you subscribe, the link in
+            every message opens a preferences page where you can change what we hold, unsubscribe, or
+            delete everything — with no login. That link is how we recognise you, so treat it as
+            private: anyone with it can see and change those preferences. KIDS FUN is for personal,
+            non-commercial use by adults; if you are under the age of majority where you live, please
+            use it with a parent or guardian.
           </p>
 
           <h2>Acceptable use</h2>
@@ -174,7 +185,7 @@ export default function TermsPage() {
               security, rate limits, or access controls;
             </li>
             <li>
-              probe for vulnerabilities, or access accounts, data, or areas of the service that are
+              probe for vulnerabilities, or access data, other people&apos;s preferences pages, or areas of the service that are
               not yours;
             </li>
             <li>
@@ -217,7 +228,7 @@ export default function TermsPage() {
             may change, suspend, add, or remove features, listings, or the service as a whole at any
             time. We do not promise any particular uptime or performance, or that a listing or
             feature you used before will still be there later. That is about the service and its
-            listings — the account information you give us is kept, and deleted, as described in our{' '}
+            listings — any personal information you give us is kept, and deleted, as described in our{' '}
             <a href="/privacy">Privacy Policy</a>.
           </p>
 
@@ -264,7 +275,9 @@ export default function TermsPage() {
 
           <h2>Ending your use</h2>
           <p>
-            You can stop using KIDS FUN at any time, and delete your account from your Account page.
+            You can stop using KIDS FUN at any time. If you subscribe to the weekly SMS, you can
+            unsubscribe or delete everything we hold from the preferences page linked in every message,
+            or by replying STOP.
             The parts of these Terms that by their nature should outlast your use — the disclaimers,
             the limitation of liability, and the indemnity — continue to apply afterwards.
           </p>
