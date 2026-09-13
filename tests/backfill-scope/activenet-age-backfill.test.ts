@@ -306,3 +306,69 @@ describe('a real portal failure reaches the plan as AMBIGUOUS, not as "source ha
     expect(plan.decisions[0].action).toBe('set');
   });
 });
+
+// ── SQL IDENTIFIERS MUST EXIST IN THE REAL SCHEMA ────────────────────────────────────────
+//
+// A hardcoded wrong table name is STRUCTURALLY INVISIBLE to a fixture-based suite: every test
+// above passes whether the query says `occurrence` or `activity_occurrence`, because none of them
+// ever meets a schema. That is the same "an untested branch is a dead branch" shape as tonight's
+// other findings, moved down to the SQL layer — and it is exactly how this shipped with TWO wrong
+// names (`occurrence` and `series`; Postgres only ever reports the first, so fixing the reported
+// one would have failed again on the next run).
+//
+// This reads the migrations as the source of truth. No database required, so it runs in the normal
+// unit lane rather than being skipped like the |db| tests that would otherwise be the only cover.
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { CANDIDATE_ROWS_SQL as CANDIDATE_SQL } from '../../scripts/backfill-scope/activenet-age-backfill-lib';
+
+function tablesDefinedByMigrations(): Set<string> {
+  const dir = join(process.cwd(), 'supabase/migrations');
+  const defined = new Set<string>();
+  for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql'))) {
+    const sql = readFileSync(join(dir, f), 'utf8');
+    for (const m of sql.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+)/gi)) defined.add(m[1].toLowerCase());
+  }
+  return defined;
+}
+
+/** Table names this query reads or writes. */
+function tablesReferencedBy(sql: string): string[] {
+  const names = new Set<string>();
+  for (const m of sql.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO)\s+([a-z_][a-z0-9_]*)/gi)) {
+    names.add(m[1].toLowerCase());
+  }
+  return [...names];
+}
+
+describe('every table the backfill names really exists in the schema', () => {
+  const defined = tablesDefinedByMigrations();
+
+  it('the migration scan finds a real schema (guards against a vacuous pass)', () => {
+    // If this ever returns nothing, every assertion below passes trivially — the failure mode a
+    // coverage check has to rule out about ITSELF first.
+    expect(defined.size).toBeGreaterThan(20);
+    expect(defined.has('activity_occurrence')).toBe(true);
+    expect(defined.has('occurrence_age')).toBe(true);
+  });
+
+  it('CANDIDATE_ROWS_SQL references only real tables', () => {
+    const referenced = tablesReferencedBy(CANDIDATE_SQL);
+    expect(referenced.length).toBeGreaterThan(0);
+    const missing = referenced.filter((t) => !defined.has(t));
+    expect(missing, `tables named by the query but absent from supabase/migrations: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('the correction UPDATE targets a real table', () => {
+    const missing = tablesReferencedBy(CORRECTION_UPDATE_SQL).filter((t) => !defined.has(t));
+    expect(missing, `missing: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('rejects the exact names that shipped broken', () => {
+    // The bare forms are NOT tables in this schema; naming them is the bug this test exists for.
+    expect(defined.has('occurrence')).toBe(false);
+    expect(defined.has('series')).toBe(false);
+    expect(CANDIDATE_SQL).toMatch(/FROM activity_occurrence/);
+    expect(CANDIDATE_SQL).toMatch(/JOIN activity_series/);
+  });
+});

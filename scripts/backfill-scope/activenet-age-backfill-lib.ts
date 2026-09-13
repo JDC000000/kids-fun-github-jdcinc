@@ -265,9 +265,9 @@ export const CANDIDATE_ROWS_SQL = `
          oa.age_max_months            AS age_max_months,
          oa.age_notes                 AS age_notes,
          coalesce(array_length(oa.age_band_matches, 1), 0) AS band_count
-    FROM occurrence o
-    JOIN series s   ON s.id = o.series_id
-    JOIN source src ON src.id = s.source_id
+    FROM activity_occurrence o
+    JOIN activity_series s ON s.id = o.series_id
+    JOIN source src        ON src.id = s.source_id
     LEFT JOIN occurrence_age oa ON oa.occurrence_id = o.id
    WHERE src.family = 'activenet'
      AND oa.occurrence_id IS NOT NULL
