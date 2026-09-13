@@ -316,6 +316,39 @@ export function parseAgeText(ageText?: string | null): AgeParse {
   return { ageMinMonths: null, ageMaxMonths: null, resolved: false, notes: `unresolved: ${ageText.trim()}` };
 }
 
+/**
+ * Which of a record's three age signals wins.
+ *
+ * PRECEDENCE IS AN AUTHORITY ORDERING, NOT A CONVENIENCE:
+ *   1. `ageBounds`          — the source's own machine-readable numbers. Not an interpretation.
+ *   2. `ageAudienceLabels`  — the source's own tag taxonomy. Its claim, our union rule.
+ *   3. `ageText`            — OUR reading of the source's prose. The only guess of the three.
+ *
+ * Nothing derived may override something stated. ActiveNet's 19+ karate class calls itself
+ * "for all ages and levels" in prose while its own age field says 19; before this ordering
+ * existed, the prose won and the listing was published as suitable for a newborn.
+ *
+ * Lives here rather than inline in ingest.ts so it is testable without a database — the reason
+ * the previous inline expression had no direct test of its own.
+ */
+export function resolveRecordAge(record: {
+  ageBounds?: { minMonths: number; maxMonths: number | null; notes?: string };
+  ageAudienceLabels?: string[];
+  ageText?: string | null;
+}): AgeParse | null {
+  if (record.ageBounds) {
+    return {
+      ageMinMonths: record.ageBounds.minMonths,
+      ageMaxMonths: record.ageBounds.maxMonths,
+      resolved: true,
+      notes: record.ageBounds.notes,
+    };
+  }
+  if (record.ageAudienceLabels?.length) return parseAudienceLabels(record.ageAudienceLabels);
+  if (record.ageText) return parseAgeText(record.ageText);
+  return null;
+}
+
 // ── structured audience labels (a source's OWN taxonomy, not prose) ──────────
 //
 // parseAgeText() reads ONE free-text phrase and, past the numeric/grade rules,

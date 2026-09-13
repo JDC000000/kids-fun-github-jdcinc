@@ -760,6 +760,12 @@ const ADAPTER_SOURCES = [
   'worker/adapters/activenet/client.ts',
   'worker/adapters/activenet/parse.ts',
   'worker/adapters/activenet/venues.ts',
+  // The activity-record age lookup (/activity/detail/<id>). A READ of the same public,
+  // credential-free portal the calendar endpoints use, through the same shared client, so it
+  // inherits the identical politeness, budget and circuit-breaker policy — it adds no new
+  // surface of its own. Listed because section (D) exists so that claim is checked rather
+  // than taken on trust.
+  'worker/adapters/activenet/activity-age.ts',
   // G-VENUE-1: a committed constant, not a fetcher — listed anyway, because
   // "this one can't make requests" is exactly the assumption a tripwire exists to stop
   // anyone having to trust. (This list stays hand-written so each entry is a deliberate

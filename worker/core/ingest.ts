@@ -26,6 +26,7 @@ import { isTermsApprovedForProduction } from './terms-gate';
 import { withNormalizedTitle } from './title';
 import {
   parseAgeText,
+  resolveRecordAge,
   parseAudienceLabels,
   computeAgeBandMatches,
   loadAgeBands,
@@ -234,21 +235,9 @@ export async function ingestSource(
         // by a different rule (union of every tag, not first-keyword-wins) — see
         // StructuredRecord.ageAudienceLabels. The adapter has already decided which signal
         // won for this record, so there is no precedence logic here beyond "structured first".
-        // Precedence is an authority ordering, not a convenience: the source's own numeric
-        // bounds beat its tag taxonomy, which beats our reading of its prose. Only the first
-        // is free of interpretation, so nothing derived may override it.
-        const ageParse = record.ageBounds
-          ? {
-              ageMinMonths: record.ageBounds.minMonths,
-              ageMaxMonths: record.ageBounds.maxMonths,
-              resolved: true,
-              notes: record.ageBounds.notes,
-            }
-          : record.ageAudienceLabels?.length
-            ? parseAudienceLabels(record.ageAudienceLabels)
-            : record.ageText
-              ? parseAgeText(record.ageText)
-              : null;
+        // Precedence lives in worker/core/age.ts#resolveRecordAge so it is testable
+        // without a database: source numbers > source tags > our reading of source prose.
+        const ageParse = resolveRecordAge(record);
 
         // BR-13: real confidence = authority × parse_quality × freshness × volatility.
         // The gate routes low/unscored records to needs_review (hidden until reviewed)
