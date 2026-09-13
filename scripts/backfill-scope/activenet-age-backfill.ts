@@ -29,6 +29,7 @@ import {
   REASON,
   activityIdFromSourceRecordId,
   buildPlan,
+  candidateParams,
   correctionParams,
   runLookupPhase,
   type RowDecision,
@@ -140,7 +141,7 @@ async function main(): Promise<number> {
       age_max_months: number | null;
       age_notes: string | null;
       band_count: number;
-    }>(CANDIDATE_ROWS_SQL);
+    }>(CANDIDATE_ROWS_SQL, candidateParams());
 
     stored = raw.map((r) => ({
       occurrenceId: r.occurrence_id,

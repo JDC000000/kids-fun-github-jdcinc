@@ -29,6 +29,7 @@
 // next run, and widening a correction tool into a populator is how a backfill's blast radius
 // stops being reviewable.
 import type { ActivityAgeBounds } from '../../worker/adapters/activenet/activity-age';
+import { parseAgeText } from '../../worker/core/age';
 
 /** One occurrence as production stores it, joined to its occurrence_age row if any. */
 export interface StoredAgeRow {
@@ -250,33 +251,59 @@ export function buildPlan(rows: StoredAgeRow[], lookup: LookupPhaseResult): Back
   };
 }
 
+/** Bound values for CANDIDATE_ROWS_SQL, in order. Derived, never typed twice. */
+export function candidateParams(): [number, string] {
+  return [MANUFACTURED_MIN_MONTHS, ALL_AGES_NOTES_PROXY];
+}
+
 /** The activity id is the first segment of `${event_item_id}:${start}:${centre}:${facilities}`. */
 export function activityIdFromSourceRecordId(sourceRecordId: string): number {
   const n = Number((sourceRecordId ?? '').split(':')[0]);
   return Number.isFinite(n) ? n : Number.NaN;
 }
 
+/** The free-text phrase ActiveNet's descriptions carried, which worker/core/age.ts's ALL_AGES_RE
+ *  branch turned into the manufactured claim. */
+export const ACTIVENET_ALL_AGES_TEXT = 'all ages';
+
 /**
- * THE POPULATION THIS TOOL IS ALLOWED TO TOUCH — the exact triple the parser manufactured:
- * age_min_months 0, age_max_months NULL, age_notes 'all-ages'. Written by precisely one branch
- * (worker/core/age.ts's ALL_AGES_RE), which is what makes it a reliable identifier rather than a
- * heuristic.
+ * THE POPULATION THIS TOOL IS ALLOWED TO TOUCH, DERIVED BY RUNNING THE REAL PARSER rather than
+ * hard-coded — the same construction m1-withheld-backfill-lib.ts uses, and for the same reason.
+ * Two files independently agreeing to spell a magic string the same way is a coincidence waiting
+ * to lapse; deriving it means that if worker/core/age.ts ever changes what "all ages" resolves to,
+ * this tool stops matching rows and SAYS SO LOUDLY AT LOAD instead of silently selecting nothing.
  *
- * WHY THIS IS A SCOPE BOUNDARY AND NOT AN OPTIMISATION, stated plainly because its absence was a
- * real defect: without it the query selects EVERY ActiveNet occurrence carrying any age row —
- * measured against production, 13,748 rows across 6,974 distinct activities — and planRow writes a
- * correction for ANY disagreement with the source, for any reason. That is a different and far
- * larger action than "correct the rows one parsing bug manufactured", and it is not the action
- * that was reviewed or approved. The approved population is ~227 rows / ~135 activities.
+ * WHY THIS PREDICATE IS A SCOPE BOUNDARY AND NOT AN OPTIMISATION, stated plainly because its
+ * absence was a real defect: without it the query selects EVERY ActiveNet occurrence carrying any
+ * age row — measured against production, 13,748 rows across 6,974 distinct activities — and
+ * planRow writes a correction for ANY disagreement with the source, for any reason. That is a
+ * different and far larger action than "correct the rows one parsing bug manufactured", and it is
+ * not the action that was reviewed or approved.
  *
- * THE WIDER BUG CLASS IS DELIBERATELY OUT OF SCOPE HERE. The same root cause also produced wrong
- * NARROWER bands (a 19+ class published as 12-18, and so on — see the write-up's §12 measurement).
- * Those rows are real and worth correcting, but they are a separate population needing their own
- * sizing and their own approval. Widening this predicate to reach them is a decision for the
- * Operator, not a convenience for whoever edits this next.
+ * THE WIDER BUG CLASS IS DELIBERATELY OUT OF SCOPE. The same root cause also produced wrong
+ * NARROWER bands (a 19+ class published as 12-18 — see the write-up's §12 measurement). Those rows
+ * are real and worth correcting, but they are a separate population needing their own sizing and
+ * their own approval. Widening this predicate is an Operator decision, not a convenience for
+ * whoever edits this next.
  */
-export const MANUFACTURED_MIN_MONTHS = 0;
-export const MANUFACTURED_NOTES = 'all-ages';
+const MANUFACTURED_CLAIM = parseAgeText(ACTIVENET_ALL_AGES_TEXT);
+
+if (
+  MANUFACTURED_CLAIM.notes !== 'all-ages' ||
+  MANUFACTURED_CLAIM.ageMinMonths !== 0 ||
+  MANUFACTURED_CLAIM.ageMaxMonths !== null
+) {
+  throw new Error(
+    `activenet-age-backfill: parseAgeText(${JSON.stringify(ACTIVENET_ALL_AGES_TEXT)}) no longer resolves to ` +
+      `[0, infinity) notes='all-ages' (got ${JSON.stringify(MANUFACTURED_CLAIM)}). The row-selection ` +
+      `predicate is derived from it, so this tool refuses to run until it is re-derived.`
+  );
+}
+
+/** The manufactured lower bound a bad row holds — [0 months, open-ended). */
+export const MANUFACTURED_MIN_MONTHS: number = MANUFACTURED_CLAIM.ageMinMonths as number;
+/** `age_notes` value that stands in for "this row came from an all-ages ageText". */
+export const ALL_AGES_NOTES_PROXY: string = MANUFACTURED_CLAIM.notes as string;
 
 export const CANDIDATE_ROWS_SQL = `
   SELECT o.id                         AS occurrence_id,
@@ -295,9 +322,9 @@ export const CANDIDATE_ROWS_SQL = `
      AND oa.occurrence_id IS NOT NULL
      -- THE MANUFACTURED PATTERN, AND ONLY IT. See MANUFACTURED_* below for why this predicate
      -- is the scope boundary rather than a performance filter.
-     AND oa.age_min_months = ${MANUFACTURED_MIN_MONTHS}
+     AND oa.age_min_months = $1
      AND oa.age_max_months IS NULL
-     AND oa.age_notes = '${MANUFACTURED_NOTES}'
+     AND oa.age_notes = $2
    ORDER BY o.id
 `;
 

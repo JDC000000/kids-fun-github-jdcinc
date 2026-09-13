@@ -8,11 +8,18 @@ import {
   activityIdFromSourceRecordId,
   CORRECTION_UPDATE_SQL,
   MANUFACTURED_MIN_MONTHS,
-  MANUFACTURED_NOTES,
+  ALL_AGES_NOTES_PROXY,
+  candidateParams,
+  ACTIVENET_ALL_AGES_TEXT,
   REASON,
   type StoredAgeRow,
 } from '../../scripts/backfill-scope/activenet-age-backfill-lib';
 import { assertCorrectionStatement } from '../../scripts/backfill-scope/correcting-db';
+import { parseAgeText } from '../../worker/core/age';
+import {
+  MANUFACTURED_MIN_MONTHS as M1_MANUFACTURED_MIN_MONTHS,
+  ALL_AGES_NOTES_PROXY as M1_ALL_AGES_NOTES_PROXY,
+} from '../../scripts/backfill-scope/m1-withheld-backfill-lib';
 
 const row = (over: Partial<StoredAgeRow> = {}): StoredAgeRow => ({
   occurrenceId: 'occ-1',
@@ -386,25 +393,38 @@ describe('every table the backfill names really exists in the schema', () => {
 // ActiveNet rows, only the two carrying the manufactured triple are selected.
 describe('the candidate query selects ONLY the manufactured-all-ages population', () => {
   it('pins all three parts of the pattern predicate', () => {
-    expect(CANDIDATE_SQL).toMatch(/age_min_months\s*=\s*0/);
+    expect(CANDIDATE_SQL).toMatch(/age_min_months\s*=\s*\$1/);
     expect(CANDIDATE_SQL).toMatch(/age_max_months\s+IS\s+NULL/i);
-    expect(CANDIDATE_SQL).toMatch(/age_notes\s*=\s*'all-ages'/);
+    expect(CANDIDATE_SQL).toMatch(/age_notes\s*=\s*\$2/);
   });
 
   it('does not select on source family alone — the defect this guards', () => {
-    // Strip the pattern predicate and what remains must NOT be a complete filter. Expressed as a
-    // count so that removing ANY one of the three conditions fails, not just all three.
+    // Expressed as a count so that removing ANY one of the three conditions fails, not just all.
     const patternConditions = [
-      /age_min_months\s*=\s*0/,
+      /age_min_months\s*=\s*\$1/,
       /age_max_months\s+IS\s+NULL/i,
-      /age_notes\s*=\s*'all-ages'/,
+      /age_notes\s*=\s*\$2/,
     ].filter((re) => re.test(CANDIDATE_SQL)).length;
     expect(patternConditions, 'all three pattern conditions must be present').toBe(3);
   });
 
-  it('the constants the predicate is built from match the documented triple', () => {
-    expect(MANUFACTURED_MIN_MONTHS).toBe(0);
-    expect(MANUFACTURED_NOTES).toBe('all-ages');
+  it('DERIVES the pattern from the real parser rather than a fresh literal', () => {
+    // Two files independently agreeing to spell a magic string the same way is a coincidence
+    // waiting to lapse. These must come from parseAgeText, so a change there breaks this loudly.
+    const derived = parseAgeText(ACTIVENET_ALL_AGES_TEXT);
+    expect(derived.notes).toBe(ALL_AGES_NOTES_PROXY);
+    expect(derived.ageMinMonths).toBe(MANUFACTURED_MIN_MONTHS);
+    expect(derived.ageMaxMonths).toBeNull();
+  });
+
+  it('binds those derived values as the query parameters', () => {
+    expect(candidateParams()).toEqual([0, 'all-ages']);
+  });
+
+  it('matches the shape m1-withheld-backfill already proved', () => {
+    // Same triple, same derivation strategy, independently derived from PerfectMind's own phrase.
+    expect(MANUFACTURED_MIN_MONTHS).toBe(M1_MANUFACTURED_MIN_MONTHS);
+    expect(ALL_AGES_NOTES_PROXY).toBe(M1_ALL_AGES_NOTES_PROXY);
   });
 
   it('still scopes to the activenet family', () => {
