@@ -145,11 +145,25 @@ export function classifyCost(event: ActiveNetEvent): CostVerdict {
  *  current, not as frozen. */
 const AGE_PHRASE_NUMERIC =
   String.raw`ages?\s*\d{1,2}\s*(?:-|–|to)\s*\d{1,2}|\bages?\s*\d{1,2}\s*\+|\b\d{1,2}\s*(?:-|–|to)\s*\d{1,2}\s*(?:yrs?|years)|\b\d{1,2}\s*\+\s*(?:yrs?|years)`;
+/**
+ * Audience words a DESCRIPTION may state.
+ *
+ * `all ages` IS DELIBERATELY ABSENT, and its absence is the safety rule of this module.
+ * An all-ages claim is the most permissive statement this product can make — it matches every
+ * band including under-2 — so it is published ONLY when the source attributes it directly: in
+ * the TITLE (see TITLE_STATES_AGE_RE, which still admits it) or in a structured age field.
+ * Measured live on the source's own API, 2026-09-12: `Karate - Ku Yu Kai Go-Ju Ryu (Adults)`
+ * (age_min_year 19) says "teaches classes for all ages and levels" — a sentence about the
+ * INSTRUCTORS; `Wu's Tai Chi` (age_min_year 50) says "for people of all ages and health
+ * conditions"; `Bootcamp Circuits` (age_min_year 19) says "This all ages, circuit-based class".
+ * In every case the phrase is marketing colloquial for "any level, come along" and the venue
+ * states a real numeric bound elsewhere. Prose cannot carry this claim.
+ */
 const AGE_PHRASE_KEYWORD =
-  String.raw`\ball\s+ages\b|\bpreschool(?:ers?)?\b|\btoddlers?\b|\bbabies\b|\byouth\b|\bteens?\b`;
-const AGE_PHRASE_RE = new RegExp(`(?:${AGE_PHRASE_NUMERIC}|${AGE_PHRASE_KEYWORD})`, 'i');
-/** Every numeric phrase in the text, in order — the scan statedAgePhrase() walks. */
-const AGE_PHRASE_NUMERIC_RE = new RegExp(`(?:${AGE_PHRASE_NUMERIC})`, 'gi');
+  String.raw`\bpreschool(?:ers?)?\b|\btoddlers?\b|\bbabies\b|\byouth\b|\bteens?\b`;
+/** Every age phrase in the text, in order — the scan statedAgePhrase() walks. Numbers and
+ *  audience words together, because both are now held to the same evidence bar. */
+const AGE_PHRASE_SCAN_RE = new RegExp(`(?:${AGE_PHRASE_NUMERIC}|${AGE_PHRASE_KEYWORD})`, 'gi');
 /** Is a matched phrase a bare audience WORD rather than a stated number? */
 const AGE_PHRASE_IS_KEYWORD_RE = new RegExp(`^(?:${AGE_PHRASE_KEYWORD})$`, 'i');
 
@@ -157,7 +171,7 @@ const AGE_PHRASE_IS_KEYWORD_RE = new RegExp(`^(?:${AGE_PHRASE_KEYWORD})$`, 'i');
  * Wording that makes a nearby number a rule about SOMEONE ELSE, or about money — not a
  * statement of who the programme is for.
  *
- * THIS LIST IS THE WHOLE FIX AND EVERY ENTRY IN IT IS MEASURED. `AGE_PHRASE_RE` is
+ * THIS LIST IS THE WHOLE FIX AND EVERY ENTRY IN IT IS MEASURED. The candidate scan is
  * first-position-wins, and on this platform the vaguer word usually sits earlier in the
  * paragraph than the specific range: "for pre-teens and youth ages 8-18" publishes as
  * 12–18 off `teens`, excluding the 8–11-year-olds the sentence names. Preferring the
@@ -225,23 +239,69 @@ const AGE_CLAIM_WINDOW = 80;
  * Resolving that record properly needs a union-of-ranges capability this adapter does not
  * have and should not grow here.
  */
-function statedAgePhrase(description: string): string | undefined {
-  const leftmost = AGE_PHRASE_RE.exec(description)?.[0];
-  if (!leftmost || !AGE_PHRASE_IS_KEYWORD_RE.test(leftmost)) return leftmost;
+interface AgeCandidate {
+  /** The matched phrase, as the source spelled it. */
+  text: string;
+  index: number;
+  /** A bare audience WORD ("youth") rather than a stated NUMBER ("6-12 years"). */
+  isKeyword: boolean;
+}
 
-  const stated = new Map<string, string>();
-  AGE_PHRASE_NUMERIC_RE.lastIndex = 0;
-  for (let m = AGE_PHRASE_NUMERIC_RE.exec(description); m; m = AGE_PHRASE_NUMERIC_RE.exec(description)) {
-    const window = description.slice(
-      Math.max(0, m.index - AGE_CLAIM_WINDOW),
-      m.index + m[0].length + AGE_CLAIM_WINDOW
-    );
-    if (AGE_CLAIM_DISQUALIFIER_RE.test(window)) continue;
-    // Keyed on the claim, not the spelling: one age repeated is still one age.
-    stated.set(m[0].toLowerCase().replace(/\s+/g, ''), m[0]);
-    if (stated.size > 1) return leftmost;
+/** Every age phrase in the text, in document order, numbers and words together. */
+function ageCandidates(description: string): AgeCandidate[] {
+  const found: AgeCandidate[] = [];
+  AGE_PHRASE_SCAN_RE.lastIndex = 0;
+  for (let m = AGE_PHRASE_SCAN_RE.exec(description); m; m = AGE_PHRASE_SCAN_RE.exec(description)) {
+    found.push({ text: m[0], index: m.index, isKeyword: AGE_PHRASE_IS_KEYWORD_RE.test(m[0]) });
   }
-  return stated.size === 1 ? [...stated.values()][0] : leftmost;
+  return found;
+}
+
+/**
+ * Is this phrase the programme's own age, or a rule about someone else?
+ *
+ * THE ASYMMETRY THIS REMOVES WAS THE DEFECT. AGE_CLAIM_DISQUALIFIER_RE used to be consulted
+ * only for phrases competing to OVERRIDE a leading keyword — so whatever was returned by the
+ * two fallback paths was returned unvetted, and both paths were live in production:
+ *
+ *   • a bare word: "All ages programs, children 6-12 years must be accompanied by a
+ *     participating adult." published [0, infinity) + all five bands on adult Tai Chi, Tae Kwon
+ *     Do, bootcamp and 19+/50+ martial-arts listings. The same sentence's own number was
+ *     CORRECTLY discarded as a supervision rule while the word four tokens earlier was trusted.
+ *   • a bare number: the identical sentence with no audience word in front of it —
+ *     "Children 6-12 years must be accompanied by a participating adult." — published ages
+ *     6-12 on an adults-only class, because a numeric leftmost match returned immediately.
+ *     The disqualifier had simply never run on that path; its protection was incidental on a
+ *     keyword happening to sit earlier in the paragraph.
+ *
+ * One rule for every candidate is the root-cause fix: evidence is evidence regardless of shape.
+ */
+function isQualifiedClaim(description: string, candidate: AgeCandidate): boolean {
+  const window = description.slice(
+    Math.max(0, candidate.index - AGE_CLAIM_WINDOW),
+    candidate.index + candidate.text.length + AGE_CLAIM_WINDOW
+  );
+  return !AGE_CLAIM_DISQUALIFIER_RE.test(window);
+}
+
+function statedAgePhrase(description: string): string | undefined {
+  const qualified = ageCandidates(description).filter((c) => isQualifiedClaim(description, c));
+  const first = qualified[0];
+  if (!first) return undefined;
+  if (!first.isKeyword) return first.text;
+
+  // A stated NUMBER beats the vaguer word that came first — but only when the description
+  // states exactly ONE. Two different ranges is not a precedence problem, it is a description
+  // that does not state a single programme age ("Younger youth, aged 11-13 ... Older youth,
+  // aged 13-18"), and picking either one drops real children. Keyed on the claim rather than
+  // the spelling, so one age repeated is still one age.
+  const stated = new Map<string, string>();
+  for (const c of qualified) {
+    if (c.isKeyword) continue;
+    stated.set(c.text.toLowerCase().replace(/\s+/g, ''), c.text);
+    if (stated.size > 1) return first.text;
+  }
+  return stated.size === 1 ? [...stated.values()][0] : first.text;
 }
 
 /** A number that is plausibly an AGE. The guards are worker/core/age.ts's, and for its
