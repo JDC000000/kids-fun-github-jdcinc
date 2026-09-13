@@ -19,6 +19,7 @@ import {
   PREFS_UNKNOWN_TOKEN_HEADING,
 } from '@/lib/sms/consent-copy';
 import { resolvePreferences, type PreferencesView } from '@/lib/sms/preferences';
+import { InstantPicks } from './_components/InstantPicks';
 import { PreferencesForm } from './_components/PreferencesForm';
 
 // /u/[preferencesToken] — the no-login preferences / hub page (PRD §2.4), linked in the footer of
@@ -171,6 +172,17 @@ export default async function PreferencesPage({
 
   const { view } = resolution;
 
+  /**
+   * Is there anything here for this subscriber to DO?
+   *
+   * One expression, read by both the edit form and the Instant Picks button, because they answer
+   * the same question: a purged row has nothing left to act on, and a stopped one asked us to
+   * stop. Written once rather than twice so the two controls cannot drift apart — the server
+   * enforces the same rule independently (`findInstantPicksSubscriber`, `performPreferencesAction`),
+   * and this is the UI half of it.
+   */
+  const editable = !view.purged && view.status !== 'stopped';
+
   return (
     <main className="kf-prefs">
       <div className="kf-prefs__panel">
@@ -205,6 +217,21 @@ export default async function PreferencesPage({
               ))}
             </ol>
           )}
+
+          {/* ═══ INSTANT PICKS — the fuller list, on demand (plan v1.0) ═══
+              INSIDE the "Last Friday" section rather than below it, because that is literally what
+              was asked for: more things in this section. The panel above says what we SENT; this
+              says what is on, at the same length the Friday text runs to.
+
+              GATED ON `editable` — the SAME expression the edit form below reads, not a second
+              copy of the same condition. A stopped or purged subscriber has nothing here: the
+              route refuses them anyway (see `findInstantPicksSubscriber`), and rendering a button
+              guaranteed to fail is a worse answer than not offering it.
+
+              A CLIENT COMPONENT, so nothing runs until it is pressed. See its own header: a search
+              on page load would spend a rate-limit budget belonging to someone who came here to
+              unsubscribe, and would put a catalogue scan in front of the CASL control. */}
+          {editable && <InstantPicks token={params.preferencesToken} />}
         </section>
 
         {/* A purged or stopped subscriber has nothing to edit, and offering the form would imply
@@ -213,7 +240,7 @@ export default async function PreferencesPage({
         <PreferencesForm
           token={params.preferencesToken}
           view={view}
-          editable={!view.purged && view.status !== 'stopped'}
+          editable={editable}
         />
 
         {/* ── CASL sender identification (§1.4) + carrier disclosures + legal links. ──

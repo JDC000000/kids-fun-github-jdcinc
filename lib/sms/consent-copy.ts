@@ -527,6 +527,77 @@ export const PREFS_LAST_WEEK_NONE = 'We haven’t sent you an SMS yet.';
 export const PREFS_LAST_WEEK_EMPTY =
   'Nothing near your kids matched last week, so we said so rather than padding the list.';
 
+// ── Instant Picks — the "show me more" button inside the Last Friday section ──────────────
+//
+// ⚠ NOT ONE OF THESE STRINGS MAY IMPLY A TEXT WILL BE SENT, AND THAT IS A COMPLIANCE RULE RATHER
+// THAN A TONE PREFERENCE.
+//
+// `MESSAGE_FREQUENCY_DISCLOSURE` — "1 message per week, plus a one-time confirmation message" —
+// is rendered on this very page, a few centimetres below this button, inside CARRIER_DISCLOSURES.
+// That line is a carrier disclosure: it is the statement a Toll-Free Verification reviewer checks
+// the messaging behaviour against. A button here that said "text me this list", or copy that read
+// as though one were coming, would sit directly above a sentence it contradicts.
+//
+// Which is why this feature is PAGE-ONLY and there is no send path anywhere behind it. If a "text
+// me this" option is ever wanted, it starts by changing the frequency disclosure and talking to
+// carrier verification — not by adding a button and writing the copy afterwards. So: every verb
+// below is about SHOWING, and none is about SENDING. Keep it that way.
+
+export const PREFS_INSTANT_HEADING = 'Want more than that?';
+export const PREFS_INSTANT_BODY =
+  'We can show you a longer list for this weekend, picked the same way — using your area, your '
+  + 'kids’ ages and what you’re interested in.';
+export const PREFS_INSTANT_BUTTON = 'Show me more for this weekend';
+export const PREFS_INSTANT_LOADING = 'Looking…';
+
+/** The four honest states a press can land in. One sentence each, no jargon, no blame. */
+
+/** Results. `areaLabel` is the subscriber's own area, as the weekly text says it ("East Van"). */
+export function instantPicksResultLine(count: number, areaLabel: string | null): string {
+  const what = `${count} ${count === 1 ? 'thing' : 'things'} on this weekend`;
+  return areaLabel ? `${what} near ${areaLabel}.` : `${what}.`;
+}
+
+/**
+ * We had to look further out than usual to fill the list. SAID RATHER THAN HIDDEN — the selector
+ * reports its own degradation precisely so the copy layer cannot reach a different conclusion than
+ * the selection did, and a parent who drives to something 20km away deserves to know we widened.
+ */
+export const PREFS_INSTANT_WIDENED = 'We looked a bit further out than usual to fill this list.';
+
+/** Widened AND had to ignore the interests they ticked. A stronger caveat, so it gets its own. */
+export const PREFS_INSTANT_INTERESTS_DROPPED =
+  'We looked further out and beyond what you’re interested in, so some of these are outside it.';
+
+/**
+ * Nothing right now.
+ *
+ * The engine treats "fewer than three things" as empty rather than showing two, and that is
+ * DELIBERATE HERE TOO, not an inherited quirk: falling below the floor is what makes the selector
+ * widen its search first, and that widening is what produces the longer list this button exists to
+ * give. Showing two things immediately would skip it. So on a genuinely thin weekend this says an
+ * honest nothing, in the same voice PREFS_LAST_WEEK_EMPTY uses two paragraphs above.
+ */
+export const PREFS_INSTANT_EMPTY =
+  'Nothing near your kids for this weekend yet — we’d rather say so than pad the list.';
+
+/**
+ * We could not check. NEVER conflated with "there is nothing": the search either did not run or
+ * could not load, and reporting that as an empty weekend is a false statement about the catalogue.
+ */
+export const PREFS_INSTANT_UNAVAILABLE =
+  'We can’t check right now. Try again in a little while.';
+
+/**
+ * Too fast.
+ *
+ * Says nothing about WHICH limit was hit or how close they are to it — the same posture the signup
+ * route takes, and for the same reason: the numbers are ours, the wait is theirs. The actual wait
+ * comes from the response's `retry-after`, so this sentence never has to be rewritten when the
+ * limits are retuned.
+ */
+export const PREFS_INSTANT_THROTTLED = 'Just a moment — you can do that again shortly.';
+
 export const PREFS_EDIT_HEADING = 'What we use to find your kids’ activities';
 export const PREFS_SAVE = 'Save changes';
 export const PREFS_SAVING = 'Saving…';

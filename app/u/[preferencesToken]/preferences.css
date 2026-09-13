@@ -286,3 +286,39 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ── Instant Picks — the on-demand fuller list inside the "Last Friday" section ──
+   Indented and rule-separated so it reads as a follow-on WITHIN that section rather than as a
+   fourth top-level section: it is answering a different question about the same subject, and
+   giving it section chrome would make the page look like it had grown a feature rather than
+   gained a control. Uses the same hairline and spacing tokens .kf-prefs__section does, at one
+   step down, so the nesting is legible without a second visual language. */
+.kf-prefs__instant {
+  border-top: 1px solid var(--kf-hairline);
+  padding-top: var(--kf-space-4);
+  margin-top: var(--kf-space-4);
+}
+
+.kf-prefs__instant-heading {
+  font-size: 1rem;
+  margin: 0 0 var(--kf-space-2);
+}
+
+.kf-prefs__instant-result {
+  margin-top: var(--kf-space-4);
+}
+
+/* An always-present live region (see the component — one inserted at the moment it gains content
+   is announced unreliably) must not leave a gap on a page whose default state is never having
+   pressed the button. */
+.kf-prefs__instant-result:empty {
+  display: none;
+  margin-top: 0;
+}
+
+/* The venue, subordinate to the name it qualifies. Deliberately NOT a link: one tap target per
+   row, so a thumb on a phone cannot miss the activity and land on the venue instead. */
+.kf-prefs__instant-venue {
+  color: var(--kf-ink-secondary);
+  font-size: 0.875rem;
+}

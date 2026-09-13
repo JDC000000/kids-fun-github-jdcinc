@@ -21,6 +21,7 @@ import { redactPhone } from './redact';
 import type { SmsSignup } from './signup-validate';
 import { dispatchSms, type DispatchResult } from './twilio-client';
 import { recordSmsSend } from './send-log';
+import { countAttempt, explainRefusal } from './throttle';
 
 export type SignupWriteOutcome =
   | 'created'
@@ -423,90 +424,12 @@ function signupIpHash(ip: string | null): string | null {
   return createHmac('sha256', salt).update(`sms-signup-ip:${ip}`).digest('hex');
 }
 
-/**
- * Count one signup attempt against one subject, and say whether it is allowed — ATOMICALLY.
- *
- * ═══ THE DECISION AND THE WRITE ARE ONE STATEMENT, AND THAT IS THE WHOLE POINT ═══
- * The readable implementation is `SELECT count(...)` then `INSERT`, and it does not work: two
- * concurrent POSTs both take their snapshot before either writes, both see the same count, and
- * both are allowed. Serverless is precisely where fifty simultaneous requests are one line of
- * shell, so a check-then-write throttle throttles only polite callers. Putting the INSERT in a
- * CTE of the SELECT does not help either — same snapshot, same race.
- *
- * `ON CONFLICT ... DO UPDATE` takes a ROW LOCK on the conflicting row, so the second request
- * blocks until the first commits and then re-evaluates its `WHERE` against the row the first one
- * just wrote. One round trip, no window.
- *
- * ZERO ROWS RETURNED ⟺ REFUSED. When the `WHERE` is false the conflict action is skipped
- * entirely: nothing is updated and nothing is returned. That also means A REFUSED ATTEMPT DOES
- * NOT MOVE `last_attempt_at`, so hammering cannot extend a caller's own lockout — which matters
- * because the caller retrying three times in a minute is usually a parent who did not get the
- * text, not an attacker.
- */
-async function countAttempt(
-  run: typeof query,
-  scope: 'phone' | 'ip',
-  subjectHash: string,
-  perDay: number,
-  minIntervalSeconds: number
-): Promise<{ allowed: boolean; attempts: number }> {
-  const rows = await run<{ attempts: number }>(
-    `INSERT INTO sms_signup_throttle (scope, subject_hash)
-          VALUES ($1, $2)
-     ON CONFLICT (scope, subject_hash, window_date) DO UPDATE
-            SET attempts        = sms_signup_throttle.attempts + 1,
-                last_attempt_at = now()
-          WHERE sms_signup_throttle.attempts < $3
-            AND sms_signup_throttle.last_attempt_at <= now() - make_interval(secs => $4::int)
-      RETURNING attempts`,
-    [scope, subjectHash, perDay, minIntervalSeconds]
-  );
-  const row = rows[0];
-  return { allowed: Boolean(row), attempts: row?.attempts ?? 0 };
-}
-
-/**
- * WHY the refused subject was refused, and for how long. Read-only, and only on the refused path.
- *
- * A second query rather than more RETURNING, because there is nothing to return: the whole point
- * of the statement above is that it touches no row when it refuses. This one runs at most once
- * per rejected request, which is the request we are least worried about the cost of.
- *
- * Falls back to the minimum interval if the row has vanished between the two statements (a
- * retention sweep at midnight, essentially), rather than reporting a confident zero.
- */
-async function explainRefusal(
-  run: typeof query,
-  scope: 'phone' | 'ip',
-  subjectHash: string,
-  perDay: number,
-  minIntervalSeconds: number
-): Promise<{ daily: boolean; retryAfterSeconds: number }> {
-  const rows = await run<{ attempts: number; since_last: number }>(
-    `SELECT attempts, extract(epoch FROM now() - last_attempt_at)::int AS since_last
-       FROM sms_signup_throttle
-      WHERE scope = $1 AND subject_hash = $2
-        AND window_date = (now() AT TIME ZONE 'UTC')::date`,
-    [scope, subjectHash]
-  );
-  const row = rows[0];
-  if (!row) return { daily: false, retryAfterSeconds: minIntervalSeconds };
-  if (row.attempts >= perDay) {
-    // Until the UTC day rolls over, which is when the counter's bucket changes.
-    const now = new Date();
-    const midnightUtc = Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate() + 1,
-      0, 0, 0, 0
-    );
-    return { daily: true, retryAfterSeconds: Math.max(1, Math.ceil((midnightUtc - now.getTime()) / 1000)) };
-  }
-  return {
-    daily: false,
-    retryAfterSeconds: Math.max(1, minIntervalSeconds - Math.max(0, row.since_last)),
-  };
-}
+// `countAttempt` and `explainRefusal` MOVED to lib/sms/throttle.ts when Instant Picks became
+// the second caller of this table (migration 0046). The atomic INSERT..ON CONFLICT is the only
+// thing making this throttle correct under concurrency, and a second copy of it would be a
+// second thing to get subtly wrong — so it is shared rather than duplicated, exactly as
+// migration 0045's header anticipated. The LIMITS and the subject hashing stay here, because
+// they are this caller's policy rather than the storage's.
 
 /**
  * The one call the signup route makes before it writes anything or sends anything.
