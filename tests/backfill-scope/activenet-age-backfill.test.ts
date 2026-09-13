@@ -1,8 +1,9 @@
 // tests/backfill-scope/activenet-age-backfill.test.ts — the correction plan, without a database.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   planRow,
   buildPlan,
+  runLookupPhase,
   correctionParams,
   activityIdFromSourceRecordId,
   CORRECTION_UPDATE_SQL,
@@ -99,9 +100,17 @@ describe('buildPlan', () => {
       row({ occurrenceId: 'c', activityId: 2, activityName: '|Public Skate|' }),
       row({ occurrenceId: 'd', activityId: 3 }),
     ];
-    const source = (id: number) =>
-      id === 1 ? { minMonths: 228, maxMonths: null } : id === 2 ? { minMonths: 0, maxMonths: null, notes: 'all-ages' } : undefined;
-    const plan = buildPlan(rows, source);
+    const plan = buildPlan(rows, {
+      answers: new Map<number, any>([
+        [1, { minMonths: 228, maxMonths: null }],
+        [2, { minMonths: 0, maxMonths: null, notes: 'all-ages' }],
+        // id 3 deliberately absent — never asked about
+      ]),
+      complete: true,
+      asked: 2,
+      total: 3,
+      haltReason: null,
+    });
     expect(plan.counts).toMatchObject({ rows: 4, set: 2, leave: 1, ambiguous: 1, admitsTooYoung: 2, wasAllAges: 2 });
     expect(plan.distinctActivities).toBe(3);
     expect(plan.byReason[REASON.SET_CONTRADICTED]).toBe(2);
@@ -109,7 +118,13 @@ describe('buildPlan', () => {
 
   it('a second run over already-corrected rows writes nothing', () => {
     const corrected = row({ ageMinMonths: 228, ageMaxMonths: null, ageNotes: null });
-    const plan = buildPlan([corrected], () => ({ minMonths: 228, maxMonths: null }));
+    const plan = buildPlan([corrected], {
+      answers: new Map<number, any>([[622061, { minMonths: 228, maxMonths: null }]]),
+      complete: true,
+      asked: 1,
+      total: 1,
+      haltReason: null,
+    });
     expect(plan.counts.set).toBe(0);
     expect(plan.counts.leave).toBe(1);
   });
@@ -156,5 +171,138 @@ describe('activityIdFromSourceRecordId', () => {
   });
   it('is NaN when there is no usable id, so planRow can refuse it', () => {
     expect(Number.isNaN(activityIdFromSourceRecordId('noid:x:1:2'))).toBe(true);
+  });
+});
+
+
+// ── THE HARD GATE: a portal failure must reach the REPORT as "never asked" ────────────────
+//
+// The Operator blocked the production run on this specific path, and the reviewer's bar is that
+// the failure ORIGINATES AT THE FETCH/CLIENT LAYER and propagates — not hand-fed at planRow(),
+// which is the boundary that already behaves correctly and is exactly why the original defect
+// went unnoticed. So these drive a real stubbed fetch through the real ActiveNetAdapter client,
+// the real ActivityAgeResolver, the real runLookupPhase and the real buildPlan.
+import { ActivityAgeResolver, isFatalPortalError } from '../../worker/adapters/activenet/activity-age';
+import { RequestBudget } from '../../worker/adapters/activenet/client';
+import { getTenantConfig } from '../../worker/adapters/activenet/config';
+import { clearPolicyState } from '../../worker/health/policy';
+
+describe('a real portal failure reaches the plan as AMBIGUOUS, not as "source has no age"', () => {
+  const VANCOUVER = getTenantConfig('vancouver')!;
+  const NO_SLEEP = { sleepImpl: async () => {} };
+  beforeEach(() => clearPolicyState());
+
+  /** Answers for the listed ids, then returns `status` for every id after that. */
+  function portalThatGivesUp(good: Record<number, Record<string, unknown>>, status: number) {
+    const asked: number[] = [];
+    const impl = (async (input: string | URL) => {
+      const id = Number(new URL(String(input)).pathname.split('/').pop());
+      asked.push(id);
+      const detail = good[id];
+      if (!detail) return new Response('stop', { status });
+      return new Response(JSON.stringify({ headers: { response_code: '0000' }, body: { detail } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    return { asked, impl };
+  }
+
+  const rows = (ids: number[]): StoredAgeRow[] =>
+    ids.map((id) => ({
+      occurrenceId: `occ-${id}`,
+      activityId: id,
+      activityName: `Activity ${id}`,
+      hasAgeRow: true,
+      ageMinMonths: 0,
+      ageMaxMonths: null,
+      ageNotes: 'all-ages',
+      bandCount: 5,
+    }));
+
+  it('a 429 part way through stops the phase and marks the run INCOMPLETE', async () => {
+    const { asked, impl } = portalThatGivesUp(
+      { 1: { age_description: '19 yrs +,', age_min_year: 19 }, 2: { age_description: 'All ages,' } },
+      429
+    );
+    const resolver = new ActivityAgeResolver(VANCOUVER, {
+      budget: new RequestBudget('v', 50),
+      fetchImpl: impl,
+      ...NO_SLEEP,
+    });
+
+    const lookup = await runLookupPhase([1, 2, 3, 4], (id) => resolver.resolve(id), isFatalPortalError);
+
+    expect(lookup.complete).toBe(false);
+    expect(lookup.asked).toBe(2);
+    expect(lookup.total).toBe(4);
+    expect(lookup.haltReason).toMatch(/429|rate/i);
+    // and it stopped ASKING — it did not keep hammering a portal that just refused
+    expect(asked).toEqual([1, 2, 3]);
+
+    const plan = buildPlan(rows([1, 2, 3, 4]), lookup);
+    expect(plan.lookupComplete).toBe(false);
+
+    // THE WHOLE POINT: the un-asked rows must be AMBIGUOUS, never "source is silent".
+    const byId = new Map(plan.decisions.map((d) => [d.activityId, d]));
+    expect(byId.get(3)!.action).toBe('ambiguous');
+    expect(byId.get(3)!.reason).toBe(REASON.AMBIGUOUS_LOOKUP_FAILED);
+    expect(byId.get(4)!.reason).toBe(REASON.AMBIGUOUS_LOOKUP_FAILED);
+    expect(byId.get(3)!.reason).not.toBe(REASON.LEAVE_SOURCE_SILENT);
+    expect(plan.counts.ambiguous).toBe(2);
+    // the two it DID verify are still corrected — a partial run is not a wasted one
+    expect(byId.get(1)!.action).toBe('set');
+  });
+
+  it('a 403 block behaves the same way', async () => {
+    const { impl } = portalThatGivesUp({ 1: { age_description: '19 yrs +,', age_min_year: 19 } }, 403);
+    const resolver = new ActivityAgeResolver(VANCOUVER, { budget: new RequestBudget('v', 50), fetchImpl: impl, ...NO_SLEEP });
+    const lookup = await runLookupPhase([1, 2], (id) => resolver.resolve(id), isFatalPortalError);
+    expect(lookup.complete).toBe(false);
+    expect(buildPlan(rows([1, 2]), lookup).decisions[1].reason).toBe(REASON.AMBIGUOUS_LOOKUP_FAILED);
+  });
+
+  it('a REAL request-cap exhaustion stops the phase — the Operator\'s named case', async () => {
+    const { impl } = portalThatGivesUp(
+      { 1: { age_description: '19 yrs +,', age_min_year: 19 }, 2: { age_description: 'All ages,' }, 3: { age_description: '55 yrs +,', age_min_year: 55 } },
+      200
+    );
+    // cap of 2 => the third lookup raises RequestCapExceededError from inside the client
+    const resolver = new ActivityAgeResolver(VANCOUVER, { budget: new RequestBudget('v', 2), fetchImpl: impl, ...NO_SLEEP });
+    const lookup = await runLookupPhase([1, 2, 3], (id) => resolver.resolve(id), isFatalPortalError);
+
+    expect(lookup.complete).toBe(false);
+    expect(lookup.asked).toBe(2);
+    expect(lookup.haltReason).toMatch(/cap/i);
+    const plan = buildPlan(rows([1, 2, 3]), lookup);
+    expect(plan.lookupComplete).toBe(false);
+    expect(plan.decisions[2].reason).toBe(REASON.AMBIGUOUS_LOOKUP_FAILED);
+  });
+
+  it('a COMPLETE phase says so, so the flag means something', async () => {
+    const { impl } = portalThatGivesUp({ 1: { age_description: '19 yrs +,', age_min_year: 19 } }, 200);
+    const resolver = new ActivityAgeResolver(VANCOUVER, { budget: new RequestBudget('v', 50), fetchImpl: impl, ...NO_SLEEP });
+    const lookup = await runLookupPhase([1], (id) => resolver.resolve(id), isFatalPortalError);
+    expect(lookup.complete).toBe(true);
+    expect(lookup.haltReason).toBeNull();
+    expect(buildPlan(rows([1]), lookup).lookupComplete).toBe(true);
+  });
+
+  it('a NON-fatal error does not stop the run — it is one ambiguous row, not a halt', async () => {
+    // 404 on id 2 only: the phase must continue and finish.
+    const impl = (async (input: string | URL) => {
+      const id = Number(new URL(String(input)).pathname.split('/').pop());
+      if (id === 2) return new Response('gone', { status: 404 });
+      return new Response(JSON.stringify({ headers: { response_code: '0000' }, body: { detail: { age_description: '19 yrs +,', age_min_year: 19 } } }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const resolver = new ActivityAgeResolver(VANCOUVER, { budget: new RequestBudget('v', 50), fetchImpl: impl, ...NO_SLEEP });
+    const lookup = await runLookupPhase([1, 2, 3], (id) => resolver.resolve(id), isFatalPortalError);
+    expect(lookup.complete).toBe(true);
+    expect(lookup.asked).toBe(3);
+    const plan = buildPlan(rows([1, 2, 3]), lookup);
+    expect(plan.decisions[1].reason).toBe(REASON.AMBIGUOUS_LOOKUP_FAILED);
+    expect(plan.decisions[0].action).toBe('set');
   });
 });

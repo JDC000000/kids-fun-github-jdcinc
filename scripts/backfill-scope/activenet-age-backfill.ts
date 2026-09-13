@@ -30,10 +30,11 @@ import {
   activityIdFromSourceRecordId,
   buildPlan,
   correctionParams,
+  runLookupPhase,
   type RowDecision,
   type StoredAgeRow,
 } from './activenet-age-backfill-lib';
-import { ActivityAgeResolver, type ActivityAgeBounds } from '../../worker/adapters/activenet/activity-age';
+import { ActivityAgeResolver, isFatalPortalError } from '../../worker/adapters/activenet/activity-age';
 import { RequestBudget } from '../../worker/adapters/activenet/client';
 import { getTenantConfig } from '../../worker/adapters/activenet/config';
 import { computeAgeBandMatches, type AgeBandRow } from '../../worker/core/age';
@@ -49,6 +50,8 @@ const DEFAULT_MAX_LOOKUPS = 600;
 
 interface Args {
   apply: boolean;
+  /** Explicitly acknowledge applying a plan whose lookup phase did not finish. */
+  allowPartial: boolean;
   json: string | null;
   maxRows: number;
   maxLookups: number;
@@ -58,6 +61,7 @@ interface Args {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     apply: false,
+    allowPartial: false,
     json: null,
     maxRows: DEFAULT_MAX_ROWS,
     maxLookups: DEFAULT_MAX_LOOKUPS,
@@ -65,6 +69,7 @@ function parseArgs(argv: string[]): Args {
   };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--apply' || argv[i] === '--write') args.apply = true;
+    else if (argv[i] === '--allow-partial') args.allowPartial = true;
     else if (argv[i] === '--json') args.json = argv[++i] ?? null;
     else if (argv[i] === '--max-rows') args.maxRows = Number(argv[++i]);
     else if (argv[i] === '--max-lookups') args.maxLookups = Number(argv[++i]);
@@ -145,21 +150,16 @@ async function main(): Promise<number> {
     // ── the network phase, over the read-only plan only ──────────────────────────────────
     const ids = [...new Set(stored.map((s) => s.activityId).filter((n) => Number.isFinite(n) && n > 0))];
     console.log(`distinct activities to ask the source about: ${ids.length} (cap ${args.maxLookups})`);
-    const answers = new Map<number, ActivityAgeBounds | null | undefined>();
-    for (const id of ids) {
-      try {
-        answers.set(id, await resolver.resolve(id));
-      } catch (err) {
-        // Budget/circuit-breaker errors stop the lookup phase but must not destroy the plan:
-        // everything already answered is still a valid, reviewable correction, and the
-        // unanswered remainder is reported as ambiguous rather than guessed.
-        console.error(`lookup phase stopped early at activity ${id}: ${(err as Error).message}`);
-        break;
-      }
+    const lookup = await runLookupPhase(ids, (id) => resolver.resolve(id), isFatalPortalError);
+    if (!lookup.complete) {
+      console.error(
+        `\n*** LOOKUP PHASE STOPPED EARLY after ${lookup.asked}/${lookup.total} activities: ${lookup.haltReason}`
+      );
+      console.error('*** Rows for the un-asked activities are AMBIGUOUS — never verified, never written.\n');
     }
-    console.log(`source answered for ${[...answers.values()].filter((v) => v !== undefined).length}/${ids.length}\n`);
+    console.log(`source answered for ${lookup.asked}/${lookup.total}\n`);
 
-    plan = buildPlan(stored, (id) => answers.get(id));
+    plan = buildPlan(stored, lookup);
   } finally {
     await db.end();
   }
@@ -167,6 +167,12 @@ async function main(): Promise<number> {
   const storedById = new Map(stored.map((s) => [s.occurrenceId, s]));
 
   console.log('## Plan');
+  if (!plan.lookupComplete) {
+    console.log('  !! PARTIAL RUN — the source stopped answering part way through.');
+    console.log(`  !! asked ${plan.lookupAsked} of ${plan.lookupTotal} activities · halted: ${plan.haltReason}`);
+    console.log('  !! The un-asked rows are counted as ambiguous below. This is NOT a clean pass.');
+  }
+  console.log(`  lookup phase        : ${plan.lookupComplete ? 'COMPLETE' : 'INCOMPLETE'} (${plan.lookupAsked}/${plan.lookupTotal} activities asked)`);
   console.log(`  rows examined       : ${plan.counts.rows}`);
   console.log(`  WOULD WRITE         : ${plan.counts.set}`);
   console.log(`    of which admit someone TOO YOUNG : ${plan.counts.admitsTooYoung}   <-- the child-safety subset`);
@@ -199,6 +205,18 @@ async function main(): Promise<number> {
   if (!fitsCap) {
     console.error(`\nrefusing to apply: plan is ${plan.counts.set} rows, cap is ${args.maxRows}.`);
     return 3;
+  }
+  // A partial plan is still CORRECT for the rows it did verify, so this is not a hard refusal —
+  // it is a refusal to let a partial run be mistaken for a finished one. Acknowledging it is one
+  // flag; not noticing it should not be possible.
+  if (!plan.lookupComplete && !args.allowPartial) {
+    console.error(
+      `\nrefusing to apply: the lookup phase stopped after ${plan.lookupAsked}/${plan.lookupTotal} ` +
+        `activities (${plan.haltReason}). The ${plan.counts.set} planned corrections are sound, but ` +
+        `${plan.counts.ambiguous} rows were never asked about and this run must not be recorded as a ` +
+        `complete pass. Re-run when the portal is willing, or pass --allow-partial to apply what was verified.`
+    );
+    return 5;
   }
 
   const { openForCorrection } = await import('./correcting-db');

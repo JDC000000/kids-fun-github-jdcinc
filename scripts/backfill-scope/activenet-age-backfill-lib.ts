@@ -142,6 +142,59 @@ export function planRow(row: StoredAgeRow, source: ActivityAgeBounds | null | un
   };
 }
 
+/**
+ * What the lookup phase actually managed to ask.
+ *
+ * `complete: false` is the fact the Operator's hard gate exists to make impossible to miss: a
+ * one-shot production correction that stopped half way through, reported as if it had finished,
+ * would leave thousands of rows believed-checked and never actually asked about.
+ */
+export interface LookupPhaseResult {
+  answers: Map<number, ActivityAgeBounds | null | undefined>;
+  /** False when a fatal portal error stopped the phase before every id was asked. */
+  complete: boolean;
+  asked: number;
+  total: number;
+  /** Why it stopped, verbatim, or null when it ran to the end. */
+  haltReason: string | null;
+}
+
+/**
+ * Ask the source about every activity, stopping honestly when it tells us to stop.
+ *
+ * EXTRACTED FROM THE RUNNER SO IT CAN BE TESTED AT ALL. While this loop lived inside main() the
+ * only way to exercise its stop-and-report behaviour was to run the script against a live
+ * portal, so the branch that matters most — the one that fires exactly when a production run is
+ * going wrong — had never been executed by anything. That is the same dead-branch shape as the
+ * defect this function exists to report.
+ *
+ * A fatal error does NOT become a result. Ids never reached are simply absent from `answers`,
+ * so `planRow` sees `undefined` and returns AMBIGUOUS — "we never asked" — rather than `null`,
+ * which would mean "the source told us there is no age".
+ */
+export async function runLookupPhase(
+  activityIds: number[],
+  resolve: (id: number) => Promise<ActivityAgeBounds | null | undefined>,
+  isFatal: (err: unknown) => boolean
+): Promise<LookupPhaseResult> {
+  const answers = new Map<number, ActivityAgeBounds | null | undefined>();
+  for (const id of activityIds) {
+    try {
+      answers.set(id, await resolve(id));
+    } catch (err) {
+      if (!isFatal(err)) throw err;
+      return {
+        answers,
+        complete: false,
+        asked: answers.size,
+        total: activityIds.length,
+        haltReason: (err as Error).message,
+      };
+    }
+  }
+  return { answers, complete: true, asked: answers.size, total: activityIds.length, haltReason: null };
+}
+
 export interface BackfillPlan {
   decisions: RowDecision[];
   toWrite: RowDecision[];
@@ -159,13 +212,20 @@ export interface BackfillPlan {
   };
   byReason: Record<string, number>;
   distinctActivities: number;
+  /** Carried from the lookup phase so no report can describe a partial run as a complete one. */
+  lookupComplete: boolean;
+  lookupAsked: number;
+  lookupTotal: number;
+  haltReason: string | null;
 }
 
-export function buildPlan(
-  rows: StoredAgeRow[],
-  sourceFor: (activityId: number) => ActivityAgeBounds | null | undefined
-): BackfillPlan {
-  const decisions = rows.map((r) => planRow(r, sourceFor(r.activityId)));
+/**
+ * Takes the LOOKUP RESULT, not a bare lookup function, and that is deliberate: it makes
+ * "did we actually manage to ask?" a required input rather than something a caller can forget to
+ * carry into the report. The type system now refuses to build a plan that cannot say so.
+ */
+export function buildPlan(rows: StoredAgeRow[], lookup: LookupPhaseResult): BackfillPlan {
+  const decisions = rows.map((r) => planRow(r, lookup.answers.get(r.activityId)));
   const toWrite = decisions.filter((d) => d.action === 'set');
   const byReason: Record<string, number> = {};
   for (const d of decisions) byReason[d.reason] = (byReason[d.reason] ?? 0) + 1;
@@ -183,6 +243,10 @@ export function buildPlan(
     },
     byReason,
     distinctActivities: new Set(rows.map((r) => r.activityId)).size,
+    lookupComplete: lookup.complete,
+    lookupAsked: lookup.asked,
+    lookupTotal: lookup.total,
+    haltReason: lookup.haltReason,
   };
 }
 
