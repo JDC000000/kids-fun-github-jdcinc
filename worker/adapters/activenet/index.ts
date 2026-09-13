@@ -37,6 +37,7 @@ import {
 } from './client';
 import { parseTenantCalendars, allAgesInPlay, type ParseResult } from './parse';
 import { ActivityAgeResolver } from './activity-age';
+import type { ActivityAgeStore } from './activity-age-store';
 import { buildVenueIndex, applyVenues } from './venues';
 import { assessRunHealth, type ActiveNetHealthVerdict } from './health';
 
@@ -170,7 +171,10 @@ export class ActiveNetAdapter implements Adapter {
    */
   constructor(
     private readonly tenant: ActiveNetTenantConfig,
-    private readonly clientOverrides: Partial<Omit<ClientOptions, 'budget'>> = {}
+    private readonly clientOverrides: Partial<Omit<ClientOptions, 'budget'>> = {},
+    /** Cross-run answer store. Absent in fixture runs and unit tests, which then behave exactly
+     *  as before: per-run memory only. */
+    private readonly activityAgeStore?: ActivityAgeStore
   ) {}
 
   isLiveFetchEnabled(): boolean {
@@ -254,7 +258,11 @@ export class ActiveNetAdapter implements Adapter {
         `${this.tenant.tenantKey}:activity-age`,
         this.tenant.maxRequestsPerRun
       );
-      this.ageResolver = new ActivityAgeResolver(this.tenant, { budget, ...this.clientOverrides });
+      this.ageResolver = new ActivityAgeResolver(
+        this.tenant,
+        { budget, ...this.clientOverrides },
+        this.activityAgeStore
+      );
     }
 
     try {

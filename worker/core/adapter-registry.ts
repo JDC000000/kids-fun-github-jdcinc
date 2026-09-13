@@ -6,6 +6,7 @@
 import type { Pool } from 'pg';
 import type { Adapter } from './adapter';
 import { ActiveNetAdapter, ACTIVENET_TENANTS } from '../adapters/activenet';
+import { createActivityAgeStore, type ActivityAgeStore } from '../adapters/activenet/activity-age-store';
 import { PerfectMindAdapter, PERFECTMIND_TENANTS } from '../adapters/perfectmind';
 import { LibraryAdapter, LIBRARY_SYSTEMS } from '../adapters/library';
 import { CityCalendarAdapter, CITY_CALENDARS } from '../adapters/citycalendar';
@@ -22,12 +23,18 @@ function key(family: string, name: string): string {
   return `${family}::${name}`;
 }
 
+export interface AdapterRegistryOptions {
+  /** Cross-run activity-age answers. Supplied on the live path (which has a pool); omitted by
+   *  fixture and test callers, where the adapter falls back to per-run memory only. */
+  activityAgeStore?: ActivityAgeStore;
+}
+
 /** Build the in-memory source registry from adapter config. */
-export function buildAdapterRegistry(): Map<string, Adapter> {
+export function buildAdapterRegistry(opts: AdapterRegistryOptions = {}): Map<string, Adapter> {
   const registry = new Map<string, Adapter>();
 
   for (const tenant of ACTIVENET_TENANTS) {
-    registry.set(key('activenet', tenant.sourceName), new ActiveNetAdapter(tenant));
+    registry.set(key('activenet', tenant.sourceName), new ActiveNetAdapter(tenant, {}, opts.activityAgeStore));
   }
   for (const tenant of PERFECTMIND_TENANTS) {
     registry.set(key('perfectmind', tenant.sourceName), new PerfectMindAdapter(tenant));
@@ -64,7 +71,7 @@ export function resolveAdapterForSourceRow(
 export async function resolveAdapterForSource(
   pool: Pool,
   sourceId: string,
-  registry = buildAdapterRegistry()
+  registry = buildAdapterRegistry({ activityAgeStore: createActivityAgeStore(pool) })
 ): Promise<Adapter | null> {
   const { rows } = await pool.query<SourceRegistryRow>(
     `SELECT id, family, name FROM source WHERE id = $1`,

@@ -10,7 +10,8 @@ import {
   SOURCE_GATE_COLUMNS,
   type Environment,
 } from './terms-gate';
-import { resolveAdapterForSourceRow } from './adapter-registry';
+import { resolveAdapterForSourceRow, buildAdapterRegistry } from './adapter-registry';
+import { createActivityAgeStore } from '../adapters/activenet/activity-age-store';
 import { ingestSource, type IngestSummary } from './ingest';
 
 export type SourceSelector =
@@ -88,7 +89,13 @@ export async function runTermsGatedIngest(
   environment: Environment = 'staging'
 ): Promise<TermsGatedIngestResult> {
   const source = await loadSourceForIngest(pool, selector);
-  const adapter = resolveAdapterForSourceRow(source);
+  // Built WITH the cross-run age store: this is the live path and it has the pool. Without it the
+  // adapter keeps per-run memory only, and verification coverage never advances past the head of
+  // the list (see supabase/migrations/0047 for why that is a correctness issue, not a speed one).
+  const adapter = resolveAdapterForSourceRow(
+    source,
+    buildAdapterRegistry({ activityAgeStore: createActivityAgeStore(pool) })
+  );
   const baseGate = evaluateTermsGate(source, environment);
   if (!baseGate.allowed) {
     return { ok: false, source, gate: baseGate, error: baseGate.reason };

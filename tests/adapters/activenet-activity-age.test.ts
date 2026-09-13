@@ -5,7 +5,7 @@
 // own API (/rest/activity/detail/<id> and /rest/activities/list, fetched 2026-09-12), not
 // invented. The prose beside them is the real catalog_description that was being trusted instead.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { activityAgeToBounds, ActivityAgeResolver, isFatalPortalError } from '../../worker/adapters/activenet/activity-age';
+import { activityAgeToBounds, ActivityAgeResolver, isFatalPortalError, type ActivityAgeBounds } from '../../worker/adapters/activenet/activity-age';
 import { resolveRecordAge } from '../../worker/core/age';
 import { allAgesInPlay } from '../../worker/adapters/activenet/parse';
 import { ActiveNetAdapter } from '../../worker/adapters/activenet';
@@ -312,5 +312,104 @@ describe('resolveRecordAge — authority ordering (no database needed)', () => {
     expect(resolveRecordAge({ ageAudienceLabels: ['Toddlers'] })).toMatchObject({ resolved: true });
     expect(resolveRecordAge({ ageText: 'ages 5-7' })).toMatchObject({ ageMinMonths: 60, ageMaxMonths: 96 });
     expect(resolveRecordAge({})).toBeNull();
+  });
+});
+
+// ── THE CROSS-RUN STORE ───────────────────────────────────────────────────────────────────
+//
+// Per-run memory collapses an activity's repeats within one run. This carries answers ACROSS
+// runs, which is what lets the verification frontier advance instead of re-spending every run's
+// budget on the same head of the list.
+describe('ActivityAgeResolver + a persistent store', () => {
+  const VAN = getTenantConfig('vancouver')!;
+  beforeEach(() => clearPolicyState());
+
+  /** An in-memory ActivityAgeStore with call counting — the same contract the pg one implements. */
+  function fakeStore(seed: Record<number, ActivityAgeBounds | null> = {}) {
+    const data = new Map<number, ActivityAgeBounds | null>(Object.entries(seed).map(([k, v]) => [Number(k), v]));
+    const reads: number[] = [];
+    const writes: Array<[number, ActivityAgeBounds | null]> = [];
+    return {
+      reads,
+      writes,
+      store: {
+        async get(_family: string, id: number) {
+          reads.push(id);
+          return data.has(id) ? data.get(id) : undefined;
+        },
+        async put(_family: string, id: number, value: ActivityAgeBounds | null) {
+          writes.push([id, value]);
+          data.set(id, value);
+        },
+      },
+    };
+  }
+
+  async function budget(cap = 50) {
+    const { RequestBudget } = await import('../../worker/adapters/activenet/client');
+    return new RequestBudget('v', cap);
+  }
+
+  it('a stored answer costs NO portal request — this is the whole point', async () => {
+    const { calls, impl } = stubDetails({ 1: { age_description: '19 yrs +,', age_min_year: 19 } });
+    const f = fakeStore({ 1: { minMonths: 228, maxMonths: null } });
+    const r = new ActivityAgeResolver(VAN, { budget: await budget(), fetchImpl: impl, ...NO_SLEEP }, f.store);
+    await expect(r.resolve(1)).resolves.toEqual({ minMonths: 228, maxMonths: null });
+    expect(calls).toEqual([]);
+    expect(r.stats.fromStore).toBe(1);
+  });
+
+  it('a fresh answer is written back, so the next run starts from it', async () => {
+    const { impl } = stubDetails({ 2: { age_description: '50 yrs +,', age_min_year: 50 } });
+    const f = fakeStore();
+    const r = new ActivityAgeResolver(VAN, { budget: await budget(), fetchImpl: impl, ...NO_SLEEP }, f.store);
+    await r.resolve(2);
+    expect(f.writes).toEqual([[2, { minMonths: 600, maxMonths: null, notes: undefined }]]);
+  });
+
+  it('persists "the source has NO age" too, so we stop re-asking', async () => {
+    const { impl } = stubDetails({ 3: { activity_name: 'answered, no age field' } });
+    const f = fakeStore();
+    const r = new ActivityAgeResolver(VAN, { budget: await budget(), fetchImpl: impl, ...NO_SLEEP }, f.store);
+    await expect(r.resolve(3)).resolves.toBeNull();
+    expect(f.writes).toEqual([[3, null]]);
+  });
+
+  it('NEVER persists "we got no answer" — one bad night must not suppress an activity', async () => {
+    // A 404 is a non-fatal failure: undefined, not null. Caching it would look identical to
+    // "the source says there is no age" for the whole TTL.
+    const { impl } = stubDetails({});
+    const f = fakeStore();
+    const r = new ActivityAgeResolver(VAN, { budget: await budget(), fetchImpl: impl, ...NO_SLEEP }, f.store);
+    await expect(r.resolve(404)).resolves.toBeUndefined();
+    expect(f.writes).toEqual([]);
+  });
+
+  it('a broken store degrades to the old behaviour rather than failing the run', async () => {
+    const { calls, impl } = stubDetails({ 5: { age_description: '19 yrs +,', age_min_year: 19 } });
+    const broken = {
+      async get() { throw new Error('store down'); },
+      async put() { throw new Error('store down'); },
+    };
+    const r = new ActivityAgeResolver(VAN, { budget: await budget(), fetchImpl: impl, ...NO_SLEEP }, broken);
+    await expect(r.resolve(5)).resolves.toEqual({ minMonths: 228, maxMonths: null, notes: undefined });
+    expect(calls).toEqual([5]);
+  });
+
+  it('reads the store once per activity, not once per occurrence', async () => {
+    const { impl } = stubDetails({ 6: { age_description: '19 yrs +,', age_min_year: 19 } });
+    const f = fakeStore({ 6: { minMonths: 228, maxMonths: null } });
+    const r = new ActivityAgeResolver(VAN, { budget: await budget(), fetchImpl: impl, ...NO_SLEEP }, f.store);
+    for (let i = 0; i < 4; i += 1) await r.resolve(6);
+    expect(f.reads).toEqual([6]);
+  });
+
+  it('without a store it behaves exactly as before', async () => {
+    const { calls, impl } = stubDetails({ 7: { age_description: '19 yrs +,', age_min_year: 19 } });
+    const r = new ActivityAgeResolver(VAN, { budget: await budget(), fetchImpl: impl, ...NO_SLEEP });
+    await r.resolve(7);
+    await r.resolve(7);
+    expect(calls).toEqual([7]);
+    expect(r.stats.fromStore).toBe(0);
   });
 });

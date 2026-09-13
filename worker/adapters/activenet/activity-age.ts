@@ -27,8 +27,12 @@ import {
   type ClientOptions,
 } from './client';
 import type { ActiveNetTenantConfig } from './config';
+import type { ActivityAgeStore } from './activity-age-store';
 
 const MONTHS_PER_YEAR = 12;
+
+/** `source.family` these answers belong to — the store is keyed by it so other families can share the table. */
+export const ACTIVENET_FAMILY = 'activenet';
 
 /**
  * The vendor's sentinel for "no real upper bound". Ranges are published as
@@ -118,14 +122,18 @@ export class ActivityAgeResolver {
   private readonly cache = new Map<number, ActivityAgeBounds | null | undefined>();
   private fetches = 0;
   private failures = 0;
+  private storeHits = 0;
 
+  /** `store` carries answers across runs. Optional: without it the resolver behaves exactly as
+   *  before (per-run memory only), which is what fixture runs and unit tests want. */
   constructor(
     private readonly tenant: ActiveNetTenantConfig,
-    private readonly clientOpts: ClientOptions
+    private readonly clientOpts: ClientOptions,
+    private readonly store?: ActivityAgeStore
   ) {}
 
-  get stats(): { lookups: number; cached: number; failures: number } {
-    return { lookups: this.fetches, cached: this.cache.size, failures: this.failures };
+  get stats(): { lookups: number; cached: number; failures: number; fromStore: number } {
+    return { lookups: this.fetches, cached: this.cache.size, failures: this.failures, fromStore: this.storeHits };
   }
 
   /** Throws on a fatal portal error (see isFatalPortalError) so the caller can stop; every
@@ -134,6 +142,21 @@ export class ActivityAgeResolver {
     if (!Number.isFinite(activityId)) return undefined;
     const id = activityId as number;
     if (this.cache.has(id)) return this.cache.get(id);
+
+    // What an earlier run already learned. A hit costs one indexed row read instead of a live
+    // request, and it is what lets each run start from the frontier rather than the head.
+    if (this.store) {
+      try {
+        const stored = await this.store.get(ACTIVENET_FAMILY, id);
+        if (stored !== undefined) {
+          this.storeHits += 1;
+          this.cache.set(id, stored);
+          return stored;
+        }
+      } catch {
+        // A cache that cannot be read is a slow path, never a failure. Fall through and ask.
+      }
+    }
 
     let result: ActivityAgeBounds | null | undefined;
     try {
@@ -150,6 +173,15 @@ export class ActivityAgeResolver {
       result = undefined;
     }
     this.cache.set(id, result);
+    // Only a real ANSWER is persisted. `undefined` means we never got one, and writing that would
+    // let one bad night suppress an activity for the whole TTL.
+    if (this.store && result !== undefined) {
+      try {
+        await this.store.put(ACTIVENET_FAMILY, id, result);
+      } catch {
+        // Same posture: failing to remember an answer must not fail the run that obtained it.
+      }
+    }
     return result;
   }
 

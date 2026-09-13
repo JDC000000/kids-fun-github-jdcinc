@@ -766,6 +766,10 @@ const ADAPTER_SOURCES = [
   // surface of its own. Listed because section (D) exists so that claim is checked rather
   // than taken on trust.
   'worker/adapters/activenet/activity-age.ts',
+  // The cross-run store for those answers. Touches the DATABASE, never the portal — it holds no
+  // fetch of any kind. Listed for the same reason venue-geo.ts is: "this one cannot make a
+  // request" is exactly the assumption section (D) exists so nobody has to take on trust.
+  'worker/adapters/activenet/activity-age-store.ts',
   // G-VENUE-1: a committed constant, not a fetcher — listed anyway, because
   // "this one can't make requests" is exactly the assumption a tripwire exists to stop
   // anyone having to trust. (This list stays hand-written so each entry is a deliberate
