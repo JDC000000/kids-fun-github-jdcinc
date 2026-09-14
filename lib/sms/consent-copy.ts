@@ -79,6 +79,35 @@
  */
 export const CONSENT_TEXT_VERSION = '2026-09-03.v7';
 
+/**
+ * The serial number inside a consent version string — `'2026-09-03.v7'` → `7`. Null if it does not
+ * parse.
+ *
+ * ═══ WHY A PARSER RATHER THAN A STRING COMPARISON ═══
+ * Code that has to ask "did this subscriber agree to wording at least as new as vN" cannot compare
+ * these strings. `'2026-09-03.v7' < '2026-09-03.v10'` is FALSE lexically, so the first version to
+ * reach double digits would silently un-gate — or re-gate — every subscriber, with nothing failing.
+ * The date prefix does not save it either: versions are RE-STAMPED on resubmit (see the history
+ * list above), so the date on a row is when that parent last touched the form, not when the
+ * wording was issued. The serial is the only part of this string that orders.
+ *
+ * ═══ NULL IS A REFUSAL, NOT A ZERO ═══
+ * Returning 0 for an unparseable value would make `>= 0` checks pass and `>= 8` checks fail, which
+ * is two different wrong answers depending on the caller. Null forces the caller to decide, and
+ * every caller that gates a SEND decides the same way: no parse, no send.
+ *
+ * ⚠ DOES NOT KNOW OR CARE WHAT THE CURRENT VERSION IS. That is deliberate: this is the mechanism a
+ * gate is built from, and a gate that had to be edited every time the version moved would be a
+ * gate that stopped being edited.
+ */
+export function consentVersionSerial(version: string | null | undefined): number | null {
+  if (typeof version !== 'string') return null;
+  const match = /\.v(\d+)$/.exec(version.trim());
+  if (!match) return null;
+  const serial = Number(match[1]);
+  return Number.isSafeInteger(serial) ? serial : null;
+}
+
 /** What the page is, in one line, above the fields. */
 export const FORM_HEADING = 'Get kids’ weekend activities by text';
 
@@ -532,19 +561,38 @@ export const PREFS_LAST_WEEK_EMPTY =
 
 // ── Instant Picks — the "show me more" button inside the Last Friday section ──────────────
 //
-// ⚠ NOT ONE OF THESE STRINGS MAY IMPLY A TEXT WILL BE SENT, AND THAT IS A COMPLIANCE RULE RATHER
-// THAN A TONE PREFERENCE.
+// ═══ ⚠ THIS BLOCK REPLACES AN EARLIER ONE THAT SAID "NO STRING HERE MAY IMPLY A TEXT WILL BE
+//     SENT". THAT RULE IS NOW WRONG AS WRITTEN, AND IT IS REWRITTEN RATHER THAN DELETED ═══
+// It was a real compliance rule, correctly argued, for a feature that was page-only. Jon has since
+// ruled that the button ALSO sends a text (PRD v3.22, D1/D2/D3), so leaving the old absolute in
+// place would have left a comment recording a superseded ruling — which reads later as current
+// policy and is exactly the trap this project hit on 2026-09-12. What follows is the rule that is
+// actually in force, which is narrower than the old one rather than its opposite.
 //
-// `MESSAGE_FREQUENCY_DISCLOSURE` — "1 message per week, plus a one-time confirmation message" —
-// is rendered on this very page, a few centimetres below this button, inside CARRIER_DISCLOSURES.
-// That line is a carrier disclosure: it is the statement a Toll-Free Verification reviewer checks
-// the messaging behaviour against. A button here that said "text me this list", or copy that read
-// as though one were coming, would sit directly above a sentence it contradicts.
+// ═══ THE RULE IN FORCE: THE STATIC COPY STILL MAY NOT IMPLY A TEXT. THE OUTCOME LINES MAY. ═══
+// Two groups of string live below and they are governed differently:
 //
-// Which is why this feature is PAGE-ONLY and there is no send path anywhere behind it. If a "text
-// me this" option is ever wanted, it starts by changing the frequency disclosure and talking to
-// carrier verification — not by adding a button and writing the copy afterwards. So: every verb
-// below is about SHOWING, and none is about SENDING. Keep it that way.
+//   GROUP A — ALWAYS ON THE PAGE: heading, body, button label, loading label, and the four
+//     list-outcome lines (result, widened, interests-dropped, empty, can't-check, slow-down).
+//     ⚠ STILL NO SENDING VERBS. `MESSAGE_FREQUENCY_DISCLOSURE` — "1 message per week, plus a
+//     one-time confirmation message" — is STILL the live wording, rendered a few centimetres below
+//     this button, and it is what a Toll-Free Verification reviewer compares behaviour against. The
+//     rewrite of that sentence and its CONSENT_TEXT_VERSION bump are task 1, HELD pending the TFV
+//     decision (plan v2.0 §6, option B). Until it lands, a button promising a text would sit
+//     directly above a sentence saying no such text exists — and would be promising something the
+//     three gates in lib/sms/instant-picks-send.ts currently refuse to deliver. So: false AND
+//     contradictory. tests/sms/instant_picks_copy.test.ts keeps enforcing this over group A.
+//
+//   GROUP B — THE SEND-OUTCOME LINES: rendered ONLY when the server reports that a send was
+//     actually attempted for this subscriber, which requires `consent_text_version >= v8` — i.e.
+//     they saw the NEW disclosure and agreed to it. A v7 subscriber, and every subscriber today,
+//     gets `sendStatus: 'not_eligible'` and sees NONE of group B. That is what makes these
+//     sentences safe to write now: they cannot appear beside wording they contradict, because the
+//     only way to see them is to have agreed to wording that includes them.
+//
+// ⇒ WHEN TASK 1 LANDS, REVISIT GROUP A — not this comment. A parent who has agreed to "plus texts
+//   you ask for" should probably be told the button sends one BEFORE they press it, and that is a
+//   copy decision for whoever writes the new disclosure, made in the same pass.
 
 export const PREFS_INSTANT_HEADING = 'Want more than that?';
 export const PREFS_INSTANT_BODY =
@@ -600,6 +648,47 @@ export const PREFS_INSTANT_UNAVAILABLE =
  * limits are retuned.
  */
 export const PREFS_INSTANT_THROTTLED = 'Just a moment — you can do that again shortly.';
+
+// ── The send-outcome lines (GROUP B — see the block above before editing any of these) ─────
+//
+// ⚠ NONE OF THESE IS REACHABLE TODAY. They render only when `sendStatus` says a send was attempted,
+// and it cannot be while task 1 is held. That is the point, not a gap: the plumbing is finished so
+// the copy change is a copy change.
+//
+// THEY SAY WHAT HAPPENED TO THE TEXT AND NOTHING ABOUT THE LIST. On every one of these except
+// 'sent', the list the parent pressed for IS ON THE SCREEN BELOW. That is the whole argument for
+// letting the send fail closed (plan §4.3) — so the copy must not read as though the request
+// failed, because it did not.
+
+/** It went. Short, past tense, no promise about when it arrives — that is the carrier's business. */
+export const PREFS_INSTANT_SENT = 'We’ve sent this to your phone too.';
+
+/**
+ * The send throttle refused.
+ *
+ * NAMES NO LIMIT AND NO NUMBER, the same posture PREFS_INSTANT_THROTTLED takes: the numbers are
+ * ours, the wait is theirs. Says the list is still here, because it is, and a sentence that only
+ * reported the refusal would read as a failure sitting above a perfectly good answer.
+ */
+export const PREFS_INSTANT_SEND_THROTTLED =
+  'We didn’t send this one to your phone — you can ask for that again a bit later. It’s all below.';
+
+/** Twilio failed, or the audit write did. Same shape: what didn't happen, then what did. */
+export const PREFS_INSTANT_SEND_FAILED =
+  'We couldn’t get this to your phone just now — it’s all below.';
+
+/**
+ * Sending is switched off in this environment (`SMS_SENDING_ENABLED` false).
+ *
+ * NOT the held state. A parent whose subscription cannot trigger a text at all sees NOTHING
+ * (`sendStatus: 'not_eligible'`) — telling them about a text that was never on offer, on a page
+ * whose legal block says one message a week, would be worse than silence. This line is for the
+ * narrow case where the feature IS on for them and the environment cannot dispatch, which is
+ * staging. It still has to be a true sentence a parent could read, because nothing guarantees only
+ * an operator will.
+ */
+export const PREFS_INSTANT_SEND_DISABLED =
+  'We’re not sending these to phones at the moment — it’s all below.';
 
 export const PREFS_EDIT_HEADING = 'What we use to find your kids’ activities';
 

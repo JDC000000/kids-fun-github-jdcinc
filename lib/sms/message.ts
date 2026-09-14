@@ -894,6 +894,87 @@ export function renderWelcomeMessage(input: WelcomeMessageInput): RenderedMessag
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THE ON-DEMAND DIGEST — the text an Instant Picks press sends (plan v2.0 §2/D3, task 4)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// ⚠⚠ THE SENTENCE BELOW IS PROVISIONAL AND HAS NOT BEEN APPROVED. DO NOT TREAT IT AS FINAL COPY.
+//
+// Jon ruled the SHAPE (short text carrying a link, not a list inside the text — PRD v3.22 D3), and
+// that shape is what this renderer implements. He has NOT signed off the WORDING, and this
+// project's standing practice is that message copy is drafted by the Operator and approved by Jon
+// before it ships ("YOU WRITE THE ONE LINE - I APPROVE YOUR WORDS" — used for /activity-unavailable
+// and for the PRD §8 Q5 sentence). So this is a measured placeholder that satisfies every hard
+// constraint, put here so the plumbing is finished and the copy change is a one-line edit.
+//
+// ═══ WHAT A REPLACEMENT SENTENCE MUST STILL DO — the constraints, separated from the taste ═══
+//   1. ONE SEGMENT against the REAL link. tests/sms/instant_picks_message.test.ts pins that at 1
+//      and runs `assertGsm7Safe` over it. See the budget below before writing anything longer.
+//   2. GSM-7 ONLY. An en dash, a curly apostrophe or an ellipsis character silently converts the
+//      whole message to UCS-2 at 70 chars/segment and doubles the bill. Write ASCII.
+//   3. IT MUST NOT PROMISE THE SAME LIST. The link reopens the preferences page, where the parent
+//      presses the button again and may legitimately get a DIFFERENT list — the result is
+//      render-and-discard by design and nothing is stored (Jon's D2 ruling, L1). "Here it is
+//      again" would be a false sentence; "here is where to get it" is a true one.
+//   4. KEEP THE BRAND TAG AND THE STOP LINE. Both are CASL §1.4 requirements on every commercial
+//      message, and this is one.
+//
+// ═══ THE SEGMENT BUDGET, MEASURED RATHER THAN ESTIMATED ═══
+// The real preferences link is 67 characters: `https://kidsfunapp.ca` (21) + `/u/` (3) + a
+// 43-character base64url HMAC. ⚠ THE PRD's `kidsfun.ca/u/8fJ2q` EXAMPLES ARE ILLUSTRATIVE and
+// understate it by ~49 characters — anyone budgeting from those will budget wrong. Against the
+// real link this message measures 144 septets: 16 to spare inside one GSM-7 segment (160), about
+// the same headroom `renderUnknownKeywordMessage` runs on. An inline list of three activity names
+// would be ~217 septets — TWO segments, i.e. double the cost of every press, forever.
+//   Measured, not estimated: `renderInstantPicksMessage({ preferencesUrl: 'https://kidsfunapp.ca/u/'
+//   + 'a'.repeat(43) })` → { encoding: 'GSM-7', characters: 144, segments: 1 }. The test pins it.
+//
+// ═══ WHY THE URL IS ON ITS OWN LINE ═══
+// Not formatting preference. A bare URL at the start of a line is what most handsets linkify
+// reliably, and it keeps the one thing the recipient has to tap away from trailing punctuation.
+// It also means the sentence above it can be rewritten without touching the link.
+
+/**
+ * The one line of prose in the on-demand digest. PROVISIONAL — see the block above.
+ *
+ * EXPORTED AND NAMED so the approved wording lands here, in one place, without going near the
+ * renderer's structure. That separation is the point: the shape, the brand tag, the STOP line and
+ * the segment test are settled, and the copy is the only variable left.
+ */
+export const INSTANT_PICKS_MESSAGE_LINE = 'More to do with the kids this weekend, near you:';
+
+export interface InstantPicksMessageInput {
+  /**
+   * The subscriber's own `/u/{token}` page.
+   *
+   * NOT OPTIONAL, AND THE CALLER MUST REFUSE TO SEND WITHOUT IT. This link is the CASL unsubscribe
+   * path and the PIPEDA access mechanism at once, and it is also the entire payload — a message
+   * that rendered without it would be a commercial text with no opt-out and nothing to act on.
+   * `preferencesUrl()` in lib/sms/config.ts states the same rule for every other template.
+   */
+  preferencesUrl: string;
+}
+
+/**
+ * Render the on-demand digest: one line, one link, the brand tag and the opt-out.
+ *
+ *     KIDS FUN: More to do with the kids this weekend, near you:
+ *     https://kidsfunapp.ca/u/{token}
+ *     Reply STOP to end
+ *
+ * ═══ IT CARRIES NO ACTIVITY NAMES, AND THAT IS THE RULING RATHER THAN A SIMPLIFICATION ═══
+ * Jon confirmed short-text-plus-link over an inline list (PRD v3.22 D3). It is also the cheap
+ * read: see the budget above. A consequence worth knowing before anyone "improves" this — this
+ * renderer takes NO PICKS AND NO SUBSCRIBER DATA, so the text cannot leak a child's age, an area,
+ * or what was selected, and it is identical for every recipient. Adding names would change that
+ * as well as the bill.
+ */
+export function renderInstantPicksMessage(input: InstantPicksMessageInput): RenderedMessage {
+  return render(
+    `${BRAND} ${INSTANT_PICKS_MESSAGE_LINE}\n${input.preferencesUrl}\n${STOP_LINE}`
+  );
+}
+
 /**
  * The reply to an inbound text we do not recognise (webhook `unknown` branch).
  *

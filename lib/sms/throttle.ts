@@ -24,10 +24,25 @@ import { query } from '@/lib/db/client';
  * The `sms_signup_throttle.scope` values.
  *
  * ⚠ MIRRORS A DATABASE CHECK CONSTRAINT. Adding a member here is not enough — the column's
- * `CHECK (scope IN (...))` has to admit it too, or every write under the new scope fails and the
- * caller silently degrades to fail-open. `'instant_picks'` is added by migration 0046.
+ * `CHECK (scope IN (...))` has to admit it too, or every write under the new scope fails.
+ * `'instant_picks'` is added by migration 0046; the two send-path scopes by migration 0048.
+ *
+ * ⚠ AND THE CONSEQUENCE OF GETTING THAT WRONG NOW DIFFERS BY SCOPE, WHICH IS WORTH KNOWING BEFORE
+ * YOU ADD THE NEXT ONE. A missing constraint value raises `23514 check_violation`, and what
+ * happens next is the CALLER's fail direction, not this file's: the signup and page-render
+ * throttles catch it and fail OPEN (an unlimited action plus a Sentry event), while the Instant
+ * Picks SEND throttle catches it and fails CLOSED (no text is ever dispatched, silently, until the
+ * migration runs). Neither is a crash, so neither shows up as an error — which is exactly why the
+ * migration goes first.
  */
-export type ThrottleScope = 'phone' | 'ip' | 'instant_picks';
+export type ThrottleScope =
+  | 'phone'
+  | 'ip'
+  | 'instant_picks'
+  /** Per subscriber, for the SMS an Instant Picks press dispatches. Migration 0048. */
+  | 'instant_picks_sms'
+  /** Per source IP, same send path. Migration 0048. */
+  | 'instant_picks_sms_ip';
 
 /**
  * Count one attempt against one subject, and say whether it is allowed — ATOMICALLY.

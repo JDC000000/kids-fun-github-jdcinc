@@ -25,7 +25,26 @@ import { query } from '@/lib/db/client';
 import { MissingPhoneHashSaltError, PHONE_HASH_VERSION, phoneHash } from './phone-hash';
 
 export type SendLogOutcome = 'sent' | 'empty' | 'paused' | 'stopped_via_carrier' | 'failed';
-export type SendLogType = 'confirm_request' | 'welcome' | 'weekly' | 'empty_week' | 'pause_notice';
+/**
+ * The `sms_send_log.send_type` values.
+ *
+ * ⚠ MIRRORS A DATABASE CHECK CONSTRAINT (0035, widened by 0049). Adding a member here is not
+ * enough — the column's `CHECK (send_type IN (...))` has to admit it too.
+ *
+ * ⚠ `'instant_picks'` IS NOT IN `findLastWeek`'s IN-LIST, AND THAT IS NOT AN OMISSION. The "Last
+ * Friday" panel (lib/sms/preferences.ts) shows messages WE decided to send; the Instant Picks
+ * button sits inside that panel and its rows record a message the SUBSCRIBER asked for. Adding the
+ * value there would show a parent their own button press as though we had texted them unprompted.
+ * See migration 0049's header and tests/sms/instant_picks_send_log_invariants.test.ts.
+ */
+export type SendLogType =
+  | 'confirm_request'
+  | 'welcome'
+  | 'weekly'
+  | 'empty_week'
+  | 'pause_notice'
+  /** The on-demand digest a subscriber requested from their preferences page. Migration 0049. */
+  | 'instant_picks';
 
 export interface RecordSendInput {
   /**

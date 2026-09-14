@@ -16,8 +16,12 @@ vi.mock('@/lib/sms/instant-picks', async (importOriginal) => ({
   selectInstantPicks: vi.fn(),
 }));
 // The send-log writer is mocked so a call to it would be VISIBLE rather than a database error.
-// The route must never reach it — see §NEVER PERSISTS below.
+// The route must never reach it DIRECTLY — see §NEVER PERSISTS below.
 vi.mock('@/lib/sms/send-log', () => ({ recordSmsSend: vi.fn() }));
+// The SEND PATH is mocked because it is a separate unit with its own suite
+// (tests/sms/instant_picks_send.test.ts). What is under test HERE is the route's contract with
+// it: when it is called, with what, and what the response says about the answer.
+vi.mock('@/lib/sms/instant-picks-send', () => ({ sendInstantPicksText: vi.fn() }));
 vi.mock('@/lib/observability/route-handler', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/observability/route-handler')>()),
   captureAndFlush: vi.fn(async () => {}),
@@ -29,6 +33,7 @@ import { checkAndRecordInstantPicks } from '@/lib/sms/instant-picks-throttle';
 import { getServerSearchEngine } from '@/lib/search/server-engine';
 import { selectInstantPicks } from '@/lib/sms/instant-picks';
 import { recordSmsSend } from '@/lib/sms/send-log';
+import { sendInstantPicksText } from '@/lib/sms/instant-picks-send';
 import { captureAndFlush } from '@/lib/observability/route-handler';
 import type { SearchEngine } from '@/lib/search/engine';
 
@@ -37,6 +42,7 @@ const throttleMock = vi.mocked(checkAndRecordInstantPicks);
 const engineMock = vi.mocked(getServerSearchEngine);
 const selectMock = vi.mocked(selectInstantPicks);
 const sendLogMock = vi.mocked(recordSmsSend);
+const sendMock = vi.mocked(sendInstantPicksText);
 const captureMock = vi.mocked(captureAndFlush);
 
 const TOKEN = 'a'.repeat(43); // a plausible preferences token width
@@ -76,6 +82,9 @@ beforeEach(() => {
     widened: false,
     interestsDropped: false,
   });
+  // THE DEFAULT IS THE HELD STATE, because that is what every deployment is in today: the flag is
+  // off and no subscriber is on consent v8, so no send is attempted and nothing is said about one.
+  sendMock.mockResolvedValue({ status: 'not_eligible', segments: 0, degraded: false });
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -327,5 +336,134 @@ describe('instant picks route · malformed input', () => {
 
     expect(a.status).toBe(b.status);
     expect(aBody).toEqual(bBody);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §THE SEND — plan v2.0 tasks 5 and 7, at the route layer.
+// ═════════════════════════════════════════════════════════════════════════════
+describe('instant picks route · 🔴 while the send is HELD, this route behaves exactly as before', () => {
+  it('reports not_eligible and says nothing else about a text', async () => {
+    const body = await (await POST(post())).json();
+    expect(body.sendStatus).toBe('not_eligible');
+    // The component renders nothing for that status, so the page is byte-identical to the
+    // page-only build. Asserted here because "the UI happens to ignore it" is a weaker guarantee
+    // than "the server says nothing happened".
+    expect(JSON.stringify(body)).not.toMatch(/sent|throttled|disabled|failed/);
+  });
+
+  it('the response still carries every field the page-only build returned', async () => {
+    // A regression here would break the live page, which is deployed and working.
+    const body = await (await POST(post())).json();
+    expect(Object.keys(body).sort()).toEqual([
+      'areaLabel', 'interestsDropped', 'ok', 'outcome', 'picks', 'sendStatus', 'widened',
+    ]);
+  });
+
+  it('raises nothing to Sentry when the feature is simply held', async () => {
+    // 'not_eligible' is the normal state, not an incident. Alerting on it would fire on every
+    // press in every environment and bury the states that matter.
+    await POST(post());
+    expect(captureMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('instant picks route · when the send path is reached', () => {
+  it('attempts a send only on the picks outcome, and passes the caller’s IP', async () => {
+    await POST(post({ token: TOKEN }, { 'x-real-ip': '198.51.100.9' }));
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock).toHaveBeenCalledWith(SUBSCRIBER_ID, { ipAddress: '198.51.100.9' });
+  });
+
+  it('does NOT attempt a send when the weekend is empty', async () => {
+    // ⚠ A DECISION THE PLAN DID NOT MAKE, asserted so it is visible rather than incidental. The
+    // message says "more to do with the kids this weekend" and links to a page that would show the
+    // same nothing — a false sentence, a wasted ~$0.016, and a text a parent would call spam.
+    selectMock.mockReturnValue({
+      outcome: 'empty', picks: [], areaLabel: 'Vancouver',
+      emptyReason: 'none_showable', widened: false, interestsDropped: false,
+    });
+    const body = await (await POST(post())).json();
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(body.sendStatus).toBe('not_eligible');
+  });
+
+  it('does NOT attempt a send when we could not check at all', async () => {
+    selectMock.mockReturnValue({
+      outcome: 'unavailable', picks: [], areaLabel: null,
+      emptyReason: null, widened: false, interestsDropped: false,
+    });
+    await POST(post());
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT attempt a send when the PAGE throttle already refused', async () => {
+    // The press never produced a list, so there is nothing to be a takeaway from.
+    throttleMock.mockResolvedValue({
+      allowed: false, reason: 'interval', retryAfterSeconds: 42, degraded: false,
+    });
+    await POST(post());
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT attempt a send for a token that resolved to nobody', async () => {
+    findMock.mockResolvedValue({ outcome: 'not_found' });
+    await POST(post());
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['sent', 'throttled', 'failed', 'disabled'] as const)(
+    'relays sendStatus %s beside an unchanged list',
+    async (status) => {
+      sendMock.mockResolvedValue({ status, segments: 1, degraded: false });
+      const res = await POST(post());
+      const body = await res.json();
+
+      // THE LIST IS UNTOUCHED BY THE SEND OUTCOME. This is the whole reason the send throttle is
+      // allowed to fail closed: failing the text costs one channel of a two-channel answer.
+      expect(res.status).toBe(200);
+      expect(body.outcome).toBe('picks');
+      expect(body.picks).toEqual([PICK]);
+      expect(body.sendStatus).toBe(status);
+    }
+  );
+
+  it('raises to Sentry when the send reports it could not do its job', async () => {
+    sendMock.mockResolvedValue({
+      status: 'throttled', segments: 1, degraded: true,
+      error: 'send throttle could not run; refused',
+    });
+    await POST(post());
+    expect(captureMock).toHaveBeenCalledTimes(1);
+    expect(captureMock.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect((captureMock.mock.calls[0][0] as Error).message).toBe('sms_instant_picks_send_degraded');
+  });
+
+  it('does NOT raise for an ordinary throttle refusal — that is the system working', async () => {
+    sendMock.mockResolvedValue({ status: 'throttled', segments: 1, degraded: false });
+    await POST(post());
+    expect(captureMock).not.toHaveBeenCalled();
+  });
+
+  it('a send that somehow rejected does not take the page down with it', async () => {
+    // The module promises never to throw, and is tested to it. A PROMISE IS NOT A MECHANISM — the
+    // route contains it anyway, because `withObservedRoute` would turn an escaped rejection into a
+    // 500 on the request whose PRIMARY job was rendering this parent's weekend list.
+    sendMock.mockRejectedValue(new Error('unexpected'));
+    const res = await POST(post());
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.outcome).toBe('picks');
+    expect(body.picks).toEqual([PICK]);
+    expect(body.sendStatus).toBe('failed');
+    // ...and it is reported, because a broken never-throws contract is an incident.
+    expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still never calls the send-log writer directly', async () => {
+    sendMock.mockResolvedValue({ status: 'sent', segments: 1, degraded: false });
+    await POST(post());
+    expect(sendLogMock).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@
 // `sendConfirmationRequest` is now half real: it BUILDS §2.6's approved confirmation text on
 // every path, dry run included, and only its Twilio dispatch and `sms_send_log` write are stubs.
 import { NextResponse } from 'next/server';
+import { clientIpFrom } from '@/lib/sms/client-ip';
 import { smsSendingEnabled, smsSignupEnabled } from '@/lib/sms/config';
 import {
   MAX_SIGNUP_PAYLOAD_BYTES,
@@ -96,35 +97,6 @@ function signupAccepted(dispatched: boolean): NextResponse {
  * counting.
  */
 const THROTTLED_MESSAGE = 'Too many signup attempts. Please try again in a few minutes.';
-
-/**
- * The caller's IP, or null when the request did not arrive with a usable one.
- *
- * ═══ x-real-ip FIRST, x-forwarded-for SECOND, AND NEITHER IS TRUSTED ═══
- * On Vercel both headers are set by the platform edge, and `x-real-ip` is the single value it
- * resolved rather than a list a proxy chain appended to — so it is the one with the least room
- * for a caller to prepend their own entry. `x-forwarded-for`'s LEFTMOST entry is the conventional
- * client position and is what we fall back to, split off rather than hashing the whole chain,
- * which would otherwise make every hop change the subject and defeat the counter.
- *
- * ⚠ THIS IS WHY THE IP LIMIT IS DEFENCE IN DEPTH AND NEVER THE ONLY GUARD. Both headers are
- * strings on an unauthenticated request; behind a misconfigured proxy either can be attacker-set,
- * and an attacker with a header can have as many identities as they like. The per-number limit in
- * lib/sms/signup-store.ts is the one that cannot be evaded, because the number IS the destination
- * the text goes to. Anything the IP half adds is a bonus, and the code is written so losing it
- * degrades rather than fails.
- *
- * LENGTH-CAPPED. This value is hashed and stored, so an unbounded header must not become an
- * unbounded subject. Anything implausible for an address is treated as absent rather than
- * truncated — a truncated address is a different address, and would silently merge callers.
- */
-function clientIpFrom(headers: Headers): string | null {
-  const realIp = headers.get('x-real-ip')?.trim();
-  const forwardedFirst = headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  const candidate = realIp || forwardedFirst || '';
-  if (candidate.length === 0 || candidate.length > 45) return null; // 45 = longest IPv6 text form.
-  return candidate;
-}
 
 export const POST = withObservedRoute(smsSignupPost, { tags: { route: 'api/sms/signup' } });
 

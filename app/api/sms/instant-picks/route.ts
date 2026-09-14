@@ -12,28 +12,40 @@
 // It does mean a press is not cacheable. That is correct: the whole promise is "fresh".
 //
 // ═══ WHAT THIS ENDPOINT WRITES ═══
-// One row, ever, and it is a counter: the throttle's `sms_signup_throttle` upsert.
+// The throttle counters, and — only once every gate in lib/sms/instant-picks-send.ts passes — one
+// `sms_send_log` row recording the text that went out. Nothing else. In particular THE LIST IS
+// STILL NEVER PERSISTED: the result is serialised to the caller and dropped, and the link in the
+// text reopens this page so the parent presses the button again (Jon's D2 ruling, L1).
 //
-// ⚠ IT MUST NEVER WRITE `sms_send_log`, AND THE REASON IS SPECIFIC RATHER THAN TIDINESS. That
-// table is what the "Last Friday" panel this button sits inside READS FROM (`findLastWeek` in
-// lib/sms/preferences.ts). A press logged there would appear in that panel as though it were a
-// text we had sent, corrupting the exact section this feature was added to, and would land in
-// PRD §6's send and click-through metrics as a message that never existed. This file imports no
-// send-log writer and no Twilio client; tests/sms/instant_picks_no_persistence.test.ts asserts
-// that statically, and tests/sms/instant_picks_route.test.ts asserts it behaviourally.
+// ⚠ THE `sms_send_log` ROW IS WRITTEN UNDER A NEW `send_type = 'instant_picks'`, AND THAT VALUE IS
+// DELIBERATELY ABSENT FROM `findLastWeek`'s IN-LIST (lib/sms/preferences.ts). That discrimination
+// is what makes an audit row safe here: the "Last Friday" panel this button sits INSIDE reads that
+// table, and a press surfacing there would show a parent their own request as though it were a
+// text we had decided to send them — and would land in PRD §6's send metrics as a different kind
+// of message than it is. The row also carries `picks_snapshot` NULL, because widening 0035's CHECK
+// to allow one would silently break the weekly novelty filter. Both are asserted in
+// tests/sms/instant_picks_send_log_invariants.test.ts.
 //
-// ═══ AND IT SENDS NOTHING ═══
-// Page-only, deliberately. The preferences page carries `MESSAGE_FREQUENCY_DISCLOSURE` — "1 message
-// per week, plus a one-time confirmation message" — in its legal block: a carrier disclosure that a
-// Toll-Free Verification reviewer checks behaviour against. A "text me this" option here would
-// contradict a statement rendered on the same page. That is a compliance decision, not a
-// preference; see the copy block in lib/sms/consent-copy.ts before adding any send path.
+// ═══ 🔴 THE SEND IS BUILT AND HELD — DO NOT READ THE SEND CALL BELOW AS "THIS TEXTS PEOPLE" ═══
+// It cannot, in any environment, as this commit stands. `sendInstantPicksText` refuses unless
+// INSTANT_PICKS_SMS_SEND_ENABLED is true AND the subscriber's `consent_text_version` is v8 or
+// later — and the live constant is still v7, because the frequency disclosure ("1 message per
+// week, plus a one-time confirmation message") has not been rewritten yet. That copy change, its
+// consent-version bump and the switch are task 1, held pending the Toll-Free Verification decision
+// (plan v2.0 §6, option B). While they are held, THIS ROUTE BEHAVES EXACTLY AS IT DID BEFORE: the
+// response carries `sendStatus: 'not_eligible'`, the page renders nothing for it, and no text and
+// no audit row exist. See lib/sms/instant-picks-send.ts before touching any of it.
 import { NextResponse } from 'next/server';
 import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 import { getServerSearchEngine } from '@/lib/search/server-engine';
 import { findInstantPicksSubscriber } from '@/lib/sms/instant-picks-store';
 import { checkAndRecordInstantPicks } from '@/lib/sms/instant-picks-throttle';
 import { selectInstantPicks, type InstantPick } from '@/lib/sms/instant-picks';
+import { clientIpFrom } from '@/lib/sms/client-ip';
+import {
+  sendInstantPicksText,
+  type InstantPicksSendStatus,
+} from '@/lib/sms/instant-picks-send';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -77,6 +89,18 @@ interface InstantPicksResponse {
   areaLabel: string | null;
   widened: boolean;
   interestsDropped: boolean;
+  /**
+   * What happened to the TEXT, on the one outcome that attempts one. `'not_eligible'` on every
+   * other path, and on every path at all while the send is held — see this file's header.
+   *
+   * A SEPARATE FIELD FROM `outcome`, NOT A SIXTH VALUE OF IT. `outcome` answers "what is on this
+   * weekend" and the page's list rendering is driven entirely by it; the send is a second,
+   * independent thing that happened to the same press. Folding them together would mean a
+   * throttled TEXT could not be reported without also claiming something about the LIST — and the
+   * whole graceful-degradation argument for failing the send closed (plan §4.3) is that the list
+   * still renders when the text does not.
+   */
+  sendStatus: InstantPicksSendStatus;
 }
 
 function respond(
@@ -92,6 +116,10 @@ function respond(
     areaLabel: null,
     widened: false,
     interestsDropped: false,
+    // DEFAULTS TO SILENT. Every early return — bad request, dead token, throttled page press,
+    // engine down — carries this without having to remember to, so a new refusal branch cannot
+    // accidentally claim a text was sent or failed.
+    sendStatus: 'not_eligible',
     ...body,
   };
   return NextResponse.json(payload, status === 200 ? undefined : { status, headers });
@@ -100,6 +128,40 @@ function respond(
 export const POST = withObservedRoute(instantPicksPost, {
   tags: { route: 'api/sms/instant-picks' },
 });
+
+/**
+ * The send half, in the one shape that cannot cost the parent their list.
+ *
+ * ═══ THE TRY/CATCH IS NOT REDUNDANT, THOUGH IT LOOKS IT ═══
+ * `sendInstantPicksText` promises never to throw and is tested to that promise. A PROMISE IS NOT A
+ * MECHANISM: it holds until somebody adds a line above its first try block, or a dependency starts
+ * throwing on import. The cost of being wrong is not one lost text — it is a 500 where a parent
+ * would have had their weekend list, on the request whose PRIMARY job was rendering that list.
+ * `withObservedRoute` would turn an escaped rejection into exactly that.
+ *
+ * So the secondary half of this request is contained: it cannot fail the primary half. That is the
+ * same asymmetry the send throttle's fail-closed direction rests on, enforced one layer out.
+ */
+async function attemptSend(
+  outcome: InstantPicksResponseOutcome,
+  subscriberId: string,
+  request: Request
+): Promise<{ status: InstantPicksSendStatus; degraded: boolean; error?: string }> {
+  if (outcome !== 'picks') return { status: 'not_eligible', degraded: false };
+  try {
+    return await sendInstantPicksText(subscriberId, {
+      ipAddress: clientIpFrom(request.headers),
+    });
+  } catch (err) {
+    // Reported as degraded so the capture below fires: a module that broke its own never-throws
+    // contract is exactly the thing nobody should learn about from a bill or a complaint.
+    return {
+      status: 'failed',
+      degraded: true,
+      error: `send threw: ${(err as Error)?.name ?? 'unknown'}`,
+    };
+  }
+}
 
 async function instantPicksPost(request: Request): Promise<NextResponse> {
   // ── 1. Payload ceiling, declared and actual — same two checks the preferences route makes. ──
@@ -182,12 +244,46 @@ async function instantPicksPost(request: Request): Promise<NextResponse> {
     return respond('unavailable', 503);
   }
 
-  // NOTHING IS PERSISTED FROM HERE. The result is serialised to the caller and dropped: no send
-  // log row, no click events minted, no counter moved. See this file's header.
+  // ── 5. The text. AFTER the list exists, and ONLY when there is a list. ──────────────────
+  //
+  // ═══ WHY THE SEND IS LAST, AND WHY ITS FAILURE CANNOT REACH THE RESPONSE'S `outcome` ═══
+  // The page render is the primary half of this feature and the text is the takeaway. So the list
+  // is fully resolved before anything is dispatched, and `sendInstantPicksText` never throws — a
+  // held flag, a refused throttle, a Twilio outage and a lost audit row all degrade to a
+  // `sendStatus` beside an unchanged list. That is the same asymmetry the send throttle's
+  // fail-closed direction rests on (plan §4.3): failing the text costs one channel of a
+  // two-channel answer.
+  //
+  // ═══ ⚠ ONLY ON `picks`, AND THIS IS A DECISION THE PLAN DID NOT MAKE — FLAGGED, NOT BURIED ═══
+  // An `empty` outcome means we genuinely found nothing on this weekend. The message says "more to
+  // do with the kids this weekend" and links to a page that would show the same nothing, so
+  // sending it would be a false sentence, a wasted ~$0.016, and a text a parent would reasonably
+  // call spam — against a disclosed cadence of one message a week and from a toll-free number in
+  // carrier review. `unavailable` is worse still: we could not check, so we have nothing to say.
+  // The plan's task 7 lists the send states without saying which outcomes attempt one; this is the
+  // narrow reading, and it is the reversible direction — widening it later is one condition.
+  const send = await attemptSend(result.outcome, resolution.subscriberId, request);
+
+  if (send.degraded) {
+    // A limiter that cannot run, a dispatch that failed, or an audit row we could not write. NOT
+    // raised for an ordinary throttle refusal — a parent hitting 3/day is the system working, and
+    // alerting on it would bury the cases that are not. `error` is built by a module that promises
+    // never to put a phone number or a message body in it.
+    await captureAndFlush(new Error('sms_instant_picks_send_degraded'), undefined, {
+      route: 'api/sms/instant-picks',
+      operation: 'send_instant_picks_text',
+      sendStatus: send.status,
+      detail: send.error ?? 'no detail',
+    });
+  }
+
+  // THE LIST ITSELF IS STILL NOT PERSISTED. The only row this press can produce is the audit
+  // record that a text went out — never what was in it. See this file's header.
   return respond(result.outcome, 200, {
     picks: result.picks,
     areaLabel: result.areaLabel,
     widened: result.widened,
     interestsDropped: result.interestsDropped,
+    sendStatus: send.status,
   });
 }

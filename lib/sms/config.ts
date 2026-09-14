@@ -14,6 +14,11 @@
 //   SMS_SIGNUP_ENABLED       — "true" to expose the public signup form and its API route at all.
 //                              Default FALSE. Separate from SMS_SENDING_ENABLED on purpose —
 //                              see smsSignupEnabled().
+//   INSTANT_PICKS_SMS_SEND_ENABLED
+//                            — "true" to permit an Instant Picks press to DISPATCH a text.
+//                              Default FALSE. SEPARATE from SMS_SENDING_ENABLED, which is already
+//                              true in production and therefore cannot hold this back — see
+//                              instantPicksSmsSendEnabled().
 //   TWILIO_ACCOUNT_SID       — Twilio account SID (not secret, but paired with the token).
 //   TWILIO_AUTH_TOKEN        — Twilio auth token. SECRET. Used ONLY to verify the
 //                              X-Twilio-Signature on inbound webhooks and to authenticate
@@ -72,6 +77,46 @@ export function waitlistNotificationsEnabled(): boolean {
  */
 export function smsSendingEnabled(): boolean {
   return env('SMS_SENDING_ENABLED') === 'true';
+}
+
+/**
+ * Whether an Instant Picks press may dispatch an SMS at all.
+ *
+ * ═══ A FOURTH FLAG, AND DELIBERATELY NOT `SMS_SENDING_ENABLED` ═══
+ * `SMS_SENDING_ENABLED` IS ALREADY `true` IN PRODUCTION — it is what permits the Friday weekly
+ * send, which is the live product. So reusing it as this feature's switch would not be a switch at
+ * all: the on-demand send path would go live the moment the code merged, which is the exact
+ * outcome Instant Picks plan v2.0 §6 option B ("build now, hold the switch") was chosen to
+ * prevent. A shared flag cannot express "sending is on, and this one thing is still held" — the
+ * same argument `waitlistNotificationsEnabled()` makes two functions up, and this is that
+ * argument's second instance rather than a new one.
+ *
+ * ═══ WHAT IS BEING HELD, AND BY WHOM ═══
+ * The disclosure copy. `MESSAGE_FREQUENCY_DISCLOSURE` still says "1 message per week, plus a
+ * one-time confirmation message" — rendered on the preferences page, on /sms/start and on the
+ * homepage — and it is the statement a Toll-Free Verification reviewer compares observed behaviour
+ * against. The TFV filing (SID HH9607afc894eb24bc3fe2e6362d49aaf6) was IN_REVIEW as of 2026-08-28
+ * and its opt-in evidence is a screenshot of the live page rendering that constant. So the copy
+ * change, the CONSENT_TEXT_VERSION bump that legally follows it, and this flag are one decision,
+ * and it is Jon's and the Operator's — not a deploy-time default.
+ *
+ * ═══ ⚠ THIS IS ONE OF THREE INDEPENDENT GATES, NOT THE GATE ═══
+ * A press only becomes a text when ALL of these pass, and each closes a different hole:
+ *   1. this flag                      — the operator's held switch; the thing a human flips.
+ *   2. consent_text_version >= v8     — the STRUCTURAL gate (plan §7). Only a subscriber who saw
+ *                                       the new wording can trigger a text. Today NOBODY is on v8,
+ *                                       so the send path is inert even with this flag on.
+ *   3. the send throttle              — 1 per 10 min / 3 per day per subscriber, 1 per 30s / 20 per
+ *                                       day per IP, FAILING CLOSED (plan §4.2, §4.3).
+ * Removing any one of them is a decision, not a cleanup. See lib/sms/instant-picks-send.ts.
+ *
+ * DEFAULT FALSE, and `=== 'true'` through the same `env()` reader every other flag here uses — so
+ * 'TRUE', '1' and 'yes' are all off. Deliberately neither stricter nor more lenient than the flags
+ * beside it: a new flag that parsed its input differently from the established ones would be its
+ * own trap.
+ */
+export function instantPicksSmsSendEnabled(): boolean {
+  return env('INSTANT_PICKS_SMS_SEND_ENABLED') === 'true';
 }
 
 /**

@@ -1,18 +1,31 @@
-// tests/sms/instant_picks_copy.test.ts — the Instant Picks strings (plan v1.0, task 5).
+// tests/sms/instant_picks_copy.test.ts — the Instant Picks strings (plan v1.0 task 5, v2.0 task 7).
 //
-// ═══ THE RULE THIS ENFORCES IS A COMPLIANCE RULE, NOT A STYLE ONE ═══
+// ═══ THE RULE THIS ENFORCES IS A COMPLIANCE RULE, NOT A STYLE ONE — AND IT IS NOW NARROWER ═══
 // The preferences page renders `MESSAGE_FREQUENCY_DISCLOSURE` — "1 message per week, plus a
 // one-time confirmation message" — in its carrier disclosure block, a few centimetres below the
 // Instant Picks button. That line is what a Toll-Free Verification reviewer checks the messaging
-// behaviour against. So no string on this button may imply a text is coming: the contradiction
-// would be visible in a single screenshot of the page.
+// behaviour against.
 //
-// Page-only was decided for exactly that reason rather than as a preference, and copy is where the
-// decision would erode first — "we'll send you the list" is an easy sentence to write and reads as
-// friendlier than the truth. Hence a test rather than a comment.
+// ⚠ THE FEATURE IS NO LONGER PAGE-ONLY: Jon ruled the button also sends a text (PRD v3.22). But
+// THE DISCLOSURE HAS NOT CHANGED YET — rewriting it, and bumping CONSENT_TEXT_VERSION with it, is
+// task 1, HELD pending the TFV decision (plan v2.0 §6 option B). So the original rule still holds
+// over everything that is ALWAYS on the page, and it holds for a second reason on top of the
+// first: while the send path is held, a button promising a text would be promising something the
+// three gates in lib/sms/instant-picks-send.ts refuse to deliver. False AND contradictory.
+//
+// ═══ TWO GROUPS, GOVERNED DIFFERENTLY ═══
+//   GROUP A — always on the page. NO SENDING VERBS, for the reasons above.
+//   GROUP B — the send-outcome lines. Rendered ONLY when the server reports a send was actually
+//     attempted for this subscriber, which requires `consent_text_version >= v8` — i.e. they saw
+//     the NEW disclosure and agreed to it. They CANNOT appear beside wording they contradict,
+//     because the only way to see them is to have agreed to wording that includes them.
+//
+// ⚠ DO NOT "TIDY" THESE INTO ONE LIST. The split IS the rule; a single list would either forbid
+// group B from ever saying "text" or permit group A to say it.
 import { describe, expect, it } from 'vitest';
 import {
   CARRIER_DISCLOSURES,
+  CONSENT_TEXT_VERSION,
   MESSAGE_FREQUENCY_DISCLOSURE,
   PREFS_INSTANT_BODY,
   PREFS_INSTANT_BUTTON,
@@ -20,12 +33,27 @@ import {
   PREFS_INSTANT_HEADING,
   PREFS_INSTANT_INTERESTS_DROPPED,
   PREFS_INSTANT_LOADING,
+  PREFS_INSTANT_SEND_DISABLED,
+  PREFS_INSTANT_SEND_FAILED,
+  PREFS_INSTANT_SEND_THROTTLED,
+  PREFS_INSTANT_SENT,
   PREFS_INSTANT_THROTTLED,
   PREFS_INSTANT_UNAVAILABLE,
   PREFS_INSTANT_WIDENED,
+  consentVersionSerial,
   instantPicksResultLine,
 } from '@/lib/sms/consent-copy';
+import { INSTANT_PICKS_MIN_CONSENT_SERIAL } from '@/lib/sms/instant-picks-send';
 
+/** GROUP B — only reachable after a real send attempt. See the header. */
+const SEND_OUTCOME_STRINGS = [
+  PREFS_INSTANT_SENT,
+  PREFS_INSTANT_SEND_THROTTLED,
+  PREFS_INSTANT_SEND_FAILED,
+  PREFS_INSTANT_SEND_DISABLED,
+];
+
+/** GROUP A — always on the page. */
 const ALL_STRINGS = [
   PREFS_INSTANT_HEADING,
   PREFS_INSTANT_BODY,
@@ -95,5 +123,58 @@ describe('instant picks copy · the result line', () => {
     // broken "what's on now". See lib/sms/instant-picks.ts.
     expect(instantPicksResultLine(7, 'East Van')).toMatch(/weekend/i);
     expect(PREFS_INSTANT_BUTTON).toMatch(/weekend/i);
+  });
+});
+
+describe('instant picks copy · GROUP B — the send-outcome lines', () => {
+  it('cannot be shown to anyone today, which is what makes them safe to write now', () => {
+    // ⚠ THE PREMISE OF THIS WHOLE GROUP. These sentences DO say "sent"/"send", which group A is
+    // forbidden from doing, and that is only defensible because the server cannot report a send
+    // outcome for a subscriber below consent v8 — and the live version is v7. If this assertion
+    // ever flips, task 1 has landed: the disclosure now describes these texts, and GROUP A should
+    // be REVISITED in that same pass rather than left silently cautious.
+    expect(consentVersionSerial(CONSENT_TEXT_VERSION)!).toBeLessThan(INSTANT_PICKS_MIN_CONSENT_SERIAL);
+  });
+
+  it.each(SEND_OUTCOME_STRINGS)('%s — is a whole sentence, not a code', (line) => {
+    expect(line.length).toBeGreaterThan(10);
+    expect(line).not.toMatch(/_|\bERR|\bnull\b|undefined/);
+    expect(line).toMatch(/[.!]$/);
+  });
+
+  it('the three non-success lines all say the list is still there', () => {
+    // The entire argument for letting the send fail closed (plan §4.3) is that the parent still
+    // gets what they pressed the button for. Copy that only reported the failure would make a
+    // working answer read as a broken one.
+    for (const line of [
+      PREFS_INSTANT_SEND_THROTTLED,
+      PREFS_INSTANT_SEND_FAILED,
+      PREFS_INSTANT_SEND_DISABLED,
+    ]) {
+      expect(line.toLowerCase()).toMatch(/below/);
+    }
+  });
+
+  it('the throttled line names no limit and no number, like its page-path twin', () => {
+    expect(PREFS_INSTANT_SEND_THROTTLED).not.toMatch(/\d/);
+    expect(PREFS_INSTANT_SEND_THROTTLED.toLowerCase()).not.toMatch(/limit|per day|too many/);
+  });
+
+  it('they say four different things', () => {
+    expect(new Set(SEND_OUTCOME_STRINGS).size).toBe(SEND_OUTCOME_STRINGS.length);
+  });
+
+  it('none of them leaks an environment variable or an internal state name', () => {
+    for (const line of SEND_OUTCOME_STRINGS) {
+      expect(line).not.toMatch(/ENABLED|flag|throttle|Twilio|consent_text_version|v8/i);
+    }
+  });
+
+  it('and they are NOT in group A — the split is the rule', () => {
+    // A future edit that appended these to ALL_STRINGS would make the group A assertion fail
+    // rather than silently weaken it, but this says the intent out loud.
+    for (const line of SEND_OUTCOME_STRINGS) {
+      expect(ALL_STRINGS).not.toContain(line);
+    }
   });
 });

@@ -15,11 +15,25 @@
 // rendered as "nothing found": the two sentences make different claims about the catalogue and
 // only one of them would be true. The route keeps them apart for exactly this reason.
 //
-// ── NOTHING HERE SENDS ANYTHING ─────────────────────────────────────────────────────────
-// There is no "text me this" control and there must not be one: the legal block further down this
-// same page states "1 message per week, plus a one-time confirmation message", which is a carrier
-// disclosure a send button would contradict from a few centimetres away. See the copy block in
-// lib/sms/consent-copy.ts.
+// ── AND THE SEND OUTCOME IS A FIFTH THING, ORTHOGONAL TO THOSE FOUR ─────────────────────
+// It is a separate response field and a separate line, because it answers a separate question.
+// A text that was throttled or failed sits ABOVE a list that rendered perfectly — which is the
+// entire reason the send throttle is allowed to fail closed (plan v2.0 §4.3). Folding it into the
+// four states would have made "we couldn't text you" and "we couldn't check" the same sentence,
+// and they are not.
+//
+// ── THE PRESS CAN ALSO SEND A TEXT — BUT THERE IS STILL NO "TEXT ME THIS" CONTROL ───────
+// Jon ruled that the EXISTING button also triggers a text (PRD v3.22, D1): one button, two
+// results. So this file gains no new control, and deliberately — a separate "text me this" button
+// would be a second thing to disclose and a second thing to throttle.
+//
+// ⚠ AND IT DOES NOT ANNOUNCE ONE IN ADVANCE. The legal block further down this same page still
+// says "1 message per week, plus a one-time confirmation message", and rewriting that sentence is
+// task 1, held pending the Toll-Free Verification decision. Until it lands, the button's own label
+// and body copy must not promise a text they would contradict — and could not deliver anyway,
+// since the send path refuses every subscriber below consent v8. What this component renders is
+// what the SERVER REPORTS ACTUALLY HAPPENED, after the fact, and nothing when nothing did. See the
+// group A / group B block in lib/sms/consent-copy.ts.
 
 import { useState } from 'react';
 import { Button } from '@/components/ui';
@@ -30,6 +44,10 @@ import {
   PREFS_INSTANT_HEADING,
   PREFS_INSTANT_INTERESTS_DROPPED,
   PREFS_INSTANT_LOADING,
+  PREFS_INSTANT_SEND_DISABLED,
+  PREFS_INSTANT_SEND_FAILED,
+  PREFS_INSTANT_SEND_THROTTLED,
+  PREFS_INSTANT_SENT,
   PREFS_INSTANT_THROTTLED,
   PREFS_INSTANT_UNAVAILABLE,
   PREFS_INSTANT_WIDENED,
@@ -44,6 +62,18 @@ interface InstantPick {
   href: string;
 }
 
+/**
+ * What the route reports happened to the TEXT.
+ *
+ * ⚠ RESTATED HERE RATHER THAN IMPORTED FROM lib/sms/instant-picks-send.ts, and that is not an
+ * oversight. This is a `'use client'` module: a value import from that file would pull the pg pool,
+ * the Twilio SDK and the send-log writer into the browser bundle's graph, which is the property
+ * tests/sms/instant_picks_no_persistence.test.ts checks on this very file. A four-member union is
+ * the cheap half of that trade, and the `SEND_LINE` map below is exhaustive over it, so a value
+ * added on the server that is not handled here fails the typecheck rather than rendering nothing.
+ */
+type SendStatus = 'sent' | 'throttled' | 'disabled' | 'failed' | 'not_eligible';
+
 interface InstantPicksBody {
   ok?: boolean;
   outcome?: 'picks' | 'empty' | 'unavailable' | 'throttled' | 'not_found';
@@ -51,12 +81,37 @@ interface InstantPicksBody {
   areaLabel?: string | null;
   widened?: boolean;
   interestsDropped?: boolean;
+  sendStatus?: SendStatus;
 }
+
+/**
+ * One line per send outcome — and NOTHING for `not_eligible`.
+ *
+ * ⚠ `not_eligible` IS THE STATE EVERY SUBSCRIBER IS IN TODAY, and its null is the single most
+ * load-bearing entry in this map. It means no send was attempted: the feature is held, or this
+ * subscriber's consent predates the new wording. Saying anything at all there would tell a parent
+ * about a text that was never offered, on a page whose own legal block promises one message a
+ * week. Silence makes this component render EXACTLY as it did before the send path existed.
+ */
+const SEND_LINE: Record<SendStatus, string | null> = {
+  sent: PREFS_INSTANT_SENT,
+  throttled: PREFS_INSTANT_SEND_THROTTLED,
+  failed: PREFS_INSTANT_SEND_FAILED,
+  disabled: PREFS_INSTANT_SEND_DISABLED,
+  not_eligible: null,
+};
 
 type Phase =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'picks'; picks: InstantPick[]; areaLabel: string | null; widened: boolean; interestsDropped: boolean }
+  | {
+      kind: 'picks';
+      picks: InstantPick[];
+      areaLabel: string | null;
+      widened: boolean;
+      interestsDropped: boolean;
+      sendStatus: SendStatus;
+    }
   | { kind: 'empty' }
   | { kind: 'unavailable' }
   | { kind: 'throttled' };
@@ -93,6 +148,10 @@ export function InstantPicks({ token }: { token: string }) {
         areaLabel: data.areaLabel ?? null,
         widened: Boolean(data.widened),
         interestsDropped: Boolean(data.interestsDropped),
+        // DEFAULTS TO SILENT. An older cached bundle, a proxy that stripped the field, or a
+        // response shape that moves on — every one of those should say nothing about a text
+        // rather than guess, and `not_eligible` is the only value that renders nothing.
+        sendStatus: data.sendStatus && data.sendStatus in SEND_LINE ? data.sendStatus : 'not_eligible',
       });
     } catch {
       setPhase({ kind: 'unavailable' });
@@ -143,6 +202,14 @@ export function InstantPicks({ token }: { token: string }) {
             <p className="kf-prefs__intro">
               {instantPicksResultLine(phase.picks.length, phase.areaLabel)}
             </p>
+            {/* ABOVE THE LIST, NOT INSTEAD OF IT. Every send outcome except 'sent' is a sentence
+                about something that did NOT happen, printed directly over the thing that DID —
+                which is the graceful degradation the send path's fail-closed direction is
+                premised on. Inside the same `role="status"` region, so a screen reader user is
+                told about the text in the same announcement as the result. */}
+            {SEND_LINE[phase.sendStatus] && (
+              <p className="kf-prefs__help">{SEND_LINE[phase.sendStatus]}</p>
+            )}
             {/* The caveat the SELECTOR reported, not one inferred from the result's shape — it
                 reports its own degradation precisely so the copy cannot reach a different
                 conclusion than the selection did. */}
