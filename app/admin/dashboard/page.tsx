@@ -224,8 +224,19 @@ export default async function AdminDashboardPage({
           <StatTile label="Enabled sources" value={formatCount(registry.enabledSources)} sub={`of ${formatCount(registry.totalSources)} registered`} />
           <StatTile label="Series" value={formatCount(totalSeries)} sub="from enabled sources" />
           <StatTile label="Occurrences" value={formatCount(totalOccurrences)} sub="non-archived" />
-          <StatTile label="Analytics events" value={formatCount(analytics.totalEvents)} sub={`${formatCount(analytics.listingViewed)} listing views`} />
-          <StatTile label="Searches" value={formatCount(analytics.searchPerformed)} sub="search_performed events" />
+          {/* These two used to be all-time. They are now windowed (see
+              ANALYTICS_ROLLUP_WINDOW_DAYS) because the all-time versions stopped the page
+              responding at all — so the window goes IN THE LABEL, not just in a comment. */}
+          <StatTile
+            label={`Analytics events (${analytics.windowDays}d)`}
+            value={formatCount(analytics.totalEvents)}
+            sub={`${formatCount(analytics.listingViewed)} listing views, last ${analytics.windowDays} days`}
+          />
+          <StatTile
+            label={`Searches (${analytics.windowDays}d)`}
+            value={formatCount(analytics.searchPerformed)}
+            sub={`search_performed events, last ${analytics.windowDays} days`}
+          />
         </div>
       </section>
 
@@ -375,11 +386,15 @@ export default async function AdminDashboardPage({
       </section>
 
       <section className="adm-section">
-        <h2>Analytics</h2>
+        <h2>Analytics — last {analytics.windowDays} days</h2>
+        <p className="adm-hint">
+          Every figure in this section covers the last {analytics.windowDays} days, not all time. The daily
+          chart below is its own 7-day series and is labelled separately.
+        </p>
         {analytics.totalEvents === 0 ? (
           <p className="empty">
-            No analytics events captured yet. Event capture is live (POST /api/analytics/event); this fills in as parents view
-            listings.
+            No analytics events in the last {analytics.windowDays} days. Event capture is live
+            (POST /api/analytics/event); this fills in as parents view listings.
           </p>
         ) : (
           <div className="cols">
@@ -430,9 +445,9 @@ export default async function AdminDashboardPage({
             </div>
 
             <div>
-              <h3>Most-viewed listings</h3>
+              <h3>Most-viewed listings (last {analytics.windowDays}d)</h3>
               {analytics.topListings.length === 0 ? (
-                <p className="empty">No listing views yet.</p>
+                <p className="empty">No listing views in the last {analytics.windowDays} days.</p>
               ) : (
                 <table className="grid">
                   <thead>
@@ -457,7 +472,7 @@ export default async function AdminDashboardPage({
       </section>
 
       <section className="adm-section">
-        <h2>Search analytics</h2>
+        <h2>Search analytics — last {analytics.windowDays} days</h2>
         <p className="adm-hint">
           What parents actually search for — query terms and filters from{' '}
           <span className="mono">search_performed</span> events fired by the /search page. The raw query text is
@@ -466,8 +481,8 @@ export default async function AdminDashboardPage({
         </p>
         {analytics.searchPerformed === 0 ? (
           <p className="empty">
-            No searches captured yet. The /search page fires a <span className="mono">search_performed</span> event
-            whenever a real query or filter runs; this fills in as parents search.
+            No searches in the last {analytics.windowDays} days. The /search page fires a{' '}
+            <span className="mono">search_performed</span> event whenever a real query or filter runs.
           </p>
         ) : (
           <div className="cols">

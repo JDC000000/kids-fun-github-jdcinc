@@ -44,6 +44,45 @@ export async function loadRecordsFoundBaseline(
 }
 
 /**
+ * The health-alert code raised by this source's PREVIOUS finished check run, or null when
+ * the previous run raised none (or there is no previous run).
+ *
+ * ═══ WHY THE INGEST PATH NEEDS THE RUN BEFORE THIS ONE ═══
+ * A yield verdict compares ONE run to a trailing baseline, so it cannot tell a source that
+ * has genuinely emptied from a source whose run was merely SHORT — a vendor mid-maintenance,
+ * a half-served page, a crawl that stopped early. Both look identical in a single sample,
+ * and production settled which one dominates: of 182 `yield_collapse` alerts raised between
+ * 2026-08-11 and 2026-09-14, every single one was followed by a full-yield run, and every
+ * job that raised one reached `status = 'done'`. Not one was a regression.
+ *
+ * Persistence is what separates them, and it needs no new threshold — the ratio, the
+ * baseline and the per-run verdict are all untouched. A verdict that repeats across
+ * CONSECUTIVE runs is a source that did not come back; a verdict that does not repeat was a
+ * blip the next run already corrected. Only the first kind is worth failing a job over.
+ *
+ * `excludeCheckRunId` is the in-flight run, which is already on the table as 'running' with
+ * a null code by the time this is called. Excluding it by id rather than filtering
+ * `status <> 'running'` also skips over runs a dead worker stranded in 'running'.
+ */
+export async function loadPreviousHealthAlertCode(
+  pool: Pool,
+  sourceId: string,
+  excludeCheckRunId: string
+): Promise<string | null> {
+  const { rows } = await pool.query<{ health_alert_code: string | null }>(
+    `SELECT health_alert_code
+       FROM source_check_run
+      WHERE source_id = $1
+        AND id <> $2
+        AND status <> 'running'
+      ORDER BY started_at DESC
+      LIMIT 1`,
+    [sourceId, excludeCheckRunId]
+  );
+  return rows[0]?.health_alert_code ?? null;
+}
+
+/**
  * A run-level health verdict raised by the adapter's own self-assessment
  * (Adapter.assessRun → AdapterRunDiagnostics with alert=true).
  *

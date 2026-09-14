@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { poolConfigFor } from '../lib/db/pool-config';
+import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '../lib/db/budgets';
 
 describe('poolConfigFor', () => {
   it('does not force SSL for local Postgres', () => {
@@ -29,5 +30,26 @@ describe('poolConfigFor', () => {
     expect(
       poolConfigFor('postgres://postgres:secret@db.example.supabase.co:5432/postgres?host=127.0.0.1').ssl
     ).toBeUndefined();
+  });
+
+  // 2026-09-14: `connectionTimeoutMillis` was unset, and node-postgres reads unset as WAIT
+  // FOREVER. With max: 5 and /admin/operating fanning nine reads out of one Promise.all,
+  // the four that queue had no ceiling — so a request could sit on a serverless function
+  // indefinitely behind five multi-minute scans. A number here, any number, is the fix; the
+  // assertion is that it is SET and shorter than a single query's own budget.
+  it('bounds how long a caller may wait for a pooled connection', () => {
+    const config = poolConfigFor('postgres://postgres:postgres@127.0.0.1:5432/kids_fun');
+    expect(config.connectionTimeoutMillis, 'unset means wait forever — see the constant').toBeGreaterThan(0);
+    expect(config.connectionTimeoutMillis).toBeLessThan(ADMIN_ANALYTICS_QUERY_TIMEOUT_MS);
+  });
+
+  // Stated rather than inherited: on this deployment the alternative to closing our own
+  // idle connections is that the platform reclaims them, which surfaces as
+  // `57P01 terminating connection due to administrator command` on the next request to pick
+  // one up. The value matches node-postgres's default; pinning it makes it a decision.
+  it('closes its own idle connections rather than leaving them to be reclaimed', () => {
+    expect(
+      poolConfigFor('postgres://postgres:postgres@127.0.0.1:5432/kids_fun').idleTimeoutMillis
+    ).toBeGreaterThan(0);
   });
 });

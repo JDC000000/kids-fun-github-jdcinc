@@ -243,7 +243,14 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
   // G-T7R-6 — Adapter.assessRun(): an adapter over a brittle, unofficial source gets to
   // fail its OWN run. Without this, a vendor shape change or a yield collapse completes
   // without throwing and the check run reports a cheerful green over empty data.
-  it('folds an alerting adapter self-assessment into the check-run errors', async () => {
+  //
+  // What this case now pins is the SPLIT introduced after the 2026-09-14 production
+  // investigation: the verdict reaches the BOARD (persisted errors jsonb, health_alert
+  // column, degraded status) on the very first run, but it does NOT reach
+  // `summary.errors` — the array `runTermsGatedIngest` turns into a thrown job failure.
+  // 182 Sentry errors and up to five redundant crawls per incident came from that one
+  // array being asked to mean both things.
+  it('a FIRST alerting self-assessment reaches the board but not the job', async () => {
     const pool = getPool();
     const [source] = await query<{ id: string }>(
       `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
@@ -261,19 +268,85 @@ describe.skipIf(!hasDb)('Ingest runner series_id wiring (G-T5-4)', () => {
     const summary = await ingestSource(pool, new CollapsingAdapter(), source.id);
 
     expect(seenBaselines, 'first run has no history to compare against').toEqual([null]);
-    expect(summary.errors.join(' ')).toMatch(/run health \[yield_collapse\]/);
-    // Records still landed, so the run is 'partial' — degraded and visible, not silent.
+    // THE JOB SUCCEEDS. A one-run dip is self-correcting and must not retry the crawl.
+    expect(summary.errors, 'a first verdict is not an execution error').toEqual([]);
+    expect(summary.healthAlert).toMatchObject({ code: 'yield_collapse' });
+    // …and the board still sees everything it always did.
     expect(summary.occurrencesUpserted).toBeGreaterThan(0);
-    const [run] = await query<{ status: string; errors: unknown }>(
-      `SELECT status, errors FROM source_check_run WHERE id = $1`,
+    const [run] = await query<{ status: string; errors: unknown; health_alert_code: string | null }>(
+      `SELECT status, errors, health_alert_code FROM source_check_run WHERE id = $1`,
       [summary.checkRunId]
     );
-    expect(run.status).toBe('partial');
-    expect(JSON.stringify(run.errors)).toMatch(/yield_collapse/);
+    expect(run.status, 'records landed, so degraded to partial — not green').toBe('partial');
+    expect(JSON.stringify(run.errors)).toMatch(/run health \[yield_collapse\]/);
+    expect(run.health_alert_code).toBe('yield_collapse');
+    // The verdict sits where the old `errors.push` put it — FIRST, ahead of any per-record
+    // line — so the board renders the array in the order it always has.
+    expect((run.errors as string[])[0]).toMatch(/^run health \[yield_collapse\]/);
 
     // Second run: the first run's records_found is now the trailing baseline.
     await ingestSource(pool, new CollapsingAdapter(), source.id);
     expect(seenBaselines[1]).toBe(1);
+  });
+
+  // The other half of the same rule: silence for one blip, but NOT silence for a source
+  // that stays collapsed. The second consecutive verdict is what fails the job, retries
+  // the crawl and reaches Sentry — the behaviour the alarm was built for, now aimed only
+  // at the condition that warrants it.
+  it('a SUSTAINED verdict — two consecutive runs — does fail the job', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      [`Assess Run Sustained ${crypto.randomUUID()}`]
+    );
+    class AlwaysCollapsingAdapter extends NoopAdapter {
+      assessRun() {
+        return { code: 'yield_collapse', alert: true, detail: 'still empty' };
+      }
+    }
+
+    const first = await ingestSource(pool, new AlwaysCollapsingAdapter(), source.id);
+    expect(first.errors, 'run 1 is a blip').toEqual([]);
+
+    const second = await ingestSource(pool, new AlwaysCollapsingAdapter(), source.id);
+    expect(second.errors.join(' '), 'run 2 is a regression').toMatch(
+      /run health \[yield_collapse\] SUSTAINED/
+    );
+
+    const [run] = await query<{ status: string; errors: unknown }>(
+      `SELECT status, errors FROM source_check_run WHERE id = $1`,
+      [second.checkRunId]
+    );
+    expect(run.status).toBe('partial');
+    // The louder line replaces the plain one rather than printing the collapse twice.
+    expect(
+      JSON.stringify(run.errors).match(/yield_collapse/g)?.length,
+      'the board states the collapse once'
+    ).toBe(1);
+  });
+
+  // A DIFFERENT verdict on the next run is not a sustained collapse — the source moved
+  // from one symptom to another, and the second symptom deserves its own first-run grace
+  // rather than inheriting the first's strike.
+  it('a different verdict code does not count as sustained', async () => {
+    const pool = getPool();
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`,
+      [`Assess Run Switching ${crypto.randomUUID()}`]
+    );
+    let call = 0;
+    class SwitchingAdapter extends NoopAdapter {
+      assessRun() {
+        call += 1;
+        return call === 1
+          ? { code: 'yield_collapse', alert: true, detail: 'thin' }
+          : { code: 'shape_drift', alert: true, detail: 'new key' };
+      }
+    }
+    await ingestSource(pool, new SwitchingAdapter(), source.id);
+    const second = await ingestSource(pool, new SwitchingAdapter(), source.id);
+    expect(second.errors).toEqual([]);
+    expect(second.healthAlert).toMatchObject({ code: 'shape_drift' });
   });
 
   it('a non-alerting self-assessment leaves the run green', async () => {

@@ -25,6 +25,7 @@
 // bucket CLOSED at or before the first recorded event are suppressed. See
 // lib/analytics/prehistory.ts for the shared rule.
 import { queryWithTimeout } from '@/lib/db/client';
+import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
 import { WAU_WINDOW_DAYS, MAU_WINDOW_DAYS } from './kpi';
 import { anchorMsFromIso, isPreHistory } from './prehistory';
 
@@ -32,16 +33,28 @@ import { anchorMsFromIso, isPreHistory } from './prehistory';
 export const TREND_WINDOW_DAYS = 30;
 
 /**
- * Per-query ceiling for the trend read. Set BELOW the serverless function ceiling (~10s on the
- * current plan, and nothing in the repo raises it) so a pathological run surfaces as a real error
- * this code can handle, rather than the platform killing the function and leaving Postgres to
- * finish the scan alone — which is exactly what produced two orphaned backends during this
- * incident and had to be cleared with pg_terminate_backend by hand.
+ * Per-query ceiling for the trend read — now the SHARED admin budget, not a second opinion.
  *
- * Measured cost on production-shaped data is ~1.5s, so this is ~5x headroom and should only ever
- * fire if something has gone wrong again.
+ * ═══ THE OLD 8s NUMBER WAS CORRECTING FOR TWO THINGS THAT TURNED OUT TO BE WRONG ═══
+ * It was justified as "~5x headroom over a measured ~1.5s" and as sitting "below the
+ * serverless function ceiling (~10s on the current plan)". Both were re-measured against
+ * production on 2026-09-14 and neither holds:
+ *
+ *   • THE QUERY COSTS 10.2s, not 1.5s. The 1.5s figure came from a fixture; the table has
+ *     since reached 2.65M rows. So the ceiling was not 5x headroom — it was BELOW the
+ *     query's ordinary cost, and it fired on every single load. That is the whole reason
+ *     /admin/product-health returned a 500 after ~8.6s: not contention, not a fault, just a
+ *     budget that the normal path could no longer fit inside.
+ *   • THE FUNCTION CEILING IS NOT ~10s. /admin/dashboard was observed still executing 75s
+ *     into a request, so the platform was never the binding constraint the comment assumed.
+ *
+ * A ceiling set below a query's routine cost is not a guard, it is an outage: it converted a
+ * slow page into a broken one and named the trend query while doing it. The real protection —
+ * that the statement cancels ITSELF via SET LOCAL even if the function is torn down, so no
+ * orphaned backend keeps scanning — is a property of queryWithTimeout, not of the number.
+ * So the number becomes the one admin budget, and stops being a place a second guess can rot.
  */
-export const TREND_QUERY_TIMEOUT_MS = 8_000;
+export const TREND_QUERY_TIMEOUT_MS = ADMIN_ANALYTICS_QUERY_TIMEOUT_MS;
 
 /**
  * One day of the trend: the active-user windows *as of that day* + that day's raw volume.

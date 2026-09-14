@@ -1,8 +1,8 @@
 // lib/db/client.ts — shared Postgres pool wrapper (server-side only).
 // Reads DATABASE_URL (TSD §3A.1). Used by lib/*, tests, and app/api routes.
 // NOT for client/browser code — this touches `pg` directly.
-import { Pool, type QueryResultRow } from 'pg';
-import { poolConfigFor } from './pool-config';
+import { Pool, type PoolClient, type QueryResultRow } from 'pg';
+import { CONNECTION_ACQUIRE_TIMEOUT_MS, POOL_MAX, poolConfigFor } from './pool-config';
 
 let pool: Pool | undefined;
 
@@ -13,6 +13,26 @@ export function getPool(): Pool {
       throw new Error('DATABASE_URL is not set');
     }
     pool = new Pool(poolConfigFor(connectionString));
+    // ═══ WITHOUT THIS LISTENER, A DEAD IDLE CONNECTION TAKES THE PROCESS WITH IT ═══
+    // node-postgres attaches its own `error` handler to every client it parks in the pool,
+    // and that handler re-emits on the POOL: `this.emit('error', err, client)`. A Pool is
+    // an EventEmitter, and an EventEmitter that emits 'error' with no listener does not
+    // log — Node throws it as an uncaught exception and the process dies.
+    //
+    // That is not a theoretical path here. The server ends idle backends on its own
+    // schedule (`57P01 terminating connection due to administrator command`), and when it
+    // ends one that is sitting in our pool rather than one mid-query, this listener is the
+    // only thing between that and a killed server instance. `Connection terminated
+    // unexpectedly` was already being reported from `pg.lib:client` with no route of its
+    // own, which is what that looks like from the outside.
+    //
+    // pg-pool has ALREADY removed and destroyed the client by the time this runs, so there
+    // is nothing to clean up and nothing to retry — the next `connect()` opens a fresh one.
+    // The only job here is to keep the throw from happening and leave a trace behind.
+    pool.on('error', (err) => {
+      // eslint-disable-next-line no-console
+      console.error('[db] idle pooled connection died; it has been discarded:', err);
+    });
   }
   return pool;
 }
@@ -101,13 +121,65 @@ export class QueryTimeoutError extends Error {
   }
 }
 
+/**
+ * Thrown when a query could not get a connection out of the pool at all.
+ *
+ * ═══ WHY THIS IS A SEPARATE FAILURE FROM QueryTimeoutError, AND WHY IT NEEDED A TYPE ═══
+ * A read behind /admin can fail in two quite different ways, and only one of them had a name.
+ * QueryTimeoutError means "I ran and took too long". THIS means "I never started" — the pool
+ * was saturated and the 10s acquire window expired while waiting in the queue.
+ *
+ * That second case is not the rare one. /admin/operating asks for TWELVE connections
+ * concurrently (getOperatingPeriodCounts fans 3, getProductHealthKpis fans 3, plus 6 singleton
+ * reads) against a pool whose max is 5, so seven of them queue by construction. When the
+ * slowest holders are the multi-second analytics scans this page is made of, waiting out the
+ * full acquire window is an ordinary outcome rather than a pathological one.
+ *
+ * ═══ WHY IT IS NORMALISED HERE RATHER THAN MATCHED AT THE CALL SITE ═══
+ * pg-pool signals this with `new Error('timeout exceeded when trying to connect')` — a BARE
+ * Error: no `code`, no subclass, nothing to match on but the message string (pg-pool/index.js,
+ * the setTimeout in its connect() queue path). A page-level `catch` that sniffed that string
+ * would be one upstream copy-edit away from silently reverting to an anonymous 500.
+ *
+ * So every failure to acquire is re-thrown as this type, whatever pg-pool called it, with the
+ * original kept as `cause`. Callers get something they can branch on that cannot rot.
+ * `timedOut` says whether it was specifically the acquire window, because "the pool is busy"
+ * and "the database is unreachable" deserve different words even though both land here.
+ */
+export class ConnectionAcquireError extends Error {
+  /** True when this was the acquire window expiring, rather than a connection fault. */
+  readonly timedOut: boolean;
+  readonly timeoutMs: number;
+  constructor(cause: unknown) {
+    const timedOut =
+      cause instanceof Error && /timeout exceeded when trying to connect/i.test(cause.message);
+    super(
+      timedOut
+        ? `could not get a database connection within ${CONNECTION_ACQUIRE_TIMEOUT_MS}ms — the ` +
+          `pool (max ${POOL_MAX}) was fully occupied for that whole window. The query never ran.`
+        : `could not get a database connection: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause }
+    );
+    this.name = 'ConnectionAcquireError';
+    this.timedOut = timedOut;
+    this.timeoutMs = CONNECTION_ACQUIRE_TIMEOUT_MS;
+  }
+}
+
 export async function queryWithTimeout<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: unknown[] | undefined,
   timeoutMs: number
 ): Promise<T[]> {
   const ms = Math.min(Math.max(Math.trunc(timeoutMs), 1), 600_000);
-  const client = await getPool().connect();
+  // Acquisition is its own failure mode with its own type — see ConnectionAcquireError. It is
+  // OUTSIDE the try/finally below on purpose: there is no client to release if this throws.
+  let client: PoolClient;
+  try {
+    client = await getPool().connect();
+  } catch (err) {
+    throw new ConnectionAcquireError(err);
+  }
   try {
     await client.query('BEGIN');
     await client.query(`SET LOCAL statement_timeout = ${ms}`);

@@ -23,7 +23,8 @@
 // Pure math helpers are exported (and unit-tested without a DB) exactly like
 // lib/analytics/kpi.ts; the DB reads assemble raw rows and hand them to those pure
 // builders so the SLA % and coverage/gap logic are testable on known inputs.
-import { query } from '@/lib/db/client';
+import { query, queryWithTimeout } from '@/lib/db/client';
+import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
 import {
   CLEAN_SUCCESS_RUN_SQL,
   DEFAULT_CADENCE_SECONDS,
@@ -262,7 +263,7 @@ export interface SourceFreshnessSla {
  * isCadenceAdherent so it's unit-testable and consistent with the staleness gradient.
  */
 export async function getSourceFreshnessSla(nowMs: number = Date.now()): Promise<SourceFreshnessSla> {
-  const rows = await query<{
+  const rows = await queryWithTimeout<{
     id: string;
     name: string;
     family: string;
@@ -285,7 +286,8 @@ export async function getSourceFreshnessSla(nowMs: number = Date.now()): Promise
     WHERE s.terms_status = $1
     ORDER BY s.name
     `,
-    [ENABLED_TERMS_STATUS]
+    [ENABLED_TERMS_STATUS],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 
   const sources: SlaSourceRow[] = rows.map((r) => {
@@ -495,7 +497,7 @@ export interface CorrectionsQueueSummary {
 }
 
 export async function getCorrectionsQueueSummary(): Promise<CorrectionsQueueSummary> {
-  const rows = await query<{
+  const rows = await queryWithTimeout<{
     open_count: number;
     in_review_count: number;
     unresolved_count: number;
@@ -509,7 +511,9 @@ export async function getCorrectionsQueueSummary(): Promise<CorrectionsQueueSumm
       min(created_at) FILTER (WHERE status = 'open')                        AS oldest_open_at
     FROM correction_report
     WHERE archived_at IS NULL
-    `
+    `,
+    undefined,
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
   const r = rows[0];
   return {

@@ -18,7 +18,8 @@
 //
 // Server-only: uses the shared pg pool (lib/db/client). Robust to an EMPTY table
 // (every count returns 0 and the ratio helpers return null → the UI shows "—").
-import { query } from '@/lib/db/client';
+import { queryWithTimeout } from '@/lib/db/client';
+import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
 
 // ── Rolling windows (calendar days). Kept as named constants so tests, the data
 //    layer, and the UI copy all read the exact same number. ──
@@ -122,7 +123,7 @@ export function signedInSharePct(signedInUsers: number, mau: number): number | n
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function getEngagementCounts(windowDays: number): Promise<EngagementCounts> {
-  const rows = await query<{
+  const rows = await queryWithTimeout<{
     searches: number;
     listing_views: number;
     outbound_clicks: number;
@@ -150,7 +151,8 @@ async function getEngagementCounts(windowDays: number): Promise<EngagementCounts
     FROM analytics_event
     WHERE created_at >= now() - ($1::int * interval '1 day')
     `,
-    [windowDays]
+    [windowDays],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
   const r = rows[0];
   return {
@@ -184,7 +186,7 @@ async function getActiveUsers(): Promise<ActiveUsers> {
   // confusing half hour; do not re-derive it across separate statements.)
   //
   // `now()` is stable within a statement, so the CTE and the outer FILTERs share one clock.
-  const rows = await query<{ dau: number; wau: number; mau: number }>(
+  const rows = await queryWithTimeout<{ dau: number; wau: number; mau: number }>(
     `
     WITH actors AS (
       SELECT user_or_session, max(created_at) AS last_seen
@@ -200,14 +202,15 @@ async function getActiveUsers(): Promise<ActiveUsers> {
       count(*)::int AS mau
     FROM actors
     `,
-    [DAU_WINDOW_DAYS, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS]
+    [DAU_WINDOW_DAYS, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
   const r = rows[0];
   return { dau: r?.dau ?? 0, wau: r?.wau ?? 0, mau: r?.mau ?? 0 };
 }
 
 async function getAccountValue(windowDays: number): Promise<AccountValue> {
-  const rows = await query<{
+  const rows = await queryWithTimeout<{
     saved_searches: number;
     email_opt_ins: number;
     sign_in_events: number;
@@ -247,7 +250,8 @@ async function getAccountValue(windowDays: number): Promise<AccountValue> {
     FROM analytics_event
     WHERE created_at >= now() - ($1::int * interval '1 day')
     `,
-    [windowDays]
+    [windowDays],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
   const r = rows[0];
   return {

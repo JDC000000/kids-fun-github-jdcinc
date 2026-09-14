@@ -19,7 +19,8 @@
 // canonical modules T32/T33/T36 already built. What this file adds is the two ops-side
 // PERIOD SERIES that had no implementation anywhere (corrections opened/resolved per
 // period, and source-check success per period) plus the composition.
-import { query } from '@/lib/db/client';
+import { queryWithTimeout } from '@/lib/db/client';
+import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
 import { getProductHealthKpis, type ProductHealthKpis } from '@/lib/analytics/kpi';
 import { getActivityTrend, type ActivityTrend } from '@/lib/analytics/trends';
 import {
@@ -113,7 +114,7 @@ interface OpsRow {
  * They cannot be collapsed into a single pass without changing what is counted.
  */
 async function getOpsSeries(grain: OperatingGrain, periods: number): Promise<OpsRow[]> {
-  return query<OpsRow>(
+  return queryWithTimeout<OpsRow>(
     `
     WITH periods AS (
       SELECT gs AS pstart
@@ -162,7 +163,8 @@ async function getOpsSeries(grain: OperatingGrain, periods: number): Promise<Ops
     LEFT JOIN runs ru ON ru.pstart = p.pstart
     ORDER BY p.pstart
     `,
-    [grain, grainInterval(grain), periods]
+    [grain, grainInterval(grain), periods],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 }
 
@@ -203,12 +205,14 @@ export interface OpsDataCoverage {
  * (both fields null → nothing is ever treated as pre-history).
  */
 export async function getOpsCoverage(): Promise<OpsDataCoverage> {
-  const rows = await query<{ first_check_run_at: Date | null; first_correction_at: Date | null }>(
+  const rows = await queryWithTimeout<{ first_check_run_at: Date | null; first_correction_at: Date | null }>(
     `
     SELECT
       (SELECT min(started_at) FROM source_check_run)                            AS first_check_run_at,
       (SELECT min(created_at) FROM correction_report WHERE archived_at IS NULL) AS first_correction_at
-    `
+    `,
+    undefined,
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
   const toIso = (v: Date | null | undefined): string | null => {
     if (v == null) return null;

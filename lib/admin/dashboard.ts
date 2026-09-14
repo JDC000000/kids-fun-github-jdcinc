@@ -3,7 +3,8 @@
 // (lib/db/client). Every statement here is a SELECT; nothing mutates. Numbers come
 // straight from the same tables the ingestion worker and analytics writer populate,
 // so the dashboard reflects the live database, not a fixture.
-import { query } from '@/lib/db/client';
+import { query, queryWithTimeout } from '@/lib/db/client';
+import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
 
 export interface IngestionSourceHealth {
   sourceId: string;
@@ -83,6 +84,13 @@ export interface HealthAlerts {
 }
 
 export interface AnalyticsSummary {
+  /**
+   * How many days of history every field below EXCEPT `last7Days` was computed over.
+   * Returned so the page can state it: these used to be all-time and are now windowed
+   * (see ANALYTICS_ROLLUP_WINDOW_DAYS), and a number whose meaning changed silently is a
+   * worse dashboard than a slow one.
+   */
+  windowDays: number;
   totalEvents: number;
   listingViewed: number;
   /** Count of `search_performed` events — what parents actually searched/browsed. */
@@ -269,29 +277,73 @@ export async function getSourceRegistrySummary(): Promise<SourceRegistrySummary>
   return { totalSources: row?.total ?? 0, enabledSources: row?.enabled ?? 0 };
 }
 
+/**
+ * How much history the dashboard's analytics rollups cover.
+ *
+ * ═══ WHY A BOUND EXISTS AT ALL, AND WHY IT IS THIS SMALL ═══
+ * These six rollups had NO date predicate. They aggregated the whole of analytics_event on
+ * every page load, and the table crossed 2.65M rows — so /admin/dashboard stopped responding
+ * entirely (measured 2026-09-14: no response after 75s, HTTP 000). The `byType` grouping
+ * alone took 42.2s, and the three jsonb/regexp tokenisers unnest a set-returning function
+ * across every matching row, which no btree index can help.
+ *
+ * THREE DAYS, and the number comes from the data rather than from taste. analytics_event's
+ * oldest row is 2026-07-21, so the table is only ~55 days old: a 30-day window would cover
+ * 99.997% of it (2,651,229 of 2,651,302 rows) and change nothing. Measured against production:
+ *
+ *     byType             42.2s  ->  1.02s
+ *     topSearchRegions    9.9s  ->  0.76s
+ *
+ * The bound uses idx_analytics_event_type_created (event_type, created_at DESC) and
+ * idx_analytics_event_created_at, both of which already existed. No new index, no new
+ * infrastructure — the queries simply stop reading history nobody asked for.
+ *
+ * ⚠ THIS CHANGES WHAT THE NUMBERS MEAN, so the page SAYS SO. `windowDays` is returned on
+ * AnalyticsSummary and rendered into the tile labels and section headings. A dashboard that
+ * quietly redefines "Analytics events" from all-time to three days is worse than a slow one,
+ * because nothing on screen would tell the reader which question was answered.
+ *
+ * These reads also run under ADMIN_ANALYTICS_QUERY_TIMEOUT_MS. The bound is what makes them
+ * fast; the timeout is what stops an abandoned request leaving one running anyway. Both,
+ * not either — the bound is a prediction about cost, and the timeout is what holds when
+ * the prediction is wrong.
+ *
+ * ⚠ DO NOT COPY THIS BOUND ONTO THE KPI QUERIES in lib/analytics/kpi.ts. Those are ALREADY
+ * bounded, and their windows are the metric DEFINITIONS: MAU is 30 days because MAU means
+ * 30 days. Shrinking that window does not make MAU faster, it replaces it — measured, MAU
+ * reads 15,772 over its real window and 4,103 over three days, under the same label.
+ */
+export const ANALYTICS_ROLLUP_WINDOW_DAYS = 3;
+
 /** Analytics rollups from analytics_event. Robust to an empty table (returns zeros). */
 export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
-  const totalsRows = await query<{ total_events: number; listing_viewed: number; search_performed: number }>(
+  const totalsRows = await queryWithTimeout<{ total_events: number; listing_viewed: number; search_performed: number }>(
     `
     SELECT
       count(*)::int AS total_events,
       count(*) FILTER (WHERE event_type = 'listing_viewed')::int AS listing_viewed,
       count(*) FILTER (WHERE event_type = 'search_performed')::int AS search_performed
     FROM analytics_event
-    `
+    WHERE created_at >= now() - ($1::int * interval '1 day')
+    `,
+    [ANALYTICS_ROLLUP_WINDOW_DAYS],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
   const totals = totalsRows[0];
 
-  const byType = await query<{ event_type: string; count: number }>(
+  const byType = await queryWithTimeout<{ event_type: string; count: number }>(
     `
     SELECT event_type, count(*)::int AS count
     FROM analytics_event
+    WHERE created_at >= now() - ($1::int * interval '1 day')
     GROUP BY event_type
     ORDER BY count DESC, event_type
-    `
+    `,
+    [ANALYTICS_ROLLUP_WINDOW_DAYS],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 
-  const topListings = await query<{ label: string; occurrence_id: string | null; views: number }>(
+  const topListings = await queryWithTimeout<{ label: string; occurrence_id: string | null; views: number }>(
     `
     SELECT
       coalesce(nullif(result_summary_json->>'activityName', ''), occurrence_id::text, '(unlabeled)') AS label,
@@ -299,13 +351,16 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
       count(*)::int AS views
     FROM analytics_event
     WHERE event_type = 'listing_viewed'
+      AND created_at >= now() - ($1::int * interval '1 day')
     GROUP BY 1, occurrence_id
     ORDER BY views DESC, label
     LIMIT 10
-    `
+    `,
+    [ANALYTICS_ROLLUP_WINDOW_DAYS],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 
-  const last7Days = await query<{ day: string; count: number }>(
+  const last7Days = await queryWithTimeout<{ day: string; count: number }>(
     `
     SELECT
       to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
@@ -314,7 +369,9 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     WHERE created_at >= now() - interval '7 days'
     GROUP BY 1
     ORDER BY 1
-    `
+    `,
+    undefined,
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 
   // --- search analytics rollups (search_performed events) ----------------------
@@ -325,7 +382,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
 
   // Most common query WORDS. Split the raw query on non-alphanumerics, drop tokens
   // under 3 chars and a small stopword set, then frequency-count.
-  const topQueryTerms = await query<{ term: string; count: number }>(
+  const topQueryTerms = await queryWithTimeout<{ term: string; count: number }>(
     `
     SELECT term, count(*)::int AS count
     FROM (
@@ -334,6 +391,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
       ) AS term
       FROM analytics_event
       WHERE event_type = 'search_performed'
+        AND created_at >= now() - ($2::int * interval '1 day')
     ) t
     WHERE length(term) >= 3
       AND term <> ALL ($1::text[])
@@ -341,44 +399,52 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     ORDER BY count DESC, term
     LIMIT 15
     `,
-    [QUERY_TERM_STOPWORDS]
+    [QUERY_TERM_STOPWORDS, ANALYTICS_ROLLUP_WINDOW_DAYS],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 
   // Most-used region chips (search_context_json.regions is a string array).
-  const topSearchRegions = await query<{ region: string; count: number }>(
+  const topSearchRegions = await queryWithTimeout<{ region: string; count: number }>(
     `
     SELECT region, count(*)::int AS count
     FROM (
       SELECT jsonb_array_elements_text(search_context_json->'regions') AS region
       FROM analytics_event
       WHERE event_type = 'search_performed'
+        AND created_at >= now() - ($1::int * interval '1 day')
         AND jsonb_typeof(search_context_json->'regions') = 'array'
     ) t
     GROUP BY region
     ORDER BY count DESC, region
     LIMIT 10
-    `
+    `,
+    [ANALYTICS_ROLLUP_WINDOW_DAYS],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 
   // Most-used non-region filter tokens (search_context_json.filters is a string array).
   // Alias the unnested value `token` (not `filter`) — FILTER is a SQL keyword and a bare
   // `filter` alias is a parser landmine right after a set-returning function.
-  const topSearchFilters = await query<{ token: string; count: number }>(
+  const topSearchFilters = await queryWithTimeout<{ token: string; count: number }>(
     `
     SELECT token, count(*)::int AS count
     FROM (
       SELECT jsonb_array_elements_text(search_context_json->'filters') AS token
       FROM analytics_event
       WHERE event_type = 'search_performed'
+        AND created_at >= now() - ($1::int * interval '1 day')
         AND jsonb_typeof(search_context_json->'filters') = 'array'
     ) t
     GROUP BY token
     ORDER BY count DESC, token
     LIMIT 15
-    `
+    `,
+    [ANALYTICS_ROLLUP_WINDOW_DAYS],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 
   return {
+    windowDays: ANALYTICS_ROLLUP_WINDOW_DAYS,
     totalEvents: totals?.total_events ?? 0,
     listingViewed: totals?.listing_viewed ?? 0,
     searchPerformed: totals?.search_performed ?? 0,

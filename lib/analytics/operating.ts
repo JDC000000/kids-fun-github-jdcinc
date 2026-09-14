@@ -32,7 +32,8 @@
 //     `lowSample` flag so the UI can mark it as directionally unreliable instead of
 //     presenting it with the same authority as a well-powered number. This matters
 //     right now: KIDS FUN launched 2026-07-21 and the production dataset is days old.
-import { query } from '@/lib/db/client';
+import { queryWithTimeout } from '@/lib/db/client';
+import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
 import {
   SOURCE_CTR_TARGET_PCT,
   pct,
@@ -301,7 +302,7 @@ const PERIODS_CTE = `
  * this class of reason.
  */
 async function getEngagementSeries(grain: OperatingGrain, periods: number): Promise<EngagementRow[]> {
-  return query<EngagementRow>(
+  return queryWithTimeout<EngagementRow>(
     `
     WITH ${PERIODS_CTE},
     bounds AS (
@@ -434,7 +435,8 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
     LEFT JOIN signed_in_counts si ON si.pstart = p.pstart
     ORDER BY p.pstart
     `,
-    [grain, grainInterval(grain), periods, SEARCH_OUTCOME_WINDOW_MINUTES]
+    [grain, grainInterval(grain), periods, SEARCH_OUTCOME_WINDOW_MINUTES],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 }
 
@@ -471,7 +473,7 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
  * between the two queries rather than the queries disagreeing.
  */
 async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promise<LifecycleRow[]> {
-  return query<LifecycleRow>(
+  return queryWithTimeout<LifecycleRow>(
     `
     WITH ${PERIODS_CTE},
     bounds AS (
@@ -487,11 +489,37 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
         AND e.user_or_session IS NOT NULL AND e.user_or_session <> ''
       GROUP BY 1, 2
     ),
+    -- Lifetime first-seen, for the actors seen HAS ALREADY MATERIALISED — not for every
+    -- actor that has ever existed. The previous form re-scanned the whole table (Parallel Seq
+    -- Scan, 2.65M rows, 118,534 physical block reads) to build rows that mostly cannot be
+    -- reached: per_actor is periods LEFT JOIN seen s LEFT JOIN actor_first af ON af.actor =
+    -- s.actor, driven from the seen side, so an af row with no matching seen actor is inert
+    -- by construction. Measured on production 2026-09-14: this node 7.65s -> 5.5s, and its
+    -- physical reads 118,534 -> 7,606 blocks (-93.6%, ~0.87GB less I/O per page load). The I/O
+    -- is the point, not the seconds — shared_buffers is 256MB against a 1,164MB heap, so every
+    -- block this does not read is a block the page's eight sibling queries are not evicted for.
+    -- Output verified BYTE-IDENTICAL to the old form over all 30 periods in one REPEATABLE READ
+    -- snapshot, and first_at identical for all 15,700 shared actors.
+    --
+    -- TWO THINGS HERE ARE LOAD-BEARING AND EASY TO "TIDY" INTO A BUG:
+    --   • DISTINCT. Without it this yields one row per (pstart, actor) and the LEFT JOIN in
+    --     per_actor FANS OUT, multiplying new_actors/activated_new_actors/returning_actors by
+    --     the number of periods the actor appears in.
+    --   • The subquery carries NO time predicate. Bounding it to bounds looks like the
+    --     obvious next optimisation and silently reclassifies returning actors as new — the
+    --     mutant was written and it diverged on a real actor.
+    --
+    -- KNOWN LIMIT (cost, not correctness): this scales with ACTOR count where the old form
+    -- scaled with ROW count. Today that is 15.7k actors against 2.65M rows. At grain='month'
+    -- the window covers nearly all retained history, so seen holds nearly every actor and the
+    -- win narrows; at hundreds of thousands of actors, 0.35ms per index probe would make this
+    -- slower than the seq scan. Re-measure before assuming it still wins.
     actor_first AS (
-      SELECT user_or_session AS actor, min(created_at) AS first_at
-      FROM analytics_event
-      WHERE user_or_session IS NOT NULL AND user_or_session <> ''
-      GROUP BY user_or_session
+      SELECT s.actor,
+             (SELECT min(e.created_at)
+                FROM analytics_event e
+               WHERE e.user_or_session = s.actor) AS first_at
+      FROM (SELECT DISTINCT actor FROM seen) s
     ),
     carryover AS (
       SELECT
@@ -527,7 +555,8 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
     LEFT JOIN carryover c ON c.pstart = p.pstart
     ORDER BY p.pstart
     `,
-    [grain, grainInterval(grain), periods, [...ACTIVATION_EVENT_TYPES]]
+    [grain, grainInterval(grain), periods, [...ACTIVATION_EVENT_TYPES]],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 }
 
@@ -541,7 +570,7 @@ async function getEmailOptInSeries(
   grain: OperatingGrain,
   periods: number
 ): Promise<{ period_start: string; email_opt_ins: number }[]> {
-  return query<{ period_start: string; email_opt_ins: number }>(
+  return queryWithTimeout<{ period_start: string; email_opt_ins: number }>(
     `
     WITH ${PERIODS_CTE}
     SELECT
@@ -555,7 +584,8 @@ async function getEmailOptInSeries(
     GROUP BY p.pstart
     ORDER BY p.pstart
     `,
-    [grain, grainInterval(grain), periods]
+    [grain, grainInterval(grain), periods],
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
 }
 
@@ -571,8 +601,10 @@ export interface DataCoverage {
 
 /** Read how far back real analytics data actually goes. Safe on an empty table. */
 export async function getDataCoverage(): Promise<DataCoverage> {
-  const rows = await query<{ first_event_at: Date | null; total_events: number }>(
-    `SELECT min(created_at) AS first_event_at, count(*)::int AS total_events FROM analytics_event`
+  const rows = await queryWithTimeout<{ first_event_at: Date | null; total_events: number }>(
+    `SELECT min(created_at) AS first_event_at, count(*)::int AS total_events FROM analytics_event`,
+    undefined,
+    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
   );
   const first = rows[0]?.first_event_at ?? null;
   const firstMs = first ? new Date(first).getTime() : null;

@@ -118,6 +118,12 @@ export async function runTermsGatedIngest(
   }
 
   const summary = await ingestSource(pool, adapter, source.id);
+  // `summary.errors` is EXECUTION errors only, and this line is why that matters: `ok`
+  // feeds makeTermsGatedIngestJobHandler, which throws — so every string in that array
+  // costs a full retried crawl and a Sentry error per attempt. A health verdict about the
+  // run's OUTPUT reaches the board through `summary.healthAlert` and the check run's own
+  // persisted errors instead, and only escalates to here once it has repeated. See the
+  // assessRun block in worker/core/ingest.ts before widening what lands in `errors`.
   return {
     ok: summary.errors.length === 0,
     source,

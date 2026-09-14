@@ -26,6 +26,7 @@ import { notFound } from 'next/navigation';
 import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { getOperatingDashboardData } from '@/lib/admin/operating';
+import { ConnectionAcquireError, QueryTimeoutError } from '@/lib/db/client';
 import { parseGrain, type OperatingGrain } from '@/lib/analytics/operating';
 import { formatCount, formatTimestampUtc } from '@/lib/admin/format';
 import { TrendChart } from '@/components/charts/TrendChart';
@@ -83,8 +84,60 @@ export default async function AdminOperatingPage({
   }
 
   const grain = parseGrain(searchParams.view);
-  const data = await getOperatingDashboardData(grain);
   const copy = reviewCopy(grain);
+
+  // ═══ A PANEL THAT CANNOT MAKE ITS BUDGET IS NOT A 500 ═══
+  // Every read behind this page now runs under ADMIN_ANALYTICS_QUERY_TIMEOUT_MS, which
+  // exists to stop an abandoned request leaving multi-minute scans holding pooled
+  // connections (see lib/db/client.ts). The ceiling firing is therefore an EXPECTED
+  // outcome on the heaviest reads, not an exception — and letting it reach Next's generic
+  // error boundary turns a known, named, self-describing limit back into an anonymous 500
+  // that a reader has to go to Sentry to identify. Which is the shape the original
+  // `terminating connection due to administrator command` report arrived in.
+  //
+  // TWO failure modes are handled here, and only two. Both are outcomes this page is DESIGNED
+  // to produce under load; anything else is a genuine fault and still belongs on the error
+  // boundary with its stack intact.
+  //
+  //   QueryTimeoutError      — a read ran and exceeded its ceiling.
+  //   ConnectionAcquireError — a read never started, because this page asks for TWELVE
+  //                            connections at once against a pool of 5.
+  //
+  // The second one is not the exotic case. getOperatingDashboardData fans 12 concurrent
+  // requests (getOperatingPeriodCounts 3 + getProductHealthKpis 3 + 6 singleton reads), so
+  // seven of them queue by construction and waiting out the acquire window is ordinary. An
+  // earlier version of this block caught only QueryTimeoutError, which left the MORE likely
+  // failure falling through to an anonymous 500 — the exact thing this block exists to stop.
+  let data: Awaited<ReturnType<typeof getOperatingDashboardData>>;
+  try {
+    data = await getOperatingDashboardData(grain);
+  } catch (err) {
+    const timedOutRunning = err instanceof QueryTimeoutError;
+    const neverStarted = err instanceof ConnectionAcquireError;
+    if (!timedOutRunning && !neverStarted) throw err;
+    return (
+      <main className={styles.page}>
+        <h1>{copy.title}</h1>
+        <p role="alert">
+          <strong>This review could not be computed.</strong>{' '}
+          {timedOutRunning
+            ? `One of its reads exceeded the ${(err as QueryTimeoutError).timeoutMs}ms per-query
+               ceiling and was cancelled.`
+            : `One of its reads never got a database connection — the pool was fully occupied
+               for the whole ${(err as ConnectionAcquireError).timeoutMs}ms acquire window.`}{' '}
+          Either way the numbers below would have been incomplete, and an incomplete operating
+          review is worse than none, because nothing on the page would say which parts were
+          missing.
+        </p>
+        <p>
+          These limits are database guards, not page budgets: without them an abandoned request
+          leaves its scans running for minutes and holds connections the rest of the product
+          needs. Nothing is broken — this review&rsquo;s reads are simply expensive for the
+          volume of analytics data now held, and the fix is on the read side, not here.
+        </p>
+      </main>
+    );
+  }
 
   const { coverage, sourceFreshness, correctionsQueue, activeUserTrend } = data;
   // Counts ONLY buckets that could actually contain a measurement. Shared with the

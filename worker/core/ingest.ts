@@ -10,7 +10,7 @@
 // whole run — they surface via the check-run status/errors for the health board.
 import type { Pool } from 'pg';
 import type { Adapter, StructuredRecord } from './adapter';
-import { startCheckRun, finishCheckRun, loadRecordsFoundBaseline, type RunHealthAlert } from './checkrun';
+import { startCheckRun, finishCheckRun, loadRecordsFoundBaseline, loadPreviousHealthAlertCode, type RunHealthAlert } from './checkrun';
 import { resolveSeries } from './series';
 import { resolveVenue } from './venue';
 import { upsertOccurrence } from './upsert';
@@ -70,6 +70,19 @@ export interface IngestSummary {
    * censored by our own `liveEventsLimit`.
    */
   itemsInFeed: number | null;
+  /**
+   * EXECUTION errors only — things that went wrong DOING the run (a fetch that threw, a
+   * record that would not upsert), plus a health verdict that has now persisted across
+   * consecutive runs.
+   *
+   * ⚠ THIS ARRAY IS THE JOB'S SUCCESS PREDICATE, not just a list for humans.
+   * `runTermsGatedIngest` derives `ok` from `errors.length === 0` and the queue handler
+   * THROWS when `ok` is false — so anything put here retries the entire crawl up to
+   * max_attempts and raises a Sentry error on every attempt. Putting a one-run
+   * observation here cost 182 false alerts and 2–5 redundant crawls per incident; see the
+   * assessRun block in ingestSource. An observation about the DATA belongs in
+   * `healthAlert` and in the check run's persisted `errors` jsonb, not here.
+   */
   errors: string[];
 }
 
@@ -106,6 +119,8 @@ export async function ingestSource(
   let lowConfidenceFlagged = 0;
   let editorialCandidates = 0;
   let healthAlert: RunHealthAlert | null = null;
+  /** True when the PREVIOUS run raised the same verdict — see the assessRun block below. */
+  let healthAlertSustained = false;
   /** The feed's own item count for this run — see where it is read, below. */
   let itemsInFeed: number | null = null;
 
@@ -155,20 +170,56 @@ export async function ingestSource(
     // parser yields nothing, and the check run reports a cheerful green over an empty
     // municipality. Adapters that implement assessRun() get to say so.
     //
-    // The verdict travels TWO ways, and both are load-bearing (F-11):
-    //   • into `errors`, unchanged, as the human-readable line the panel renders — and,
-    //     as a side effect, as the thing that degrades this run's status to 'partial';
-    //   • into `healthAlert`, which finishCheckRun writes to its own column. This is the
-    //     one anything can query. Until it existed the alert was prose in a jsonb array,
-    //     so the dashboard's failed-runs panel (status = 'failed') and both SLA
-    //     success-ratio paths ('partial' counted as a success) sailed straight past it and
-    //     every alert this project raises reached nobody.
+    // ═══ THE VERDICT IS AN OBSERVATION ABOUT THE DATA, NOT AN EXECUTION ERROR ═══
+    // It used to be pushed into `errors`, and that turned out to have a THIRD effect
+    // nobody intended. F-11's note said the verdict travels "two ways" — the panel line
+    // and the `healthAlert` column — and listed only those. But `errors` is also the
+    // JOB'S SUCCESS PREDICATE: source-runner.ts derives `ok` from
+    // `summary.errors.length === 0`, and the queue handler throws when `ok` is false. So
+    // every health verdict silently became a thrown job failure, which means:
+    //   • the queue retried the ENTIRE crawl up to max_attempts (5);
+    //   • the scheduler reported every attempt to Sentry as an uncaught worker exception;
+    //   • for a politeness-gated source the 30s×attempts retry landed INSIDE the adapter's
+    //     own crawl-backoff window, so the retry fetched nothing, which scored as a fresh
+    //     yield collapse, which threw again — the alert manufacturing its own evidence.
+    //
+    // Measured in production before this change: 182 Sentry errors between 2026-08-11 and
+    // 2026-09-14, every one of them `yield_collapse`. Every job that raised one reached
+    // `status = 'done'` on a later attempt (job_queue), i.e. NOT ONE was a real ingestion
+    // regression — they were short runs (burnaby 376/881 records against a steady 2441;
+    // nvrc 0 against a steady 1157) that the next run corrected on its own. The cost was
+    // 2–5 extra full crawls per incident against a vendor portal that was already
+    // partially unavailable, plus an alarm nobody could act on.
+    //
+    // So the verdict now travels exactly the two ways F-11 described and NO OTHER:
+    //   • into the check run's persisted `errors` jsonb (see `persistedErrors` below), so
+    //     the panel renders the identical line it always did;
+    //   • into `healthAlert`, which finishCheckRun writes to its own column.
+    // `summary.errors` — the array the job's success predicate reads — is now execution
+    // errors ONLY. Degrading the run's status is done explicitly below rather than as a
+    // side effect of which array the string landed in.
+    //
+    // ═══ AND A REPEAT VERDICT IS STILL AN ERROR ═══
+    // Removing the verdict from `errors` on its own would silence the alarm entirely, which
+    // is the opposite failure: a source that genuinely empties would then run green forever
+    // on the one channel anybody watches. What separates the two cases is PERSISTENCE, not a
+    // wider threshold. A verdict that does not repeat was a blip the next run corrected — all
+    // 182 of them were. A verdict the PREVIOUS run also raised is a source that did not come
+    // back, and that is worth failing the job over: it fails loudly, retries, and reaches
+    // Sentry exactly as it did before. Detection is delayed by one cadence (~1–2h for these
+    // sources), which is the price of not crying wolf six times a day.
     if (adapter.assessRun) {
       const baseline = await loadRecordsFoundBaseline(pool, sourceId);
       const verdict = adapter.assessRun(baseline);
       if (verdict?.alert) {
         healthAlert = { code: verdict.code, detail: verdict.detail };
-        errors.push(`run health [${verdict.code}]: ${verdict.detail}`);
+        const previousCode = await loadPreviousHealthAlertCode(pool, sourceId, checkRunId);
+        if (previousCode === verdict.code) {
+          healthAlertSustained = true;
+          errors.push(
+            `run health [${verdict.code}] SUSTAINED (2+ consecutive runs): ${verdict.detail}`
+          );
+        }
       }
     }
 
@@ -312,13 +363,48 @@ export async function ingestSource(
     errors.push(`fetch/extract: ${errMsg(err)}`);
   }
 
-  const status =
+  // The run's EXECUTION status: did the work we attempted actually complete?
+  const executionStatus =
     errors.length === 0 ? 'success' : occurrencesUpserted > 0 ? 'partial' : 'failed';
+
+  // …then the health verdict degrades it, EXPLICITLY. This is the same arithmetic the old
+  // `errors.push` produced by accident, restated as the rule it always was: an alerting
+  // verdict must never leave a run looking green, because "cheerfully green over an empty
+  // municipality" is the exact failure the adapters' assessRun() exists to catch. A run
+  // that still upserted records is degraded to 'partial'; one that upserted none is
+  // 'failed' — which is what keeps nvrc's 0-record run off the success ratio.
+  const status =
+    healthAlert && executionStatus === 'success'
+      ? occurrencesUpserted > 0
+        ? 'partial'
+        : 'failed'
+      : executionStatus;
+
+  // What the health board renders. The verdict line is folded in HERE rather than pushed
+  // into `errors` above, so the persisted jsonb is what it has always been while
+  // `summary.errors` stays clean for the job's success predicate.
+  //
+  // PREPENDED, not appended, and the difference is load-bearing. The old `errors.push` ran
+  // inside the try block immediately after assessRun() — BEFORE the per-record loop that
+  // appends `record <id>: …` lines — so on a run that both alerted AND had record errors the
+  // verdict was element 0. And element 0 is not an arbitrary slot: lib/admin/dashboard.ts
+  // reads `cr.errors #>> '{0}'` as the failed-run panel's `errorSummary`. Appending here
+  // would have replaced the health verdict with "record abc123: bad date" on the one line an
+  // operator actually reads. No production row has ever carried more than one element, which
+  // is precisely why this would have gone unnoticed — not why it would not have mattered.
+  //
+  // A sustained verdict already put its own, louder line into `errors` at that same point in
+  // the run, so it is not re-added here; doing both would print the same collapse twice.
+  const persistedErrors =
+    healthAlert && !healthAlertSustained
+      ? [`run health [${healthAlert.code}]: ${healthAlert.detail}`, ...errors]
+      : errors;
+
   await finishCheckRun(pool, checkRunId, {
     status,
     recordsFound,
     itemsInFeed,
-    errors: errors.length > 0 ? errors : undefined,
+    errors: persistedErrors.length > 0 ? persistedErrors : undefined,
     healthAlert,
     startedAt,
   });

@@ -12,8 +12,9 @@ import {
   getHealthAlerts,
   getIngestionHealth,
   getSourceRegistrySummary,
+  ANALYTICS_ROLLUP_WINDOW_DAYS,
 } from '../../lib/admin/dashboard';
-import { closePool } from '../../lib/db/client';
+import { closePool, query } from '../../lib/db/client';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
@@ -90,6 +91,34 @@ describe.skipIf(!hasDb)('admin dashboard data layer', () => {
       expect(typeof s.name).toBe('string');
       // A stale source either never succeeded (but ran) or has an old last success.
       expect(s.lastSuccessAt === null || typeof s.lastSuccessAt === 'string').toBe(true);
+    }
+  });
+
+  // The rollups used to have no date predicate at all, which is what stopped
+  // /admin/dashboard responding once analytics_event passed 2.65M rows (no response after
+  // 75s in production, 2026-09-14). This pins the bound itself rather than a timing: an
+  // event OUTSIDE the window must not be counted, and one inside must be. A perf fix that
+  // can silently revert to a full-table scan is not a fix.
+  it('the analytics rollups are bounded to ANALYTICS_ROLLUP_WINDOW_DAYS', async () => {
+    const marker = `boundtest_${crypto.randomUUID().slice(0, 8)}`;
+    const before = await getAnalyticsSummary();
+    expect(before.windowDays).toBe(ANALYTICS_ROLLUP_WINDOW_DAYS);
+
+    // One event safely OUTSIDE the window, one safely inside.
+    await query(
+      `INSERT INTO analytics_event (event_type, user_or_session, created_at)
+       VALUES ($1, $2, now() - ($3::int * interval '1 day')),
+              ($1, $2, now() - interval '1 hour')`,
+      [marker, `sess_${marker}`, ANALYTICS_ROLLUP_WINDOW_DAYS + 5]
+    );
+    try {
+      const after = await getAnalyticsSummary();
+      const row = after.byType.find((r) => r.eventType === marker);
+      expect(row, 'the in-window event is counted').toBeDefined();
+      expect(row!.count, 'ONLY the in-window event — the older one is out of scope').toBe(1);
+      expect(after.totalEvents - before.totalEvents).toBe(1);
+    } finally {
+      await query(`DELETE FROM analytics_event WHERE event_type = $1`, [marker]);
     }
   });
 
