@@ -131,9 +131,10 @@ export class QueryTimeoutError extends Error {
  *
  * That second case is not the rare one. /admin/operating asks for TWELVE connections
  * concurrently (getOperatingPeriodCounts fans 3, getProductHealthKpis fans 3, plus 6 singleton
- * reads) against a pool whose max is 5, so seven of them queue by construction. When the
- * slowest holders are the multi-second analytics scans this page is made of, waiting out the
- * full acquire window is an ordinary outcome rather than a pathological one.
+ * reads) against a pool of POOL_MAX, so some queue by construction. When the slowest holders
+ * are the multi-second analytics scans this page is made of, waiting out the full acquire
+ * window is an ordinary outcome rather than a pathological one — and it stays reachable at
+ * any pool size a single instance can sensibly hold, which is why this has a type.
  *
  * ═══ WHY IT IS NORMALISED HERE RATHER THAN MATCHED AT THE CALL SITE ═══
  * pg-pool signals this with `new Error('timeout exceeded when trying to connect')` — a BARE
@@ -166,6 +167,43 @@ export class ConnectionAcquireError extends Error {
   }
 }
 
+/**
+ * How long a transaction opened by queryWithTimeout may sit IDLE before Postgres ends it.
+ *
+ * ═══ THIS EXISTS BECAUSE THE TRANSACTION ITSELF CAUSED A PRODUCTION OUTAGE ═══
+ * queryWithTimeout wraps every read in BEGIN…COMMIT purely so `SET LOCAL` cannot leak the
+ * timeout onto a pooled connection. That is still the right mechanism — but it quietly turned
+ * a survivable failure into a permanent one, and this is the correction.
+ *
+ * WHAT HAPPENED (production, 2026-09-14, caught in pg_stat_activity):
+ *   1. /admin/dashboard and /admin/operating fan more concurrent reads (8 and 12) than the
+ *      pool has connections (5), so some queue.
+ *   2. One queued read exceeds the acquire window and throws. Promise.all rejects, the page
+ *      returns 500 — while its SIBLING reads are still mid-transaction.
+ *   3. The serverless function is torn down on that response. Nobody ever sends COMMIT.
+ *   4. Postgres keeps each of those backends alive in `idle in transaction`. FOREVER: the
+ *      server's own `idle_in_transaction_session_timeout` is 0, and `statement_timeout` does
+ *      not apply to a session that is not running a statement.
+ *   5. All five pool slots end up wedged, so EVERY later request fails at exactly the 10s
+ *      acquire timeout — which is why two admin pages 500'd at ~10.3s with total consistency,
+ *      even one request at a time with a pause between them.
+ * Observed directly: 5 of 5 connections idle-in-transaction, the oldest 3m35s and still
+ * climbing, each one parked immediately AFTER its analytics query had already succeeded.
+ *
+ * The failure is self-amplifying, which is what made it look like a fresh bug rather than a
+ * consequence: every 500 wedges more connections, guaranteeing the next 500.
+ *
+ * WHY 15s. A legitimate idle gap here is ONE network round trip — the pause between the query
+ * returning and COMMIT being sent, ~20ms cross-region. 15s is ~750x that, so it cannot fire on
+ * a live transaction that is merely slow; it only fires when nobody is coming back. Low enough
+ * that a wedged slot self-clears inside one page load rather than never.
+ *
+ * DEFENCE IN DEPTH, not a substitute for it: setting `idle_in_transaction_session_timeout` at
+ * the database or role level would have prevented this class outright, for every client, and
+ * is worth doing separately. This covers our own transactions without needing that change.
+ */
+const IDLE_IN_TRANSACTION_TIMEOUT_MS = 15_000;
+
 export async function queryWithTimeout<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params: unknown[] | undefined,
@@ -180,9 +218,39 @@ export async function queryWithTimeout<T extends QueryResultRow = QueryResultRow
   } catch (err) {
     throw new ConnectionAcquireError(err);
   }
+  // ═══ A CHECKED-OUT CLIENT HAS NO ERROR LISTENER, AND THAT IS A CRASH ═══
+  // pg-pool attaches an 'error' handler to every client it PARKS, and strips it again on
+  // checkout (`client.removeListener('error', idleListener)` in its _acquireClient). So for
+  // the whole time we hold this client, nothing is listening — and a Client is an
+  // EventEmitter, so an async server-side FATAL arriving with no listener is not logged, it
+  // is thrown as an uncaught exception and the process dies.
+  //
+  // Arming idle_in_transaction_session_timeout below is exactly what makes such a FATAL
+  // reachable (25P03, delivered out-of-band rather than as a query rejection), so the guard
+  // and this listener have to ship together — the guard alone would trade a wedged connection
+  // for a killed server instance. Verified against a real Postgres, not reasoned about: the
+  // termination fires this event, and without a listener it takes the process down.
+  //
+  // `fatal` is also what tells release() to DESTROY the connection rather than return it to
+  // the pool: pg-pool's release(err) discards on a truthy argument, and handing a terminated
+  // backend to the next caller would just move the failure one request downstream.
+  let fatal: Error | undefined;
+  const onClientError = (err: Error): void => {
+    fatal = err;
+    // eslint-disable-next-line no-console
+    console.error('[db] pooled connection died while held by a query:', err.message);
+  };
+  client.on('error', onClientError);
+
   try {
-    await client.query('BEGIN');
-    await client.query(`SET LOCAL statement_timeout = ${ms}`);
+    // ONE round trip, and the idle bound is armed in the SAME statement that opens the
+    // transaction — see IDLE_IN_TRANSACTION_TIMEOUT_MS for why that ordering is the fix and
+    // not a micro-optimisation. Multi-statement simple query: safe here because there are no
+    // bind parameters, and both values are clamped integers interpolated by us.
+    await client.query(
+      `BEGIN; SET LOCAL statement_timeout = ${ms}; ` +
+        `SET LOCAL idle_in_transaction_session_timeout = ${IDLE_IN_TRANSACTION_TIMEOUT_MS};`
+    );
     const { rows } = await client.query<T>(text, params);
     await client.query('COMMIT');
     return rows;
@@ -200,7 +268,9 @@ export async function queryWithTimeout<T extends QueryResultRow = QueryResultRow
     }
     throw err;
   } finally {
-    client.release();
+    client.removeListener('error', onClientError);
+    // Truthy argument => pg-pool destroys instead of re-pooling. See `fatal` above.
+    client.release(fatal);
   }
 }
 

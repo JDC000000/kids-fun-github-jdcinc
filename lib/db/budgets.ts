@@ -17,7 +17,7 @@
  * Read what it is defending against, because the value only makes sense against that.
  * Measured in production on 2026-09-14, one load of /admin/operating:
  *
- *   • the page fans NINE reads out of one Promise.all against a pool whose max is 5;
+ *   • the page fans TWELVE reads out of one Promise.all against a pool that then held 5;
  *   • `getLifecycleSeries` took 35–50s, `getEngagementSeries` ~17s, and one unrelated
  *     admin aggregate 68s — none of them bounded by anything of ours;
  *   • the request 500'd at 17.5s (the ONE query that did have a budget, the 8s trend

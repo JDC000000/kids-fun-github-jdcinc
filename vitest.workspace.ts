@@ -99,6 +99,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/corrections/retention.test.ts',
   'tests/coverage-status-db.test.ts',
   'tests/db_connection_acquire_error.test.ts',
+  'tests/db_idle_in_transaction-db.test.ts',
   'tests/email/account_deletion_cascade.test.ts',
   'tests/email/weekly_send.test.ts',
   'tests/geo/backfill-clobber-guard.test.ts',

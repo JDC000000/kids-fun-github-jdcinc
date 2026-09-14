@@ -33,10 +33,10 @@ describe('poolConfigFor', () => {
   });
 
   // 2026-09-14: `connectionTimeoutMillis` was unset, and node-postgres reads unset as WAIT
-  // FOREVER. With max: 5 and /admin/operating fanning nine reads out of one Promise.all,
-  // the four that queue had no ceiling — so a request could sit on a serverless function
-  // indefinitely behind five multi-minute scans. A number here, any number, is the fix; the
-  // assertion is that it is SET and shorter than a single query's own budget.
+  // FOREVER. With /admin/operating fanning twelve reads out of one Promise.all, whichever
+  // ones queue had no ceiling — so a request could sit on a serverless function indefinitely
+  // behind multi-minute scans. A number here, any number, is the fix; the assertion is that
+  // it is SET and shorter than a single query's own budget, at whatever POOL_MAX happens to be.
   it('bounds how long a caller may wait for a pooled connection', () => {
     const config = poolConfigFor('postgres://postgres:postgres@127.0.0.1:5432/kids_fun');
     expect(config.connectionTimeoutMillis, 'unset means wait forever — see the constant').toBeGreaterThan(0);

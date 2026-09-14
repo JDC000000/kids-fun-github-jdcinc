@@ -101,11 +101,11 @@ export default async function AdminOperatingPage({
   //
   //   QueryTimeoutError      — a read ran and exceeded its ceiling.
   //   ConnectionAcquireError — a read never started, because this page asks for TWELVE
-  //                            connections at once against a pool of 5.
+  //                            connections at once, more than the pool holds.
   //
   // The second one is not the exotic case. getOperatingDashboardData fans 12 concurrent
   // requests (getOperatingPeriodCounts 3 + getProductHealthKpis 3 + 6 singleton reads), so
-  // seven of them queue by construction and waiting out the acquire window is ordinary. An
+  // some queue by construction and waiting out the acquire window is ordinary. An
   // earlier version of this block caught only QueryTimeoutError, which left the MORE likely
   // failure falling through to an anonymous 500 — the exact thing this block exists to stop.
   let data: Awaited<ReturnType<typeof getOperatingDashboardData>>;
