@@ -195,6 +195,18 @@ describe('the carrier-facing disclosures', () => {
   it('mentions the one-time confirmation message, so "1 per week" is not misread as a cap', () => {
     expect(joined).toMatch(/confirmation/i);
   });
+
+  it('🔴 discloses the ON-DEMAND texts, and discloses them as SOLICITED', () => {
+    // Added 2026-09-14 with task 1. The Instant Picks button can send a text, so the frequency
+    // statement has to say so or the disclosure understates real sending behaviour — which is
+    // precisely what a Toll-Free Verification reviewer compares against observed traffic.
+    expect(joined).toMatch(/up to 3 more messages per day/i);
+    // ⚠ THE QUALIFIER IS NOT DECORATION. "up to 3 more messages per day" ALONE reads as a
+    // marketing cadence nobody agreed to; "but only when you request them" is what makes it a
+    // description of solicited traffic. Asserted separately so a future shortening of the
+    // sentence cannot quietly drop the half that does the compliance work.
+    expect(joined).toMatch(/but only when you request them/i);
+  });
 });
 
 describe('the area notices', () => {
@@ -340,7 +352,14 @@ describe("the post-submit page's STOP recovery sentence (PRD §8 Q5, Jon-approve
     // two strings inside this version's scope — CONSENT_CHECKBOX_TEXT and SUPPORT_LINE — and
     // wording a subscriber agrees to is exactly what this version records. So the bump is
     // required, not optional, and this assertion failing was again the guard working.
-    expect(CONSENT_TEXT_VERSION).toBe('2026-09-03.v7');
+    // ⚠ RE-PINNED 2026-09-14 to v8, and again NOT because SUBMITTED_BODY moved it — it still does
+    // not, and the assertion below still holds. The version moved for MESSAGE_FREQUENCY_DISCLOSURE:
+    // the carrier disclosures sit beside the consent checkbox and are squarely inside this
+    // version's scope ("the carrier disclosures shown beside it", per consent-copy.ts's own rule),
+    // and the cadence a subscriber agrees to is the single most load-bearing thing this column
+    // records. Wording approved verbatim by Jon (PRD v3.23); applied once the Toll-Free
+    // Verification filing was confirmed Approved (PRD v3.24). Guard working as intended, again.
+    expect(CONSENT_TEXT_VERSION).toBe('2026-09-14.v8');
     expect(CONSENT_CHECKBOX_TEXT).not.toContain('texted us before'); // the consent text is untouched
   });
 });

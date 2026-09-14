@@ -275,6 +275,19 @@ describe('AC-13 / AC-14 — compliance is reachable in one step, and LINKED OR R
     }
   });
 
+  it('🔴 SURFACE 3 OF 3 — the homepage renders the approved frequency wording, verbatim', async () => {
+    // Added 2026-09-14 with task 1. H10 above asserts the homepage reuses the CONSTANTS, which is
+    // what stops drift — but it passes against ANY value of those constants, including a reworded
+    // one. This pins the actual sentence, because the wording was approved by Jon as an exact
+    // string (PRD v3.23) and the "only when you request them" clause is what makes the 3-per-day
+    // figure a description of SOLICITED traffic rather than an undisclosed marketing cadence.
+    // The homepage reaches it via legalFooterParts(false) — the non-waitlist surface, where the
+    // frequency sentence applies and is NOT stripped.
+    const text = textOf(await renderHome());
+    expect(text).toContain('1 message per week, a one-time confirmation message, and up to 3 more messages per day — but only when you request them.');
+    expect(text).not.toContain('1 message per week, plus a one-time confirmation message.');
+  });
+
   it('🔴 H11 — the sender identity is stated and the support number is a real tel: link', async () => {
     // CASL identification. The number must stay tappable: a parent reads this on the phone they
     // are about to sign up with. Flattened into prose it is just characters.

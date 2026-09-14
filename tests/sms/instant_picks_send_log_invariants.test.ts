@@ -147,30 +147,64 @@ describe('3 · the send_type mirror and its constraint agree', () => {
   });
 });
 
-describe('4 · task 1 is HELD, and nothing here reached into it', () => {
-  // ⚠ THE BOUNDARY, ASSERTED RATHER THAN PROMISED. Tasks 2–8 were built while task 1 — the new
-  // disclosure wording, the CONSENT_TEXT_VERSION bump, and the enablement decision — waits on the
-  // Toll-Free Verification status. These four assertions are what stop that boundary being crossed
-  // by accident, in this change or in a later one that quietly "finishes the job".
+describe('4 · task 1 has LANDED — and it landed as a COPY change, not an enablement', () => {
+  // ⚠ THE BOUNDARY, RE-DRAWN RATHER THAN DELETED (2026-09-14). This block used to assert that
+  // task 1 had NOT happened: tasks 2–8 were built while the disclosure rewrite waited on the
+  // Toll-Free Verification status, and these assertions stopped that boundary being crossed by
+  // accident. The TFV filing for +1 877-835-7776 is now confirmed Approved (2026-08-31, PRD
+  // v3.24), Jon approved the wording verbatim (PRD v3.23), and task 1 has been applied.
+  //
+  // So the boundary MOVED — it did not disappear. What still must not happen in this change is
+  // ENABLEMENT: the copy and the version are task 1's, the flag is the Operator's separate act.
+  // These assertions now pin the landed state and the still-held switch.
   const copy = read('/lib/sms/consent-copy.ts');
 
-  it('the frequency disclosure is untouched', () => {
+  it('the frequency disclosure is Jon’s approved wording, verbatim', () => {
+    // Pinned as a literal, not read from the constant — a test that imported the constant would
+    // pass against ANY wording, including a later well-meaning reword of a sentence that is
+    // legally load-bearing and was approved as an exact string (PRD v3.23).
     expect(copy).toContain(
-      "'1 message per week, plus a one-time confirmation message.'"
+      "'1 message per week, a one-time confirmation message, and up to 3 more messages per day — but only when you request them.'"
     );
+    // And the superseded wording is genuinely gone, not left beside it.
+    expect(copy).not.toContain("'1 message per week, plus a one-time confirmation message.'");
   });
 
-  it('CONSENT_TEXT_VERSION is still v7', () => {
-    expect(copy).toContain("export const CONSENT_TEXT_VERSION = '2026-09-03.v7';");
+  it('CONSENT_TEXT_VERSION moved to v8, and v7 is resolvable in the history list', () => {
+    // This file's own standing rule: changing wording a subscriber agrees to REQUIRES the bump,
+    // and bumping REQUIRES adding the outgoing version to the history list in the SAME commit —
+    // otherwise rows stamped v7 point at wording held nowhere but git.
+    expect(copy).toContain("export const CONSENT_TEXT_VERSION = '2026-09-14.v8';");
+    expect(copy).not.toContain("export const CONSENT_TEXT_VERSION = '2026-09-03.v7';");
+    expect(copy).toMatch(/\*\s+2026-09-03\.v7\s+→\s+this file as of commit [0-9a-f]{7}/);
+    expect(copy).toMatch(/\*\s+2026-09-14\.v8\s+→\s+current\./);
   });
 
   it('carrierDisclosuresFor still strips exactly the one frequency line', () => {
     // The area-waitlist surface removes the frequency sentence and NOTHING ELSE, by exact match.
-    // Rewriting that sentence as a paragraph fused with something else would break this surface —
-    // which is a task 1 consideration, recorded here because task 1 lands on top of this code.
+    // The new wording is LONGER than the one it replaced, so the live risk this guards is that it
+    // became two array entries or got fused into a neighbouring one — either of which leaves a
+    // now-false frequency claim on the waitlist screen. Structure asserted here; the BEHAVIOUR is
+    // asserted against the real function in tests/sms/start_page.test.tsx.
     expect(stripComments(copy)).toMatch(
       /CARRIER_DISCLOSURES\.filter\(\(line\) => line !== MESSAGE_FREQUENCY_DISCLOSURE\)/
     );
+    // Exactly one array entry, and it is a single sentence — one terminal period, no newline.
+    const entry = /export const MESSAGE_FREQUENCY_DISCLOSURE =\s*\n\s*'([^']*)';/.exec(copy);
+    expect(entry).not.toBeNull();
+    expect(entry![1].endsWith('.')).toBe(true);
+    expect(entry![1].slice(0, -1)).not.toContain('. ');
+  });
+
+  it('🔴 the send-enable flag was NOT flipped by this copy change', () => {
+    // THE LINE THAT STILL MATTERS. Task 1 makes `consent_text_version >= v8` REACHABLE; it does
+    // not turn sending on. INSTANT_PICKS_SMS_SEND_ENABLED must still default to false, so that
+    // going live stays a deliberate Operator action rather than a side effect of a copy edit.
+    const config = read('/lib/sms/config.ts');
+    const fn = /export function instantPicksSmsSendEnabled\(\)[\s\S]*?\n}/.exec(config);
+    expect(fn).not.toBeNull();
+    expect(fn![0]).toContain("=== 'true'");
+    expect(fn![0]).not.toMatch(/return true/);
   });
 
   it('the send path is gated on a version that does not exist yet', () => {

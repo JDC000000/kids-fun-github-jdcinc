@@ -62,9 +62,19 @@
  *                     2026-09-01, when the consent checkbox itself was corrected.
  *   2026-09-01.v6  →  this file as of commit e85bf68 (the commit immediately before this
  *                     bump). Retired 2026-09-03.
- *   2026-09-03.v7  →  current. Jon's product-wide "always SMS, never text" ruling reached
- *                     two strings inside this version's scope: the consent checkbox and
- *                     SUPPORT_LINE.
+ *   2026-09-03.v7  →  this file as of commit f57a6a4 (the commit immediately before this
+ *                     bump). Jon's product-wide "always SMS, never text" ruling reached two
+ *                     strings inside this version's scope: the consent checkbox and
+ *                     SUPPORT_LINE. Retired 2026-09-14.
+ *   2026-09-14.v8  →  current. MESSAGE_FREQUENCY_DISCLOSURE was rewritten to describe the
+ *                     on-demand Instant Picks text as well as the weekly one — the cadence a
+ *                     subscriber is agreeing to changed, which is the clearest case this
+ *                     column exists for. Wording approved verbatim by Jon (PRD v3.23), applied
+ *                     once the Toll-Free Verification filing for +1 877-835-7776 was confirmed
+ *                     Approved (2026-08-31, recorded PRD v3.24). ⚠ This bump makes `consent_text_version >= v8`
+ *                     REACHABLE for new and resubmitting subscribers, which is gate 2 of three
+ *                     in lib/sms/instant-picks-send.ts. It does NOT enable sending: gate 1,
+ *                     INSTANT_PICKS_SMS_SEND_ENABLED, is a separate switch and is still off.
  *
  * ⚠ THIS LIST IS NOT A DATE CUTOFF, and an audit query written as though it were will be wrong.
  * `signup-store.ts` RE-STAMPS `consent_text_version` on resubmit, deliberately — a resubmitting
@@ -77,7 +87,7 @@
  *
  * >>> BUMPING THIS? ADD THE OUTGOING VERSION TO THE LIST ABOVE IN THE SAME COMMIT. <<<
  */
-export const CONSENT_TEXT_VERSION = '2026-09-03.v7';
+export const CONSENT_TEXT_VERSION = '2026-09-14.v8';
 
 /**
  * The serial number inside a consent version string — `'2026-09-03.v7'` → `7`. Null if it does not
@@ -201,12 +211,27 @@ export const WHAT_HAPPENS_NEXT =
  */
 /**
  * The frequency statement, pulled out under its own name because it is the ONE line in this list
- * that is not true on every surface that shows the list. It describes the weekly SUBSCRIPTION.
- * Someone who is only being offered the area waitlist is not signing up for that and will receive
- * a single notification, if we ever reach their area at all. See `carrierDisclosuresFor`.
+ * that is not true on every surface that shows the list. It describes the weekly SUBSCRIPTION and
+ * the on-demand texts a subscriber can request from their own preferences page. Someone who is
+ * only being offered the area waitlist is signing up for NEITHER — they will receive a single
+ * notification, if we ever reach their area at all. See `carrierDisclosuresFor`.
+ *
+ * ═══ ⚠ IT MUST STAY ONE SENTENCE ON ONE LINE, AND THAT IS STRUCTURAL, NOT STYLISTIC ═══
+ * `carrierDisclosuresFor` removes this from the waitlist surface by EXACT VALUE MATCH against
+ * this constant. Splitting it into two sentences in one string still filters (the value is what
+ * matches, not the grammar), but splitting it into two ARRAY ENTRIES would leave half of a
+ * now-false frequency claim on the waitlist screen, and folding it into a neighbouring entry
+ * would make the filter drop a true disclosure alongside the false one. One entry, one sentence,
+ * removed as one unit. tests/sms/start_page.test.tsx asserts exactly one line comes out.
+ *
+ * ═══ WORDING: JON'S, VERBATIM (PRD v3.23; TFV hold lifted in v3.24) ═══
+ * Approved as a literal string, not as a brief. The "— but only when you request them" clause is
+ * the load-bearing half for Toll-Free Verification: it is what makes "up to 3 more messages per
+ * day" a description of SOLICITED traffic rather than of a marketing cadence nobody agreed to.
+ * Do not reword it for house style, do not swap the em dash for a comma, do not shorten it.
  */
 export const MESSAGE_FREQUENCY_DISCLOSURE =
-  '1 message per week, plus a one-time confirmation message.';
+  '1 message per week, a one-time confirmation message, and up to 3 more messages per day — but only when you request them.';
 
 export const CARRIER_DISCLOSURES: readonly string[] = [
   MESSAGE_FREQUENCY_DISCLOSURE,
@@ -574,25 +599,33 @@ export const PREFS_LAST_WEEK_EMPTY =
 //
 //   GROUP A — ALWAYS ON THE PAGE: heading, body, button label, loading label, and the four
 //     list-outcome lines (result, widened, interests-dropped, empty, can't-check, slow-down).
-//     ⚠ STILL NO SENDING VERBS. `MESSAGE_FREQUENCY_DISCLOSURE` — "1 message per week, plus a
-//     one-time confirmation message" — is STILL the live wording, rendered a few centimetres below
-//     this button, and it is what a Toll-Free Verification reviewer compares behaviour against. The
-//     rewrite of that sentence and its CONSENT_TEXT_VERSION bump are task 1, HELD pending the TFV
-//     decision (plan v2.0 §6, option B). Until it lands, a button promising a text would sit
-//     directly above a sentence saying no such text exists — and would be promising something the
-//     three gates in lib/sms/instant-picks-send.ts currently refuse to deliver. So: false AND
-//     contradictory. tests/sms/instant_picks_copy.test.ts keeps enforcing this over group A.
+//     ⚠ STILL NO SENDING VERBS — BUT THE REASON HAS NARROWED, SO READ IT BEFORE RELYING ON IT.
+//     Task 1 HAS NOW LANDED (2026-09-14): `MESSAGE_FREQUENCY_DISCLOSURE` now reads "…and up to 3
+//     more messages per day — but only when you request them", and CONSENT_TEXT_VERSION is v8. So
+//     the FIRST half of the old argument is gone: a button promising a text no longer contradicts
+//     the sentence a few centimetres below it. The SECOND half still stands on its own —
+//     INSTANT_PICKS_SMS_SEND_ENABLED (gate 1 of three, lib/sms/instant-picks-send.ts) is still
+//     OFF, so a press still sends nothing, and group A promising a text would still promise
+//     something the gates refuse to deliver. Hence: unchanged here, deliberately, not by oversight.
+//     ⇒ WHEN THE OPERATOR FLIPS THAT FLAG, GROUP A SHOULD BE REVISITED IN THAT PASS — telling a
+//     parent the button texts them BEFORE they press it is the right copy once it is true, and it
+//     is Jon's call, not a mechanical follow-on. tests/sms/instant_picks_copy.test.ts keeps
+//     enforcing the current rule over group A until then.
 //
 //   GROUP B — THE SEND-OUTCOME LINES: rendered ONLY when the server reports that a send was
 //     actually attempted for this subscriber, which requires `consent_text_version >= v8` — i.e.
-//     they saw the NEW disclosure and agreed to it. A v7 subscriber, and every subscriber today,
-//     gets `sendStatus: 'not_eligible'` and sees NONE of group B. That is what makes these
-//     sentences safe to write now: they cannot appear beside wording they contradict, because the
-//     only way to see them is to have agreed to wording that includes them.
+//     they saw the NEW disclosure and agreed to it. ⚠ UPDATED 2026-09-14: this used to add "and
+//     every subscriber today", which is no longer true — since the v8 bump a new or resubmitting
+//     signup stamps v8 and DOES clear this gate. A subscriber still on v7 (anyone who has not
+//     touched the form since the bump) gets `sendStatus: 'not_eligible'` and sees none of group B.
+//     What makes these sentences safe is unchanged in substance: they cannot appear beside wording
+//     they contradict, because the only way to see them is to have agreed to wording that includes
+//     them — and v8 is exactly that wording.
 //
-// ⇒ WHEN TASK 1 LANDS, REVISIT GROUP A — not this comment. A parent who has agreed to "plus texts
-//   you ask for" should probably be told the button sends one BEFORE they press it, and that is a
-//   copy decision for whoever writes the new disclosure, made in the same pass.
+// ⇒ TASK 1 HAS LANDED; THE REMAINING TRIGGER IS THE FLAG, NOT THE COPY. A parent who has agreed
+//   to "up to 3 more messages per day — but only when you request them" should be told the button
+//   sends one BEFORE they press it. That becomes true — and should be written — when
+//   INSTANT_PICKS_SMS_SEND_ENABLED goes on. It is a copy decision for Jon, not a side effect.
 
 export const PREFS_INSTANT_HEADING = 'Want more than that?';
 export const PREFS_INSTANT_BODY =

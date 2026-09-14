@@ -45,20 +45,50 @@ function deps(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe('instant picks send · 🔴 THE FEATURE IS HELD, AND THAT IS THIS COMMIT’S INTENT', () => {
-  it('the live consent version is BELOW the gate, so no subscriber anywhere can trigger a text', () => {
-    // ⚠ WHEN TASK 1 LANDS — new disclosure copy, CONSENT_TEXT_VERSION → v8, v7 added to the
-    // history list — THIS ASSERTION IS EXPECTED TO FLIP. Change it to `toBeGreaterThanOrEqual` in
-    // THE SAME COMMIT as the bump, deliberately and with the TFV decision recorded. It is here so
-    // that enabling this feature cannot happen as a side effect of someone else's change.
+describe('instant picks send · 🔴 STILL HELD — BY THE FLAG NOW, NOT BY THE CONSENT VERSION', () => {
+  it('the live consent version now REACHES the gate — task 1 landed, deliberately', () => {
+    // ⚠ FLIPPED 2026-09-14, IN THE SAME COMMIT AS THE BUMP, exactly as the previous version of
+    // this assertion instructed. CONSENT_TEXT_VERSION is v8, the disclosure now describes the
+    // on-demand text, and the Toll-Free Verification filing for +1 877-835-7776 is confirmed
+    // Approved (2026-08-31, PRD v3.24). So gate 2 is now SATISFIABLE — a new or resubmitting
+    // subscriber stamps v8 and clears it.
+    //
+    // ⚠ THIS IS NOT "THE FEATURE IS ON". Gate 1 — INSTANT_PICKS_SMS_SEND_ENABLED — is still off
+    // and is the Operator's to flip, as a separate deliberate act. The test below is what now
+    // holds the line that the previous version of THIS test used to hold.
     const live = consentVersionSerial(CONSENT_TEXT_VERSION);
     expect(live).not.toBeNull();
-    expect(live!).toBeLessThan(INSTANT_PICKS_MIN_CONSENT_SERIAL);
+    expect(live!).toBeGreaterThanOrEqual(INSTANT_PICKS_MIN_CONSENT_SERIAL);
   });
 
-  it('a subscriber on the CURRENT live version is refused, silently', async () => {
+  it('🔴 the flag is what holds the feature now — live consent version, flag off, still nothing sent', async () => {
+    // THE GUARD THAT REPLACES THE OLD CONSENT-VERSION ONE. Before task 1 the feature was held by
+    // TWO independent things and this suite leaned on the consent version. That prop is gone, so
+    // the remaining one is asserted directly and on its own: a subscriber on the CURRENT live
+    // wording, who now genuinely clears gate 2, must STILL get nothing while the flag is off.
+    // If someone defaults INSTANT_PICKS_SMS_SEND_ENABLED to true, this is what goes red.
+    delete process.env.INSTANT_PICKS_SMS_SEND_ENABLED;
     const d = deps({
+      enabled: undefined, // fall through to instantPicksSmsSendEnabled() — the real default
       loadSubscriber: vi.fn(async () => ({ ...V8, consentTextVersion: CONSENT_TEXT_VERSION })),
+    });
+    const result = await sendInstantPicksText(SUBSCRIBER_ID, d);
+    expect(result.status).toBe('not_eligible');
+    expect(d.loadSubscriber).not.toHaveBeenCalled(); // gate 1 is before any I/O
+    expect(d.dispatch).not.toHaveBeenCalled();
+    expect(d.record).not.toHaveBeenCalled();
+    expect(d.checkThrottle).not.toHaveBeenCalled();
+  });
+
+  it('a subscriber BELOW the gate is refused, silently', async () => {
+    // ⚠ PINNED TO A LITERAL v7 RATHER THAN TO CONSENT_TEXT_VERSION, as of 2026-09-14. It used to
+    // read CONSENT_TEXT_VERSION because the live version WAS below the gate; now that it is v8,
+    // reading the constant would have made this test assert the opposite of its own name. The
+    // invariant being tested is "a pre-v8 subscriber gets nothing" — and v7 rows are real and
+    // still in the table (signup-store re-stamps only on resubmit), so this is the live case for
+    // every existing subscriber who has not touched the form since the bump.
+    const d = deps({
+      loadSubscriber: vi.fn(async () => ({ ...V8, consentTextVersion: '2026-09-03.v7' })),
     });
     const result = await sendInstantPicksText(SUBSCRIBER_ID, d);
     expect(result.status).toBe('not_eligible');

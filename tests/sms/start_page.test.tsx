@@ -231,6 +231,23 @@ describe('the area waitlist is offered only when there is an area problem', () =
   });
 });
 
+describe('SURFACE 2 OF 3 — /sms/start renders the approved frequency disclosure', () => {
+  // Added 2026-09-14 with task 1. /sms/start is THE signup page and carries the Toll-Free
+  // Verification screenshot obligation, so the sentence a reviewer photographs is asserted here
+  // against the RENDERED markup — not merely against the constant, which cannot prove the page
+  // still puts it on screen.
+  it('the new wording is on the page, verbatim', () => {
+    expect(MESSAGE_FREQUENCY_DISCLOSURE).toBe('1 message per week, a one-time confirmation message, and up to 3 more messages per day — but only when you request them.');
+    expect(text).toContain(MESSAGE_FREQUENCY_DISCLOSURE);
+  });
+
+  it('the superseded wording is gone from the page', () => {
+    // Guards the failure mode a constant-based assertion cannot see: the new line added while an
+    // old hand-typed copy of the retired sentence survives somewhere in the same markup.
+    expect(text).not.toContain('1 message per week, plus a one-time confirmation message.');
+  });
+});
+
 describe('the waitlist-only state drops the frequency line, and only that line', () => {
   // Jon, 2026-08-31: on the out-of-area state the weekly-frequency sentence is simply false — that
   // visitor is not being offered a subscription. It goes. The other two disclosures do not.
@@ -256,5 +273,21 @@ describe('the waitlist-only state drops the frequency line, and only that line',
   it('removes exactly one line, and leaves the ordinary state untouched', () => {
     expect(waitlist).toHaveLength(CARRIER_DISCLOSURES.length - 1);
     expect(carrierDisclosuresFor(false)).toEqual(CARRIER_DISCLOSURES);
+  });
+
+  it('🔴 the LONGER task-1 wording is still stripped as ONE discrete unit', () => {
+    // ⚠ THE SPECIFIC RISK TASK 1 INTRODUCED. The frequency sentence grew from 49 to 122 characters
+    // and gained an em-dash clause. `carrierDisclosuresFor` removes it by EXACT VALUE MATCH on a
+    // single array entry, so the wording is only safely strippable while it remains exactly one
+    // entry and exactly one sentence. Had it been split into two entries — or fused into a
+    // neighbour — the waitlist screen would keep a now-false frequency claim, or lose a true
+    // disclosure alongside it. Asserted on the real function's output, not on the source text.
+    expect(MESSAGE_FREQUENCY_DISCLOSURE).toContain('but only when you request them');
+    // It is ONE entry in the full list, and it is the ONE that disappears.
+    const removed = CARRIER_DISCLOSURES.filter((line) => !waitlist.includes(line));
+    expect(removed).toEqual([MESSAGE_FREQUENCY_DISCLOSURE]);
+    // No fragment of it survives anywhere in the waitlist copy — the "split into two entries"
+    // failure would leave the first half behind and still pass a length check.
+    expect(waitlist.join(' ')).not.toMatch(/message per week|when you request them|confirmation/i);
   });
 });
