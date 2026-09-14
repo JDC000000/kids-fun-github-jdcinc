@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { auditRoute } from './axe-helper';
 
 // Project-wide WCAG AA accessibility AUDIT — anonymous (unauthenticated) routes.
@@ -23,6 +24,15 @@ interface AnonRoute {
 
 const ANON_ROUTES: AnonRoute[] = [
   { route: '/', label: 'home' },
+  // Home AT PHONE WIDTH (TSD v1.2 §9 M4 T4.2). The entry above audits the default Desktop
+  // Chrome viewport, and after the M2/M3 restructure that is no longer the same DOM: below
+  // 768px the site nav's category row is replaced by a collapsed <details> Menu
+  // (app/_components/site-nav.css), and the offer's fact grid stacks from a four-column row
+  // into four rows. AC-17 makes the phone the frame this page is judged on, so auditing only
+  // the desktop layout would leave the reviewed one unaudited. 390x844 is TSD §6.2's own
+  // figure, kept here so the a11y sweep and the fold test (home-above-the-fold.public.spec.ts)
+  // describe the same screen.
+  { route: '/', label: 'home (phone)', viewport: { width: 390, height: 844 } },
   { route: '/search', label: 'search (no query)' },
   { route: '/search?q=swim&region=van', label: 'search (query + region filter)' },
   // Active custom date range (T26 / FR-04, G-T26-1). With both `from` and `to` set the
@@ -91,6 +101,76 @@ test.describe('a11y audit — anonymous routes', () => {
       await auditRoute(page, testInfo, route, label, prepare);
     });
   }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE HOME PAGE'S HEADING STRUCTURE — A HARD GATE, NOT PART OF THE AUDIT ABOVE.
+// TSD v1.2 §9 M4 T4.2.
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// ═══ 🔴 WHY THIS EXISTS: THE SWEEP ABOVE CANNOT SEE THE THING T4.2 IS WORRIED ABOUT ═══
+// T4.2, verbatim: "Heading order is the likely casualty of moving <h1>/<h2> blocks around."
+// It is right that that is the risk, and the audit above is structurally blind to it.
+//
+// axe-core classifies `heading-order`, `page-has-heading-one` and `empty-heading` as
+// `best-practice` — VERIFIED against axe-core's own rule metadata, not assumed. WCAG_AA_TAGS
+// in axe-helper.ts is `wcag2a|wcag2aa|wcag21a|wcag21aa` and deliberately excludes
+// best-practice, "so every reported finding maps to a real WCAG success criterion". That is a
+// good rule for an audit. Its consequence here is that a home page restructured into a new
+// heading hierarchy could skip from <h1> straight to <h3>, or lose its <h1> entirely, and the
+// sweep above would still print "clean".
+//
+// So this block is deliberately a DIFFERENT KIND OF TEST from the one above it, and the
+// difference is the point:
+//   • the sweep is AUDIT-ONLY by design (Round 17 / G-T38-4) — it records and never fails;
+//   • this is a GATE — it fails, and it is scoped to the ONE route this milestone restructured.
+// It does not retroactively gate any other route. Widening it is a separate decision.
+test.describe('home — heading structure (hard gate, scoped to the restructured route)', () => {
+  const SEMANTIC_RULES = ['heading-order', 'page-has-heading-one', 'empty-heading'];
+
+  test('no skipped heading levels, exactly one h1, no empty heading', async ({ page }) => {
+    await page.goto('/', { waitUntil: 'load' });
+    await page.waitForLoadState('networkidle').catch(() => {});
+
+    // A plain DOM read first, because it produces a failure message somebody can act on: the
+    // whole outline, in order, with the offending step marked. axe says "heading-order" and
+    // points at one node; this says which heading followed which.
+    const outline = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6')).map((h) => ({
+        level: Number(h.tagName[1]),
+        text: (h.textContent ?? '').trim().slice(0, 60),
+      })),
+    );
+    const rendered = outline.map((h) => `h${h.level} ${JSON.stringify(h.text)}`).join('\n      ');
+
+    expect(
+      outline.filter((h) => h.level === 1).length,
+      `the home page must have exactly one <h1> — the offer. Outline:\n      ${rendered}`,
+    ).toBe(1);
+    expect(outline[0]?.level, `the first heading must be the <h1>. Outline:\n      ${rendered}`).toBe(1);
+
+    for (let i = 1; i < outline.length; i += 1) {
+      expect(
+        outline[i].level - outline[i - 1].level,
+        `heading level skipped from h${outline[i - 1].level} to h${outline[i].level} at ` +
+          `${JSON.stringify(outline[i].text)} — a screen-reader user hears a section that is ` +
+          `missing its parent. Outline:\n      ${rendered}`,
+      ).toBeLessThanOrEqual(1);
+    }
+    for (const h of outline) {
+      expect(h.text, `an empty h${h.level} announces a section with no name`).not.toBe('');
+    }
+
+    // And axe's own verdict on the same three rules, so this gate cannot drift away from the
+    // tool the rest of the harness trusts.
+    const results = await new AxeBuilder({ page }).withRules(SEMANTIC_RULES).analyze();
+    expect(results.testEngine?.name, 'axe-core actually executed on the page').toBe('axe-core');
+    expect(
+      results.violations.map((v) => `${v.id}: ${v.help} (x${v.nodes.length})`),
+      `axe flagged the home page's heading semantics. These rules are best-practice-tagged and ` +
+        'therefore invisible to the WCAG-AA audit above — which is exactly why this gate exists',
+    ).toEqual([]);
+  });
 });
 
 // --- Admin routes (project-wide sweep) -------------------------------------------

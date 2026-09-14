@@ -89,6 +89,17 @@ E2E_BASE_URL=http://127.0.0.1:3000
 # (tests/e2e/a11y/routes.anon.a11y.spec.ts), because run-e2e.sh sources this file
 # before starting either — so the token the spec presents is the one the gate expects.
 ADMIN_DASHBOARD_TOKEN=${E2E_ADMIN_TOKEN}
+# The SMS signup release switch (lib/sms/config.ts \`smsSignupEnabled()\`). It DEFAULTS TO FALSE,
+# which means the default state of a local E2E run was: /sms/start 404s, the home page correctly
+# renders no signup action (AC-12), and every spec that needs the enabled branch has nothing to
+# look at. Two specs need it and neither skips silently —
+# tests/e2e/public/sms-cta-analytics.public.spec.ts (M1 T1.6) asserts the CTA is present with a
+# message naming this variable, and tests/e2e/public/address-integrity.public.spec.ts (M4 T4.3)
+# asserts /sms/start's status against it. Provisioned here for the same reason
+# ADMIN_DASHBOARD_TOKEN above is: run-e2e.sh sources this file before starting BOTH the app server
+# and the Playwright process, so the flag the specs expect is the flag the app is running with.
+# Flip it to any other value to exercise the fail-safe (404 / no-action) branch instead.
+SMS_SIGNUP_ENABLED=true
 EOF
 
 echo "✔ E2E local Supabase ready (target ${API_URL}). Now run: npm run build && bash scripts/e2e/run-e2e.sh"
