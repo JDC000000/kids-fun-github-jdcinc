@@ -35,6 +35,8 @@ import { SearchEngine, type SearchResultItem } from '@/lib/search/engine';
 import { InMemoryListingRepository } from '@/lib/search/repository';
 import { FixtureAliasResolver } from '@/lib/search/expand';
 import { RegionHierarchy } from '@/lib/geo/region';
+import { AGE_BAND_ORDER } from '@/lib/search/filters/age';
+import { DEFAULT_RANK_WEIGHTS } from '@/lib/search/rank-config';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
 import { REGIONS } from '@/lib/search/__fixtures__/regions';
 import { ALIAS_SEED } from '@/lib/search/__fixtures__/aliases';
@@ -46,6 +48,7 @@ import { isWeeklyPickEligible } from '@/lib/sms/registration';
 import {
   DEDUP_TITLE_SIMILARITY,
   DIRECT_LINK_PICKS,
+  DROP_IN_RANK_BOOST,
   FLOOR_PICKS,
   MAX_FORCED_PICKS,
   MAX_PICKS,
@@ -62,6 +65,7 @@ import {
   collapseSameOfferingAtVenue,
   dedupeCandidates,
   matchesInterests,
+  preferDropIn,
   sameOfferingAtVenue,
   selectWeeklyPicks,
   spreadNamedSlots,
@@ -1007,13 +1011,24 @@ describe('T9 — diversity telemetry on the result payload', () => {
     expect(result.diversity.sameOfferingCollapsed).toBe(1);
     // ONE pick deferred by the venue cap: Britannia's third card, which a filler replaced.
     expect(result.diversity.venueCapDeferred).toBe(1);
-    // ONE named slot permuted: the second Roundhouse card gave up its named slot to the
-    // best-ranked pick at a place not yet named.
-    expect(result.diversity.namedSlotsPermuted).toBe(1);
-    expect(result.diversity.promoted).toHaveLength(1);
+    // TWO named slots permuted, both by the venue rule — the named three end up at three
+    // different buildings from a list that arrived with two Roundhouse cards at the top.
+    //
+    // ═══ WHY THIS WAS ONE PROMOTION UNTIL 2026-09-15 ═══
+    // `DROP_IN_RANK_BOOST` reorders the ten upstream of this stage, and on this fixture it moves
+    // real cards: "Public Swim with Tot Pool" and "Lengths" carry drop-in title vocabulary,
+    // "Tai Chi Chuan - Beginners" and "Pickleball" do not. So the card that reaches the named
+    // block from Britannia is now `br-tot` rather than `br-les`, which frees a second slot for
+    // `coal`. The COUNTS this file exists to defend are unchanged (one collapse, one venue
+    // deferral, at most two cards per venue); what moved is which card of an equally-ranked pair
+    // gets named, which is exactly what the boost is for. Left as an exact pin rather than
+    // loosened to a range: a pin that notices a deliberate ranking change is doing its job.
+    expect(result.diversity.namedSlotsPermuted).toBe(2);
+    expect(result.diversity.promoted).toHaveLength(2);
+    expect(result.diversity.promoted.map((p) => p.reason)).toEqual(['venue', 'venue']);
 
-    const [promotion] = result.diversity.promoted;
-    expect(promotion.occurrenceId).toBe('br-les');
+    const [promotion, second] = result.diversity.promoted;
+    expect(promotion.occurrenceId).toBe('br-tot');
     expect(promotion.displacedOccurrenceId).toBe('rh-tai');
     expect(promotion.toIndex).toBe(1);
     expect(promotion.fromIndex).toBe(3);
@@ -1026,6 +1041,11 @@ describe('T9 — diversity telemetry on the result payload', () => {
     // the subscriber's radius already bounds it, and a second ceiling would be a filter wearing a
     // preference's clothes.
     expect(promotion.distanceDeltaKm).toBeCloseTo(1.8, 1);
+
+    // The second promotion moves the named block CLOSER, which is the other half of the honest
+    // answer: a promotion is lower-RANKED by definition and only usually farther away.
+    expect(second).toMatchObject({ occurrenceId: 'coal', displacedOccurrenceId: 'br-les', fromIndex: 4, toIndex: 2, rankDelta: 2 });
+    expect(second.distanceDeltaKm).toBeCloseTo(-1.2, 1);
   });
 
   it('is DERIVED from the run that produced the picks — every id it names is one that shipped', () => {
@@ -1046,13 +1066,13 @@ describe('T9 — diversity telemetry on the result payload', () => {
 
   it('is all zeroes when nothing had to be done, including on an EMPTY week', () => {
     const quiet = selectWeeklyPicks(input(thinCatalogue(56, 2), { subscriber: { origin: { geo: HOME, label: 'R' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } }));
-    expect(quiet.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [] });
+    expect(quiet.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, dropInReordered: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [] });
 
     // An empty week still carries the summary, describing the attempt that produced the emptiness
     // — a caller reading `diversity` must never have to branch on `outcome` first.
     const empty = selectWeeklyPicks(input([]));
     expect(empty.outcome).toBe('empty');
-    expect(empty.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [] });
+    expect(empty.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, dropInReordered: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [] });
   });
 
   it('reports a null distance delta rather than a zero when a card is un-geocoded', () => {
@@ -2011,5 +2031,114 @@ describe('T12 — at most one of each activity type in the three picks a parent 
     expect(typePromotions.length).toBeGreaterThan(0);
     expect(result.diversity.namedSlotsPermuted).toBe(result.diversity.promoted.length);
     expect(typePromotions[0].rankDelta).toBeGreaterThan(0);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// T13 (2026-09-15) — THE DROP-IN PREFERENCE.
+//
+// Jon's highest-rated Friday preview (4/5) came with the reason attached: "my impression is all
+// of those are drop-in." Today registration/multi-week content and drop-in content rank on
+// EQUAL FOOTING once both clear `isWeeklyPickEligible` — that gate removes multi-session
+// commitments, and is silent about the difference between "just turn up" and "book a place".
+//
+// This pins the nudge that separates them, and — more importantly — the BOUND on it. The number
+// is not a feeling: it is smaller than the cheapest age-fit difference this product can express,
+// so the preference can never buy a drop-in listing past a candidate that admits one more of the
+// household's children. The arithmetic behind that claim is asserted below against the real
+// weights, so a future weight change fails here rather than silently invalidating the reasoning.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('T13 — drop-in content ranks above content you have to book, but only just', () => {
+  /** A ranked pair at an EXPLICIT score, so the boost is the only thing that can separate them. */
+  const scored = (spec: Array<{ id: string; score: number; dropIn: boolean }>): SearchResultItem[] =>
+    spec.map((s) => ({
+      ...asItem(
+        kidActivity({
+          id: s.id,
+          activityName: s.dropIn ? `Drop-in ${s.id}` : `Bookable ${s.id}`,
+          venueName: `Venue ${s.id}`,
+        })
+      ),
+      score: s.score,
+    }));
+
+  it('lifts a drop-in candidate above an equally-ranked one that must be booked', () => {
+    const before = scored([
+      { id: 'book-a', score: 2.0, dropIn: false },
+      { id: 'drop-a', score: 2.0, dropIn: true },
+      { id: 'book-b', score: 1.99, dropIn: false },
+    ]);
+    expect(idsOf(preferDropIn(before))).toEqual(['drop-a', 'book-a', 'book-b']);
+  });
+
+  it('IS STRICTLY SMALLER THAN THE CHEAPEST AGE-FIT DIFFERENCE — the bound, as arithmetic', () => {
+    // `ageMatchScore` returns covered/requested. The smallest step it can take is one band out of
+    // the five in AGE_BAND_ORDER, and every narrower household makes the gap bigger. If the
+    // weights or the band list ever move, this fails rather than the reasoning quietly rotting.
+    const cheapestAgeFitGap = DEFAULT_RANK_WEIGHTS.ageMatch * (1 / AGE_BAND_ORDER.length);
+    expect(DROP_IN_RANK_BOOST).toBeLessThan(cheapestAgeFitGap);
+
+    // …and demonstrated, not just computed: a drop-in listing that fits ONE of two children stays
+    // below a bookable one that fits both.
+    const fitsBoth = 2.0;
+    const fitsOne = fitsBoth - DEFAULT_RANK_WEIGHTS.ageMatch * 0.5;
+    const before = scored([
+      { id: 'book-both', score: fitsBoth, dropIn: false },
+      { id: 'drop-one', score: fitsOne, dropIn: true },
+    ]);
+    expect(idsOf(preferDropIn(before))).toEqual(['book-both', 'drop-one']);
+  });
+
+  it('is a REORDER, never a filter, and is stable on everything it does not separate', () => {
+    const before = scored([
+      { id: 'a', score: 2.0, dropIn: false },
+      { id: 'b', score: 2.0, dropIn: false },
+      { id: 'c', score: 2.0, dropIn: true },
+      { id: 'd', score: 2.0, dropIn: true },
+      { id: 'e', score: 1.0, dropIn: false },
+    ]);
+    const after = preferDropIn(before);
+    expect([...idsOf(after)].sort()).toEqual([...idsOf(before)].sort());
+    for (const item of before) expect(after).toContain(item);
+    // The two drop-ins keep the engine's order between themselves, and so do the two bookables.
+    expect(idsOf(after)).toEqual(['c', 'd', 'a', 'b', 'e']);
+  });
+
+  it('READS THE SHARED SIGNAL, in every form that signal takes', () => {
+    // Not a second definition of "drop-in": the tag, the vendor's own persisted `false`, and the
+    // title vocabulary all come from `hasDropInSignal`, and all three have to work here.
+    const base = { score: 2.0, venueName: 'Same Place' };
+    const items: SearchResultItem[] = [
+      { ...asItem(kidActivity({ id: 'plain', activityName: 'Pottery Wheel', ...base })), score: 2.0 },
+      { ...asItem(kidActivity({ id: 'by-tag', activityName: 'Pottery Wheel', suitabilityTags: ['drop_in'], ...base })), score: 2.0 },
+      { ...asItem(kidActivity({ id: 'by-flag', activityName: 'Pottery Wheel', registrationRequired: false, ...base })), score: 2.0 },
+      { ...asItem(kidActivity({ id: 'by-title', activityName: 'Public Swim', ...base })), score: 2.0 },
+    ];
+    expect(idsOf(preferDropIn(items))).toEqual(['by-tag', 'by-flag', 'by-title', 'plain']);
+  });
+
+  it('END TO END — a drop-in listing overtakes a bookable one, and the summary says so', () => {
+    // Eleven candidates so the boost can change MEMBERSHIP of the ten and not only their order:
+    // the drop-in sits at rank 11 by distance and has to displace the bookable at rank 10.
+    const rows: ListingRecord[] = Array.from({ length: 10 }, (_, i) =>
+      kidActivity({
+        id: `book-${i}`, activityName: FILLER_NAMES[i], venueName: `Bookable Venue ${i}`,
+        geo: northOfHome(600 + i * 200),
+      })
+    );
+    rows.push(kidActivity({
+      // A name no bookable row uses — otherwise `dedupeCandidates` collapses the pair on title
+      // similarity and the test measures dedup rather than the boost.
+      id: 'drop-in-one', activityName: FILLER_NAMES[10], venueName: 'Drop-in Venue',
+      geo: northOfHome(600 + 10 * 200), suitabilityTags: ['drop_in'],
+    }));
+    const withBoost = selectWeeklyPicks(input(rows));
+    expect(withBoost.picks.map((p) => p.item.listing.id)).toContain('drop-in-one');
+    expect(withBoost.diversity.dropInReordered).toBeGreaterThan(0);
+
+    // …and with nothing to prefer, the counter is silent rather than decorative.
+    const noneDropIn = selectWeeklyPicks(input(rows.filter((r) => r.id !== 'drop-in-one')));
+    expect(noneDropIn.diversity.dropInReordered).toBe(0);
   });
 });

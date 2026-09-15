@@ -65,6 +65,9 @@ import { foldTitleForComparison, isShowableOnFrontDoor } from '@/lib/recommend/t
 // Jon's §8 Q1 ruling: multi-session commitments out, one-off bookings in. SMS-scoped — see that
 // file for why it re-runs the shared classifier rather than copying its vocabulary.
 import { isWeeklyPickEligible } from './registration';
+// The SAME predicate the eligibility gate is built on, reused as a RANKING signal. Not a second
+// copy and not a second definition of "drop-in": see `preferDropIn`.
+import { hasDropInSignal } from '@/lib/search/filters/registration';
 
 // ── Tunables. Every one of these is a PRD number, named so it is greppable and adjustable. ──
 
@@ -166,6 +169,31 @@ export const CLASS_PROGRAM_CATEGORY_KEY = 'class_program';
  * line to revisit, and `CLASS_PROGRAM_CATEGORY_KEY` is already named for that.
  */
 export const MAX_NAMED_SLOTS_PER_CATEGORY = 1;
+/**
+ * How much a DROP-IN-signalled listing is worth in this surface's ranking — Jon's ruling of
+ * 2026-09-15, from the preview he rated highest (4/5): "my impression is all of those are drop-in."
+ *
+ * WHY A RANKING NUDGE AND NOT A FILTER. `isWeeklyPickEligible` already removes multi-session
+ * commitments, so what reaches here is drop-in content and one-off content that merely has to be
+ * BOOKED — and the Friday text is read on a Friday afternoon about tomorrow, where "just turn up"
+ * is worth something a booking is not. It is a PREFERENCE, though, not a fact about quality: a
+ * bookable one-off is still a perfectly good Saturday, so it is nudged past, never excluded.
+ *
+ * ═══ WHY 0.1, WHICH IS A BOUND RATHER THAN A FEELING ═══
+ * Scores here are `DEFAULT_RANK_WEIGHTS` sums (lib/search/rank-config.ts). The smallest age-fit
+ * difference this product can express is ONE band out of the five in `AGE_BAND_ORDER`:
+ * `ageMatchScore` returns covered/requested, so one band of five is 0.2, times the `ageMatch`
+ * weight of 0.6 = 0.12. Every other household shape makes that gap BIGGER (one of two bands costs
+ * 0.3). At 0.1 this boost is therefore strictly smaller than the cheapest possible loss of age
+ * fit, and cannot buy a drop-in listing past a candidate that admits one more of this family's
+ * children — which is the same line `orderByCategorySpread`'s age-fit guard draws, drawn here in
+ * arithmetic because a re-sort has no guard to hang it on.
+ *
+ * SMALL AND GREPPABLE BECAUSE IT IS EXPECTED TO MOVE, exactly like `MAX_PICKS_PER_VENUE`. This
+ * codebase's standing discipline is measure-before-build: `DiversitySummary.dropInReordered`
+ * reports what it actually did on every send, so this is a number to retune against real sends.
+ */
+export const DROP_IN_RANK_BOOST = 0.1;
 /**
  * Total forced picks the coverage swap may make — 2 ACROSS ALL BANDS, not 2 per band (PRD v2.4
  * §2.2 step 4 made this explicit after the first draft asked the question).
@@ -308,6 +336,16 @@ export interface DiversitySummary {
    */
   venueCapDeferred: number;
   categoryCapDeferred: number;
+  /**
+   * How many of the picks are there because of `DROP_IN_RANK_BOOST` — i.e. how many of the first
+   * `maxPicks` after the boost were NOT in the first `maxPicks` before it.
+   *
+   * The same question, computed the same way, as the two cap counters above, so the three can be
+   * read side by side. It is deliberately a MEMBERSHIP number and not an ordering one: a boost
+   * that only shuffles the ten among themselves has changed which pick gets named, which
+   * `namedSlotsPermuted` and `promoted` already describe far better than a second counter could.
+   */
+  dropInReordered: number;
   /**
    * Promotions the age-fit guard refused — a category promotion that would have served fewer of
    * the subscriber's children than the pick it jumped.
@@ -925,6 +963,41 @@ export function applyCoverageSwap(
  * every item to call it; now that the key is a parameter the wrapper is gone and the items are
  * passed as they are.
  */
+/**
+ * Re-rank the candidates so that, among otherwise-similar-relevance ones, DROP-IN content sits
+ * above content you have to book. See `DROP_IN_RANK_BOOST` for the number and why it is that size.
+ *
+ * ═══ THE SIGNAL IS REUSED, NOT REDEFINED ═══
+ * `hasDropInSignal` is the shared classifier's own positive "no booking needed" test — the tag,
+ * the persisted `registration_required === false`, and the title vocabulary, in one place that was
+ * audited against the live catalogue. Restating any part of it here would be a second definition
+ * of "drop-in" free to drift from the one the ELIGIBILITY GATE on the very next line uses, and
+ * this module already refuses to do that with `isShowableOnFrontDoor` for the same reason.
+ *
+ * ═══ A REORDER, NEVER A FILTER — AND WHERE IT SITS ═══
+ * Every candidate comes back, so like the two caps below it cannot thin a week. It runs AFTER the
+ * gates, the dedup and the novelty exclusion and BEFORE the caps, which is the only placement that
+ * is a ranking change and nothing else:
+ *   • after dedup, so it cannot change WHICH of two near-identical sittings is the one kept — that
+ *     is `dedupeCandidates`' decision, made on rank, and a preference has no business editing it;
+ *   • before the caps and the truncation, because a cap that runs on a stale order would defer
+ *     cards by a rank this stage has already superseded.
+ *
+ * STABLE BY CONSTRUCTION. The original index is the tiebreak, so two candidates that the boost
+ * does not separate come back in exactly the engine's order. Without that, a "small nudge" would
+ * silently re-order every tied pair in the list.
+ */
+export function preferDropIn(items: SearchResultItem[]): SearchResultItem[] {
+  return items
+    .map((item, index) => ({
+      item,
+      index,
+      score: item.score + (hasDropInSignal(item.listing) ? DROP_IN_RANK_BOOST : 0),
+    }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map((entry) => entry.item);
+}
+
 function orderByVenueSpread(items: SearchResultItem[], maxPicks: number): SearchResultItem[] {
   return capByGroupingKey(items, (item) => venueIdentity(item.listing.venueName), {
     maxPerKey: MAX_PICKS_PER_VENUE,
@@ -1408,6 +1481,15 @@ function selectFrom(
       : distinctOfferings;
   const novelExcluded = distinctOfferings.length - fresh.length;
 
+  // ── DROP-IN PREFERENCE (2026-09-15) ─────────────────────────────────────────────────
+  // A ranking nudge, not a gate — see `preferDropIn` for why it sits exactly here, between the
+  // novelty exclusion and the caps.
+  const dropInOrdered = preferDropIn(fresh);
+  const beforeDropIn = new Set(fresh.slice(0, maxPicks).map((item) => item.listing.id));
+  const dropInReordered = dropInOrdered
+    .slice(0, maxPicks)
+    .filter((item) => !beforeDropIn.has(item.listing.id)).length;
+
   // ── DIGEST-SIZED VENUE CAP (2026-09-10) ─────────────────────────────────────────────
   // Applied to the FULL candidate list and BEFORE the truncation, which is the entire remedy for
   // the latent failure: the engine capped at a window of 20, then this module's gates, dedup and
@@ -1417,8 +1499,8 @@ function selectFrom(
   //
   // `maxPicks` is read from the INPUT rather than the constant, so the cap tracks the list size
   // automatically if a future per-subscriber preference changes it.
-  const venueOrdered = orderByVenueSpread(fresh, maxPicks);
-  const beforeVenueCap = new Set(fresh.slice(0, maxPicks).map((item) => item.listing.id));
+  const venueOrdered = orderByVenueSpread(dropInOrdered, maxPicks);
+  const beforeVenueCap = new Set(dropInOrdered.slice(0, maxPicks).map((item) => item.listing.id));
   const venueCapDeferred = venueOrdered
     .slice(0, maxPicks)
     .filter((item) => !beforeVenueCap.has(item.listing.id)).length;
@@ -1458,6 +1540,7 @@ function selectFrom(
       sameOfferingCollapsed,
       venueCapDeferred,
       categoryCapDeferred,
+      dropInReordered,
       ageFitBlocked,
       namedSlotsPermuted: promoted.length,
       promoted,
