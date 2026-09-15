@@ -30,6 +30,22 @@
 //
 // Every rule below was audited against all 9,988 live staging occurrences before landing; see
 // tests/search/registration-filter.test.ts for the titles each one is pinned to.
+//
+// RE-AUDITED 2026-09-15 against 3,692 distinct live PRODUCTION activity names (28,821
+// occurrences), after Jon found two multi-week programmes in a real Friday text that this file
+// read as drop-in. `scripts/registration-vocabulary-probe.sh` is that audit made repeatable —
+// run it before and after any edit here and diff the two `--json` outputs, so the population a
+// change was measured against is a file a reviewer can read rather than a claim in a commit
+// message. What the re-audit found, and the vocabulary that answers it, is documented on
+// `MARTIAL_ART_PROGRAM` and on the two additions to `REGISTRATION_TITLE`.
+//
+// WHAT THE RE-AUDIT DELIBERATELY DID NOT ADD, because the measurement said no. A skill-level word
+// ("Beginner", "Intermediate", "All Levels") looked like the highest-yield generic rule available
+// and matches 281 live titles — but among them are "Adult Sports: Badminton - All Levels",
+// "Badminton Intermediate Play" and "Ball Hockey (Co-ed) - All Levels", which are drop-in sessions
+// labelled by skill. A rule that takes those out of the default view is the expensive error this
+// file's precision-over-recall rule is about. Recorded here so the next reader does not have to
+// rediscover it, and so the idea is rejected on evidence rather than on taste.
 
 import type { ListingRecord } from '../types';
 
@@ -54,7 +70,7 @@ const DROP_IN_TITLE =
  * programs, and the vendor's own explicit "Reserve In Advance:" prefix.
  */
 const REGISTRATION_TITLE =
-  /\bcamps?\b|\blessons?\b|\bcourses?\b|\bclass(es)?\b|\bworkshops?\b|\bclinics?\b|\bintro\s+to\b|\blearn\s+to\b|\bregistrations?\b|\bregisters?\b|\bregistered\b|\breserve\s+in\s+advance\b|\bacadem(y|ies)\b|\bseries\b|\b(level|stage|star)\s*\d|\bsession\s*\d|\bweek\s*\d|\bcertificat/i;
+  /\bcamps?\b|\blessons?\b|\bcourses?\b|\bclass(es)?\b|\bworkshops?\b|\bclinics?\b|\bintro\s+to\b|\blearn\s+to\b|\bregistrations?\b|\bregisters?\b|\bregistered\b|\breserve\s+in\s+advance\b|\bacadem(y|ies)\b|\bseries\b|\b(level|stage|star)\s*\d|\bsession\s*\d|\bweek\s*\d|\bcertificat|\bballerinas?\b|\bcreative\s+(?:ballet|dance|movement)\b/i;
 
 /**
  * A skill-program name followed by a bare level number — "Power Skate 1", "Figure Skating 1",
@@ -64,7 +80,44 @@ const REGISTRATION_TITLE =
  * program noun in front also keeps it off titles like "Outdoor Movie — Zootopia 2".
  */
 const PROGRAM_LEVEL =
-  /\b(skate|skating|hockey|ringette|swim|swimming|gymnastics|dance|ballet|soccer|basketball|tennis|badminton|karate|judo|aikido|piano|guitar|violin|drawing|painting|pottery|yoga)\s+\d{1,2}(?![\d\-–+]|\s*(yrs?|years?|\+))/i;
+  /\b(skate|skating|hockey|ringette|swim|swimming|gymnastics|dance|ballet|soccer|basketball|tennis|badminton|piano|guitar|violin|drawing|painting|pottery|yoga)\s+\d{1,2}(?![\d\-–+]|\s*(yrs?|years?|\+))/i;
+
+/**
+ * A named martial-arts DISCIPLINE, on its own — no level digit required.
+ *
+ * WHY THIS IS SEPARATE FROM `PROGRAM_LEVEL`, WHICH IS WHERE KARATE/JUDO/AIKIDO USED TO LIVE.
+ * Those three sat in the noun list above and therefore only ever fired with a trailing bare level
+ * number ("Karate 3"). Audited against the live catalogue on 2026-09-15, that requirement made
+ * them almost entirely inert: "Karate - Advanced (Full Month) AUG", "Aikido (August)", "Seiyu
+ * Karate - Beginner" and "Olympic Style TaeKwonDo (11-16 yrs)" ALL read as drop-in, because a
+ * parenthesised age range or month is not a bare digit. They are moved here rather than left
+ * duplicated: this pattern is strictly broader than the alternatives it replaces, so one home per
+ * concept and nothing to keep in sync.
+ *
+ * WHY A BARE DISCIPLINE NOUN IS SAFE HERE WHEN A BARE ACTIVITY NOUN IS NOT. Every one of these
+ * names a BELT- OR CURRICULUM-PROGRESSION art, and the audit found no counter-example: across
+ * 3,692 distinct live activity names, all 189 occurrences carrying one of these words are
+ * month-labelled, level-labelled or belt-labelled programmes ("Axe Capoeira - Beginner mini kids
+ * (3-6yrs) SEPT", "Taekwondo - White Belt to Yellow Belt", "Kung Fu: Choy Lee Fut (Oct)"). There
+ * is no drop-in martial-arts session in the catalogue to lose, which is exactly the check
+ * "swim" or "dance" would fail — those name drop-in sessions and one-off events as readily as
+ * courses, and a bare rule on either would be a disaster. `taekwondo` was the reported gap;
+ * `capoeira` (63 titles), `boxing` (22), `kickboxing`, `kung fu`, `wushu`, `jiu jitsu` and
+ * `muay thai` were found by auditing the same shape rather than by patching the one example.
+ *
+ * `boxing` CARRIES A NEGATIVE LOOKAHEAD, AND IT IS NOT DECORATION. "Boxing Day" is a date, not a
+ * discipline, and a Boxing Day family event is precisely the kind of genuine weekend content this
+ * file's precision-over-recall rule exists to protect. The catalogue holds none today only
+ * because it is September.
+ *
+ * DELIBERATELY ABSENT: `wrestling`, `fencing` and `self-defence`. Each has one or two live titles,
+ * each reads as something other than a martial-arts programme at least as often as not
+ * ("Classical Fencing" is a course; a fencing CONTRACTOR is not), and none of them is the reported
+ * defect. Adding a term to answer a question nobody asked is how this alternation stops being
+ * auditable.
+ */
+const MARTIAL_ART_PROGRAM =
+  /\b(tae\s*kwon\s*-?\s*do|karate|judo|jiu[\s-]?jitsu|jujitsu|ju[\s-]?jutsu|aikido|hapkido|kendo|kung[\s-]?fu|wushu|muay\s+thai|capoeira|krav[\s-]?maga|martial\s+arts?|kickboxing)\b|\bboxing\b(?!\s+day)/i;
 
 /** The subset of a listing this predicate reads — so both the DB record and the UI DTO satisfy it. */
 export interface RegistrationSignalInput {
@@ -122,7 +175,7 @@ export function isRegistrationShaped(listing: RegistrationSignalInput): boolean 
   if (listing.registrationRequired === true) return true;
   if (hasDropInSignal(listing)) return false;
   const title = listing.activityName ?? '';
-  return REGISTRATION_TITLE.test(title) || PROGRAM_LEVEL.test(title);
+  return REGISTRATION_TITLE.test(title) || PROGRAM_LEVEL.test(title) || MARTIAL_ART_PROGRAM.test(title);
 }
 
 /** Narrowing helper for call sites that hold a full `ListingRecord`. */

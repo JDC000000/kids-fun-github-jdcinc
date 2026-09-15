@@ -196,3 +196,102 @@ describe('isRegistrationShaped — a persisted source fact overrides the title',
     expect(isRegistrationShaped({ activityName: 'Summer Camp', registrationRequired: false })).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-09-15 VOCABULARY PATCH — the martial-arts and ballerina gap.
+//
+// Jon read a real Friday text carrying "Olympic Style TaeKwonDo (11-16 yrs)" and "Little
+// Ballerinas". Both are multi-week registration programmes; both have registration_required NULL
+// in production, so both fell to this file's title heuristic, and the heuristic had no word for
+// either. "taekwondo" was absent from the vocabulary entirely, and neither title carries a bare
+// trailing level digit or a duration word.
+//
+// Every title below is a real production title, and the change was audited the way this file's
+// header requires rather than patched to the two examples: run against 3,692 distinct live
+// activity names (28,821 occurrences) with scripts/registration-vocabulary-probe.sh, 195 titles /
+// 1,358 occurrences moved from drop-in to registration, ZERO moved the other way, and zero titles
+// moved that were not one of the terms below.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('martial-arts programmes — a named discipline is a curriculum, digit or no digit', () => {
+  it.each([
+    'Olympic Style TaeKwonDo (11-16 yrs)', // the reported title
+    'Olympic Style TaeKwonDo (4-6yrs)',
+    'Taekwondo - White Belt to Yellow Belt',
+    'Taekwondo All Levels - Young Adult',
+    'Tae Kwon Do',
+  ])('taekwondo, in every spelling the catalogue uses: %s', (title) => {
+    expect(isRegistrationShaped(listing(title))).toBe(true);
+  });
+
+  it.each([
+    // These three WERE in the vocabulary and were almost entirely inert, because PROGRAM_LEVEL
+    // required a bare trailing digit that a parenthesised age range or month is not.
+    'Karate - Advanced (Full Month) AUG',
+    'Seiyu Karate - Blue Belt to Yellow Belt (No Beginner)',
+    'Aikido (August)',
+    'Parent & Kids Aikido (4-6yrs)',
+    // …and these were never in it at all. Found by auditing the catalogue for the same shape,
+    // not by reading the two titles in Jon's text. `capoeira` alone is 63 live titles.
+    'Axe Capoeira - Beginner mini kids (3-6yrs) SEPT',
+    'Kids Capoeira',
+    'Kung Fu: Choy Lee Fut (Oct)',
+    'Gentle Method Toddler Jiu Jitsu (3-6yrs)',
+    'Muay Thai Kickboxing',
+    'Britannia Boxing (SEPT)',
+    'Children/Preteens - RC Boxing',
+    'I Liq Chuan (Martial Arts of Awareness) - Beginners',
+  ])('the rest of the family, which the audit found and the report did not: %s', (title) => {
+    expect(isRegistrationShaped(listing(title))).toBe(true);
+  });
+
+  it('BOXING DAY IS A DATE, NOT A DISCIPLINE', () => {
+    // The catalogue holds no Boxing Day content in September and will in December. A Boxing Day
+    // family event is exactly the genuine weekend content this file exists to keep visible, so
+    // the lookahead is load-bearing rather than defensive decoration.
+    expect(isRegistrationShaped(listing('Boxing Day Public Skate'))).toBe(false);
+    expect(isRegistrationShaped(listing('Boxing Day Family Swim'))).toBe(false);
+  });
+
+  it('still loses to a drop-in signal, like every other term in this file', () => {
+    // The veto is not weakened by any of this: the registration signal is still a GUESS, and a
+    // positive drop-in signal still beats it.
+    expect(isRegistrationShaped(listing('Drop-in Karate'))).toBe(false);
+    expect(isRegistrationShaped({ activityName: 'Capoeira', registrationRequired: false })).toBe(false);
+    expect(isRegistrationShaped(listing('Open Gym Boxing', ['drop_in']))).toBe(false);
+  });
+});
+
+describe('dance programmes without a level digit — the narrow half of the patch', () => {
+  it.each([
+    'Little Ballerinas', // the reported title
+    'Little Ballerinas: 3-5yrs',
+    'Endorphin Rush: Little Ballerinas (4-6 yrs)',
+    'Creative Ballet (3-5yrs)',
+    'Children Creative Ballet',
+    'Creative Dance',
+    'Collaborative Creative Dance for Older Adults (55+ yrs)',
+  ])('%s', (title) => {
+    expect(isRegistrationShaped(listing(title))).toBe(true);
+  });
+
+  it('WHY THIS IS NOT JUST "ballet" — the measured false positive that rule would have caused', () => {
+    // A bare `\bballet\b` would have been the obvious, tidier rule and it is wrong: the catalogue
+    // holds a genuine ballet PERFORMANCE, which is a weekend outing rather than a course. Pinned
+    // so the tidier rule cannot be reintroduced without this failing.
+    expect(isRegistrationShaped(listing("Goh Ballet's The Nutcracker"))).toBe(false);
+    // Likewise `\bdance\b`: these are events, not programmes.
+    expect(isRegistrationShaped(listing('Coastal First Nations Dance Festival'))).toBe(false);
+    expect(isRegistrationShaped(listing('All Over The Map: Outdoor Dance Performances'))).toBe(false);
+    expect(isRegistrationShaped(listing('Collingwood Lunar New Year Lion Dance'))).toBe(false);
+  });
+
+  it('A SKILL-LEVEL WORD IS NOT A REGISTRATION SIGNAL — rejected on evidence, pinned so it stays rejected', () => {
+    // 281 live titles carry "Beginner"/"Intermediate"/"All Levels" and it looked like the
+    // highest-yield generic rule available. These three are why it was not taken: drop-in
+    // community-centre sessions labelled by skill.
+    expect(isRegistrationShaped(listing('Adult Sports: Badminton - All Levels'))).toBe(false);
+    expect(isRegistrationShaped(listing('Badminton Intermediate Play'))).toBe(false);
+    expect(isRegistrationShaped(listing('Ball Hockey (Co-ed) - All Levels'))).toBe(false);
+  });
+});

@@ -26,6 +26,7 @@ import { FIXTURE_NOW } from '@/lib/search/__fixtures__/engine';
 import { isAdultOrSeniorOnly } from '@/lib/search/filters/audience';
 import { readIndoorOutdoor } from '@/lib/search/indoor';
 import type { ListingRecord } from '@/lib/search/types';
+import { isRegistrationShaped } from '@/lib/search/filters/registration';
 import {
   chooseThreeThings,
   filledSlots,
@@ -201,7 +202,17 @@ describe('front-door gates (ported from HomeTodayStrip’s drift guard)', () => 
     const engineSaw = engineOf(UNRESOLVED)
       .search({ q: '', now: NOW, when: 'today', free: true, minResults: 0 })
       .results.map((r) => r.listing.id);
-    expect(engineSaw).toEqual(expect.arrayContaining(['zumba', 'muaythai']));
+    expect(engineSaw).toEqual(expect.arrayContaining(['zumba']));
+
+    // `muaythai` STOPPED being one of them on 2026-09-15, for a reason that has nothing to do
+    // with age. The registration vocabulary gained the martial-arts disciplines
+    // (lib/search/filters/registration.ts), so this row now leaves the DEFAULT view as a
+    // registration-shaped programme — correctly: "Muay Thai Kickboxing" is a live production
+    // title and it is a course. Asserted explicitly rather than quietly dropped from the list,
+    // because the two exclusions are different mechanisms and the whole point of this case is
+    // that the age one still fires.
+    expect(isRegistrationShaped({ activityName: 'Muay Thai Kickboxing' })).toBe(true);
+    expect(engineSaw).not.toContain('muaythai');
   });
 
   it('keeps a genuinely resolved ALL-AGES listing — 0 is a real number, not an unknown', () => {
