@@ -68,9 +68,35 @@ const DROP_IN_TITLE =
 /**
  * Vocabulary that means "you must register/book to attend": named courses, camps, lesson
  * programs, and the vendor's own explicit "Reserve In Advance:" prefix.
+ *
+ * ── A VENDOR'S PROGRAMME-SERIES BRAND COUNTS AS VOCABULARY (added 2026-09-15) ───────────
+ * "Endorphin Rush:" is one vendor's multi-week children's programme series, run at Vancouver
+ * community centres. It is here for the same reason "Reserve In Advance:" is: it is the VENDOR'S
+ * OWN LABEL for content they themselves treat as a registered programme, which is better evidence
+ * than any word we could infer from the activity name.
+ *
+ * WHY IT IS NEEDED ON TOP OF THE 2026-09-15 VOCABULARY PATCH. That patch caught six of this
+ * family's ten titles through `ballerinas?` and `creative dance` and left four — "Hip Hop
+ * Breakers", "Mini Hip Hop Breakers", "Hip Hop Breakers (4-7 yrs)" and "Jazz / Ballet" — because
+ * none carries a duration word, a level digit or a dance term this file is willing to match
+ * BARE. "Jazz / Ballet" is the sharpest illustration: `\bballet\b` was deliberately rejected
+ * because it would have hidden "Goh Ballet's The Nutcracker", a genuine performance. The brand is
+ * the signal that separates this vendor's classes from the art form's events, and it needs no
+ * loosening of a rule that is protecting real weekend content.
+ *
+ * AUDITED, LIKE EVERY OTHER RULE HERE. Measured over all 3,693 distinct live production activity
+ * names: 10 titles match the brand, 6 were already classified, 4 move (34 occurrences), and NO
+ * match is an event, performance, festival, showcase or celebration.
+ *
+ * DELIBERATELY ONE BRAND, NOT A GENERAL "BRAND:" RULE. The same audit found other prefix families
+ * whose siblings are split across the two classifications, and at least one of them —
+ * "TAIWANfest:" — is split CORRECTLY: its Exhibitions, Performances and Hope Talks are real
+ * events and only its Workshops are a programme. A general rule over branded prefixes would have
+ * taken a festival out of the default view, so the split-verdict signal is a lead to investigate
+ * rather than a rule to encode. Other families are logged as follow-ups and are not fixed here.
  */
 const REGISTRATION_TITLE =
-  /\bcamps?\b|\blessons?\b|\bcourses?\b|\bclass(es)?\b|\bworkshops?\b|\bclinics?\b|\bintro\s+to\b|\blearn\s+to\b|\bregistrations?\b|\bregisters?\b|\bregistered\b|\breserve\s+in\s+advance\b|\bacadem(y|ies)\b|\bseries\b|\b(level|stage|star)\s*\d|\bsession\s*\d|\bweek\s*\d|\bcertificat|\bballerinas?\b|\bcreative\s+(?:ballet|dance|movement)\b/i;
+  /\bcamps?\b|\blessons?\b|\bcourses?\b|\bclass(es)?\b|\bworkshops?\b|\bclinics?\b|\bintro\s+to\b|\blearn\s+to\b|\bregistrations?\b|\bregisters?\b|\bregistered\b|\breserve\s+in\s+advance\b|\bacadem(y|ies)\b|\bseries\b|\b(level|stage|star)\s*\d|\bsession\s*\d|\bweek\s*\d|\bcertificat|\bballerinas?\b|\bcreative\s+(?:ballet|dance|movement)\b|\bendorphin\s+rush\b/i;
 
 /**
  * A skill-program name followed by a bare level number — "Power Skate 1", "Figure Skating 1",
