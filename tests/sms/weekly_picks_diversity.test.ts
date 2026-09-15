@@ -49,6 +49,7 @@ import {
   FLOOR_PICKS,
   MAX_FORCED_PICKS,
   MAX_PICKS,
+  MAX_NAMED_SLOTS_PER_CATEGORY,
   MAX_PICKS_PER_CATEGORY,
   MAX_PICKS_PER_VENUE,
   CLASS_PROGRAM_CAP,
@@ -1771,5 +1772,244 @@ describe('T8 — the named three must speak to every child, before they speak to
     expect(bandPromotions.length).toBeGreaterThan(0);
     expect(bandPromotions[0].bandsGained).toContain('10-14');
     expect(bandPromotions[0].rankDelta).toBeGreaterThan(0);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// T12 (2026-09-15) — ACTIVITY-TYPE VARIETY IN THE NAMED BLOCK, AND THE ONE PLACE
+// THIS CODEBASE LETS VARIETY OUTRANK AGE FIT.
+//
+// THE REPORTED DEFECT, WITH REAL NUMBERS. Jon rated four real Friday previews 2/5 to 4/5 on
+// 2026-09-15. Three of them carried two or three picks of ONE category in the three NAMED,
+// direct-linked slots — subscriber short_ref 21 carried three sharing a single
+// `primary_category_id` — WHILE `MAX_PICKS_PER_CATEGORY` (2 of 10) was being honoured exactly as
+// written. `orderByCategorySpread`'s age-fit guard is why: nothing inside `COVERAGE_SWAP_REACH`
+// covered that household's bands as well as more of the same category, so every swap was
+// correctly refused. A 2-of-10 cap simply does not constrain a 3-item window.
+//
+// THE RULING THIS FILE PINS. "It should definitely force variety even at some age fit cost."
+// Phase 0 therefore carries NO age-fit guard, and the two cases below that assert a band being
+// LOST are not bugs being tolerated — they are the licence being spent, and `bandsLost` is the
+// receipt. The cases after them pin the BOUNDARY: the ten-item category cap's guard and the venue
+// cap keep their old behaviour exactly, because the reversal is scoped to this one pass.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Picks with an explicit activity type, venue and bands, ranked by position. */
+function selectionWithTypes(
+  spec: Array<{ type: string | null; venue?: string; bands?: AgeBandKey[] }>
+): SearchResultItem[] {
+  return spec.map((s, i) => {
+    const item = asItem(
+      kidActivity({
+        id: `t${i}`,
+        activityName: FILLER_NAMES[i % FILLER_NAMES.length],
+        venueName: s.venue ?? `Venue ${i}`,
+        geo: northOfHome(600 + i * 600),
+        primaryCategoryKey: s.type ?? '',
+        categoryTags: s.type ? [s.type] : [],
+        ...(s.bands ? { ageBandMatches: s.bands } : {}),
+      })
+    );
+    return { ...item, distanceKm: 0.6 + i * 0.6 };
+  });
+}
+
+const namedTypesOf = (picks: SearchResultItem[], n = DIRECT_LINK_PICKS) =>
+  picks.slice(0, n).map((p) => p.listing.primaryCategoryKey);
+
+describe('T12 — at most one of each activity type in the three picks a parent actually reads', () => {
+  it('breaks up three-of-one-category in the named block — the short_ref 21 defect', () => {
+    const before = selectionWithTypes([
+      { type: SWIM }, { type: SWIM }, { type: SWIM },
+      { type: SKATE }, { type: OPEN_GYM }, { type: SWIM },
+    ]);
+    expect(new Set(namedTypesOf(before)).size).toBe(1); // the defect, before
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
+    expect(namedTypesOf(selection)).toEqual([SWIM, SKATE, OPEN_GYM]);
+    expect(promoted.map((p) => p.reason)).toEqual(['activity_type', 'activity_type']);
+    // HIGHEST-ranked alternative first, same discipline as the venue pass: t3 before t4.
+    expect(promoted[0]).toMatchObject({ occurrenceId: 't3', displacedOccurrenceId: 't1', fromIndex: 3, toIndex: 1, rankDelta: 2 });
+    expect(promoted[1]).toMatchObject({ occurrenceId: 't4', displacedOccurrenceId: 't2', rankDelta: 2 });
+  });
+
+  it('honours MAX_NAMED_SLOTS_PER_CATEGORY as a number, not as a hard-coded one', () => {
+    // If the cap is ever retuned, the rule has to move with it rather than the constant becoming
+    // decorative. Two of one type in the named three is a violation at 1 and legal at 2.
+    const before = selectionWithTypes([{ type: SWIM }, { type: SWIM }, { type: SKATE }, { type: OPEN_GYM }]);
+    const { selection } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
+    const swimsNamed = namedTypesOf(selection).filter((t) => t === SWIM).length;
+    expect(swimsNamed).toBe(MAX_NAMED_SLOTS_PER_CATEGORY);
+  });
+
+  it('FORCES VARIETY EVEN AT AGE-FIT COST — Jon’s ruling, and the receipt for it', () => {
+    // Slot 2 is a second skate AND the sole named voice for the teenager. Every other rule in
+    // this file would refuse to move it. Phase 0 moves it, and says what that cost.
+    //
+    // Phase 1 cannot then undo the cost, and the reason is structural rather than lucky: the only
+    // picks carrying '10-14' are skates, skate is still seated at slot 1, and re-seating one
+    // would put two skates back in the named three — which `wouldWorsenTypeSpread` refuses on
+    // phase 1's behalf. Slot 1 is also the sole named voice for '5-9', so phase 1's own
+    // never-reduce-coverage guard will not vacate it either.
+    const bands: AgeBandKey[] = ['2-4', '5-9', '10-14'];
+    const before = selectionWithTypes([
+      { type: SWIM, bands: ['2-4'] },
+      { type: SKATE, bands: ['5-9'] },
+      { type: SKATE, bands: ['10-14'] },
+      { type: OPEN_GYM, bands: ['2-4'] },
+      { type: SKATE, bands: ['10-14'] },
+    ]);
+    expect(namedBandsOf(before)).toEqual(new Set(bands)); // all three children named, before
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, bands);
+    expect(namedTypesOf(selection)).toEqual([SWIM, SKATE, OPEN_GYM]);
+    // The teenager lost their named slot. That is the authorised cost, not an accident…
+    expect(namedBandsOf(selection)).toEqual(new Set(['2-4', '5-9']));
+    // …and it is REPORTED, which is the whole reason `bandsLost` exists.
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]).toMatchObject({
+      reason: 'activity_type', occurrenceId: 't3', displacedOccurrenceId: 't2',
+      bandsLost: ['10-14'], bandsGained: [],
+    });
+    // Nothing left the ten: the teenager's pick is still there, just no longer direct-linked.
+    expect([...idsOf(selection)].sort()).toEqual([...idsOf(before)].sort());
+    expect(selection.map((p) => p.listing.ageBandMatches).flat()).toContain('10-14');
+  });
+
+  it('records bandsLost as EMPTY for age_band and venue promotions — both are still guarded', () => {
+    // The licence is scoped to phase 0. A non-empty `bandsLost` on any other reason would mean a
+    // guard had been loosened somewhere it was not supposed to be.
+    const bands: AgeBandKey[] = ['2-4', '10-14'];
+    const before = selectionWithBands([
+      { venue: 'A', bands: ['2-4'] }, { venue: 'B', bands: ['2-4'] }, { venue: 'C', bands: ['2-4'] },
+      { venue: 'D', bands: ['10-14'] }, { venue: 'E', bands: ['2-4'] },
+    ]);
+    const { promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, bands);
+    expect(promoted.length).toBeGreaterThan(0);
+    for (const p of promoted) {
+      expect(p.reason).not.toBe('activity_type');
+      expect(p.bandsLost).toEqual([]);
+    }
+  });
+
+  it('runs BEFORE age-band fairness, and age-band fairness may not hand the slot back', () => {
+    // Ordering, as an assertion rather than a comment. If phase 1 ran first it would seat the
+    // teen swim at slot 1 and phase 0 would have to undo it; if phase 0 ran first WITHOUT
+    // locking, phase 1 would put a third swim straight back.
+    const bands: AgeBandKey[] = ['2-4', '10-14'];
+    const before = selectionWithTypes([
+      { type: SWIM, bands: ['2-4'] }, { type: SWIM, bands: ['2-4'] }, { type: SKATE, bands: ['2-4'] },
+      { type: OPEN_GYM, bands: ['2-4'] }, { type: OPEN_GYM, bands: ['10-14'] },
+    ]);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS, bands);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]).toMatchObject({ reason: 'activity_type', occurrenceId: 't3', displacedOccurrenceId: 't1' });
+    expect(namedTypesOf(selection)).toEqual([SWIM, OPEN_GYM, SKATE]);
+    // The only teen pick is a SECOND open gym, so phase 1 is refused it at every unlocked slot —
+    // and slot 1, the one phase 0 spent, it may not touch at all. The band goes unnamed, which is
+    // the ruling applied consistently rather than only to phase 0's own swaps.
+    expect(namedBandsOf(selection)).toEqual(new Set(['2-4']));
+    expect(promoted.every((p) => p.reason === 'activity_type')).toBe(true);
+  });
+
+  it('venue spread may not re-create a type collision either', () => {
+    // Slots 0 and 1 are the same PLACE, so the venue pass wants to move slot 1. The
+    // highest-ranked unused venue below is a second helping of slot 0's type, and is refused.
+    const before = selectionWithTypes([
+      { type: SWIM, venue: 'A' }, { type: SKATE, venue: 'A' }, { type: OPEN_GYM, venue: 'B' },
+      { type: SWIM, venue: 'C' }, { type: 'museum_venue', venue: 'D' },
+    ]);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(), DIRECT_LINK_PICKS);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]).toMatchObject({ reason: 'venue', occurrenceId: 't4' }); // t3 skipped: a second swim
+    expect(new Set(namedTypesOf(selection)).size).toBe(DIRECT_LINK_PICKS);
+  });
+
+  it('never treats an ABSENT category key as a type — not as a repeat, and not as variety', () => {
+    // The rule `venueIdentity` states for every caller, applied to the other key. Two typeless
+    // rows are not the same type…
+    const typeless = selectionWithTypes([{ type: null }, { type: null }, { type: SWIM }, { type: SKATE }]);
+    expect(idsOf(spreadNamedSlots(typeless, new Set(), DIRECT_LINK_PICKS).selection)).toEqual(idsOf(typeless));
+    // …and a typeless row below is never promoted as though it were something different to do.
+    const noAlternative = selectionWithTypes([{ type: SWIM }, { type: SWIM }, { type: SKATE }, { type: null }, { type: null }]);
+    expect(idsOf(spreadNamedSlots(noAlternative, new Set(), DIRECT_LINK_PICKS).selection)).toEqual(idsOf(noAlternative));
+  });
+
+  it('NEVER MOVES A FORCED PICK — the escape valve is scoped to the age-fit GUARD, not to the swap', () => {
+    // A forced pick exists because a band had no organic match ANYWHERE. That is a membership
+    // fact `applyCoverageSwap` owns, and a permutation has no business overruling it.
+    const before = selectionWithTypes([
+      { type: SWIM }, { type: SWIM }, { type: SWIM }, { type: SKATE }, { type: OPEN_GYM },
+    ]);
+    const { selection, promoted } = spreadNamedSlots(before, new Set(['t1']), DIRECT_LINK_PICKS);
+    expect(selection[1].listing.id).toBe('t1'); // still named, still a second swim
+    expect(namedTypesOf(selection)).toEqual([SWIM, SWIM, SKATE]);
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0]).toMatchObject({ occurrenceId: 't3', displacedOccurrenceId: 't2' });
+    // …and a forced pick BELOW the named block is never pulled up by this pass either.
+    const forcedBelow = selectionWithTypes([{ type: SWIM }, { type: SWIM }, { type: SWIM }, { type: SKATE }, { type: OPEN_GYM }]);
+    expect(spreadNamedSlots(forcedBelow, new Set(['t3']), DIRECT_LINK_PICKS).promoted[0]?.occurrenceId).toBe('t4');
+  });
+
+  it('is a no-op when the ten hold only one activity type, and a pure permutation always', () => {
+    const oneType = selectionWithTypes(Array.from({ length: 10 }, () => ({ type: SWIM })));
+    const { selection, promoted } = spreadNamedSlots(oneType, new Set(), DIRECT_LINK_PICKS);
+    expect(idsOf(selection)).toEqual(idsOf(oneType));
+    expect(promoted).toEqual([]);
+
+    const mixed = selectionWithTypes([
+      { type: SWIM }, { type: SWIM }, { type: SWIM }, { type: SKATE }, { type: OPEN_GYM }, { type: SWIM },
+    ]);
+    const out = spreadNamedSlots(mixed, new Set(), DIRECT_LINK_PICKS).selection;
+    expect(out).toHaveLength(mixed.length);
+    expect([...idsOf(out)].sort()).toEqual([...idsOf(mixed)].sort());
+    for (const item of mixed) expect(out).toContain(item);
+  });
+
+  it('THE BOUNDARY — the ten-item category cap keeps its age-fit guard, untouched', () => {
+    // The reversal is scoped to the named three. `orderByCategorySpread` still refuses any
+    // promotion that would serve fewer of this household's children, and still SAYS it refused.
+    // Household of 2 and 13; every alternative to swim is teen-only, so the guard blocks and the
+    // ten stay swim-heavy — exactly as before this change.
+    const rows: ListingRecord[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      rows.push(kidActivity({
+        id: `sw-${i}`, activityName: `Public Swim ${FILLER_NAMES[i % FILLER_NAMES.length]}`,
+        primaryCategoryKey: SWIM, categoryTags: [SWIM], venueName: `Pool ${i}`,
+        geo: northOfHome(600 + i * 400), ageMinMonths: 0, ageMaxMonths: 216,
+        ageBandMatches: ['2-4', '10-14'] as AgeBandKey[],
+      }));
+    }
+    for (let i = 0; i < 4; i += 1) {
+      rows.push(kidActivity({
+        id: `gym-${i}`, activityName: FILLER_NAMES[i + 10],
+        primaryCategoryKey: OPEN_GYM, categoryTags: [OPEN_GYM], venueName: `Gym ${i}`,
+        geo: northOfHome(5000 + i * 400), ageMinMonths: 120, ageMaxMonths: 216,
+        ageBandMatches: ['10-14'] as AgeBandKey[],
+      }));
+    }
+    const result = selectWeeklyPicks(input(rows, { subscriber: profile4Subscriber() }));
+    expect(result.diversity.ageFitBlocked).toBeGreaterThan(0); // the guard still fires…
+    expect(result.diversity.categoryCapDeferred).toBe(0); // …and still wins in the ten.
+  });
+
+  it('END TO END — the effect is visible in WeeklyPicks.diversity, not only in the text', () => {
+    // The instrumentation is the acceptance criterion: an operator regenerating a real
+    // subscriber's preview must be able to see WHICH rule moved the named block and what it cost.
+    const rows: ListingRecord[] = [];
+    const types = [SWIM, SWIM, SWIM, SWIM, SKATE, OPEN_GYM, SWIM, SKATE, OPEN_GYM, SWIM];
+    types.forEach((type, i) => {
+      rows.push(kidActivity({
+        id: `e2e-${i}`, activityName: FILLER_NAMES[i], primaryCategoryKey: type, categoryTags: [type],
+        venueName: `Place ${i}`, geo: northOfHome(600 + i * 400),
+        ageMinMonths: 0, ageMaxMonths: 216, ageBandMatches: ['2-4', '5-9'] as AgeBandKey[],
+      }));
+    });
+    const result = selectWeeklyPicks(input(rows));
+    const named = result.picks.filter((p) => p.linkOrigin === 'direct');
+    expect(named).toHaveLength(DIRECT_LINK_PICKS);
+    expect(new Set(named.map((p) => p.item.listing.primaryCategoryKey)).size).toBe(DIRECT_LINK_PICKS);
+    const typePromotions = result.diversity.promoted.filter((p) => p.reason === 'activity_type');
+    expect(typePromotions.length).toBeGreaterThan(0);
+    expect(result.diversity.namedSlotsPermuted).toBe(result.diversity.promoted.length);
+    expect(typePromotions[0].rankDelta).toBeGreaterThan(0);
   });
 });

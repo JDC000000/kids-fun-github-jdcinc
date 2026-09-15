@@ -145,6 +145,28 @@ export const CLASS_PROGRAM_CAP = 3;
 /** The catch-all key itself. Named so the special case is greppable from both sides. */
 export const CLASS_PROGRAM_CATEGORY_KEY = 'class_program';
 /**
+ * Most of the NAMED slots (`DIRECT_LINK_PICKS`) any ONE activity type may hold — Jon's ruling of
+ * 2026-09-15, after rating four real Friday previews 2/5 to 4/5.
+ *
+ * STRICTER THAN `MAX_PICKS_PER_CATEGORY`, AND THAT IS THE POINT. That cap is 2-of-10 across the
+ * whole text; this is 1-of-3 across the only picks a parent reads without tapping through. Three
+ * of the four rated previews carried two or three picks of ONE category in those three slots
+ * (subscriber short_ref 21 carried three sharing a single `primary_category_id`) WHILE THE 2-OF-10
+ * CAP WAS BEING HONOURED EXACTLY AS WRITTEN. The reason is `orderByCategorySpread`'s age-fit guard
+ * working correctly: nothing inside `COVERAGE_SWAP_REACH` covered the requested bands as well as
+ * more of the same category, so every diversity swap was refused. A separate, tighter rule over a
+ * much smaller window is the remedy. Loosening the ten-item cap is NOT — see `spreadNamedSlots`.
+ *
+ * "ACTIVITY TYPE" IS `primaryCategoryKey`, DIRECTLY — Jon's explicit ruling. No grouping layer, no
+ * second taxonomy, nothing to keep in sync with `category.key`. The known unevenness of that key
+ * (see `CLASS_PROGRAM_CAP`) is deliberately NOT special-cased here: that exemption exists because
+ * the ten-item cap decides what a parent is OFFERED, and this pass decides only which three of the
+ * already-chosen picks carry a direct link — it removes nothing and can cost nothing but rank. If
+ * real previews show the catch-all key spending a named slot for no real variety, this is the one
+ * line to revisit, and `CLASS_PROGRAM_CATEGORY_KEY` is already named for that.
+ */
+export const MAX_NAMED_SLOTS_PER_CATEGORY = 1;
+/**
  * Total forced picks the coverage swap may make — 2 ACROSS ALL BANDS, not 2 per band (PRD v2.4
  * §2.2 step 4 made this explicit after the first draft asked the question).
  */
@@ -992,17 +1014,32 @@ function orderByCategorySpread(
 // ── (f) Named-slot venue spread ──────────────────────────────────────────────
 
 /** Why a named slot was refilled. See `spreadNamedSlots` — the order between these is the design. */
-export type PromotionReason = 'age_band' | 'venue';
+export type PromotionReason = 'activity_type' | 'age_band' | 'venue';
 
 /** One named slot that was filled from further down the list, and what it cost. */
 export interface PromotedPick {
-  /** Which rule asked for this promotion. `age_band` outranks `venue`; see `spreadNamedSlots`. */
+  /**
+   * Which rule asked for this promotion. `activity_type` outranks `age_band`, which outranks
+   * `venue` — see `spreadNamedSlots`, where that order is the whole design.
+   */
   reason: PromotionReason;
   /**
    * For an `age_band` promotion, the requested bands this pick brought INTO the named block that
    * nothing named covered before. Empty for a `venue` promotion.
    */
   bandsGained: AgeBandKey[];
+  /**
+   * The requested bands the named block STOPPED covering because of this promotion.
+   *
+   * ALWAYS EMPTY FOR `age_band` AND `venue`, by construction: both phases refuse a swap that would
+   * reduce coverage, so a non-empty value here is ALWAYS the activity-type pass spending the
+   * licence Jon gave it ("it should definitely force variety even at some age fit cost"). That is
+   * precisely why it is reported rather than left to be inferred — this file's standing rule is
+   * that a guard nobody can see is a guard nobody can tune, and the same holds for a guard that
+   * was deliberately switched off. The band is still represented in the TEN (`applyCoverageSwap`
+   * guarantees that one level up); what it lost is a direct link.
+   */
+  bandsLost: AgeBandKey[];
   occurrenceId: string;
   /** Where it sat in the post-cap selection (0-based) before being promoted. */
   fromIndex: number;
@@ -1029,17 +1066,41 @@ export interface PromotedPick {
  * about venues, and a name that says otherwise would mislead the next reader about which rule
  * wins.
  *
- * ═══ TWO RULES, AND THE ORDER BETWEEN THEM IS THE WHOLE DESIGN ═══
- *   1. AGE-BAND FAIRNESS (higher). A band that IS represented in the ten but is NOT represented
- *      among the named three means a parent of that child reads three links, taps none of them,
- *      and sees nothing for them — while the product did in fact find something.
- *   2. VENUE SPREAD (lower). Three named picks at three different places.
+ * ═══ THREE RULES, AND THE ORDER BETWEEN THEM IS THE WHOLE DESIGN ═══
+ *   0. ACTIVITY-TYPE VARIETY (highest, added 2026-09-15). At most
+ *      `MAX_NAMED_SLOTS_PER_CATEGORY` of the named three from any one `primaryCategoryKey`.
+ *   1. AGE-BAND FAIRNESS. A band that IS represented in the ten but is NOT represented among the
+ *      named three means a parent of that child reads three links, taps none of them, and sees
+ *      nothing for them — while the product did in fact find something.
+ *   2. VENUE SPREAD (lowest). Three named picks at three different places.
  *
- * WHY THEY ARE ONE PASS AND NOT TWO. Two independent passes over the same three slots would
- * fight, and whichever ran second would silently win — the venue pass would cheerfully swap out
- * the only named pick for a child. This file has already been bitten by that shape three times
+ * WHY THEY ARE ONE PASS AND NOT THREE. Independent passes over the same three slots would fight,
+ * and whichever ran last would silently win — the venue pass would cheerfully swap out the only
+ * named pick for a child. This file has already been bitten by that shape three times
  * (venue-before-category, the age-fit guard over the category cap, and the coverage swap over
  * both), so the ordering is explicit, in one pass, and pinned by a test that fails if reversed.
+ *
+ * ═══ WHY ACTIVITY TYPE RUNS FIRST, AND WHY THAT INVERTS THIS FILE'S OWN PRECEDENT ═══
+ * Everything else in this module ranks age fit above variety, and says so at length: "Variety is
+ * found among things that fit the whole family, or it is not found this week"
+ * (`orderByCategorySpread`), "a child with nothing is closer to WRONG, a repeated venue is merely
+ * LESS GOOD" (phase 2, below). Jon's 2026-09-15 ruling reverses that for THIS pass and only this
+ * pass: "it should definitely force variety even at some age fit cost."
+ *
+ * Reversing it means phase 0 runs FIRST and LOCKS what it spends. Running it last would let it
+ * undo phases 1 and 2 with no record of what it cost; running it first but unlocked would let
+ * phase 1 hand the slot straight back, because band fairness is blind to category and would
+ * happily seat a third swim. First, locked, and with the two phases below forbidden from
+ * re-creating a type collision by any other route (`wouldWorsenTypeSpread`) is the only
+ * arrangement in which "at most one of each type in the named three" is a POSTCONDITION of this
+ * function rather than an intention one of its own later phases can quietly break.
+ *
+ * WHAT THE REVERSAL DOES NOT COST, WHICH IS WHY IT IS SAFE TO SCOPE IT HERE. This is a
+ * permutation of picks that are already chosen. A band that phase 1 can no longer name is STILL
+ * REPRESENTED IN THE TEN — `applyCoverageSwap` guarantees membership one level up, and the
+ * ten-item category cap's age-fit guard and the venue cap are untouched by any of this. The cost
+ * is a direct link, not an absent child, and every instance of it is reported as
+ * `PromotedPick.bandsLost` rather than inferred.
  *
  * WHY BAND FAIRNESS OUTRANKS VENUE VARIETY — reused, not re-argued. It is the ordering this
  * codebase has already settled twice: a child with nothing is closer to WRONG, a repeated venue
@@ -1087,6 +1148,43 @@ export function spreadNamedSlots(
   const bandsOf = (item: SearchResultItem): AgeBandKey[] =>
     requestedBands.filter((band) => item.listing.ageBandMatches.includes(band));
 
+  /** Every requested band the named block currently speaks to. Read AFTER a swap, never before. */
+  const namedBands = () => new Set(picks.slice(0, named).flatMap(bandsOf));
+
+  /**
+   * This pick's activity type, or null when the row carries no category key.
+   *
+   * NULL IS THE ABSENCE OF A FACT, NOT A TYPE — the rule `venue-diversity.ts` states for every
+   * caller, applied to the other key for the same reason. A pick with no category key never counts
+   * as a repeat of anything, and one below the named block is never promoted for a "variety" it
+   * cannot be shown to have. Trimmed and lower-cased to match `orderByCategorySpread`'s key
+   * exactly, so the ten-item cap and this one can never disagree about what two picks share.
+   */
+  const typeOf = (item: SearchResultItem): string | null =>
+    item.listing.primaryCategoryKey?.trim().toLowerCase() || null;
+
+  /**
+   * Would seating `candidate` in named slot `slot` push some activity type OVER
+   * `MAX_NAMED_SLOTS_PER_CATEGORY` when it is not over already?
+   *
+   * Phase 0 owns that cap; phases 1 and 2 may not undo it by another route. This is the same
+   * shape of subordination phase 2 already owes phase 1 on bands — stated as a guard rather than
+   * left to the ordering, because ordering alone does not stop a LATER phase reaching past an
+   * earlier one's locked slot and re-creating the collision in a different slot.
+   *
+   * It blocks an INCREASE, never a pre-existing collision: when the pick being displaced was
+   * itself the one over the cap, the swap changes no count and is none of this guard's business.
+   */
+  const wouldWorsenTypeSpread = (candidate: SearchResultItem, slot: number): boolean => {
+    const incoming = typeOf(candidate);
+    if (incoming == null) return false;
+    const others = picks.slice(0, named).filter((_, k) => k !== slot).map(typeOf);
+    if (others.filter((t) => t === incoming).length < MAX_NAMED_SLOTS_PER_CATEGORY) return false;
+    const outgoing = typeOf(picks[slot]);
+    if (outgoing == null) return true;
+    return others.filter((t) => t === outgoing).length < MAX_NAMED_SLOTS_PER_CATEGORY;
+  };
+
   const record = (
     reason: PromotionReason,
     bandsGained: AgeBandKey[],
@@ -1095,9 +1193,14 @@ export function spreadNamedSlots(
     from: number,
     to: number
   ) => {
+    // Read AFTER the swap the caller has already performed — so this is what the named block
+    // actually lost, not what it was predicted to lose. Empty for `age_band` and `venue` by
+    // construction; see `PromotedPick.bandsLost`.
+    const stillNamed = namedBands();
     promoted.push({
       reason,
       bandsGained,
+      bandsLost: bandsOf(outgoing).filter((band) => !stillNamed.has(band)),
       occurrenceId: incoming.listing.id,
       fromIndex: from,
       toIndex: to,
@@ -1116,11 +1219,60 @@ export function spreadNamedSlots(
     picks[j] = tmp;
   };
 
-  /** Named slots phase 1 has spent. Phase 2 may not touch them, or it would undo the fix. */
+  /** Named slots an earlier phase has spent. A later phase may not touch them — it would undo the fix. */
   const lockedSlots = new Set<number>();
-  const namedBands = () => new Set(picks.slice(0, named).flatMap(bandsOf));
 
-  // ── PHASE 1 — AGE-BAND FAIRNESS ────────────────────────────────────────────────────────
+  // ── PHASE 0 — ACTIVITY-TYPE VARIETY, AND IT OUTRANKS BOTH RULES BELOW ──────────────────
+  // THE ONE PASS IN THIS FILE THAT MAY COST AGE FIT. It carries no equivalent of
+  // `orderByCategorySpread`'s age-fit guard and no equivalent of phase 1's "would vacating this
+  // slot cost a band nothing else named covers?" check — deliberately, per Jon's ruling. Those
+  // guards remain exactly as they were everywhere else; see this function's header for the
+  // boundary and `PromotedPick.bandsLost` for what each instance actually cost.
+  //
+  // FORCED PICKS ARE STILL NEVER MOVED. The escape valve is scoped to the AGE-FIT GUARD, not to
+  // the coverage swap: a forced pick is there because a band had NO organic match anywhere in the
+  // catalogue, which is a membership fact this permutation has no business overruling. Where a
+  // forced pick is the type repeat, the repeat stays and the collision is accepted, exactly as
+  // T11 already accepts it for the two rules below.
+  const namedTypeCounts = new Map<string, number>();
+  const seatType = (type: string | null) => {
+    if (type != null) namedTypeCounts.set(type, (namedTypeCounts.get(type) ?? 0) + 1);
+  };
+  for (let i = 0; i < named; i += 1) {
+    const type = typeOf(picks[i]);
+    if (type == null || (namedTypeCounts.get(type) ?? 0) < MAX_NAMED_SLOTS_PER_CATEGORY) {
+      seatType(type);
+      continue;
+    }
+    if (forcedIds.has(picks[i].listing.id)) {
+      seatType(type); // stays seated, and the count has to say so
+      continue;
+    }
+
+    const swapIndex = picks.findIndex((candidate, index) => {
+      if (index < named) return false; // already named — moving it here changes nothing
+      if (forcedIds.has(candidate.listing.id)) return false;
+      const candidateType = typeOf(candidate);
+      if (candidateType == null) return false; // not a type — see `typeOf`
+      return (namedTypeCounts.get(candidateType) ?? 0) < MAX_NAMED_SLOTS_PER_CATEGORY;
+    });
+    // Nothing else in the ten is a different thing to do. The repeat stays — an honest week rather
+    // than a promotion this pass cannot justify. The same shape phase 1 uses when the ten do not
+    // allow it, except that this one keeps looking at the remaining slots.
+    if (swapIndex === -1) {
+      seatType(type);
+      continue;
+    }
+
+    const incoming = picks[swapIndex];
+    const outgoing = picks[i];
+    swap(i, swapIndex);
+    lockedSlots.add(i);
+    seatType(typeOf(incoming));
+    record('activity_type', [], incoming, outgoing, swapIndex, i);
+  }
+
+  // ── PHASE 1 — AGE-BAND FAIRNESS, SUBORDINATE TO PHASE 0 ────────────────────────────────
   // Only bands that are actually reachable are pursued: a band nothing in the ten speaks to is
   // `applyCoverageSwap`'s problem and was already given its chance. This stage never reaches
   // outside the selection, so it can never fail in a way that costs a pick.
@@ -1130,6 +1282,7 @@ export function spreadNamedSlots(
       const missing = [...reachable].filter((band) => !namedBands().has(band));
       if (missing.length === 0) break;
       if (forcedIds.has(picks[i].listing.id)) continue; // never moved — see the header
+      if (lockedSlots.has(i)) continue; // phase 0 spent this slot; handing it back would undo the fix
       // Would vacating this slot cost the named block a band nothing else named covers? If so it
       // is not a slot to spend, whatever it might buy. Same guard shape as the category pass's
       // age-fit rule: a diversity move may never REDUCE coverage.
@@ -1139,6 +1292,10 @@ export function spreadNamedSlots(
       const swapIndex = picks.findIndex((candidate, index) => {
         if (index < named) return false; // already named — moving it here changes nothing
         if (forcedIds.has(candidate.listing.id)) return false;
+        // …and it may not re-create the type collision phase 0 just removed. Where the only pick
+        // that speaks to this band is a second helping of something already named, the band goes
+        // unnamed: Jon's ruling, applied consistently rather than only to phase 0's own swaps.
+        if (wouldWorsenTypeSpread(candidate, i)) return false;
         return bandsOf(candidate).some((band) => missing.includes(band));
       });
       if (swapIndex === -1) break; // the ten do not allow it — nothing further down speaks to it
@@ -1152,10 +1309,11 @@ export function spreadNamedSlots(
     }
   }
 
-  // ── PHASE 2 — VENUE SPREAD, SUBORDINATE TO PHASE 1 ─────────────────────────────────────
-  // Subordinate in two distinct ways, and both are needed. It may not touch a slot phase 1 spent,
-  // AND it may not reduce the named block's band coverage by any other route — a pick can be the
-  // sole named voice for a child without phase 1 having put it there.
+  // ── PHASE 2 — VENUE SPREAD, SUBORDINATE TO BOTH PHASES ABOVE ───────────────────────────
+  // Subordinate in three distinct ways, and all three are needed. It may not touch a slot an
+  // earlier phase spent, it may not reduce the named block's band coverage by any other route — a
+  // pick can be the sole named voice for a child without phase 1 having put it there — and it may
+  // not re-create an activity-type collision phase 0 removed.
   const usedVenues = new Set<string>();
   for (let i = 0; i < named; i += 1) {
     const venue = venueIdentity(picks[i].listing.venueName);
@@ -1168,6 +1326,7 @@ export function spreadNamedSlots(
         if (forcedIds.has(candidate.listing.id)) return false;
         const v = venueIdentity(candidate.listing.venueName);
         if (v == null || usedVenues.has(v)) return false;
+        if (wouldWorsenTypeSpread(candidate, i)) return false;
         // …and it must carry every band this slot is the only named voice for.
         return wouldLose.every((band) => bandsOf(candidate).includes(band));
       });
