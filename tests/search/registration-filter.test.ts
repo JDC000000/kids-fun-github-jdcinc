@@ -295,3 +295,35 @@ describe('dance programmes without a level digit — the narrow half of the patc
     expect(isRegistrationShaped(listing('Ball Hockey (Co-ed) - All Levels'))).toBe(false);
   });
 });
+
+describe('a vendor programme-series brand — the sibling gap the first patch left open', () => {
+  // The 2026-09-15 vocabulary patch caught six of this family's ten titles via `ballerinas?` and
+  // `creative dance`, and left four. QA found the gap the expensive way: removing "Little
+  // Ballerinas" PROMOTED its sibling "Hip Hop Breakers" into a real subscriber's direct-linked
+  // slot, so the half-fixed family became MORE visible rather than less.
+  //
+  // Audited like every other rule here: over all 3,693 live production titles the brand matches
+  // 10, of which 6 were already classified — so the delta is exactly these 4 (34 occurrences),
+  // with no event, performance, festival or showcase among them.
+  it.each([
+    'Endorphin Rush: Hip Hop Breakers',
+    'Endorphin Rush: Hip Hop Breakers (4-7 yrs)',
+    'Endorphin Rush: Mini Hip Hop Breakers',
+    'Endorphin Rush: Jazz / Ballet',
+  ])('%s', (title) => {
+    expect(isRegistrationShaped(listing(title))).toBe(true);
+  });
+
+  it('is why the brand is the signal and `ballet` still is not', () => {
+    // "Jazz / Ballet" is the sharpest case for the brand rule: it is this vendor's class, while
+    // the art form's name also belongs to genuine performances. Both facts survive together only
+    // because the BRAND does the work and `\bballet\b` is still refused.
+    expect(isRegistrationShaped(listing('Endorphin Rush: Jazz / Ballet'))).toBe(true);
+    expect(isRegistrationShaped(listing("Goh Ballet's The Nutcracker"))).toBe(false);
+  });
+
+  it('still loses to a drop-in signal, like every other term in this file', () => {
+    expect(isRegistrationShaped({ activityName: 'Endorphin Rush: Open Gym', registrationRequired: false })).toBe(false);
+    expect(isRegistrationShaped(listing('Endorphin Rush: Hip Hop Breakers', ['drop_in']))).toBe(false);
+  });
+});
