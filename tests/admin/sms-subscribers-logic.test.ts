@@ -149,6 +149,47 @@ describe('kids’ ages', () => {
     }
   });
 
+  it('🔴 QA N1 — flags a PARTIALLY corrupt row instead of silently dropping the bad year', () => {
+    // The regression this pins: [2021, 3000] used to render a confident, unmuted "5" — the second
+    // child gone with no signal at all. A partially-bad row is the WORSE case, because unlike an
+    // all-bad row it looks entirely normal, so nobody goes looking. An admin must be able to tell
+    // "this family has one child aged 5" apart from "we are holding something broken for them".
+    const d = displayChildAges(row({ birthYears: [2021, 3000] }), NOW);
+    expect(d.text).toContain('5'); // the readable age is still stated
+    expect(d.text).toContain('unreadable');
+    expect(d.text).toContain('3000'); // the raw stored value, so it can be acted on
+    expect(d.text).not.toBe('5'); // the exact shape of the original bug
+  });
+
+  it('counts how many years were dropped, for more than one bad value', () => {
+    const d = displayChildAges(row({ birthYears: [2021, 3000, 4000] }), NOW);
+    expect(d.text).toContain('2 unreadable');
+  });
+
+  it('stays UNMUTED when a real age survives — muted means "this explains an absence"', () => {
+    // Greying the one row worth investigating would bury it among the purged/never-given rows.
+    expect(displayChildAges(row({ birthYears: [2021, 3000] }), NOW).muted).toBe(false);
+  });
+
+  it('does not flag a clean row', () => {
+    // Guard against the fix firing on healthy data: no "unreadable", no separator noise.
+    const d = displayChildAges(row({ birthYears: [2019, 2022] }), NOW);
+    expect(d.text).toBe('7, 4');
+    expect(d.text).not.toContain('unreadable');
+  });
+
+  it('🔴 derives the dropped count from the shared helper, not a second copy of its rule', async () => {
+    // stored.length - ages.length is exact because agesFromBirthYears maps then filters. If this
+    // module ever restates the ">= 0" predicate itself, the two definitions can drift apart and
+    // this assertion is the thing that should start failing.
+    const { agesFromBirthYears } = await import('@/lib/sms/signup-validate');
+    const years = [2021, 3000, 2018];
+    const surviving = agesFromBirthYears(years, NOW).length;
+    expect(displayChildAges(row({ birthYears: years }), NOW).text).toContain(
+      `${years.length - surviving} unreadable`
+    );
+  });
+
   it('🔴 shows an unreadable birth year RAW instead of hiding it', () => {
     // agesFromBirthYears drops a future year, because a parent should never read "age -1". An
     // admin is the opposite reader: they are the one who needs to see that the row holds

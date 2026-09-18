@@ -143,6 +143,22 @@ export function displayPostalCode(
  * A year that cannot become a plausible age is shown RAW rather than dropped. The shared helper
  * discards it (a parent should not read "age -1"), but an admin is precisely the reader who needs
  * to see that the row holds something unreadable — hiding it here would erase the only signal.
+ *
+ * ═══ THAT APPLIES PER-YEAR, NOT ONLY WHEN EVERY YEAR IS BAD (QA N1, 2026-09-18) ═══
+ * The first version of this function only honoured the rule above when the helper returned
+ * NOTHING, so a household stored as [2021, 3000] rendered a confident, unmuted "5" and the second
+ * child simply vanished. That is the worse half of the bug, not the lesser one: an all-bad row at
+ * least looks wrong, whereas a partially-bad row looks perfectly normal and silently under-reports
+ * how many children we hold. It also contradicted this very comment, which is how QA found it.
+ *
+ * The dropped COUNT is derived as `stored.length - ages.length`. `agesFromBirthYears` maps then
+ * filters, so that subtraction is exact — and, deliberately, it does not restate the helper's
+ * ">= 0" predicate here. Re-deriving WHICH years were rejected would mean owning a second copy of
+ * that rule, which is the drift this module keeps refusing to introduce. The parenthetical prints
+ * every stored year verbatim instead, which tells an admin strictly more and duplicates nothing.
+ *
+ * Left UNMUTED: the cell now states a real age as well as flagging a problem, and `muted` means
+ * "this text explains an absence". Greying it would de-emphasise the one row worth looking at.
  */
 export function displayChildAges(
   row: Pick<SmsSubscriberListRow, 'purged' | 'birthYears'>,
@@ -152,7 +168,15 @@ export function displayChildAges(
   const stored = row.birthYears ?? [];
   if (stored.length === 0) return { text: EM_DASH, muted: true };
   const ages = agesFromBirthYears(stored, now);
+  // Nothing survived: there is no age to state, so the whole cell is the explanation.
   if (ages.length === 0) return { text: `unreadable (${stored.join(', ')})`, muted: true };
+  const dropped = stored.length - ages.length;
+  if (dropped > 0) {
+    return {
+      text: `${ages.join(', ')} · ${dropped} unreadable (stored ${stored.join(', ')})`,
+      muted: false,
+    };
+  }
   return { text: ages.join(', '), muted: false };
 }
 
