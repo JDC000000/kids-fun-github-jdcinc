@@ -78,6 +78,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/admin/health-verdict-visibility-db.test.ts',
   'tests/admin/manual-listing-db.test.ts',
   'tests/admin/operating-db.test.ts',
+  'tests/admin/snapshot-store-db.test.ts',
   'tests/admin/qa-queue-db.test.ts',
   'tests/admin/sms-subscribers-db.test.ts',
   'tests/retention/sms-retention-db.test.ts',

@@ -26,8 +26,9 @@ import { notFound } from 'next/navigation';
 import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { getOperatingDashboardData } from '@/lib/admin/operating';
+import { describeSnapshotAge, operatingSnapshotKey, readAdminSnapshot } from '@/lib/admin/snapshot';
 import { ConnectionAcquireError, QueryTimeoutError } from '@/lib/db/client';
-import { parseGrain, type OperatingGrain } from '@/lib/analytics/operating';
+import { defaultPeriods, parseGrain, type OperatingGrain } from '@/lib/analytics/operating';
 import { formatCount, formatTimestampUtc } from '@/lib/admin/format';
 import { TrendChart } from '@/components/charts/TrendChart';
 import type { TrendSeries } from '@/components/charts/types';
@@ -108,6 +109,59 @@ export default async function AdminOperatingPage({
   // some queue by construction and waiting out the acquire window is ordinary. An
   // earlier version of this block caught only QueryTimeoutError, which left the MORE likely
   // failure falling through to an anonymous 500 — the exact thing this block exists to stop.
+  // ═══ THIS PAGE READS A PRECOMPUTED SNAPSHOT. IT DOES NOT COMPUTE THE REVIEW. ═══
+  // Measured on production 2026-09-18 (analytics_event = 2,965,374 rows, +65–93K/day), the
+  // reads this review needs cost 70,462 ms and 15,369 ms STANDALONE — the first one alone is
+  // over the 45s per-query ceiling, so the live path below cannot succeed at any concurrency
+  // and the page did not load at all. It is not slow; it is unserveable on the request path.
+  //
+  // And it cannot be fixed by narrowing the window, which was the obvious move and was checked
+  // first: 2,964,728 of 2,965,374 rows (99.98%) fall inside the 30-day review window. There is
+  // no bound to apply. The 2026-09-14 decision NOT to date-bound this page therefore still
+  // stands on correctness grounds AND would buy nothing on speed.
+  //
+  // So the work moved off the request path to a schedule (POST /api/admin/snapshot/refresh/run)
+  // and this page reads the result: one row, by primary key. The numbers are the SAME numbers —
+  // the refresh job calls getOperatingDashboardData verbatim, it does not re-derive a KPI — and
+  // the page states when they were computed, because a cached figure that does not say so is
+  // worse than a slow one.
+  //
+  // `?live=1` keeps the old behaviour available for verification. It is not a fallback and is
+  // deliberately not automatic: silently attempting a 70s read on a cache miss would reproduce
+  // the exact hang this page is being fixed for, on the exact request that found it missing.
+  const wantsLive = searchParams.live === '1';
+  const snapshotKey = operatingSnapshotKey(grain, defaultPeriods(grain));
+  let snapshotAge: string | null = null;
+  let snapshotComputedAt: string | null = null;
+
+  if (!wantsLive && snapshotKey) {
+    const snapshot = await readAdminSnapshot<Awaited<ReturnType<typeof getOperatingDashboardData>>>(
+      snapshotKey
+    );
+    if (!snapshot) {
+      return (
+        <main className={styles.page}>
+          <h1>{copy.title}</h1>
+          <p role="alert">
+            <strong>No snapshot has been computed yet.</strong> This review is precomputed on a
+            schedule rather than on page load, and no run has stored a{' '}
+            <span className={styles.mono}>{snapshotKey}</span> payload yet.
+          </p>
+          <p>
+            Trigger one with an authorised{' '}
+            <span className={styles.mono}>POST /api/admin/snapshot/refresh/run</span>, or{' '}
+            <Link href={`/admin/operating?view=${grain}&live=1`}>compute it live instead</Link> —
+            which is expected to take over a minute and may not finish, which is the reason this
+            page is precomputed.
+          </p>
+        </main>
+      );
+    }
+    snapshotAge = describeSnapshotAge(snapshot.ageSeconds);
+    snapshotComputedAt = snapshot.computedAt;
+    return renderReview({ data: snapshot.payload, grain, copy, snapshotAge, snapshotComputedAt });
+  }
+
   let data: Awaited<ReturnType<typeof getOperatingDashboardData>>;
   try {
     data = await getOperatingDashboardData(grain);
@@ -139,6 +193,36 @@ export default async function AdminOperatingPage({
     );
   }
 
+  // The live path renders through the SAME function as the snapshot path — one renderer, so a
+  // number cannot be formatted one way when cached and another way when computed. It passes no
+  // snapshot provenance, which is how the renderer knows to describe itself as live.
+  return renderReview({ data, grain, copy, snapshotAge: null, snapshotComputedAt: null });
+}
+
+/**
+ * The review renderer, shared by the precomputed and the `?live=1` paths.
+ *
+ * Split out so the two paths cannot drift: this page's whole value is that the numbers on it
+ * are trustworthy, and "the cached view formats this differently" is exactly the kind of
+ * divergence that erodes that without ever looking like a bug.
+ *
+ * `snapshotAge`/`snapshotComputedAt` are null on the live path and set on the cached one, and
+ * the renderer STATES WHICH IT IS. That is not cosmetic: a cached dashboard that presents
+ * itself as live is a worse artefact than a slow one.
+ */
+function renderReview({
+  data,
+  grain,
+  copy,
+  snapshotAge,
+  snapshotComputedAt,
+}: {
+  data: Awaited<ReturnType<typeof getOperatingDashboardData>>;
+  grain: OperatingGrain;
+  copy: { title: string; blurb: string };
+  snapshotAge: string | null;
+  snapshotComputedAt: string | null;
+}) {
   const { coverage, sourceFreshness, correctionsQueue, activeUserTrend } = data;
   // Counts ONLY buckets that could actually contain a measurement. Shared with the
   // detail table's own arithmetic so the header and the caption can never disagree.
@@ -190,11 +274,37 @@ export default async function AdminOperatingPage({
         </nav>
         <h1 className={styles.pageTitle}>KIDS FUN — Operating review</h1>
         <p className={styles.sub}>
-          Internal product-health operating view · read-only · every KPI as a trend, live from{' '}
+          Internal product-health operating view · read-only · every KPI as a trend, drawn from{' '}
           <span className={styles.mono}>analytics_event</span>, <span className={styles.mono}>correction_report</span>,{' '}
-          <span className={styles.mono}>source_check_run</span> and Sentry. Generated{' '}
+          <span className={styles.mono}>source_check_run</span> and Sentry. Computed{' '}
           {formatTimestampUtc(data.generatedAt)}.
         </p>
+        {/* ═══ THE PAGE SAYS WHICH KIND OF NUMBER IT IS SHOWING ═══
+            A precomputed review is fine for a daily/monthly review cadence, and a precomputed
+            review that looks live is not. So the staleness is stated in words, next to the
+            numbers, on every cached render — never left to be inferred from a timestamp the
+            reader would have to compare against the clock themselves. */}
+        {snapshotAge ? (
+          <p className={styles.sub}>
+            <strong>Precomputed snapshot · {snapshotAge}.</strong> These numbers were computed on
+            a schedule, not when this page was opened, because computing them takes over a minute
+            against the current volume of{' '}
+            <span className={styles.mono}>analytics_event</span>. They are the same numbers the
+            live path produces — the refresh job calls the same code — but they are as of{' '}
+            {snapshotComputedAt ? formatTimestampUtc(snapshotComputedAt) : 'the time shown above'}
+            , not as of now.{' '}
+            <Link href={`/admin/operating?view=${grain}&live=1`}>Recompute live</Link> (slow, and
+            may exceed its ceiling).
+          </p>
+        ) : (
+          <p className={styles.sub}>
+            <strong>Computed live, on this request.</strong> This is the{' '}
+            <span className={styles.mono}>?live=1</span> path, kept for verification against the
+            scheduled snapshot. It is expected to be slow and is not the normal way to read this
+            page.{' '}
+            <Link href={`/admin/operating?view=${grain}`}>Back to the snapshot</Link>.
+          </p>
+        )}
 
         <ReviewModeSwitch grain={grain} />
 
@@ -331,8 +441,11 @@ export default async function AdminOperatingPage({
       </div>
 
       <footer className={styles.foot}>
-        Read-only operating view · every number is live from the database (or explicitly marked unavailable) · no data
-        is modified by this page.
+        Read-only operating view ·{' '}
+        {snapshotAge
+          ? 'every number is from the scheduled snapshot named above (or explicitly marked unavailable)'
+          : 'every number is live from the database (or explicitly marked unavailable)'}{' '}
+        · no data is modified by this page.
       </footer>
     </main>
   );

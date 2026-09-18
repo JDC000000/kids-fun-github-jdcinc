@@ -24,7 +24,7 @@
 // lib/analytics/kpi.ts; the DB reads assemble raw rows and hand them to those pure
 // builders so the SLA % and coverage/gap logic are testable on known inputs.
 import { query, queryWithTimeout } from '@/lib/db/client';
-import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
+import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 import {
   CLEAN_SUCCESS_RUN_SQL,
   DEFAULT_CADENCE_SECONDS,
@@ -287,7 +287,7 @@ export async function getSourceFreshnessSla(nowMs: number = Date.now()): Promise
     ORDER BY s.name
     `,
     [ENABLED_TERMS_STATUS],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 
   const sources: SlaSourceRow[] = rows.map((r) => {
@@ -513,7 +513,7 @@ export async function getCorrectionsQueueSummary(): Promise<CorrectionsQueueSumm
     WHERE archived_at IS NULL
     `,
     undefined,
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
   const r = rows[0];
   return {

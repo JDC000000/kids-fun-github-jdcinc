@@ -33,7 +33,7 @@
 //     presenting it with the same authority as a well-powered number. This matters
 //     right now: KIDS FUN launched 2026-07-21 and the production dataset is days old.
 import { queryWithTimeout } from '@/lib/db/client';
-import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
+import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 import {
   SOURCE_CTR_TARGET_PCT,
   pct,
@@ -436,7 +436,7 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
     ORDER BY p.pstart
     `,
     [grain, grainInterval(grain), periods, SEARCH_OUTCOME_WINDOW_MINUTES],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 }
 
@@ -556,7 +556,7 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
     ORDER BY p.pstart
     `,
     [grain, grainInterval(grain), periods, [...ACTIVATION_EVENT_TYPES]],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 }
 
@@ -585,7 +585,7 @@ async function getEmailOptInSeries(
     ORDER BY p.pstart
     `,
     [grain, grainInterval(grain), periods],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 }
 
@@ -604,7 +604,7 @@ export async function getDataCoverage(): Promise<DataCoverage> {
   const rows = await queryWithTimeout<{ first_event_at: Date | null; total_events: number }>(
     `SELECT min(created_at) AS first_event_at, count(*)::int AS total_events FROM analytics_event`,
     undefined,
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
   const first = rows[0]?.first_event_at ?? null;
   const firstMs = first ? new Date(first).getTime() : null;

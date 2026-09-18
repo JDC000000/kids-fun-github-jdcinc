@@ -30,6 +30,7 @@ import {
 } from '@/lib/admin/dashboard';
 import { formatAge, formatCadence, formatCount, formatDurationMs, formatTimestampUtc } from '@/lib/admin/format';
 import { getProductHealthKpis } from '@/lib/analytics/kpi';
+import { ADMIN_SNAPSHOT_KEYS, snapshotOrCompute } from '@/lib/admin/snapshot';
 import { KpiTiles } from './_components/KpiTiles';
 
 export const dynamic = 'force-dynamic';
@@ -188,9 +189,20 @@ export default async function AdminDashboardPage({
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
 
-  // Product-health KPIs (T32) are fetched alongside the existing ops payload; both
-  // are independent read-only rollups, so run them concurrently.
-  const [data, kpis] = await Promise.all([getAdminDashboardData(), getProductHealthKpis()]);
+  // ═══ PRECOMPUTED WHEN AVAILABLE, COMPUTED LIVE WHEN NOT ═══
+  // getProductHealthKpis is the expensive half and it is shared with /admin/product-health and
+  // /admin/operating: its two heaviest reads cost 9,444 ms (DAU/WAU/MAU) and 8,207 ms (account
+  // counts) standalone on production 2026-09-18, and 15,992 ms / 11,129 ms inside this page's
+  // own concurrent fan-out. Whole page: 16,775 ms.
+  //
+  // Unlike /admin/operating this page DOES complete, so a cache miss falls back to computing
+  // live rather than refusing — the reader pays the old 17s and gets correct numbers. See
+  // snapshotOrCompute for why that fallback is honest here and not there.
+  const snapshot = await snapshotOrCompute(ADMIN_SNAPSHOT_KEYS.dashboard, async () => {
+    const [liveData, liveKpis] = await Promise.all([getAdminDashboardData(), getProductHealthKpis()]);
+    return { data: liveData, kpis: liveKpis };
+  });
+  const { data, kpis } = snapshot.payload;
   const nowMs = Date.parse(data.generatedAt);
   const { registry, ingestion, analytics, alerts, corrections } = data;
   const allHealthy = alerts.staleSources.length === 0 && alerts.runsNeedingAttention.length === 0;
@@ -205,7 +217,13 @@ export default async function AdminDashboardPage({
       <header className="adm-head">
         <h1>KIDS FUN — Admin / Health</h1>
         <p className="adm-sub">
-          Internal operations view · read-only · generated <span className="mono">{formatTimestampUtc(data.generatedAt)}</span>
+          Internal operations view · read-only · computed <span className="mono">{formatTimestampUtc(data.generatedAt)}</span>
+        </p>
+        {/* A cached number and a live number look identical, so the page says which it is. */}
+        <p className="adm-sub">
+          {snapshot.age
+            ? `Precomputed snapshot · ${snapshot.age}. These figures are refreshed on a schedule, not on page load.`
+            : 'Computed live on this request — no scheduled snapshot was available, so this load paid the full read cost.'}
         </p>
         <p className="adm-note">
           🔒 Access gate: real role-based admin sign-in (session + admin role). The interim shared-secret token is

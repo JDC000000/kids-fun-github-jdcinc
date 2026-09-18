@@ -4,7 +4,7 @@
 // straight from the same tables the ingestion worker and analytics writer populate,
 // so the dashboard reflects the live database, not a fixture.
 import { query, queryWithTimeout } from '@/lib/db/client';
-import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
+import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 
 export interface IngestionSourceHealth {
   sourceId: string;
@@ -303,7 +303,7 @@ export async function getSourceRegistrySummary(): Promise<SourceRegistrySummary>
  * quietly redefines "Analytics events" from all-time to three days is worse than a slow one,
  * because nothing on screen would tell the reader which question was answered.
  *
- * These reads also run under ADMIN_ANALYTICS_QUERY_TIMEOUT_MS. The bound is what makes them
+ * These reads also run under adminAnalyticsQueryTimeoutMs(). The bound is what makes them
  * fast; the timeout is what stops an abandoned request leaving one running anyway. Both,
  * not either — the bound is a prediction about cost, and the timeout is what holds when
  * the prediction is wrong.
@@ -327,7 +327,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     WHERE created_at >= now() - ($1::int * interval '1 day')
     `,
     [ANALYTICS_ROLLUP_WINDOW_DAYS],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
   const totals = totalsRows[0];
 
@@ -340,7 +340,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     ORDER BY count DESC, event_type
     `,
     [ANALYTICS_ROLLUP_WINDOW_DAYS],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 
   const topListings = await queryWithTimeout<{ label: string; occurrence_id: string | null; views: number }>(
@@ -357,7 +357,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     LIMIT 10
     `,
     [ANALYTICS_ROLLUP_WINDOW_DAYS],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 
   const last7Days = await queryWithTimeout<{ day: string; count: number }>(
@@ -371,7 +371,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     ORDER BY 1
     `,
     undefined,
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 
   // --- search analytics rollups (search_performed events) ----------------------
@@ -400,7 +400,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     LIMIT 15
     `,
     [QUERY_TERM_STOPWORDS, ANALYTICS_ROLLUP_WINDOW_DAYS],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 
   // Most-used region chips (search_context_json.regions is a string array).
@@ -419,7 +419,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     LIMIT 10
     `,
     [ANALYTICS_ROLLUP_WINDOW_DAYS],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 
   // Most-used non-region filter tokens (search_context_json.filters is a string array).
@@ -440,7 +440,7 @@ export async function getAnalyticsSummary(): Promise<AnalyticsSummary> {
     LIMIT 15
     `,
     [ANALYTICS_ROLLUP_WINDOW_DAYS],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 
   return {

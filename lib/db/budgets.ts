@@ -10,6 +10,14 @@
 // its acquire timeout from it) and the CALL SITES (queryWithTimeout's third argument) alike,
 // so it belongs to neither one of them.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+/**
+ * The currently-in-force query budget, if some caller has explicitly widened it.
+ * Empty on every ordinary request path — see {@link withQueryBudget}.
+ */
+const queryBudgetScope = new AsyncLocalStorage<number>();
+
 /**
  * The per-query ceiling every read behind /admin/* opts into.
  *
@@ -58,3 +66,75 @@
  * raise it to accommodate a read that got slower.
  */
 export const ADMIN_ANALYTICS_QUERY_TIMEOUT_MS = 45_000;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A SECOND BUDGET, FOR WORK NOBODY IS WAITING ON
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The ceiling for the SCHEDULED snapshot refresh (lib/admin/snapshot-refresh.ts).
+ *
+ * ═══ WHY A PAGE BUDGET IS THE WRONG BUDGET FOR A CRON JOB ═══
+ * The 45s above is derived from a HUMAN WAITING ON A REQUEST — that is the whole reason it
+ * sits under the server's 120s statement_timeout. The refresh job has no such reader: it
+ * runs on a schedule, writes a row, and exits. Holding it to the page's ceiling would make
+ * the page's slowest read unfixable-by-scheduling, which is precisely backwards — moving
+ * work off the request path is the fix, so the off-request path must be allowed to be slower
+ * than the request path ever was.
+ *
+ * Measured standalone against production 2026-09-18 (analytics_event = 2,965,374 rows), the
+ * reads this job makes:
+ *
+ *   getEngagementSeries(day,30)   70,462 ms   ← over the 45s page budget ON ITS OWN
+ *   getLifecycleSeries(day,30)    15,369 ms
+ *   getActiveUsers                 9,444 ms
+ *   getAccountCounts               8,207 ms
+ *   getDataCoverage                1,157 ms
+ *
+ * That top line is why /admin/operating does not merely load slowly — it CANNOT load. The
+ * page fans these out concurrently against a pool of 10, every one of them scanning
+ * substantially the whole 1,298 MB heap (99.98% of rows fall inside the 30-day review
+ * window), so they evict each other's buffers and the same read that costs 1.2s alone costs
+ * 38s in company. Both of the two slowest then hit the 45s ceiling and the page 500s.
+ *
+ * 180s is set from the measured worst case with real headroom, and it is deliberately ABOVE
+ * the server's own 120s statement_timeout ceiling for a REQUEST — this job does not run in a
+ * request, it runs with `SET LOCAL statement_timeout` inside its own transaction, so its
+ * limit is this one.
+ *
+ * ⚠ Same warning as above: a CEILING, not a target. Every second the rollup work saves
+ * should come off this number, not be spent against it.
+ */
+export const ADMIN_SNAPSHOT_REFRESH_TIMEOUT_MS = 180_000;
+
+/**
+ * The budget the admin analytics reads ACTUALLY run under, which is the page ceiling unless
+ * something up-stack has explicitly widened it.
+ *
+ * Call this instead of reading {@link ADMIN_ANALYTICS_QUERY_TIMEOUT_MS} directly at a query
+ * call site. The constant remains the right thing to import where a budget must be STATIC —
+ * lib/db/pool-config.ts derives the pool's acquire timeout from it at construction, long
+ * before any request exists to have a scope.
+ */
+export function adminAnalyticsQueryTimeoutMs(): number {
+  return queryBudgetScope.getStore() ?? ADMIN_ANALYTICS_QUERY_TIMEOUT_MS;
+}
+
+/**
+ * Run `fn` with every admin analytics read inside it held to `ms` instead of the page budget.
+ *
+ * ═══ WHY AsyncLocalStorage AND NOT A PARAMETER ═══
+ * The budget is consumed ~20 call sites deep (getEngagementSeries' `queryWithTimeout`), while
+ * the decision to widen it is made at the top (the refresh job). Threading a `timeoutMs`
+ * through every intervening signature would put a cron-job concern into the signature of
+ * every KPI function, including the ones the PAGES call — and the first person to forget to
+ * pass it through would silently hand a page the cron budget. A scope cannot be half-applied.
+ *
+ * ═══ WHY THIS IS SAFE UNDER CONCURRENCY ═══
+ * AsyncLocalStorage is per-async-context, not global: a refresh running inside this scope
+ * cannot widen the budget of a page request being served concurrently in the same process.
+ * A plain module-level mutable `let` WOULD do exactly that, which is why it is not one.
+ */
+export function withQueryBudget<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+  return queryBudgetScope.run(ms, fn);
+}

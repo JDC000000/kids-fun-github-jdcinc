@@ -24,6 +24,7 @@ import { notFound } from 'next/navigation';
 import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { getProductHealthKpis } from '@/lib/analytics/kpi';
+import { ADMIN_SNAPSHOT_KEYS, snapshotOrCompute } from '@/lib/admin/snapshot';
 import { getActivityTrend } from '@/lib/analytics/trends';
 import {
   buildFlagshipBenchmarks,
@@ -60,11 +61,20 @@ export default async function AdminProductHealthPage({
   }
 
   // All reads run concurrently; every one is SELECT-only against analytics_event.
-  const [kpis, trend, flagship] = await Promise.all([
-    getProductHealthKpis(),
-    getActivityTrend(),
-    getFlagshipQueryStats(),
-  ]);
+  // ═══ PRECOMPUTED WHEN AVAILABLE, COMPUTED LIVE WHEN NOT ═══
+  // Measured on production 2026-09-18: this page costs 19,394 ms, of which the trend read's
+  // whole-table count(*) contributes 18,665 ms under concurrency (1,157 ms alone — the reads
+  // evict each other's buffers) and getProductHealthKpis' DAU/WAU/MAU another 17,438 ms.
+  // It completes, so a cache miss computes live rather than refusing; see snapshotOrCompute.
+  const snapshot = await snapshotOrCompute(ADMIN_SNAPSHOT_KEYS.productHealth, async () => {
+    const [liveKpis, liveTrend, liveFlagship] = await Promise.all([
+      getProductHealthKpis(),
+      getActivityTrend(),
+      getFlagshipQueryStats(),
+    ]);
+    return { kpis: liveKpis, trend: liveTrend, flagship: liveFlagship };
+  });
+  const { kpis, trend, flagship } = snapshot.payload;
 
   const kpiRows = buildKpiBenchmarks(kpis);
   const flagshipRows = buildFlagshipBenchmarks(flagship);
@@ -105,8 +115,14 @@ export default async function AdminProductHealthPage({
         </nav>
         <h1 className={styles.pageTitle}>KIDS FUN — Product health</h1>
         <p className={styles.sub}>
-          Internal product-analytics view · read-only · target-vs-actual benchmarks and DAU/WAU/MAU trends, live from{' '}
+          Internal product-analytics view · read-only · target-vs-actual benchmarks and DAU/WAU/MAU trends, drawn from{' '}
           <span className={styles.mono}>analytics_event</span>.
+        </p>
+        {/* A cached number and a live number look identical, so the page says which it is. */}
+        <p className={styles.sub}>
+          {snapshot.age
+            ? `Precomputed snapshot · ${snapshot.age}. These figures are refreshed on a schedule, not on page load.`
+            : 'Computed live on this request — no scheduled snapshot was available, so this load paid the full read cost.'}
         </p>
         <p className={styles.note}>
           🔒 Access gate: real role-based admin sign-in (session + admin role), with the interim shared-secret token

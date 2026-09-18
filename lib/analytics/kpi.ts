@@ -19,7 +19,7 @@
 // Server-only: uses the shared pg pool (lib/db/client). Robust to an EMPTY table
 // (every count returns 0 and the ratio helpers return null → the UI shows "—").
 import { queryWithTimeout } from '@/lib/db/client';
-import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
+import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 
 // ── Rolling windows (calendar days). Kept as named constants so tests, the data
 //    layer, and the UI copy all read the exact same number. ──
@@ -152,7 +152,7 @@ async function getEngagementCounts(windowDays: number): Promise<EngagementCounts
     WHERE created_at >= now() - ($1::int * interval '1 day')
     `,
     [windowDays],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
   const r = rows[0];
   return {
@@ -203,7 +203,7 @@ async function getActiveUsers(): Promise<ActiveUsers> {
     FROM actors
     `,
     [DAU_WINDOW_DAYS, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
   const r = rows[0];
   return { dau: r?.dau ?? 0, wau: r?.wau ?? 0, mau: r?.mau ?? 0 };
@@ -251,7 +251,7 @@ async function getAccountValue(windowDays: number): Promise<AccountValue> {
     WHERE created_at >= now() - ($1::int * interval '1 day')
     `,
     [windowDays],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
   const r = rows[0];
   return {
