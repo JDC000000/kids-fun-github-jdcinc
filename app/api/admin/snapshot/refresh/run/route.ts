@@ -95,3 +95,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   const status = result.failed > 0 ? 503 : 200;
   return NextResponse.json({ ok: result.failed === 0, ...result }, { status });
 }
+
+// GET alias, added at deploy time (Operator, 2026-09-18): Vercel Cron Jobs can only issue GET
+// requests (no way to configure a POST from vercel.json), and the whole point of this route —
+// per the brief this shipped against — is to run on Vercel's own free cron infra rather than a
+// token-costing CRHQ scheduled session, unlike this project's older scheduler routes (email/SMS
+// weekly send, analytics retention), which predate that cost concern and are POST-only, invoked
+// by a `new_session` job. Same secret check, same handler, no new logic — Vercel's cron system
+// auto-injects `Authorization: Bearer $CRON_SECRET` on every cron-triggered request when a
+// `CRON_SECRET` env var exists, which is set to the same value as ADMIN_SNAPSHOT_CRON_SECRET.
+export const GET = POST;

@@ -6,5 +6,11 @@
   "regions": ["iad1"],
   "github": {
     "silent": true
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/admin/snapshot/refresh/run",
+      "schedule": "0 */4 * * *"
+    }
+  ]
 }
