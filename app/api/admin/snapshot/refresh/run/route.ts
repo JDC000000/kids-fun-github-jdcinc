@@ -2,9 +2,31 @@
 //
 // The scheduled entrypoint that precomputes the /admin/* dashboard payloads into
 // admin_dashboard_snapshot, so the pages stop re-deriving 2.9M analytics_event rows on every
-// load. Same shape as app/api/analytics/retention/run and app/api/email/weekly/run — a shared
-// secret presented by the platform's scheduler (a CRHQ `schedule`-skill job); NO new cron
-// infra is stood up here.
+// load. Same auth shape as app/api/analytics/retention/run and app/api/email/weekly/run: a
+// shared secret presented by whatever external scheduler calls it. No new cron infra here.
+//
+// ═══ HOW TO WIRE THIS, AND THE ONE WAY NOT TO ═══
+// Call it with a plain HTTP POST from an EXTERNAL scheduler — a system crontab, a systemd
+// timer, a GitHub Actions schedule, any curl on a timer.
+//
+// ⚠ Do NOT wire it as a CRHQ `schedule`-skill job, even though the sibling routes above are
+// driven that way and copying them is the obvious move. CRHQ only offers session-based job
+// types (`new_session` / `message_session`), so every single run would boot an LLM agent
+// session. This endpoint exists to serve Jon's 2026-09-14 instruction — "fix means make it
+// less expensive / FEWER TOKENS TO USE / schedule run it less often" — and paying agent
+// tokens on a fixed cadence to save database seconds would defeat the half of that goal the
+// caching does not already address. As a bare HTTP POST this job's token cost is exactly zero.
+//
+// ⚠ It must be a POST-ISSUING scheduler, not a GET-based one. Vercel Cron in particular
+// issues GET, and this route deliberately exports POST only (a three-minute write job has no
+// business behind a GET), so a Vercel-Cron wiring gets 405 and silently never refreshes —
+// the pages would just keep showing an ageing snapshot with an honest but stale "as of" line.
+// If a GET-only scheduler is the only option available, put a POST-issuing shim in front of
+// it rather than adding a GET handler here; tests/admin/snapshot-refresh-route.test.ts pins
+// the absence of that handler on purpose.
+//
+// If the platform's function ceiling is shorter than the whole job (~222s measured on prod
+// 2026-09-18), POST the `keys` array to split it across several shorter calls.
 //
 // AUTH: bearer / `x-cron-secret` shared secret (ADMIN_SNAPSHOT_CRON_SECRET), compared in
 // constant time. Unconfigured → 503 (fail closed, never open). This endpoint is cheap to call
@@ -95,13 +117,3 @@ export async function POST(request: Request): Promise<NextResponse> {
   const status = result.failed > 0 ? 503 : 200;
   return NextResponse.json({ ok: result.failed === 0, ...result }, { status });
 }
-
-// GET alias, added at deploy time (Operator, 2026-09-18): Vercel Cron Jobs can only issue GET
-// requests (no way to configure a POST from vercel.json), and the whole point of this route —
-// per the brief this shipped against — is to run on Vercel's own free cron infra rather than a
-// token-costing CRHQ scheduled session, unlike this project's older scheduler routes (email/SMS
-// weekly send, analytics retention), which predate that cost concern and are POST-only, invoked
-// by a `new_session` job. Same secret check, same handler, no new logic — Vercel's cron system
-// auto-injects `Authorization: Bearer $CRON_SECRET` on every cron-triggered request when a
-// `CRON_SECRET` env var exists, which is set to the same value as ADMIN_SNAPSHOT_CRON_SECRET.
-export const GET = POST;

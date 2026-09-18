@@ -11,7 +11,8 @@ vi.mock('@/lib/admin/snapshot-refresh', () => ({
   refreshAllSnapshots: (...args: unknown[]) => refreshAllSnapshots(...args),
 }));
 
-const { POST } = await import('../../app/api/admin/snapshot/refresh/run/route');
+const routeModule = await import('../../app/api/admin/snapshot/refresh/run/route');
+const { POST } = routeModule;
 const { ADMIN_SNAPSHOT_KEYS, ALL_ADMIN_SNAPSHOT_KEYS } = await import('../../lib/admin/snapshot');
 
 const SECRET = 'test-snapshot-secret';
@@ -121,6 +122,23 @@ describe('POST /api/admin/snapshot/refresh/run', () => {
     const res = await post('{}', { 'x-cron-secret': SECRET });
     expect(res.status).toBe(503);
     expect((await res.json()).ok).toBe(false);
+  });
+
+  it('exports POST ONLY — no GET handler, deliberately', () => {
+    // ═══ DO NOT "FIX" A 405 BY ADDING A GET HANDLER ═══
+    // QA found the trap this pins (2026-09-18): Vercel Cron issues GET, so wiring this endpoint
+    // to it yields 405 and the refresh silently never runs — the pages go on serving an ageing
+    // snapshot behind an honest-but-stale "as of" line, which is a failure mode nobody watching
+    // the dashboards would notice. The obvious repair is to add a GET handler here. That is the
+    // wrong repair: this route does ~3 minutes of database work and writes a table, which has no
+    // business being reachable by a method the whole web treats as safe, cacheable and
+    // prefetchable. The right repair is a POST-issuing scheduler (or a shim in front).
+    expect(typeof routeModule.POST).toBe('function');
+    expect('GET' in routeModule).toBe(false);
+    // Nor any other method: the surface is POST plus Next's route config exports, nothing more.
+    for (const method of ['GET', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) {
+      expect(routeModule, `${method} must not be exported`).not.toHaveProperty(method);
+    }
   });
 
   it('returns counts and timings only — never payload contents', async () => {
