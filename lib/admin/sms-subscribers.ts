@@ -18,6 +18,8 @@
 // because "we deleted this on purpose" and "something went wrong" must never look the same on
 // an admin screen.
 import { query } from '@/lib/db/client';
+import { agesFromBirthYears } from '@/lib/sms/signup-validate';
+import { EM_DASH } from '@/lib/admin/format';
 
 /** Hard cap on the list page. Raise deliberately; an unbounded admin table is a slow page. */
 export const SMS_SUBSCRIBER_LIST_LIMIT = 500;
@@ -30,6 +32,33 @@ export interface SmsSubscriberListRow {
   phoneNumber: string | null;
   /** True when the personal data has been erased by the 30-day post-stop purge. */
   purged: boolean;
+  /**
+   * The FULL postal code, or null when the retention purge has erased it. See `purged`.
+   *
+   * ═══ FULL, NOT FSA-TRUNCATED — AND THAT IS A DIFFERENT CALL FROM THE ONE NEXT DOOR ═══
+   * Two neighbouring surfaces deliberately cut this to the FSA (first three characters), so the
+   * deviation is stated here rather than left to look like an oversight:
+   *   lib/admin/sms-engagement.ts groups BY fsa, because a household-level identifier is not a
+   *     metric dimension — an aggregate keyed on a full postal code is a re-identifiable cohort.
+   *   scripts/friday-preview-real-subscribers.ts prints the FSA because its output is RELAYED
+   *     onward (script → agent → Operator → chat), where the value outlives the gate it was read
+   *     behind and lands somewhere with no gate at all.
+   * Neither reason reaches this module. This is a gated, server-rendered, noindex row about ONE
+   * subscriber an admin already drilled into — on the same page that renders their full E.164
+   * phone number, which is a strictly stronger identifier. Truncating the weaker one beside the
+   * stronger one would buy nothing and would withhold what the console exists to answer: where
+   * this subscriber is, and therefore why they were sent the picks they were sent.
+   */
+  postalCode: string | null;
+  /**
+   * One birth YEAR per child, exactly as stored — never an age. Migration 0034 holds a year on
+   * purpose: a stored age is wrong the moment a birthday passes, a stored year never is.
+   *
+   * NULL AND EMPTY ARE DIFFERENT FACTS and are kept apart. Null on a purged row means erased;
+   * empty means the parent gave no ages. Render via {@link displayChildAges}, which resolves the
+   * three cases rather than letting a blank cell stand for all of them.
+   */
+  birthYears: number[] | null;
   /**
    * Confirmed by a JOIN that arrived at a test handset's number (migration 0042).
    *
@@ -61,6 +90,72 @@ function toIso(value: Date | null): string | null {
   return value ? value.toISOString() : null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// RENDERING A PERSONAL COLUMN, WHERE "EMPTY" HAS THREE DIFFERENT MEANINGS
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// phone_number established the rule this section generalises: a null personal column is not one
+// fact, and an admin screen that prints one blank cell for all of them is lying by omission.
+// There are three, and they need three different words:
+//
+//   purged   the 30-day post-stop retention purge erased it ON PURPOSE. lib/retention/sms.ts
+//            NULLs phone_number, postal_code, birth_years and category_interests in the SAME
+//            statement, which is why the existing `purged` flag (derived from phone_number)
+//            is authoritative for these two new columns as well and no second probe is needed.
+//   absent   the subscriber never gave it. Nothing was lost; nothing is wrong.
+//   present  a value.
+//
+// Resolved here, once, as pure functions over the read model, rather than as a conditional
+// repeated in each page's JSX — two pages rendering the same tri-state from two hand-written
+// ternaries is exactly how they drift into disagreeing about what a blank cell means.
+export interface PersonalDisplay {
+  /** The text to print. */
+  text: string;
+  /** True when `text` EXPLAINS an absence rather than stating a value, so the UI can grey it. */
+  muted: boolean;
+}
+
+/** What to print in a postal-code cell. Full value — see {@link SmsSubscriberListRow.postalCode}. */
+export function displayPostalCode(
+  row: Pick<SmsSubscriberListRow, 'purged' | 'postalCode'>
+): PersonalDisplay {
+  if (row.purged) return { text: 'purged', muted: true };
+  if (!row.postalCode) return { text: EM_DASH, muted: true };
+  return { text: row.postalCode, muted: false };
+}
+
+/**
+ * What to print in a child-ages cell, at `now`.
+ *
+ * ═══ THE AGE MATH IS BORROWED, NOT REWRITTEN, AND THAT IS THE WHOLE POINT ═══
+ * `agesFromBirthYears` (lib/sms/signup-validate.ts) is the SAME function the no-login preferences
+ * hub and the welcome text use — the two surfaces that show a PARENT their own numbers. It reads
+ * the current year in America/Vancouver rather than UTC, so it does not disagree with itself on
+ * the evening of December 31st. Reimplementing `currentYear - birthYear` here would work all year
+ * and then be wrong for one evening, on the one screen used to answer "why did they get that?".
+ *
+ * It also means this page states the age the PICKER used and the age the parent was shown. A
+ * range like "4–5" would be defensible in the abstract — we hold a year, not a month — but it
+ * would put a third, different number on a third screen, and `ageBandsFromBirthYears` does not
+ * band on a range either. PRD §1.2 accepts the imprecision in exchange for never asking a parent
+ * for a minor's date of birth; it must not be "fixed" here by inventing a month.
+ *
+ * A year that cannot become a plausible age is shown RAW rather than dropped. The shared helper
+ * discards it (a parent should not read "age -1"), but an admin is precisely the reader who needs
+ * to see that the row holds something unreadable — hiding it here would erase the only signal.
+ */
+export function displayChildAges(
+  row: Pick<SmsSubscriberListRow, 'purged' | 'birthYears'>,
+  now: Date
+): PersonalDisplay {
+  if (row.purged) return { text: 'purged', muted: true };
+  const stored = row.birthYears ?? [];
+  if (stored.length === 0) return { text: EM_DASH, muted: true };
+  const ages = agesFromBirthYears(stored, now);
+  if (ages.length === 0) return { text: `unreadable (${stored.join(', ')})`, muted: true };
+  return { text: ages.join(', '), muted: false };
+}
+
 /**
  * Count every subscriber by status, plus how many have been purged.
  *
@@ -85,6 +180,8 @@ export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
     id: string;
     short_ref: string | number;
     phone_number: string | null;
+    postal_code: string | null;
+    birth_years: number[] | null;
     status: string;
     consent_method: string;
     is_test: boolean;
@@ -98,6 +195,8 @@ export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
       c.id,
       c.short_ref,
       c.phone_number,
+      c.postal_code,
+      c.birth_years,
       c.is_test,
       c.status,
       c.consent_method,
@@ -117,6 +216,8 @@ export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
     shortRef: String(r.short_ref),
     phoneNumber: r.phone_number,
     purged: r.phone_number === null,
+    postalCode: r.postal_code,
+    birthYears: r.birth_years,
     isTest: r.is_test,
     status: r.status,
     consentMethod: r.consent_method,
@@ -191,6 +292,8 @@ export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberD
     id: string;
     short_ref: string | number;
     phone_number: string | null;
+    postal_code: string | null;
+    birth_years: number[] | null;
     status: string;
     consent_method: string;
     is_test: boolean;
@@ -200,7 +303,8 @@ export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberD
     stopped_at: Date | null;
   }>(
     `SELECT id, short_ref, phone_number, is_test, status, consent_method, consent_timestamp,
-            confirmed_timestamp, consecutive_empty_weeks, stopped_at
+            confirmed_timestamp, consecutive_empty_weeks, stopped_at,
+            postal_code, birth_years
        FROM sms_consent WHERE id = $1::uuid`,
     [id]
   );
@@ -241,6 +345,8 @@ export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberD
       shortRef: String(row.short_ref),
       phoneNumber: row.phone_number,
       purged: row.phone_number === null,
+      postalCode: row.postal_code,
+      birthYears: row.birth_years,
       isTest: row.is_test,
       status: row.status,
       consentMethod: row.consent_method,

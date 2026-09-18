@@ -21,9 +21,10 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
   beforeAll(async () => {
     await query(
       `INSERT INTO sms_consent
-         (phone_number, status, consent_method, consent_text_version, consent_timestamp)
-       VALUES ($1, 'active', 'web_form', $2, now() - interval '1 hour')`,
-      ['+16045550188', MARKER]
+         (phone_number, status, consent_method, consent_text_version, consent_timestamp,
+          postal_code, birth_years)
+       VALUES ($1, 'active', 'web_form', $2, now() - interval '1 hour', 'V5N 1A1', $3::int[])`,
+      ['+16045550188', MARKER, [2019, 2022]]
     );
     // A PURGED row: stopped, personal columns erased in place, consent record retained. This is
     // the case the whole `purged` flag exists for, and the one an admin page most easily gets
@@ -46,6 +47,32 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ status: 'active', consentMethod: 'web_form', purged: false });
     expect(mine[0].consentTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('🔴 selects postal_code and birth_years — the two columns Jon asked to see', async () => {
+    // These were absent from the SELECT entirely until 2026-09-18. A test that only checked the
+    // TypeScript interface would have passed the whole time the query never asked for them.
+    const [mine] = (await getSmsSubscribers()).filter((r) => r.phoneNumber === '+16045550188');
+    expect(mine.postalCode).toBe('V5N 1A1');
+    expect(mine.birthYears).toEqual([2019, 2022]);
+  });
+
+  it('🔴 hands birth_years back as real numbers, not strings', async () => {
+    // int[] round-tripping through node-postgres as ['2019','2022'] would make every age NaN and
+    // still render a plausible-looking cell. Asserted at the boundary, like short_ref above.
+    const [mine] = (await getSmsSubscribers()).filter((r) => r.phoneNumber === '+16045550188');
+    for (const y of mine.birthYears ?? []) expect(typeof y).toBe('number');
+  });
+
+  it('🔴 a purged row has postal_code and birth_years erased ALONGSIDE the phone', async () => {
+    // lib/retention/sms.ts NULLs all of them in ONE statement. That is what makes the `purged`
+    // flag — derived from phone_number alone — authoritative for the two new columns too, rather
+    // than an inference the UI is quietly making on its own.
+    for (const r of (await getSmsSubscribers()).filter((r) => r.purged)) {
+      expect(r.phoneNumber).toBeNull();
+      expect(r.postalCode).toBeNull();
+      expect(r.birthYears).toBeNull();
+    }
   });
 
   it('🔴 reports an erased row as purged, not as a missing phone number', async () => {
@@ -173,5 +200,92 @@ describe.skipIf(!hasDb)('one subscriber\'s full send history', () => {
 
   it('returns null for an id that is not a subscriber', async () => {
     expect(await getSmsSubscriberDetail('00000000-0000-4000-8000-000000000000')).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// 🔴 THE PREVIEW IS READ-ONLY — PROVED AGAINST A REAL DATABASE, NOT ONLY AGAINST SOURCE
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//
+// tests/admin/sms-preview-logic.test.ts asserts the module imports no mutator. That is the guard
+// that survives refactors, but it is an argument about code. This is the observation: take a real
+// subscriber, snapshot every column the weekly job would move, render the preview, and check that
+// nothing moved. If the two ever disagree, believe this one.
+describe.skipIf(!hasDb)('🔴 previewing a subscriber mutates nothing', () => {
+  const M3 = `${MARKER}-preview`;
+  const NUMBER = '+16045550177';
+  let id = '';
+
+  beforeAll(async () => {
+    vi.stubEnv('SMS_SHORT_LINK_SECRET', 'test-preview-short-link-secret');
+    vi.stubEnv('SMS_PREFERENCES_SECRET', 'test-preview-preferences-secret');
+    const [row] = await query<{ id: string }>(
+      `INSERT INTO sms_consent (phone_number, status, consent_method, consent_text_version,
+                                consent_timestamp, confirmed_timestamp, postal_code, birth_years,
+                                consecutive_empty_weeks)
+       VALUES ($1, 'active', 'web_form', $2, now() - interval '10 days',
+               now() - interval '10 days', 'V5N 1A1', $3::int[], 2)
+       RETURNING id`,
+      [NUMBER, M3, [2019, 2022]]
+    );
+    id = row.id;
+  });
+
+  afterAll(async () => {
+    await query(`DELETE FROM sms_send_log WHERE consent_text_version = $1`, [M3]);
+    await query(`DELETE FROM sms_consent WHERE consent_text_version = $1`, [M3]);
+    vi.unstubAllEnvs();
+  });
+
+  it('leaves every column the weekly job writes exactly as it found them', async () => {
+    const { previewWeeklySmsForSubscriber } = await import('../../lib/admin/sms-preview');
+
+    const snapshot = async () =>
+      (
+        await query<{
+          status: string;
+          consecutive_empty_weeks: number;
+          stopped_at: Date | null;
+          phone_number: string | null;
+          postal_code: string | null;
+        }>(
+          `SELECT status, consecutive_empty_weeks, stopped_at, phone_number, postal_code
+             FROM sms_consent WHERE id = $1::uuid`,
+          [id]
+        )
+      )[0];
+    const sendCount = async () =>
+      Number(
+        (
+          await query<{ n: string }>(
+            `SELECT count(*)::text AS n FROM sms_send_log WHERE subscriber_id = $1::uuid`,
+            [id]
+          )
+        )[0].n
+      );
+
+    const before = await snapshot();
+    const sendsBefore = await sendCount();
+
+    const result = await previewWeeklySmsForSubscriber(id, new Date());
+
+    const after = await snapshot();
+    const sendsAfter = await sendCount();
+
+    // The counter the empty-week/pause machinery moves. Seeded at 2 rather than 0 so an
+    // accidental RESET would be caught as loudly as an accidental increment.
+    expect(after.consecutive_empty_weeks).toBe(2);
+    expect(after).toEqual(before);
+    // Not one CASL audit row. A previewed message was never sent, so recording one would both
+    // corrupt the send history and make the subscriber ineligible for their real Friday text via
+    // the 4-day resend guard — the preview would have consumed the send it was previewing.
+    expect(sendsAfter).toBe(sendsBefore);
+    expect(sendsAfter).toBe(0);
+
+    // And it genuinely ran the real path rather than bailing early, which is what makes the
+    // assertions above meaningful. The catalogue is empty in this lane, so 'empty'/'no_message'
+    // are the honest outcomes; what must NOT appear is 'secret_missing' (stubbed above) or
+    // 'not_eligible' (this row satisfies every condition in loadActiveSubscribers).
+    expect(['ok', 'no_message']).toContain(result.status);
   });
 });

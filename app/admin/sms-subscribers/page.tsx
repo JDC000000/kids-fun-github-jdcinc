@@ -28,6 +28,8 @@ import { adminHref } from './_lib/href';
 import {
   getSmsSubscribers,
   summariseSubscribers,
+  displayChildAges,
+  displayPostalCode,
   SMS_SUBSCRIBER_LIST_LIMIT,
 } from '@/lib/admin/sms-subscribers';
 
@@ -54,6 +56,10 @@ export default async function AdminSmsSubscribersPage({
 
   const rows = await getSmsSubscribers();
   const summary = summariseSubscribers(rows);
+  // ONE clock for the whole table. Ages are derived from a birth year against "this year", so
+  // taking the date per row would let a render that straddles midnight on December 31st print two
+  // different ages for two children of the same age.
+  const now = new Date();
 
   return (
     <main className="adm">
@@ -61,7 +67,9 @@ export default async function AdminSmsSubscribersPage({
       <div className="adm-head">
         <h1>SMS subscribers</h1>
         <p className="adm-sub">
-          Every consent record, newest first. Capped at {SMS_SUBSCRIBER_LIST_LIMIT}.
+            Every consent record, newest first. Capped at {SMS_SUBSCRIBER_LIST_LIMIT}. Ages are
+          computed from the stored birth year at today’s date, the same way the picker and the
+          parent’s own preferences page compute them.
         </p>
       </div>
 
@@ -90,6 +98,8 @@ export default async function AdminSmsSubscribersPage({
               <tr>
                 <th>Ref</th>
                 <th>Phone</th>
+                <th>Postal</th>
+                <th>Kids’ ages</th>
                 <th>Status</th>
                 <th>Method</th>
                 <th>Consented</th>
@@ -109,6 +119,14 @@ export default async function AdminSmsSubscribersPage({
                   <td>
                     {row.purged ? <span className="adm-hint">purged</span> : row.phoneNumber}
                   </td>
+                  {/* Postal code and ages resolve their own purged/absent/present tri-state in
+                      lib/admin/sms-subscribers.ts, so a blank cell never has to stand for both
+                      "erased on purpose" and "never given". */}
+                  {[displayPostalCode(row), displayChildAges(row, now)].map((cell, i) => (
+                    <td key={i}>
+                      {cell.muted ? <span className="adm-hint">{cell.text}</span> : cell.text}
+                    </td>
+                  ))}
                   <td>
                     {row.status}
                     {/* MARKED, NOT FILTERED (Operator, 2026-09-03). This list is ground truth —

@@ -15,10 +15,24 @@ import { ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 
 export function adminHref(
   path: string,
-  searchParams: Record<string, string | string[] | undefined>
+  searchParams: Record<string, string | string[] | undefined>,
+  /**
+   * Extra query params to add, e.g. `{ preview: '1' }` for the on-demand SMS preview.
+   *
+   * Built with encodeURIComponent rather than URLSearchParams on purpose: URLSearchParams encodes
+   * a space as '+', which is correct for a form body and wrong-looking in a hand-checked admin
+   * URL — and changing that encoding would silently alter the token this function exists to carry
+   * intact. The existing behaviour is pinned by tests/admin/sms-subscribers-href.test.ts.
+   */
+  extra?: Record<string, string>
 ): string {
   const raw = searchParams[ADMIN_TOKEN_QUERY_PARAM];
   const token = Array.isArray(raw) ? raw[0] : raw;
-  if (!token) return path;
-  return `${path}?${ADMIN_TOKEN_QUERY_PARAM}=${encodeURIComponent(token)}`;
+  const parts: string[] = [];
+  if (token) parts.push(`${ADMIN_TOKEN_QUERY_PARAM}=${encodeURIComponent(token)}`);
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+  }
+  if (parts.length === 0) return path;
+  return `${path}?${parts.join('&')}`;
 }

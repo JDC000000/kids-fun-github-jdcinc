@@ -18,7 +18,17 @@ import { resolveAdminAccess } from '../../_lib/gate';
 import { ADMIN_CONSOLE_CSS } from '../../sources/_lib/console-css';
 import { formatTimestampUtc } from '@/lib/admin/format';
 import { adminHref } from '../_lib/href';
-import { getSmsSubscriberDetail, SMS_SEND_HISTORY_LIMIT } from '@/lib/admin/sms-subscribers';
+import {
+  getSmsSubscriberDetail,
+  displayChildAges,
+  displayPostalCode,
+  SMS_SEND_HISTORY_LIMIT,
+} from '@/lib/admin/sms-subscribers';
+import {
+  ineligibilityReason,
+  previewWeeklySmsForSubscriber,
+  type SmsPreviewResult,
+} from '@/lib/admin/sms-preview';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -26,6 +36,11 @@ export const metadata = {
   title: 'KIDS FUN — Admin / SMS subscriber',
   robots: { index: false, follow: false },
 };
+
+/** Next hands a repeated query param over as an array; take the first value. */
+function firstParam(raw: string | string[] | undefined): string | undefined {
+  return Array.isArray(raw) ? raw[0] : raw;
+}
 
 export default async function AdminSmsSubscriberDetailPage({
   params,
@@ -50,6 +65,25 @@ export default async function AdminSmsSubscriberDetailPage({
 
   const { subscriber, sends, purged } = detail;
   const carriedOver = sends.filter((s) => !s.linkedToThisRow).length;
+
+  // ONE clock for the whole render: the ages shown, the eligibility reason's 4-day resend window
+  // and the preview's own selection must all be answered as of the same instant, or the page can
+  // explain a message with a different week's numbers.
+  const now = new Date();
+  const postal = displayPostalCode(subscriber);
+  const ages = displayChildAges(subscriber, now);
+
+  // ON DEMAND. The preview loads the whole search catalogue to build one message, so it runs only
+  // when an admin actually asks — never on the plain drill-down.
+  const previewRequested = firstParam(searchParams.preview) === '1';
+  let preview: SmsPreviewResult | null = null;
+  if (previewRequested) {
+    preview = await previewWeeklySmsForSubscriber(subscriber.id, now);
+    if (preview.status === 'not_eligible') {
+      // The module cannot see the consent row; this page can, so it supplies the specific reason.
+      preview = { status: 'not_eligible', reason: ineligibilityReason(subscriber, sends, now) };
+    }
+  }
 
   return (
     <main className="adm">
@@ -81,6 +115,120 @@ export default async function AdminSmsSubscriberDetailPage({
           happened to this row.
         </p>
       )}
+
+      <div className="adm-section">
+        <h2>Household</h2>
+        <table className="grid">
+          <tbody>
+            <tr>
+              <th>Postal code</th>
+              <td>{postal.muted ? <span className="adm-hint">{postal.text}</span> : postal.text}</td>
+            </tr>
+            <tr>
+              <th>Kids’ ages</th>
+              <td>
+                {ages.muted ? <span className="adm-hint">{ages.text}</span> : ages.text}
+                {/* The stored value, beside the derived one. We hold a birth YEAR and never a
+                    month, so the age is right only for a child who has already had this year's
+                    birthday — showing the year an admin can see what the imprecision is built on
+                    instead of having to trust the arithmetic. */}
+                {!purged && subscriber.birthYears && subscriber.birthYears.length > 0 && (
+                  <span className="adm-hint"> · born {subscriber.birthYears.join(', ')}</span>
+                )}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="adm-hint">
+          Ages are computed from the stored birth year at today’s date — the same helper the picker
+          and the parent’s own preferences page use, so all three agree.
+        </p>
+      </div>
+
+      <div className="adm-section">
+        <h2>This week’s SMS</h2>
+        {!previewRequested && (
+          <p>
+            <Link
+              href={adminHref(`/admin/sms-subscribers/${subscriber.id}`, searchParams, {
+                preview: '1',
+              })}
+            >
+              Preview this week’s SMS →
+            </Link>
+            <br />
+            <span className="adm-hint">
+              Builds the exact message this subscriber would receive on Friday, using the real
+              weekly job’s own selection and rendering. Read-only: it sends nothing, marks nothing
+              as sent and changes no counter.
+            </span>
+          </p>
+        )}
+
+        {preview?.status === 'secret_missing' && (
+          <p className="adm-note">
+            Cannot preview: SMS_SHORT_LINK_SECRET is not configured in this environment. Every
+            activity link in the message would be minted against a placeholder, and those links do
+            not 404 — they fail their signature check and land on /link-unavailable, which tells
+            the reader their link is broken. A preview that looks like a broken product is worse
+            than none, so this refuses rather than rendering one.
+          </p>
+        )}
+
+        {preview?.status === 'not_eligible' && (
+          <p className="adm-note">
+            This subscriber is not in this week’s send set: {preview.reason}. Nothing would be sent
+            to them on Friday.
+          </p>
+        )}
+
+        {preview?.status === 'no_message' && (
+          <p className="adm-note">
+            The weekly job would build no message for this subscriber (outcome:{' '}
+            {preview.outcome}). For <code>geocode_failed</code> that means their postal code
+            resolves to no covered municipality — staying silent is the intended behaviour, not a
+            fault.
+          </p>
+        )}
+
+        {preview?.status === 'ok' && (
+          <>
+            <p className="adm-hint">
+              outcome {preview.outcome} · {preview.pickCount}{' '}
+              {preview.pickCount === 1 ? 'pick' : 'picks'} · area{' '}
+              {preview.areaLabel ?? '—'} · {preview.segments}{' '}
+              {preview.segments === 1 ? 'segment' : 'segments'} · {preview.characters} characters
+            </p>
+            {/* pre-wrap: an SMS body is whitespace-significant — its line breaks ARE the layout
+                the parent sees, and collapsing them would misrepresent the message. */}
+            <pre
+              style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                padding: '0.75rem',
+                border: '1px solid currentColor',
+                borderRadius: '4px',
+                fontFamily: 'inherit',
+              }}
+            >
+              {preview.body}
+            </pre>
+            {preview.tokenRedacted && (
+              <p className="adm-hint">
+                The ###… above is this subscriber’s live preferences token, masked. That URL opens
+                their preferences hub — their child’s ages and household postal code — with no
+                sign-in, so it is a credential rather than copy and is not put on screen where a
+                screenshot would carry it past this gate. The segment and character counts above
+                are measured on the real, unmasked body. Every activity link is real.
+              </p>
+            )}
+            <p className="adm-hint">
+              Nothing was sent and nothing was recorded — building this message touches no
+              subscriber state.
+            </p>
+          </>
+        )}
+      </div>
 
       <div className="adm-section">
         <h2>Send history</h2>
