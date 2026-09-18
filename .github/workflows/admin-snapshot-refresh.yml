@@ -60,13 +60,31 @@ jobs:
             echo "::warning title=Admin snapshot refresh inactive::ADMIN_SNAPSHOT_CRON_SECRET secret is not set -- this workflow is a NO-OP. Provision it from vault slug kids-fun-admin-snapshot-cron-secret to activate."
             exit 0
           fi
+          # --max-time 420: measured total refresh time is ~265s (2026-09-18), with one key
+          # already varying +61% run-to-run (85.1s -> 136.7s) on essentially no data growth --
+          # 300s left only 13% margin, a real near-term timeout risk, not a hypothetical.
+          #
+          # Exit code captured EXPLICITLY (curl call taken out of `set -e`'s reach via `|| true`)
+          # rather than left to `pipefail`, on purpose: the server-side refresh has its own
+          # maxDuration=800 and keeps running to completion even if THIS client gives up --
+          # so a client-side timeout does not mean the refresh failed, only that the response
+          # is unknown. Reporting that as a bare "exit code 28" (or aborting the whole script on
+          # it via pipefail before the intended ::error line runs) would false-RED a refresh that
+          # actually succeeded, which is exactly how a real signal stops being trusted.
+          CURL_EXIT=0
           HTTP_CODE=$(curl -s -o /tmp/refresh_body.json -w "%{http_code}" \
             -X POST \
             -H "Authorization: Bearer ${SECRET}" \
             -H "Content-Type: application/json" \
             -d '{}' \
-            --max-time 300 \
-            "https://kidsfunapp.ca/api/admin/snapshot/refresh/run")
+            --max-time 420 \
+            "https://kidsfunapp.ca/api/admin/snapshot/refresh/run") || CURL_EXIT=$?
+
+          if [ "$CURL_EXIT" != "0" ]; then
+            echo "::warning title=Admin snapshot refresh: client timed out, server may still finish::curl exit ${CURL_EXIT} (28 = timeout) after 420s. The server-side job runs independently and may still complete successfully -- check computed_at on the next run before assuming this one failed."
+            exit 0
+          fi
+
           echo "HTTP ${HTTP_CODE}"
           cat /tmp/refresh_body.json
           echo ""
