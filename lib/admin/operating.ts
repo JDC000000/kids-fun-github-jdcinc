@@ -20,7 +20,7 @@
 // PERIOD SERIES that had no implementation anywhere (corrections opened/resolved per
 // period, and source-check success per period) plus the composition.
 import { queryWithTimeout } from '@/lib/db/client';
-import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
+import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 import { getProductHealthKpis, type ProductHealthKpis } from '@/lib/analytics/kpi';
 import { getActivityTrend, type ActivityTrend } from '@/lib/analytics/trends';
 import {
@@ -164,7 +164,7 @@ async function getOpsSeries(grain: OperatingGrain, periods: number): Promise<Ops
     ORDER BY p.pstart
     `,
     [grain, grainInterval(grain), periods],
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 }
 
@@ -212,7 +212,7 @@ export async function getOpsCoverage(): Promise<OpsDataCoverage> {
       (SELECT min(created_at) FROM correction_report WHERE archived_at IS NULL) AS first_correction_at
     `,
     undefined,
-    ADMIN_ANALYTICS_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
   const toIso = (v: Date | null | undefined): string | null => {
     if (v == null) return null;

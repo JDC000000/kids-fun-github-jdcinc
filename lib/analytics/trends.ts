@@ -25,7 +25,7 @@
 // bucket CLOSED at or before the first recorded event are suppressed. See
 // lib/analytics/prehistory.ts for the shared rule.
 import { queryWithTimeout } from '@/lib/db/client';
-import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '@/lib/db/budgets';
+import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 import { WAU_WINDOW_DAYS, MAU_WINDOW_DAYS } from './kpi';
 import { anchorMsFromIso, isPreHistory } from './prehistory';
 
@@ -53,8 +53,12 @@ export const TREND_WINDOW_DAYS = 30;
  * that the statement cancels ITSELF via SET LOCAL even if the function is torn down, so no
  * orphaned backend keeps scanning — is a property of queryWithTimeout, not of the number.
  * So the number becomes the one admin budget, and stops being a place a second guess can rot.
+ * NB: this is now resolved PER CALL via adminAnalyticsQueryTimeoutMs() rather than captured
+ * into a module-level const. A const is evaluated once at import, which would have pinned this
+ * read to the page budget forever and made it the one read the scheduled refresh could not
+ * widen — silently, and only under the cron path.
  */
-export const TREND_QUERY_TIMEOUT_MS = ADMIN_ANALYTICS_QUERY_TIMEOUT_MS;
+// (no constant: the budget is read at the call site, below.)
 
 /**
  * One day of the trend: the active-user windows *as of that day* + that day's raw volume.
@@ -250,7 +254,7 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
     ORDER BY d.day
     `,
     [windowDays, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS],
-    TREND_QUERY_TIMEOUT_MS
+    adminAnalyticsQueryTimeoutMs()
   );
 
   // The anchor is the same scalar on every row (a correlated-free sub-select), so any
