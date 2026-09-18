@@ -1,0 +1,76 @@
+name: Admin dashboard snapshot refresh
+
+# WHY: app/api/admin/snapshot/refresh/run/route.ts precomputes the /admin/* dashboard
+# payloads (operating, product-health, dashboard) into admin_dashboard_snapshot, so those
+# pages stop re-deriving 2.9M+ analytics_event rows on every load (migration 0050,
+# 2026-09-18 -- see that migration's own header for the measured before/after).
+#
+# This route is deliberately POST-only, on purpose -- a ~3-minute write job has no business
+# reachable by a method the web treats as safe/cacheable/prefetchable (see the route's own
+# header). Vercel Cron only issues GET, so it cannot drive this route; a GET alias was tried
+# and reverted (see git history on app/api/admin/snapshot/refresh/run/route.ts) specifically
+# to keep that guarantee. This workflow is the POST-issuing external scheduler instead --
+# same zero-token-cost property as a Vercel Cron would have had (this is a plain HTTP call,
+# no LLM session), just POST-capable.
+#
+# ACTIVATION: set the repo secret ADMIN_SNAPSHOT_CRON_SECRET to the same value configured as
+# ADMIN_SNAPSHOT_CRON_SECRET on the Vercel production project (vault slug
+# kids-fun-admin-snapshot-cron-secret). Until that secret exists this workflow no-ops with a
+# warning, same pattern as migration-drift.yml, so it never sits perpetually red before wiring.
+#
+# SCHEDULE: once daily, 14:00 UTC (~7am Pacific, ahead of a typical morning review) -- revised
+# 2026-09-18 from an initial every-4h guess after real measurement showed that guess was itself
+# expensive: the refresh costs ~265s of real DB work per run (measured 2026-09-18, see below),
+# so 6x/day would cost ~26 min/day of database time regardless of whether anyone ever opens the
+# page -- directly against Jon's own "less expensive" framing. This is a review surface, not a
+# live dashboard; once a day is enough freshness for it, at 1/6 the cost.
+#
+# REAL COST, measured 2026-09-18 (not the original 221.9s estimate): total ~265s across all 4
+# keys, worst single key (operating:day:30) 136,688ms -- ~24% headroom against the 180s
+# per-key ceiling (ADMIN_SNAPSHOT_REFRESH_TIMEOUT_MS), not "weeks". Two reads an hour apart
+# showed source_rows barely moved (2,970,600 vs 2,969,684) while compute time varied
+# significantly -- this is RUN-TO-RUN VARIANCE UNDER LOAD, not just data growth, and variance
+# can breach the ceiling with zero change in data volume. Worth re-measuring after a few real
+# daily runs rather than trusting this one sample.
+
+on:
+  schedule:
+    - cron: '0 14 * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: admin-snapshot-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: POST /api/admin/snapshot/refresh/run
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Trigger snapshot refresh
+        env:
+          SECRET: ${{ secrets.ADMIN_SNAPSHOT_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SECRET:-}" ]; then
+            echo "::warning title=Admin snapshot refresh inactive::ADMIN_SNAPSHOT_CRON_SECRET secret is not set -- this workflow is a NO-OP. Provision it from vault slug kids-fun-admin-snapshot-cron-secret to activate."
+            exit 0
+          fi
+          HTTP_CODE=$(curl -s -o /tmp/refresh_body.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 300 \
+            "https://kidsfunapp.ca/api/admin/snapshot/refresh/run")
+          echo "HTTP ${HTTP_CODE}"
+          cat /tmp/refresh_body.json
+          echo ""
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error title=Admin snapshot refresh failed::HTTP ${HTTP_CODE} -- see body above."
+            exit 1
+          fi
