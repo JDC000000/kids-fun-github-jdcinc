@@ -268,6 +268,11 @@ describe('the poll lane reports its CURRENT state, not only its high-water mark'
     const m = await runUntil((mm) => expect(mm.consecutivePollErrors).toBeGreaterThanOrEqual(3));
     expect(m.lastPollOkAt).toBeNull();
     expect(m.lastErrorKind).toBe('poll');
+    // The WIRE must carry the non-zero count too — a projection pinned to 0 is a false green.
+    const wire = schedulerReport(m);
+    if (!wire.known) throw new Error('expected a reported scheduler');
+    expect(wire.consecutivePollErrors).toBe(m.consecutivePollErrors);
+    expect(wire.lastPollOkAt).toBeNull();
   });
 
   it('a stranded job (markFailed failed) counts as a poll-lane failure, not a success', async () => {
