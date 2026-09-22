@@ -47,6 +47,7 @@ import {
   type OperatingPeriodCounts,
 } from '../../lib/analytics/operating';
 import { SOURCE_CTR_TARGET_PCT } from '../../lib/analytics/kpi';
+import { getActivityTrend } from '../../lib/analytics/trends';
 import { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } from '../../lib/security/search-rate-limit';
 import {
   MAU_TARGET,
@@ -627,35 +628,81 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
     expect(after.signedInActors - before.signedInActors).toBe(1);
   });
 
-  // 🔴 Regression for the SAME window-mismatch bug class 2dfdbb2c caught between kpi.ts and
-  // trends.ts (see lib/analytics/high-frequency-exclusion.ts's header), reproduced here one
-  // file over. active_actors/signed_in_actors are PER-PERIOD metrics — one independent count
-  // per bucket in a 10-bucket series — not a single aggregate over the whole requested range.
-  // An early version of this fix checked a candidate row's flag against `bounds` (the query's
-  // whole 10-day scan range) instead of that ONE bucket's own window, which would purge a
-  // flagged actor from EVERY period in the series, not just the period they were flagged in.
-  // This actor is flagged 5 days ago and has ORDINARY activity today; today's count must be
-  // unaffected, and the actor must still be excluded from the specific day they were flagged.
-  it('🔴 does not exclude an actor from TODAY when their only qualifying row is in a DIFFERENT period of the same series', async () => {
+  // REVISED (2026-09-22, THIRD review round, 6f176ae2): this test used to pin active_actors to
+  // PER-BUCKET-ONLY exclusion (a flag 5 days ago must not affect today's count). That behaviour
+  // was superseded when active_actors/signed_in_actors moved onto kpi.ts's/trends.ts's shared
+  // 30-day window — see the "DELIBERATE ARCHITECTURAL DECISION, REVISED" comment above
+  // getEngagementSeries's `flagged` CTE for why: /admin/operating renders the DAU chart
+  // (getActivityTrend, already on the shared window) directly above this table's "Active" column,
+  // and the two must not show different numbers for the same day. Per the reviewers' own
+  // standard, this test is REWRITTEN to match the new intended behaviour, not deleted or
+  // weakened — it still needs to prove active_actors' exclusion window is BOUNDED (exactly
+  // MAU_WINDOW_DAYS), not the two wrong extremes: not the whole per-page scan range (unbounded
+  // — the original wide-window bug) and not still per-bucket-only (the now-superseded
+  // behaviour this test used to pin).
+  it('excludes an actor from TODAY when flagged within the shared 30-day window (matching trends.ts’s dau), even on an unrelated day', async () => {
     const beforeSeries = await getOperatingPeriodCounts('day', 10);
-    const beforeTotal = beforeSeries.reduce((sum, p) => sum + p.activeActors, 0);
     const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
 
     const actor = randomUUID();
-    // Ordinary activity TODAY.
-    await insertEvent(actor, 'listing_viewed', 5);
-    // A threshold-crossing burst 5 days ago — flags THAT bucket only.
-    await insertEvent(actor, 'listing_viewed', 60 * 24 * 5 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    // 20 days ago: well outside the 10-day DISPLAYED series, but inside the shared 30-day
+    // exclusion window — must still reach today, proving the window is neither "this page's
+    // display range" nor "this bucket alone", but the actual MAU_WINDOW_DAYS width.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 20 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
 
     const afterSeries = await getOperatingPeriodCounts('day', 10);
-    const afterTotal = afterSeries.reduce((sum, p) => sum + p.activeActors, 0);
     const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
 
-    // +1 for today's ordinary row only: the flagged bucket correctly excludes ITSELF (so not
-    // +2), and today is correctly NOT purged by a flag raised on an unrelated day (so not +0,
-    // which is what the wide-window bug would have produced).
-    expect(afterTotal - beforeTotal).toBe(1);
+    expect(afterToday.activeActors - beforeToday.activeActors).toBe(0);
+  });
+
+  // 🔴 The OTHER extreme: the window must be BOUNDED at MAU_WINDOW_DAYS, not the actor's whole
+  // history — the exact 40-vs-30-day gap 2dfdbb2c originally caught between kpi.ts and trends.ts,
+  // reproduced here as a regression test one file over rather than assumed safe by analogy.
+  it('🔴 does NOT exclude an actor from TODAY when their only qualifying row is OUTSIDE the shared 30-day window', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    // 40 days ago: outside MAU_WINDOW_DAYS (30) from today — must NOT reach today.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 40 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
     expect(afterToday.activeActors - beforeToday.activeActors).toBe(1);
+  });
+
+  // Direct SAME-PAGE agreement check — the actual property 6f176ae2's finding is about.
+  // /admin/operating renders getActivityTrend's DAU chart directly above this table's "Active"
+  // column (getOperatingPeriodCounts's activeActors); a reader has no reason to expect those two
+  // numbers to mean different things unless told so. Calls BOTH in the SAME test against the SAME
+  // flagged actor, asserting their deltas are IDENTICAL — not just separately correct — mirroring
+  // tests/analytics/trends.test.ts's kpi.ts-vs-trends.ts cross-file test for the same reason.
+  it('🔴 activeActors (this table’s “Active” column) agrees with trends.ts’s DAU (the chart on the SAME page) for the SAME flagged actor', async () => {
+    const opsBefore = await getOperatingPeriodCounts('day', 10);
+    const opsTodayBefore = opsBefore.at(-1) as OperatingPeriodCounts;
+    const trendBefore = await getActivityTrend();
+    const trendTodayBefore = trendBefore.points[trendBefore.points.length - 1];
+
+    const actor = randomUUID();
+    // 10 days ago — the exact scenario 6f176ae2 measured: inside the shared 30-day window, so
+    // both surfaces must exclude it from TODAY.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 10 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const opsAfter = await getOperatingPeriodCounts('day', 10);
+    const opsTodayAfter = opsAfter.at(-1) as OperatingPeriodCounts;
+    const trendAfter = await getActivityTrend();
+    const trendTodayAfter = trendAfter.points[trendAfter.points.length - 1];
+
+    const opsDelta = opsTodayAfter.activeActors - opsTodayBefore.activeActors;
+    const trendDauDelta = trendTodayAfter.dau! - trendTodayBefore.dau!;
+
+    expect(opsDelta).toBe(trendDauDelta);
+    expect(opsDelta).toBe(0);
   });
 
   // Baseline for the lifecycle site specifically (new/activated/returning/retained), verified

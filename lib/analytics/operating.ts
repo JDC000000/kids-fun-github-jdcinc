@@ -35,6 +35,7 @@
 import { queryWithTimeout } from '@/lib/db/client';
 import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 import {
+  MAU_WINDOW_DAYS,
   SOURCE_CTR_TARGET_PCT,
   pct,
   perDay,
@@ -404,42 +405,57 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
     -- pstart row, exactly like trends.ts's per-day DAU, not a single aggregate over the whole
     -- scan range. bounds (b.lo/b.hi) spans ALL requested periods at once (e.g. all 30 days),
     -- so it is a "scan once" convenience window for THIS query, the same role trends.ts's scan
-    -- plays for its own per-day outputs -- it is NOT any one period's own window. Checking a
-    -- candidate row's flag against the full b.lo/b.hi range (as an earlier version of this fix
-    -- did) would exclude an actor from EVERY period in the series just because they crossed the
-    -- threshold once, on one unrelated day -- the exact tiles/trend-line drift bug this module
-    -- exists to prevent, reproduced one file over. So: flagged finds every (period-bucket,
-    -- actor) pair that crossed the threshold anywhere in the wide scan range (cheap candidate
-    -- list, per highFrequencyFlaggedDaysCte's own contract), and each subquery below then checks
-    -- ONLY that row's own bucket against flagged, via highFrequencyExclusionAgainstFlagged.
+    -- plays for its own per-day outputs -- it is NOT any one period's own window, and checking a
+    -- candidate row's flag against the full b.lo/b.hi range directly (an earlier version of this
+    -- fix did exactly that) would exclude an actor from EVERY period in the series just because
+    -- they crossed the threshold once, on one unrelated day -- the exact tiles/trend-line drift
+    -- bug this module exists to prevent, reproduced one file over. So: flagged finds every
+    -- (day, actor) pair that crossed the threshold anywhere in the wide scan range (cheap
+    -- candidate list, per highFrequencyFlaggedDaysCte's own contract), and each subquery below
+    -- checks that candidate list against ITS OWN correct window -- see the REVISED decision just
+    -- below for what that window actually is today (it is not "that row's own bucket alone").
     --
-    -- === DELIBERATE ARCHITECTURAL DECISION (2026-09-22 review round, 0bab6a97) ===
-    -- kpi.ts's tiles and trends.ts's trend line share ONE 30-day (MAU-width) exclusion window
-    -- across dau/wau/mau, because those queries derive MULTIPLE different-width metrics from the
-    -- SAME row/CTE and need internal nesting (dau <= wau <= mau) plus tile/trend-line agreement.
-    -- operating.ts does NOT adopt that shared window, and this is chosen, not an oversight:
-    -- active_actors/signed_in_actors/seen each output exactly ONE metric per period -- there is
-    -- no coexisting narrower/wider statistic on the same row that needs to nest or agree with a
-    -- sibling, the way DAU/WAU/MAU do on trends.ts's single row per day. A period here is closer
-    -- to a standalone DAU-shaped snapshot than to a rolling MAU tile, so its own bucket window IS
-    -- its correct exclusion window, per this file's own per-bucket reasoning above.
-    -- KNOWN, ACCEPTED CONSEQUENCE: /admin/operating's "today" activeActors will not always equal
-    -- /admin/product-health's "today" DAU, specifically for an actor flagged sometime in the
-    -- trailing 30 days but not on the exact day being compared -- trends.ts's dau now excludes
-    -- that actor (shared 30-day window), operating.ts's activeActors does not (bucket-only
-    -- window). If this drift is reported as a bug, it is this decision surfacing, not new
-    -- contamination -- re-open this comment before changing the code. Pinned by
-    -- tests/analytics/operating.test.ts's two 🔴 cross-period regression tests (~line 639,
-    -- ~line 687): both assert an actor flagged in ONE period is NOT excluded from an unrelated
-    -- period, i.e. per-bucket-only exclusion. If a future change moves operating.ts onto the
-    -- shared 30-day window instead, those two tests MUST be rewritten to match (not deleted or
-    -- weakened) -- they are what stands between this file and the original wide-window bug
-    -- reappearing here.
+    -- === DELIBERATE ARCHITECTURAL DECISION, REVISED (2026-09-22, THIRD review round, 6f176ae2)
+    -- ===
+    -- An earlier version of this comment picked "operating.ts stays per-bucket everywhere" and
+    -- documented the cross-PAGE consequence (activeActors vs /admin/product-health's DAU tile) as
+    -- accepted. 6f176ae2 found a narrower, same-PAGE instance that comment did not cover:
+    -- /admin/operating renders BOTH the DAU chart (getActivityTrend, shared 30-day window) AND
+    -- this table's "Active" column (active_actors, was per-bucket) side by side -- an actor
+    -- flagged 10 days ago with ordinary traffic today showed DAU=0 on the chart directly above
+    -- "Active"=1 in the table below it, on the SAME page, for the SAME day. That is a materially
+    -- different bar than agreeing with a number on a DIFFERENT page: a reader comparing two
+    -- numbers next to each other has no reason to expect them to mean different things unless
+    -- told so.
+    --
+    -- REVISED DECISION: active_actors and signed_in_actors now share kpi.ts's/trends.ts's 30-day
+    -- (MAU_WINDOW_DAYS) trailing exclusion window too, generalized per bucket exactly the way
+    -- trends.ts's per-day dau is (window ends at THIS row's own pstart, not "now" -- a historical
+    -- row gets its own historical 30-day lookback, not today's). This is a narrower change than
+    -- it looks: 'flagged' already existed as a separate small pre-aggregation; only its day
+    -- granularity (now always 'day', not grain-parameterized -- a MONTH-grain bucket's own
+    -- trailing window is still resolved to day precision, see below) and the two dayWindowSql
+    -- values changed.
+    --
+    -- getLifecycleSeries's 'seen' (new/activated/returning/retained) is UNCHANGED and keeps its
+    -- own separate per-bucket 'flagged' CTE (that function's own comment) -- the two 🔴
+    -- cross-period regression tests pinning per-bucket-only lifecycle behaviour (~line 667/~687)
+    -- still apply there. The reviewers' own read (independently confirmed correct) is that the
+    -- lifecycle cohorts have no counterpart chart to disagree with and no cross-metric nesting
+    -- duty, so they were never the problem -- only active_actors/signed_in_actors, which sit
+    -- directly beside trends.ts's chart on the page, needed to move.
+    --
+    -- The MONTH-grain case: MAU_WINDOW_DAYS is a fixed 30-day width regardless of series grain
+    -- (kpi.ts's own window is always 30 days, never scaled by any "period" concept), so a monthly
+    -- bucket's trailing window is simply "the 30 days immediately before this month's pstart" --
+    -- well-defined, and consistent with how a kpi.ts-style snapshot generalizes to a historical
+    -- point, exactly as trends.ts's per-day dau generalizes kpi.ts's single snapshot to every
+    -- plotted day.
     flagged AS (
       ${highFrequencyFlaggedDaysCte({
         scanWindowSql:
-          'e.created_at >= (SELECT lo FROM bounds) AND e.created_at < (SELECT hi FROM bounds)',
-        dayExpr: 'date_trunc($1::text, e.created_at)',
+          "e.created_at >= (SELECT lo FROM bounds) - (($6::int - 1) * interval '1 day') AND e.created_at < (SELECT hi FROM bounds)",
+        dayExpr: "date_trunc('day', e.created_at)",
         thresholdParam: '$5',
       })}
     ),
@@ -454,7 +470,8 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
              actorAlias: 'e',
              actorColumn: 'user_or_session',
              dayColumn: 'pstart',
-             dayWindowSql: 'f.d = date_trunc($1::text, e.created_at)',
+             dayWindowSql:
+               "f.d <= date_trunc($1::text, e.created_at) AND f.d > date_trunc($1::text, e.created_at) - ($6::int - 1) * interval '1 day'",
            })}
          GROUP BY 1, 2
       ) d
@@ -472,7 +489,8 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
              actorAlias: 'e',
              actorColumn: 'user_or_session',
              dayColumn: 'pstart',
-             dayWindowSql: 'f.d = date_trunc($1::text, e.created_at)',
+             dayWindowSql:
+               "f.d <= date_trunc($1::text, e.created_at) AND f.d > date_trunc($1::text, e.created_at) - ($6::int - 1) * interval '1 day'",
            })}
          GROUP BY 1, 2
       ) d
@@ -501,7 +519,14 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
     LEFT JOIN signed_in_counts si ON si.pstart = p.pstart
     ORDER BY p.pstart
     `,
-    [grain, grainInterval(grain), periods, SEARCH_OUTCOME_WINDOW_MINUTES, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD],
+    [
+      grain,
+      grainInterval(grain),
+      periods,
+      SEARCH_OUTCOME_WINDOW_MINUTES,
+      ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD,
+      MAU_WINDOW_DAYS,
+    ],
     adminAnalyticsQueryTimeoutMs()
   );
 }
