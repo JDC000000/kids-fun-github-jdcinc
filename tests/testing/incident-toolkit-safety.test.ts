@@ -37,6 +37,22 @@ function sourceFiles(dir: string): string[] {
 
 const FILES = sourceFiles(TOOLKIT);
 
+/**
+ * Deletion shapes this toolkit must never contain. Hoisted out of the test body so the patterns
+ * themselves can be tested — see 'the deletion patterns actually catch these spellings' below.
+ * I verified them by hand once; a corpus that nobody re-runs is a corpus that quietly rots.
+ */
+const FORBIDDEN_DELETES: RegExp[] = [
+        /\brm\s+-[a-z]*r/,
+        /rmSync\s*\([^)]*recursive/,
+        /rimraf/,
+        /rmdirSync/,
+        // Order-independent on purpose. My first version required `rm` to appear BEFORE the path,
+        // and I predicted `cd /tmp && rm -f n*.json` would be caught by it. It was not — the path
+        // comes first there, and so it does in `T=/tmp; rm -f $T/n*.json`. Two lookaheads, so the
+        // line only has to CONTAIN both.
+        /^(?=[^\n]*\brm\b)(?=[^\n]*(?:\/tmp|\/var\/tmp))[^\n]*$/m,
+      ];
 describe('incident toolkit: no path-scoped deletion, ever', () => {
   it('finds the toolkit sources (guards against a vacuous pass)', () => {
     expect(FILES.length).toBeGreaterThan(6);
@@ -56,16 +72,27 @@ describe('incident toolkit: no path-scoped deletion, ever', () => {
       // The recursive patterns were the original set. A reviewer showed they were not enough:
       // `rm -f /tmp/n*.json` is neither recursive nor obviously dangerous, yet it deletes any
       // matching file in SHARED /tmp — including files this suite never created, from a
-      // concurrent session. That is the same fault as the rm -rf, just quieter, and it sailed
-      // past a test whose stated purpose was to catch exactly this. A glob against a shared temp
-      // root is now refused outright; a run that needs scratch space makes its own mktemp -d.
-      for (const pattern of [
-        /\brm\s+-[a-z]*r/,
-        /rmSync\s*\([^)]*recursive/,
-        /rimraf/,
-        /rmdirSync/,
-        /\brm\s[^\n;|&]*(?:\/tmp|\/var\/tmp)\/[^\s;|&]*\*/,
-      ]) {
+      // concurrent session. That is the same fault as the rm -rf, just quieter.
+      //
+      // ═══ AND MY FIRST FIX FOR IT WAS NARROWER THAN ITS OWN COMMENT CLAIMED ═══
+      // That fix matched a literal `*` after a /tmp path and the comment announced that "a glob
+      // against a shared temp root is now refused outright". It was not: `?` globs, `[0-9]`
+      // globs, brace expansion, `cd /tmp && rm -f n*`, `${TMPDIR:-/tmp}/n*` and a plain
+      // `rm -f /tmp/known-name.json` all walked straight past it. Seven spellings, one caught.
+      // A guard described more broadly than it behaves is worse than a narrow one honestly
+      // labelled, because the label is what the next reader trusts.
+      //
+      // So the rule is no longer 'a glob against /tmp', which invites spelling-by-spelling
+      // whack-a-mole. It is simply: THIS TOOLKIT NEVER rm's ANYTHING UNDER A SHARED TEMP ROOT.
+      // It makes its own per-run mktemp -d and deletes inside that. A line that mentions both
+      // `rm` and a shared temp root is refused whatever the glob looks like — or whether there
+      // is a glob at all.
+      //
+      // KNOWN LIMIT, stated rather than implied: this is line-scoped, so a determined multi-line
+      // construction can still evade it, and it is a source-level backstop only. The actual
+      // runtime protection is that the suite allocates a private mktemp -d per run, so there is
+      // no shared path to collide on regardless of what this lint catches.
+      for (const pattern of FORBIDDEN_DELETES) {
         expect(
           pattern.test(code),
           `${full} appears to delete by path (${pattern}). This toolkit deletes only the specific ` +
@@ -77,6 +104,43 @@ describe('incident toolkit: no path-scoped deletion, ever', () => {
   );
 });
 
+describe('incident toolkit: the deletion patterns actually catch these spellings', () => {
+  // The first version of the shared-temp rule caught ONE spelling while its comment announced it
+  // refused globs 'outright'. Seven others walked past. Two of those survived my SECOND attempt
+  // too, because I required `rm` to appear before the path and did not test the reverse order —
+  // I predicted `cd /tmp && rm -f n*.json` was covered, and it was not.
+  //
+  // So the patterns now have their own corpus. This is the same discipline as the differential
+  // test's known-bad fixtures: a guard is only worth its claim if something proves it still fires.
+  const caught = (line: string): boolean => FORBIDDEN_DELETES.some((re) => re.test(line));
+
+  it.each([
+    ['recursive rm', 'rm -rf /some/dir'],
+    ['star glob under /tmp', 'rm -f /tmp/n*.json'],
+    ['question-mark glob', 'rm -f /tmp/n?.json'],
+    ['bracket glob', 'rm -f /tmp/n[0-9].json'],
+    ['brace expansion', 'rm -f /tmp/n{1,2}.json'],
+    ['cd first, rm second', 'cd /tmp && rm -f n*.json'],
+    ['TMPDIR default form', 'rm -f ${TMPDIR:-/tmp}/n*.json'],
+    ['variable holding /tmp', 'T=/tmp; rm -f $T/n*.json'],
+    ['no glob at all, still shared', 'rm -f /tmp/known-name.json'],
+    ['/var/tmp', 'rm -f /var/tmp/n*.json'],
+    ['rmSync recursive', 'rmSync(dir, { recursive: true })'],
+  ])('refuses %s', (_label, line) => {
+    expect(caught(line)).toBe(true);
+  });
+
+  // POSITIVE CONTROL: the patterns must not simply reject everything, or the suite above would
+  // be unfalsifiable. These are the shapes the toolkit legitimately uses.
+  it.each([
+    ['named files in a private per-run dir', 'rm -f "$SUITE_TMP"/*.json "$SUITE_TMP"/*.err'],
+    ['non-recursive rmdir', 'rmdir "$SUITE_TMP"'],
+    ['deleting one recorded path', 'rm -f "$backupFile"'],
+    ['no deletion at all', 'echo hello'],
+  ])('allows %s', (_label, line) => {
+    expect(caught(line)).toBe(false);
+  });
+});
 describe('incident toolkit: backups never default inside the repo', () => {
   it('no source hard-codes an in-repo backups path as a destination', () => {
     for (const full of FILES) {
