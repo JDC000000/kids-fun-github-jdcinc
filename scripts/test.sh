@@ -21,6 +21,16 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR" || exit 1
 
+# PREFLIGHT: prove the db lane's ADDRESS guard actually executes before running anything that
+# talks to a database. If the setupFiles merge has regressed, the guard silently stops running and
+# the db lane can reach a non-local database — the 2026-09-21 failure mode. Refusing to start beats
+# discovering it afterwards, so this aborts rather than warning. ~3s. See the script's header for
+# why a config assertion would not do, and for the negative-control procedure that validated it.
+if ! bash "$ROOT_DIR/scripts/testing/verify-db-lane-guard.sh" "$ROOT_DIR"; then
+  echo "✖ refusing to run the test lanes: the db lane's address guard is not wired." >&2
+  exit 2
+fi
+
 unit_log="$(mktemp)"
 db_log="$(mktemp)"
 trap 'rm -f "$unit_log" "$db_log"' EXIT
