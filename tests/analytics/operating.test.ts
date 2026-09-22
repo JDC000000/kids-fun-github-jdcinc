@@ -769,37 +769,51 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
 
     expect(beforeTarget, 'target month bucket must exist in a 4-month series').toBeTruthy();
     expect(afterTarget.activeActors - beforeTarget.activeActors).toBe(0);
+    // 0bab6a97 (twice): New+Returning=Active is an IDENTITY (pinned separately, B4), so it holds
+    // even when every number in a row is UNIFORMLY wrong — checking Active alone cannot rule that
+    // out. Assert New+Returning directly too, so this test proves what it claims to, not just
+    // that the row stayed internally self-consistent.
+    expect(afterTarget.newActors + afterTarget.returningActors - (beforeTarget.newActors + beforeTarget.returningActors)).toBe(0);
   });
 
-  // 🔴 B5, FINDING 1 REVISED (round 4, same session — a second reviewer found a hole in the FIRST
-  // month-grain fix before it shipped). Anchoring the exclusion window at the bucket's END alone
-  // still misses DAY 1 of any 31-day month specifically: a fixed 30-day width ending on day 31
-  // only reaches back to day 2. A bot bursting on the 1st of a 31-day month would still show
-  // Active=1 for that month (should be 0) — the original incident's exact symptom (bot traffic
-  // inflating a real user-facing count), reappearing in the monthly review. The fix clamps the
-  // window's lower bound to LEAST(pstart, anchor - 29 days), so it never starts later than the
-  // bucket's own first day, widening to a full 31 days for this specific case rather than ever
-  // leaving day 1 uncovered.
-  it('🔴 excludes an actor flagged on DAY 1 of a 31-day month — the blind spot a bucket-end-only anchor still misses', async () => {
+  // 🔴 B5/B7 (round 4-6): a bucket-end-only anchor still leaves DAY 1 of any 31-day month
+  // uncovered (a fixed 30-day width ending on day 31 only reaches back to day 2) -- fixed by
+  // clamping the window's lower bound to LEAST(pstart, anchor - 29 days), so it never starts
+  // later than the bucket's own first day. A LATER round (B7) reported this reproducing again on
+  // a "pure bot, day 1 only" scenario; reproducing that exact shape here empirically before
+  // trusting or dismissing it -- confirmed CLEAN against this fix (activeActors/newActors delta
+  // 0 for day 1 specifically, verified live against the scratch DB before this test was written,
+  // not assumed) -- most likely B7 was measured against the pre-LEAST-clamp state (19f375e) and
+  // crossed in transit with the fix landing, the same pattern as several earlier rounds in this
+  // thread. Sweeps day 1, mid-month, and the LAST day of a 31-day month in one test (0bab6a97's
+  // own recommendation, after noting the earlier day-15-only test could not have caught a
+  // day-1-specific gap) -- each as an independent single-event "pure bot" actor (one row, no
+  // control row), the exact shape B7 was reported against, and each checked immediately after
+  // its own insert so one day's assertion can't be confused by another's.
+  it('🔴 excludes a PURE-BOT actor (single event, no control row) at DAY 1, MID-MONTH, and the LAST DAY of a 31-day month', async () => {
     const targetMonthStart = utcRecentComplete31DayMonthStart();
-    const day1 = new Date(targetMonthStart);
-    const day20 = new Date(targetMonthStart);
-    day20.setUTCDate(20);
+    const lastDay = daysInUtcMonth(targetMonthStart);
+    const periodKey = targetMonthStart.toISOString().slice(0, 10);
 
-    const beforeSeries = await getOperatingPeriodCounts('month', 6);
-    const beforeTarget = beforeSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
+    for (const day of [1, 15, lastDay]) {
+      const beforeSeries = await getOperatingPeriodCounts('month', 6);
+      const beforeTarget = beforeSeries.find((p) => p.period === periodKey) as OperatingPeriodCounts;
+      expect(beforeTarget, `target 31-day month bucket must exist before inserting day ${day}`).toBeTruthy();
 
-    const actor = randomUUID();
-    // Flagged burst on the 1st — the exact day the bucket-end-only anchor still misses.
-    await insertEventAt(actor, 'listing_viewed', day1, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
-    // Ordinary activity later the SAME month.
-    await insertEventAt(actor, 'listing_viewed', day20);
+      const at = new Date(targetMonthStart);
+      at.setUTCDate(day);
+      const actor = randomUUID();
+      await insertEventAt(actor, 'listing_viewed', at, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
 
-    const afterSeries = await getOperatingPeriodCounts('month', 6);
-    const afterTarget = afterSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
+      const afterSeries = await getOperatingPeriodCounts('month', 6);
+      const afterTarget = afterSeries.find((p) => p.period === periodKey) as OperatingPeriodCounts;
 
-    expect(beforeTarget, 'target 31-day month bucket must exist in a 6-month series').toBeTruthy();
-    expect(afterTarget.activeActors - beforeTarget.activeActors).toBe(0);
+      expect(afterTarget.activeActors - beforeTarget.activeActors, `day ${day} activeActors`).toBe(0);
+      expect(
+        afterTarget.newActors + afterTarget.returningActors - (beforeTarget.newActors + beforeTarget.returningActors),
+        `day ${day} newActors+returningActors`
+      ).toBe(0);
+    }
   });
 
   // Direct SAME-PAGE agreement check — the actual property 6f176ae2's finding is about.
