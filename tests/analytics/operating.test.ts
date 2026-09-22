@@ -658,6 +658,30 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
     expect(afterToday.activeActors - beforeToday.activeActors).toBe(1);
   });
 
+  // Baseline for the lifecycle site specifically (new/activated/returning/retained), verified
+  // against real Postgres rather than inferred from the cross-period test below or from reading
+  // the SQL — 2dfdbb2c flagged that this call site had only been checked by reading the query,
+  // not by reproducing against a live DB, so this closes that gap directly: a brand-new actor
+  // whose ONLY activity is a threshold-crossing burst must not be counted as new, activated, or
+  // returning at all today.
+  it('excludes a flagged actor from the lifecycle cohorts (new/activated/returning) within its own period', async () => {
+    const before = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
+
+    const flagged = randomUUID();
+    await insertEvent(flagged, ACTIVATION_EVENT_TYPES[0], 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+
+    const clean = randomUUID();
+    await insertEvent(clean, ACTIVATION_EVENT_TYPES[0], 5);
+
+    const after = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
+
+    // Only the clean control actor is counted as new+activated; the flagged one contributes
+    // nothing to new, activated, or returning.
+    expect(after.newActors - before.newActors).toBe(1);
+    expect(after.activatedNewActors - before.activatedNewActors).toBe(1);
+    expect(after.returningActors - before.returningActors).toBe(0);
+  });
+
   // Same bug class, lifecycle side: `seen` (new/activated/returning) is also a per-period
   // relation, fed by the identical flagged-CTE pattern (see getLifecycleSeries's own comment).
   it('🔴 lifecycle: a flagged burst in one period does not purge an actor from an unrelated period’s new/returning counts', async () => {
