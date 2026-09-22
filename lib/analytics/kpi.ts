@@ -206,12 +206,18 @@ async function getActiveUsers(): Promise<ActiveUsers> {
   //
   // `NOT EXISTS` rather than `NOT IN`: the `NOT IN` this replaced silently zeroes the WHOLE result
   // if the negated set ever contained a NULL (any NULL on the right makes every `NOT IN` row
-  // evaluate to NULL, i.e. excluded) — not reachable today (user_or_session is never NULL in
-  // high_frequency_actors, matching the same guard actors' own WHERE already applies three lines
-  // below) but a correlated `NOT EXISTS` is immune to it AND is what actually uses
-  // idx_analytics_event_high_frequency (a partial index WHERE search_minute_request_count is
-  // above the threshold — see that index's own migration comment) rather than materialising the
-  // whole high_frequency_actors set first.
+  // evaluate to NULL, i.e. excluded) — not reachable today (the `hf` correlated subquery below
+  // applies the identical `user_or_session IS NOT NULL` guard `ae`'s own WHERE does, three lines
+  // above) but a correlated `NOT EXISTS` is immune to it regardless, AND is what actually lets
+  // the planner use idx_analytics_event_high_frequency.
+  //
+  // ⚠ F6 (2026-09-22 independent recheck), FIXED SAME DAY IT WAS WRITTEN: an earlier draft of
+  // this comment described that index as "WHERE search_minute_request_count is above the
+  // threshold" — it is NOT. Migration 0052 creates a plain `WHERE search_minute_request_count IS
+  // NOT NULL` index, deliberately NOT pinned to $4's value, specifically so
+  // ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD can change without an index rebuild (the whole point of
+  // moving the cutoff to read time — see this block's header above). Said explicitly here so a
+  // future edit does not "fix" the index to match a stale comment and destroy that tunability.
   const rows = await queryWithTimeout<{ dau: number; wau: number; mau: number }>(
     `
     WITH actors AS (

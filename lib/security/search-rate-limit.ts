@@ -118,11 +118,33 @@ export interface SearchRateLimitResult {
   /**
    * The subject's ALLOWED count in the current MINUTE bucket, for whichever identity actually
    * governed the decision — session when a session subject was checked, else ip. Null when
-   * degraded (no bucket was ever consulted). Surfaced so the caller can stamp
-   * analytics_event.search_minute_request_count (the RAW count, not a threshold decision — see
-   * ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD above) without a second query.
+   * degraded (no bucket was ever consulted). Diagnostic/internal; analytics must read
+   * `sessionMinuteAttempts` instead — see that field.
    */
   minuteAttempts: number | null;
+  /**
+   * The SESSION-scope minute count SPECIFICALLY, or null when no session subject was available to
+   * check at all (a cookieless caller).
+   *
+   * ═══ 🟡 F3 (2026-09-22 independent recheck): ip-scope counts MUST NEVER feed a per-actor
+   * exclusion, not even with a bigger threshold ═══
+   * `ip.perMinute` is deliberately ~3x `session.perMinute` specifically so a shared address (a
+   * school, an office, a CGNAT) never trips the RATE limit — see this module's header. Before this
+   * field existed, `app/api/search/route.ts` stamped `minuteAttempts` (falling back to the ip
+   * count when no session was present) into `analytics_event.search_minute_request_count`, and
+   * `lib/analytics/kpi.ts` applied the SAME `ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD` to it
+   * regardless of which bucket produced it. Reproduced live: 12 cookieless requests from one IP,
+   * every one individually ALLOWED (nowhere near ip.perMinute=40), yet every real actor sharing
+   * that address got silently excluded from DAU/WAU/MAU anyway — the exact failure class this
+   * whole incident started from, re-entering through a different door.
+   *
+   * The fix is not a bigger or bucket-aware threshold at the read side: an ip-derived count is
+   * architecturally NOT ATTRIBUTABLE to one visitor (many real people can share an IP; they
+   * cannot share a session), so it must never reach the per-actor analytics signal AT ALL. Callers
+   * (app/api/search/route.ts) surface ONLY this field to analytics; `minuteAttempts` above stays
+   * available for diagnostics/tests but is not what a caller should stamp onto a row.
+   */
+  sessionMinuteAttempts: number | null;
 }
 
 export interface SearchRateLimitSubject {
@@ -223,7 +245,15 @@ export async function checkSearchRateLimit(
     // `query` (the module import) is deliberately NOT referenced on this path — see `run`'s
     // definition below for why merely reading that binding is not always free.
     const degradedReason = subject.ip || subject.sessionId ? 'no_salt' : 'no_subject';
-    return { allowed: true, reason: null, retryAfterSeconds: 0, degraded: true, degradedReason, minuteAttempts: null };
+    return {
+      allowed: true,
+      reason: null,
+      retryAfterSeconds: 0,
+      degraded: true,
+      degradedReason,
+      minuteAttempts: null,
+      sessionMinuteAttempts: null,
+    };
   }
 
   // Resolved HERE, not at the top of the function: `query` is a live-binding import from
@@ -239,6 +269,9 @@ export async function checkSearchRateLimit(
 
   try {
     let minuteAttempts: number | null = null;
+    // Stays null unless the session bucket is actually reached — see this field's header on
+    // SearchRateLimitResult for why an ip-derived count must never leak into it (F3).
+    let sessionMinuteAttempts: number | null = null;
 
     if (ipHash) {
       const minute = await countAttempt(run, 'ip_minute', ipHash, WINDOW_SECONDS.minute, limits.ip.perMinute);
@@ -250,6 +283,7 @@ export async function checkSearchRateLimit(
           degraded: false,
           degradedReason: null,
           minuteAttempts: minute.attempts,
+          sessionMinuteAttempts: null,
         };
       }
       minuteAttempts = minute.attempts;
@@ -263,6 +297,7 @@ export async function checkSearchRateLimit(
           degraded: false,
           degradedReason: null,
           minuteAttempts,
+          sessionMinuteAttempts: null,
         };
       }
     }
@@ -277,11 +312,15 @@ export async function checkSearchRateLimit(
           degraded: false,
           degradedReason: null,
           minuteAttempts: minute.attempts,
+          sessionMinuteAttempts: minute.attempts,
         };
       }
-      // The session-scope minute count is the more precise signal when both identities were
-      // checked (it is the exact subject, not a possibly-shared IP), so it wins for the flag.
+      // The session-scope minute count is the more precise DIAGNOSTIC signal when both
+      // identities were checked (it is the exact subject, not a possibly-shared IP), so it wins
+      // for `minuteAttempts`. `sessionMinuteAttempts` is set HERE and only here — the one place
+      // in this function a real session subject was confirmed present.
       minuteAttempts = minute.attempts;
+      sessionMinuteAttempts = minute.attempts;
 
       const hour = await countAttempt(run, 'session_hour', sessionHash, WINDOW_SECONDS.hour, limits.session.perHour);
       if (!hour.allowed) {
@@ -292,17 +331,34 @@ export async function checkSearchRateLimit(
           degraded: false,
           degradedReason: null,
           minuteAttempts,
+          sessionMinuteAttempts,
         };
       }
     }
 
-    return { allowed: true, reason: null, retryAfterSeconds: 0, degraded: false, degradedReason: null, minuteAttempts };
+    return {
+      allowed: true,
+      reason: null,
+      retryAfterSeconds: 0,
+      degraded: false,
+      degradedReason: null,
+      minuteAttempts,
+      sessionMinuteAttempts,
+    };
   } catch (err) {
     // The counter table errored (most likely: migration 0051 not applied yet in this
     // environment — a deploy-ordering state, not an attack). Fail open and let the caller decide
     // whether to report it (a genuine DB outage is worth Sentry noise; this deploy-ordering case
     // resolves itself the moment the migration runs).
     void err;
-    return { allowed: true, reason: null, retryAfterSeconds: 0, degraded: true, degradedReason: 'db_error', minuteAttempts: null };
+    return {
+      allowed: true,
+      reason: null,
+      retryAfterSeconds: 0,
+      degraded: true,
+      degradedReason: 'db_error',
+      minuteAttempts: null,
+      sessionMinuteAttempts: null,
+    };
   }
 }

@@ -68,11 +68,23 @@ COMMENT ON COLUMN analytics_event.search_minute_request_count IS
   'CONTINUING, and is not a retroactive judgement on historical rows.';
 
 -- Backs the kpi.ts correlated-subquery lookup ("does this actor have any qualifying row in the
--- window") without touching the much larger set of ordinary (NULL) rows — a partial index on
--- "was measured at all" is a small fraction of the table's size because search_minute_request_count
--- is NULL on every row the rate limiter never actually reached a subject for, i.e. almost all of
--- them. Not indexed on a specific threshold value: kpi.ts's cutoff is a read-time constant that
--- can change, and an index on "IS NOT NULL" remains useful for any cutoff without being rebuilt.
+-- window") without touching every OTHER row in the table — a partial index on "was measured at
+-- all" stays a meaningfully smaller fraction of analytics_event than a full index would, because
+-- this column is populated by exactly ONE event type (search_performed; see
+-- lib/analytics/record.ts) out of the whole §9 catalogue, and NULL on the rare degraded
+-- search_performed request (no salt, no session subject, or a DB error) on top of that.
+--
+-- ⚠ NOT "NULL on almost all rows", REVISED SAME DAY (F5, 2026-09-22 independent recheck): an
+-- earlier draft of this comment assumed the rate limiter would rarely reach a real subject at
+-- all. That was true only because app/search/page.tsx's internal fetch to /api/search was, at
+-- the time, silently dropping the visitor's identity (the very blocker migration 0051 exists to
+-- fix) — once that identity actually arrives, a search_performed row has a real session on
+-- essentially EVERY request, so this column is non-NULL on the large majority of THAT event
+-- type's rows. The index is still worth having (see above), just not for the reason first
+-- written down.
+--
+-- Not indexed on a specific threshold value: kpi.ts's cutoff is a read-time constant that can
+-- change, and an index on "IS NOT NULL" remains useful for any cutoff without being rebuilt.
 CREATE INDEX IF NOT EXISTS idx_analytics_event_high_frequency
   ON analytics_event (user_or_session, created_at)
   WHERE search_minute_request_count IS NOT NULL;

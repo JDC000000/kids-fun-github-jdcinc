@@ -6,24 +6,32 @@
 // just the bug: every existing test — tests/search/route.test.ts,
 // tests/search/route-db-no-fixture-leak.test.ts, tests/search/route-rate-limit-db.test.ts, all of
 // tests/security/search-rate-limit.test.ts — calls GET /api/search directly. None of them ever
-// exercised app/search/page.tsx's OWN internal fetch, which is exactly where the identity
-// (cookie + client IP) was silently lost before the `forwardedIdentityHeaders` fix: Node's
-// `fetch()` has no cookie jar and no idea what request it is running inside of, so a plain
-// `fetch(url, { headers: { accept: ... } })` made this call indistinguishable, on the receiving
-// end, from the server talking to itself. A live-server reproduction (2026-09-22 QA) confirmed the
-// exact failure mode this predicts: 30 requests with one cookie + one IP, all served 200, zero
-// 429s, and `search_rate_limit` held only ip_* rows — never a session_* row — because the cookie
-// genuinely never left this function.
+// exercised app/search/page.tsx's OWN request construction, which is exactly where the identity
+// (cookie + client IP) was silently lost: the original version made a real `fetch()` with a bare
+// `{ accept: ... }` header set, indistinguishable, on the receiving end, from the server talking
+// to itself. A live-server reproduction (2026-09-22 QA) confirmed the exact failure mode this
+// predicts: 30 requests with one cookie + one IP, all served 200, zero 429s, and
+// `search_rate_limit` held only ip_* rows — never a session_* row — because the cookie genuinely
+// never left this function.
 //
-// This file drives `runSearch` (exported from app/search/page.tsx FOR THIS TEST ONLY) with a
-// mocked `next/headers` and a spied `fetch`, and asserts on the ACTUAL headers the outgoing
-// request carries — the one thing the bug class was invisible to every other test in this repo.
+// ═══ F7 (2026-09-22 independent recheck) CHANGED WHAT THIS FILE MOCKS, NOT WHAT IT PROVES ═══
+// runSearch no longer makes a real `fetch()` at all — it calls app/api/search/route.ts's own
+// exported `GET` directly, in-process, to remove the network hop F7 flagged as an unverified risk
+// (a fronting layer could overwrite the forwarded IP on the way back in). So this file mocks THAT
+// import instead of `global.fetch`, and asserts on the real `Request` object `runSearch` builds —
+// if anything, a more direct check than before, since a `Request`'s `.headers` is inspected
+// straight from the object `searchGet` itself would receive, with no serialisation in between.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockHeaders = vi.hoisted(() => ({ current: new Headers() }));
 vi.mock('next/headers', () => ({
   headers: () => mockHeaders.current,
   cookies: () => ({ get: () => undefined, set: () => {} }),
+}));
+
+const mockSearchApiGet = vi.hoisted(() => vi.fn());
+vi.mock('@/app/api/search/route', () => ({
+  GET: (...args: unknown[]) => mockSearchApiGet(...args),
 }));
 
 const { runSearch } = await import('../../app/search/page');
@@ -41,27 +49,20 @@ const EMPTY_SEARCH_BODY = {
   expected: [],
 };
 
-describe('app/search/page.tsx runSearch — forwards the REAL visitor identity to /api/search', () => {
-  const originalFetch = globalThis.fetch;
-  let calls: Array<[input: string | URL | Request, init: RequestInit | undefined]>;
-
+describe('app/search/page.tsx runSearch — the in-process Request it builds for /api/search', () => {
   beforeEach(() => {
-    calls = [];
-    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-      calls.push([input, init]);
-      return Promise.resolve(jsonResponse(EMPTY_SEARCH_BODY));
-    }) as typeof fetch;
+    mockSearchApiGet.mockReset();
+    mockSearchApiGet.mockResolvedValue(jsonResponse(EMPTY_SEARCH_BODY));
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
     mockHeaders.current = new Headers();
   });
 
-  function outgoingRequestHeaders(): Headers {
-    const call = calls[0];
-    expect(call, 'runSearch must call fetch exactly once').toBeDefined();
-    return new Headers(call![1]?.headers);
+  function sentRequest(): Request {
+    expect(mockSearchApiGet, 'runSearch must call the search route exactly once').toHaveBeenCalledTimes(1);
+    const [req] = mockSearchApiGet.mock.calls[0] as [Request];
+    return req;
   }
 
   it('🔴 forwards a real visitor cookie and IP — the blocker this test guards', async () => {
@@ -74,9 +75,9 @@ describe('app/search/page.tsx runSearch — forwards the REAL visitor identity t
     const state = parseSearchState({ q: 'soft play' });
     await runSearch(state, null);
 
-    const sent = outgoingRequestHeaders();
-    expect(sent.get('cookie')).toBe('kf_anon_id=visitor-a-session');
-    expect(sent.get('x-forwarded-for')).toBe('203.0.113.11');
+    const sent = sentRequest();
+    expect(sent.headers.get('cookie')).toBe('kf_anon_id=visitor-a-session');
+    expect(sent.headers.get('x-forwarded-for')).toBe('203.0.113.11');
   });
 
   it('🔴 a second visitor gets their OWN cookie and IP forwarded — not the first visitor, and not the server', async () => {
@@ -88,14 +89,14 @@ describe('app/search/page.tsx runSearch — forwards the REAL visitor identity t
     const state = parseSearchState({ q: 'storytime' });
     await runSearch(state, null);
 
-    const sent = outgoingRequestHeaders();
-    expect(sent.get('cookie')).toBe('kf_anon_id=visitor-b-session');
-    expect(sent.get('x-forwarded-for')).toBe('203.0.113.22');
+    const sent = sentRequest();
+    expect(sent.headers.get('cookie')).toBe('kf_anon_id=visitor-b-session');
+    expect(sent.headers.get('x-forwarded-for')).toBe('203.0.113.22');
     // Nothing from a hypothetical "visitor A" (or a previous call) leaks in — each call reads
     // ONLY the headers() this invocation was given, proving there is no shared/cached identity
     // sitting between page renders (the exact shared-bucket failure mode the live QA
     // reproduction measured: visitors 5-8 of 8 real visitors erased from a 30-day KPI window).
-    expect(sent.get('cookie')).not.toBe('kf_anon_id=visitor-a-session');
+    expect(sent.headers.get('cookie')).not.toBe('kf_anon_id=visitor-a-session');
   });
 
   it('forwards IP only, with no cookie key at all, for a visitor whose request genuinely has none', async () => {
@@ -108,15 +109,25 @@ describe('app/search/page.tsx runSearch — forwards the REAL visitor identity t
     const state = parseSearchState({ q: 'family swim' });
     await runSearch(state, null);
 
-    const sent = outgoingRequestHeaders();
-    expect(sent.get('x-forwarded-for')).toBe('203.0.113.33');
-    expect(sent.has('cookie')).toBe(false);
+    const sent = sentRequest();
+    expect(sent.headers.get('x-forwarded-for')).toBe('203.0.113.33');
+    expect(sent.headers.has('cookie')).toBe(false);
   });
 
   it('still sends `accept: application/json` alongside the forwarded identity', async () => {
     mockHeaders.current = new Headers({ host: 'kidsfunapp.ca', cookie: 'kf_anon_id=x' });
     const state = parseSearchState({ q: 'open gym' });
     await runSearch(state, null);
-    expect(outgoingRequestHeaders().get('accept')).toBe('application/json');
+    expect(sentRequest().headers.get('accept')).toBe('application/json');
+  });
+
+  // 🔴 F7 (2026-09-22 independent recheck): THE FIX ITSELF — no network call happens at all.
+  it('🔴 never touches global fetch — the whole point of removing the network hop', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    mockHeaders.current = new Headers({ cookie: 'kf_anon_id=x', 'x-forwarded-for': '203.0.113.1' });
+    const state = parseSearchState({ q: 'open gym' });
+    await runSearch(state, null);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

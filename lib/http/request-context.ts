@@ -18,15 +18,35 @@
 // populate the table, and simply count nothing"). Callers here now import `clientIpFrom` from
 // that module directly — see app/api/search/route.ts.
 
-/** Read a single cookie value from the request header. Returns undefined when absent. */
-export function readCookie(request: Request, name: string): string | undefined {
-  const header = request.headers.get('cookie');
+/**
+ * Read a single cookie value from a `Headers` object. Returns undefined when absent OR when the
+ * value is not valid percent-encoding.
+ *
+ * ═══ 🔴 F1 (2026-09-22 independent recheck): decodeURIComponent WAS UNGUARDED HERE ═══
+ * `kf_anon_id=%` or any other malformed percent-sequence made THIS THROW, uncaught, before
+ * searchGet's own try/catch could see it — a 500 on every request carrying it, directly violating
+ * lib/security/search-rate-limit.ts's own stated "never throws" invariant one call up the stack
+ * (it never even got the chance to run), and — because app/api/search/route.ts's error path
+ * `await`s a Sentry flush — a cheap way to make every 500 slower than it needs to be. A malformed
+ * cookie is not an attack signature worth surfacing at all; it degrades to "no cookie", exactly
+ * like a missing one, via the same `readCookie(...) ?? null` callers already use.
+ *
+ * Takes `Headers` (not `Request`) so the same function serves a route handler's `request.headers`
+ * AND `next/headers`'s `headers()` result in a server component (app/search/page.tsx) — both
+ * satisfy the standard `Headers` interface.
+ */
+export function readCookie(headers: Headers, name: string): string | undefined {
+  const header = headers.get('cookie');
   if (!header) return undefined;
   for (const part of header.split(';')) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
     if (part.slice(0, eq).trim() === name) {
-      return decodeURIComponent(part.slice(eq + 1).trim());
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return undefined; // malformed percent-encoding — treat as absent, never throw
+      }
     }
   }
   return undefined;
@@ -50,17 +70,32 @@ export function readCookie(request: Request, name: string): string | undefined {
  * deployment topology. Neither is caught by a test that always passes an explicit session id.
  *
  * The fix: read the INCOMING request's own headers (via `next/headers` `headers()` in the
- * caller) and forward the ones that carry identity — verbatim, not recomputed — onto the outgoing
- * fetch. This is safe specifically BECAUSE the fetch is same-origin (this app calling its own
- * route): there is no cross-origin cookie leak, the same trust boundary already applies.
+ * caller) and forward the ones that carry identity onto the outgoing fetch.
+ *
+ * ═══ 🟠 F2 (2026-09-22 independent recheck): ONLY the named cookie, NEVER THE WHOLE JAR ═══
+ * The first version forwarded the raw `cookie` header verbatim — the visitor's ENTIRE cookie jar,
+ * including any httpOnly auth/admin-session cookie, to a URL this app's own code assembles (see
+ * app/search/page.tsx's `baseUrl`, and the "safe because same-origin" argument that fix's own
+ * header comment made). That argument is only as good as same-origin-ness actually being
+ * enforced rather than inferred from an attacker-influenced header — see `baseUrl`'s header for
+ * the companion fix (a CONFIGURED target URL, never derived from `Host`). Even with that fixed,
+ * forwarding only the ONE cookie this call actually needs is the second, independent layer: a
+ * mistake in `baseUrl` in the future costs a leaked `kf_anon_id` (already a non-secret, non-PII
+ * value by design — lib/db/session.ts) instead of a leaked session/admin cookie. `sessionCookieName`
+ * is a parameter, not a hardcoded `kf_anon_id`, so this module stays free of a dependency on
+ * lib/db/session.ts's constant while still only ever forwarding exactly what the caller names.
  *
  * `extra` merges in caller-specific headers (e.g. `accept`) without a second object spread at
  * every call site.
  */
-export function forwardedIdentityHeaders(incoming: Headers, extra: Record<string, string> = {}): HeadersInit {
+export function forwardedIdentityHeaders(
+  incoming: Headers,
+  sessionCookieName: string,
+  extra: Record<string, string> = {}
+): HeadersInit {
   const out: Record<string, string> = { ...extra };
-  const cookie = incoming.get('cookie');
-  if (cookie) out.cookie = cookie;
+  const sessionId = readCookie(incoming, sessionCookieName);
+  if (sessionId !== undefined) out.cookie = `${sessionCookieName}=${encodeURIComponent(sessionId)}`;
   const forwardedFor = incoming.get('x-forwarded-for');
   if (forwardedFor) out['x-forwarded-for'] = forwardedFor;
   const realIp = incoming.get('x-real-ip');

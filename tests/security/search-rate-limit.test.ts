@@ -189,12 +189,14 @@ describe('IP scope — defence in depth against a caller that drops its cookie j
   });
 });
 
-// `minuteAttempts` is the RAW count this module hands to the caller — NOT a pre-thresholded
-// boolean. lib/analytics/kpi.ts owns the DAU/WAU/MAU exclusion CUTOFF against this number at read
-// time (see ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD's header for why the write-time-boolean
-// version of this was replaced the same day it was written). This module's only job is to report
-// the count honestly.
-describe('minuteAttempts — the raw count surfaced for the analytics signal', () => {
+// `minuteAttempts` is a RAW, diagnostic count — NOT a pre-thresholded boolean, and (since F3,
+// 2026-09-22 independent recheck) NOT what a caller should stamp onto analytics_event either: it
+// falls back to the ip-scope count when no session is present, and an ip-derived count is not
+// attributable to one visitor (see `sessionMinuteAttempts`'s own describe block below for why).
+// lib/analytics/kpi.ts owns the DAU/WAU/MAU exclusion CUTOFF at read time (see
+// ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD's header for why the write-time-boolean version of this
+// was replaced the same day it was written) against `sessionMinuteAttempts` specifically.
+describe('minuteAttempts — the raw diagnostic count', () => {
   it('tracks the ALLOWED count exactly as it climbs, for a session subject', async () => {
     const db = rateLimitTable();
     for (let i = 1; i <= 5; i++) {
@@ -229,6 +231,53 @@ describe('minuteAttempts — the raw count surfaced for the analytics signal', (
   });
 });
 
+// 🟡 F3 (2026-09-22 independent recheck): `sessionMinuteAttempts` — the field callers must
+// actually stamp onto analytics_event. `minuteAttempts` above falls back to the ip-scope count
+// when no session is present; this field never does, because an ip-derived count is not
+// attributable to one visitor (many real people can share an IP; they cannot share a session).
+// Reproduced live before this fix: 12 cookieless requests from one IP, every one individually
+// ALLOWED (nowhere near ip.perMinute=40), yet every real actor sharing that address got silently
+// excluded from a 30-day DAU/WAU/MAU window anyway.
+describe('sessionMinuteAttempts — the field analytics must actually use', () => {
+  it('tracks the session-scope count exactly, when a session subject is present', async () => {
+    const db = rateLimitTable();
+    for (let i = 1; i <= 5; i++) {
+      const result = await checkSearchRateLimit(subject(IP, SESSION), { query: db.query });
+      expect(result.sessionMinuteAttempts).toBe(i);
+    }
+  });
+
+  it('🔴 stays null for an IP-ONLY subject, no matter how high the ip-scope count climbs', async () => {
+    const db = rateLimitTable();
+    // Climb well past ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD (10) — reproducing the exact
+    // "12 cookieless requests" scenario — while staying under ip.perMinute (40), so every one
+    // of these is still individually ALLOWED, exactly like the live repro.
+    for (let i = 1; i <= 12; i++) {
+      const result = await checkSearchRateLimit(subject(IP, null), { query: db.query });
+      expect(result.allowed, `request ${i}`).toBe(true);
+      expect(result.minuteAttempts, `request ${i} (diagnostic field)`).toBe(i);
+      expect(result.sessionMinuteAttempts, `request ${i} (analytics field)`).toBeNull();
+    }
+  });
+
+  it('is null on a degraded/no-subject result', async () => {
+    const db = rateLimitTable();
+    const result = await checkSearchRateLimit(subject(null, null), { query: db.query });
+    expect(result.sessionMinuteAttempts).toBeNull();
+  });
+
+  it('is null when refused by ip_minute before the session bucket was ever reached', async () => {
+    const db = rateLimitTable();
+    for (let i = 0; i < SEARCH_RATE_LIMITS.ip.perMinute; i++) {
+      await checkSearchRateLimit(subject(IP, `fresh-session-${i}`), { query: db.query });
+    }
+    const refused = await checkSearchRateLimit(subject(IP, SESSION), { query: db.query });
+    expect(refused.allowed).toBe(false);
+    expect(refused.reason).toBe('ip_minute');
+    expect(refused.sessionMinuteAttempts).toBeNull();
+  });
+});
+
 describe('what it never lets out, and how it degrades', () => {
   it('never sends a raw IP or a raw session id to the database', async () => {
     const db = rateLimitTable();
@@ -254,6 +303,7 @@ describe('what it never lets out, and how it degrades', () => {
       degraded: true,
       degradedReason: 'no_salt',
       minuteAttempts: null,
+      sessionMinuteAttempts: null,
     });
     expect(db.rows.size).toBe(0);
   });

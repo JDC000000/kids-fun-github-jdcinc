@@ -181,4 +181,23 @@ describe.skipIf(!hasDb)('GET /api/search rate limit (real Postgres)', () => {
     expect(refused.status).toBe(429);
     expect(refused.headers.get('Retry-After')).toBe('60');
   });
+
+  // 🟡 F3 (2026-09-22 independent recheck), end to end: an ip-scope count must NEVER reach
+  // analytics_event.search_minute_request_count, no matter how high it climbs — see
+  // lib/security/search-rate-limit.ts's `sessionMinuteAttempts` header for the reproduced
+  // failure (12 cookieless requests, all allowed, every real actor sharing that IP silently
+  // excluded from DAU/WAU/MAU). Well past ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD (10) here,
+  // still nowhere near ip.perMinute (40) — every response must omit `rateLimit` entirely.
+  it('🔴 never stamps rateLimit for cookieless requests, even well past the exclusion threshold', async () => {
+    const ip = `10.83.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`;
+    testIps.push(ip);
+    expect(ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD).toBeLessThan(SEARCH_RATE_LIMITS.ip.perMinute);
+
+    for (let i = 1; i <= ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD + 2; i++) {
+      const res = await GET(request(ip, null));
+      expect(res.status, `request ${i}`).toBe(200);
+      const body = (await res.json()) as { rateLimit?: unknown };
+      expect(body.rateLimit, `request ${i} must omit rateLimit (ip-only, no session)`).toBeUndefined();
+    }
+  });
 });

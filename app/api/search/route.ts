@@ -67,7 +67,7 @@ async function searchGet(request: Request): Promise<NextResponse> {
   // the analytics fix are the same choke point, deliberately.
   const rateLimit = await checkSearchRateLimit({
     ip: clientIpFrom(request.headers),
-    sessionId: readCookie(request, ANON_SESSION_COOKIE) ?? null,
+    sessionId: readCookie(request.headers, ANON_SESSION_COOKIE) ?? null,
   });
   if (rateLimit.degraded && (rateLimit.degradedReason === 'db_error' || rateLimit.degradedReason === 'no_salt')) {
     // db_error: expected once, harmlessly, the moment this ships ahead of migration 0051 being
@@ -105,7 +105,13 @@ async function searchGet(request: Request): Promise<NextResponse> {
   // count, not a boolean: lib/analytics/kpi.ts decides the exclusion threshold at READ time, so
   // a mis-tuned cutoff is a query change, not a re-migration — see search-rate-limit.ts's header
   // on why a silent write-time boolean was the wrong shape for this.
-  const searchMinuteRequestCount = rateLimit.minuteAttempts;
+  //
+  // 🟡 F3 (2026-09-22 independent recheck): `sessionMinuteAttempts`, NEVER `minuteAttempts`. The
+  // latter falls back to the ip-scope count when no session was available, and an ip-derived
+  // count is not attributable to one visitor — see SearchRateLimitResult.sessionMinuteAttempts's
+  // header for the reproduced failure this caused (a shared IP's real, ordinary traffic silently
+  // excluding every one of its distinct visitors from DAU/WAU/MAU).
+  const searchMinuteRequestCount = rateLimit.sessionMinuteAttempts;
 
   if (process.env.KIDS_FUN_SEARCH_BACKEND === 'database') {
     const dbResult = await searchDatabase(searchRequest, preciseGeocoder);

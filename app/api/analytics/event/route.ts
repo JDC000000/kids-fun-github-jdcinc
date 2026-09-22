@@ -49,7 +49,7 @@ async function analyticsPost(request: Request): Promise<NextResponse> {
   }
 
   // 5. Trust the server-derived anon id, not any client-supplied session.
-  const incomingCookie = readCookie(request, ANON_SESSION_COOKIE);
+  const incomingCookie = readCookie(request.headers, ANON_SESSION_COOKIE);
   const anonId = getOrCreateAnonId(incomingCookie);
 
   // 6. Best-effort write — a DB hiccup must not fail the request.
