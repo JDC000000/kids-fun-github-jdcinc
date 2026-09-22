@@ -28,6 +28,12 @@ import { queryWithTimeout } from '@/lib/db/client';
 import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 import { WAU_WINDOW_DAYS, MAU_WINDOW_DAYS } from './kpi';
 import { anchorMsFromIso, isPreHistory } from './prehistory';
+// Not a write-side import (see this file's header) — same reasoning as kpi.ts's identical
+// import: lib/security/search-rate-limit.ts is the security module that PRODUCES
+// search_minute_request_count; this file only reads the constant that decides the exclusion
+// cutoff for it, single-sourced with kpi.ts so the tiles and this trend line can never
+// silently disagree about which sessions count as real.
+import { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } from '@/lib/security/search-rate-limit';
 
 /** How many trailing calendar days the trend charts plot by default. */
 export const TREND_WINDOW_DAYS = 30;
@@ -219,6 +225,22 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
      *
      * NULLIF(user_or_session,'') collapses the old `IS NOT NULL AND <> ''` pair into one value, so
      * the per-day aggregates below only have to test for NULL.
+     *
+     * ═══ F3 (2026-09-22, second independent recheck): THE SAME EXCLUSION kpi.ts APPLIES ═══
+     * lib/analytics/kpi.ts's getActiveUsers (the admin TILES) excludes any actor with a
+     * search_minute_request_count row at/above ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD from
+     * DAU/WAU/MAU entirely — see that migration's (0052) and module's (search-rate-limit.ts)
+     * headers for the full 2026-09-22 incident context. This query is the trend LINE plotted
+     * right next to those same tiles (app/admin/product-health/page.tsx renders both), and until
+     * this fix it had NO exclusion at all: an Operator would have seen clean DAU tiles sitting
+     * beside an uncontaminated-looking-but-actually-still-contaminated trend line for the exact
+     * metric this incident is about, with no way to reconcile the two. The `NOT EXISTS` inside
+     * `scan` excludes a flagged actor's contribution ENTIRELY — every day, not just the day it
+     * was flagged on, matching kpi.ts's "one qualifying row disqualifies the whole actor for the
+     * window" semantics — and, because `scan` also backs `events` (raw daily volume), the same
+     * exclusion applies there too: a bot burst is exactly as much a contamination of "how much
+     * happened today" as it is of "how many distinct people were active", and this repo has no
+     * reason to leave one chart honest and its neighbour lying.
      */
     `
     WITH days AS (
@@ -237,6 +259,14 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
        WHERE e.created_at >= date_trunc('day', now())
                              - ((($1::int - 1) + ($3::int - 1)) * interval '1 day')
          AND e.created_at <  date_trunc('day', now()) + interval '1 day'
+         AND NOT EXISTS (
+               SELECT 1 FROM analytics_event hf
+                WHERE hf.user_or_session = e.user_or_session
+                  AND hf.created_at >= date_trunc('day', now())
+                                       - ((($1::int - 1) + ($3::int - 1)) * interval '1 day')
+                  AND hf.created_at <  date_trunc('day', now()) + interval '1 day'
+                  AND hf.search_minute_request_count >= $4::int
+             )
        GROUP BY 1, 2
     ),
     anchor AS (SELECT min(created_at) AS first_event_at FROM analytics_event)
@@ -253,7 +283,7 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
     FROM days d
     ORDER BY d.day
     `,
-    [windowDays, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS],
+    [windowDays, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD],
     adminAnalyticsQueryTimeoutMs()
   );
 

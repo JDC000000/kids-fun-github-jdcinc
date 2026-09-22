@@ -115,11 +115,11 @@ describe('buildTrendPoints — pre-history vs. a genuine zero', () => {
 });
 
 /** Insert one analytics_event at a chosen age for a chosen session. */
-async function insertEvent(session: string, hoursAgo: number): Promise<void> {
+async function insertEvent(session: string, hoursAgo: number, searchMinuteRequestCount: number | null = null): Promise<void> {
   await query(
-    `INSERT INTO analytics_event (event_type, user_or_session, created_at)
-       VALUES ('listing_viewed', $1, now() - ($2 || ' hours')::interval)`,
-    [session, String(hoursAgo)]
+    `INSERT INTO analytics_event (event_type, user_or_session, created_at, search_minute_request_count)
+       VALUES ('listing_viewed', $1, now() - ($2 || ' hours')::interval, $3)`,
+    [session, String(hoursAgo), searchMinuteRequestCount]
   );
 }
 
@@ -219,5 +219,39 @@ describe.skipIf(!hasDb)('getActivityTrend (DB)', () => {
     expect(last1.dau! - last0.dau!).toBe(0); // not active *today*
     expect(last1.wau! - last0.wau!).toBe(1); // within trailing 7d
     expect(last1.mau! - last0.mau!).toBe(1); // within trailing 30d
+  });
+
+  // F3 (2026-09-22, second independent recheck): this query had NO exclusion at all before —
+  // app/admin/product-health/page.tsx renders this trend line right next to kpi.ts's tiles,
+  // which DO exclude, so an Operator would have seen clean DAU tiles beside a still-contaminated
+  // DAU trend line for the exact metric this incident is about. A session with a qualifying
+  // search_minute_request_count row must be excluded from today's DAU/WAU/MAU AND today's
+  // `events` volume entirely — not just the one flagged row.
+  it('🔴 excludes an actor from DAU/WAU/MAU AND events entirely once ANY of its rows reaches the exclusion threshold', async () => {
+    const { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } = await import('../../lib/security/search-rate-limit');
+    const before = await getActivityTrend();
+    const last0 = before.points[before.points.length - 1];
+
+    const flagged = randomUUID();
+    await insertEvent(flagged, 0); // an ordinary-looking row...
+    await insertEvent(flagged, 0, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD); // ...plus a qualifying one
+
+    const after = await getActivityTrend();
+    const last1 = after.points[after.points.length - 1];
+
+    expect(last1.dau! - last0.dau!).toBe(0);
+    expect(last1.wau! - last0.wau!).toBe(0);
+    expect(last1.mau! - last0.mau!).toBe(0);
+    expect(last1.events! - last0.events!).toBe(0); // both of THIS actor's rows are excluded
+
+    // Control: an identically-shaped, unflagged actor still counts normally, proving the
+    // exclusion keys off the threshold crossing and not some accidental property of the seed.
+    const clean = randomUUID();
+    await insertEvent(clean, 0);
+    await insertEvent(clean, 0);
+    const after2 = await getActivityTrend();
+    const last2 = after2.points[after2.points.length - 1];
+    expect(last2.dau! - last1.dau!).toBe(1);
+    expect(last2.events! - last1.events!).toBe(2);
   });
 });
