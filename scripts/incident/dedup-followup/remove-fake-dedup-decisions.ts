@@ -29,7 +29,7 @@
 //
 // Reversible: all 49 rows are written to a JSON backup with ready-to-run restore SQL first.
 import { readFileSync, existsSync } from 'node:fs';
-import { Abort, log, parseArgs, require_, runGuarded, writeBackup } from './_harness';
+import { Abort, backupRunDir, log, parseArgs, require_, runGuarded, writeBackup } from './_harness';
 
 const MANIFEST = 'scripts/incident/dedup-followup/manifest-dedup-followup.json';
 
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
          FROM llm_batch_decision WHERE id = ANY($1::uuid[]) ORDER BY created_at, id`, [ids]
     )).rows as Record<string, unknown>[];
     const backup = writeBackup(
-      args.backupDir, 'llm_batch_decision-fake-dedup', 'llm_batch_decision', full,
+      backupRunDir(args), 'llm_batch_decision-fake-dedup', 'llm_batch_decision', full,
       { kind: 'insert' }, ['detail']
     );
     log(`  backup written: ${backup}`);

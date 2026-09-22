@@ -14,8 +14,8 @@
 //     ready-to-run restore SQL. Written in dry-run mode too, so the backup can be inspected and
 //     the restore path reviewed before anyone commits anything.
 //   • Any precondition failure aborts the whole transaction — never a partial application.
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
 // Relative, not '@/': run under vite-node, which does not load the Vitest alias.
 import { isLocalDatabaseHost, resolveConnectionHost } from '../../../lib/db/connection-host';
@@ -33,10 +33,87 @@ export interface Args {
   commit: boolean;
   confirmed: boolean;
   manifestPath: string;
-  backupDir: string;
+  /** Explicit --backup-dir, if the caller gave one. Resolution happens in backupRunDir(). */
+  backupDirOverride: string | null;
 }
 
-export function parseArgs(argv: string[], defaultManifest: string, defaultBackupSubdir = 'scripts/incident/dedup-followup/backups'): Args {
+/**
+ * ═══ WHERE BACKUPS GO, AND WHY NOT IN THE REPO ═══
+ * These files hold REAL PRODUCTION ROW VALUES, and the first version defaulted them to a
+ * gitignored directory INSIDE the shared worktree. That was wrong twice over, and both halves
+ * actually bit:
+ *
+ *   • SHARED: several sessions ran these tools in the same worktree, so everyone's backups landed
+ *     in one directory with no ownership marker. I then ran `rm -rf` on it believing it was mine
+ *     and destroyed two reviewers' evidence. A path-scoped delete cannot tell whose files it is
+ *     deleting — the same mistake, in miniature, as the incident this toolkit exists to clean up.
+ *   • GITIGNORED: because they never showed in `git status`, nobody could SEE them accumulating
+ *     from multiple writers. The ignore rule made the collision invisible at the same time as the
+ *     shared default made it likely.
+ *
+ * So: OUTSIDE the repo (a stray `git clean` in a shared worktree would otherwise delete the only
+ * rollback that exists), and PER RUN, so two runs can never share a directory and no run can ever
+ * be handed files it did not write.
+ */
+export const DEFAULT_BACKUP_ROOT_NAME = 'kf-incident-backups';
+
+/** Absolute paths this process has written, in order. The ONLY thing any cleanup may ever touch. */
+const written: string[] = [];
+export function writtenBackups(): readonly string[] {
+  return written;
+}
+
+/**
+ * Resolve the per-run backup directory, create it, and prove it is safe to write into.
+ *
+ * Refuses when: the resolved root is inside the repo · the run directory already holds files this
+ * run did not write · commit mode is requested without an explicit destination.
+ */
+export function backupRunDir(args: Args): string {
+  const repoRoot = resolve(process.cwd());
+  const explicit = args.backupDirOverride ?? process.env.KF_INCIDENT_BACKUP_ROOT ?? null;
+
+  // A real write must not silently inherit a default location. Choosing where an irreversible
+  // operation's only rollback lives is the operator's decision, not a fallback.
+  if (args.commit && args.confirmed && !explicit) {
+    throw new Abort(
+      `refusing to COMMIT without an explicit backup destination. These files are the only ` +
+        `rollback for an irreversible delete, so their location must be chosen deliberately: pass ` +
+        `--backup-dir <abs path> or set KF_INCIDENT_BACKUP_ROOT. (Dry runs may use the default.)`
+    );
+  }
+
+  const root = explicit ?? join(repoRoot, '..', DEFAULT_BACKUP_ROOT_NAME);
+  const absRoot = isAbsolute(root) ? resolve(root) : resolve(repoRoot, root);
+
+  const rel = relative(repoRoot, absRoot);
+  const insideRepo = rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  if (insideRepo) {
+    throw new Abort(
+      `refusing to write backups inside the repository (${absRoot}). They contain real production ` +
+        `row values, and a directory in the tree is one concurrent \`git clean\` — or one ` +
+        `path-scoped \`rm\` by a session that thinks the directory is its own — away from being ` +
+        `the rollback that no longer exists. Choose a path outside the repo.`
+    );
+  }
+
+  const runId = process.env.KF_BACKUP_RUN_ID ?? `${new Date().toISOString().replace(/[:.]/g, '-')}-pid${process.pid}`;
+  const runDir = join(absRoot, runId);
+  mkdirSync(runDir, { recursive: true });
+
+  // Per-run by construction, so anything already here was written by someone else.
+  const existing = readdirSync(runDir).filter((f) => !written.includes(join(runDir, f)));
+  if (existing.length > 0) {
+    throw new Abort(
+      `refusing to write into ${runDir}: it already contains ${existing.length} file(s) this run ` +
+        `did not create (${existing.slice(0, 3).join(', ')}). Another run may be using it — this ` +
+        `tool never shares a backup directory, and never deletes a file it did not write.`
+    );
+  }
+  return runDir;
+}
+
+export function parseArgs(argv: string[], defaultManifest: string): Args {
   const flags = new Set<string>();
   let manifest = '';
   let backupDir = '';
@@ -60,7 +137,7 @@ export function parseArgs(argv: string[], defaultManifest: string, defaultBackup
     // Resolved from cwd (the wrapper cds to the repo root); under vite-node argv[1] is the
     // vite-node binary, not this file.
     manifestPath: manifest || join(process.cwd(), defaultManifest),
-    backupDir: backupDir || join(process.cwd(), defaultBackupSubdir),
+    backupDirOverride: backupDir || null,
   };
 }
 
@@ -136,6 +213,7 @@ export function writeBackup(
             `UPDATE ${table} SET ${mode.columns.map((c) => `${c} = ${lit(r[c], c)}`).join(', ')} ` +
             `WHERE ${mode.key} = ${lit(r[mode.key], mode.key)};`
         );
+  written.push(path);
   writeFileSync(
     path,
     JSON.stringify(

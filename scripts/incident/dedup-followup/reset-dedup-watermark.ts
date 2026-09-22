@@ -27,7 +27,7 @@
 //
 // Reversible: the row is written to a JSON backup with ready-to-run restore SQL before deletion.
 import { readFileSync, existsSync } from 'node:fs';
-import { Abort, log, parseArgs, require_, runGuarded, writeBackup } from './_harness';
+import { Abort, backupRunDir, log, parseArgs, require_, runGuarded, writeBackup } from './_harness';
 
 const MANIFEST = 'scripts/incident/dedup-followup/manifest-dedup-followup.json';
 const JOB = 'llm_dedup_adjudication';
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
     )).rows[0].n);
     log(`  other llm_batch_run rows present (must be untouched): ${others}`);
 
-    const backup = writeBackup(args.backupDir, 'llm_batch_run-dedup-watermark', 'llm_batch_run', [row as unknown as Record<string, unknown>]);
+    const backup = writeBackup(backupRunDir(args), 'llm_batch_run-dedup-watermark', 'llm_batch_run', [row as unknown as Record<string, unknown>]);
     log(`  backup written: ${backup}`);
 
     log('\n── deletion ──');

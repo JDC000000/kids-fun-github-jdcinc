@@ -101,6 +101,20 @@ because six of the polluted families (`activenet`, `library_bibliocommons`, `per
 window-scoped DELETE would be a second incident. All 56 rows were independently attributed to the
 specific test file whose literal mints them — see `ATTRIBUTION.md` — with zero unattributable.
 
+**Backups live outside the repo, per run.** `<repo>/../kf-incident-backups/<runId>/`, overridable
+via `--backup-dir` / `KF_INCIDENT_BACKUP_ROOT`, mandatory in commit mode. See
+`dedup-followup/README.md` for why — briefly: the first design put them in a gitignored directory
+inside a shared worktree, and a path-scoped `rm -rf` (mine) destroyed another session's backups.
+
+**⚠️ GAP, flagged not fixed: this cleanup script writes NO backup.** It performs 15 `DELETE`
+statements removing ~183 production rows and, unlike the dedup-followup and stale-restore tools, it
+captures nothing first. Its safety rests entirely on the reviewed UUID manifest and the fingerprint
+re-verification — which is a real argument, but it is not a rollback. Adding a `writeBackup` call
+before the deletions is a small change and, in my view, the right one; it is left undone here only
+because this file is inside the scope two reviewers are currently pinned to, and slipping an
+unreviewed behaviour change into it is the sort of thing tonight has taught us not to do. Operator's
+call whether to take it before or after the current review round.
+
 **Dry run is NOT read-only.** It executes the real `DELETE`s inside a transaction and rolls back, so
 it takes row locks and runs full `count(*)` scans over `activity_occurrence` and the 3.2M-row
 `analytics_event`. It deliberately cannot run under the `SET default_transaction_read_only = on`

@@ -88,4 +88,20 @@ run-counter drift, a new legitimate decision row appearing after the manifest, h
 cannot read a half-confirmation as success), missing `KF_CLEANUP_TARGET_URL`, wrong database,
 missing manifest, duplicate ids in the manifest, and re-running after the fix is already applied.
 
-`backups/` is gitignored — those files can contain real production row payloads.
+## Where backups go — and why not in the repo
+
+Backups are written to a **per-run directory outside the repository**:
+`<repo>/../kf-incident-backups/<runId>/`, overridable with `--backup-dir` or
+`KF_INCIDENT_BACKUP_ROOT`, and **an explicit destination is REQUIRED in commit mode** (a dry run may
+use the default). The script refuses an in-repo path, and refuses any run directory that already
+holds a file it did not write this run.
+
+That is not caution in the abstract. The first design defaulted backups to a gitignored directory
+*inside* the shared worktree, and while rehearsing these tools I ran `rm -rf` on it three times
+believing the files were mine — destroying two reviewer sessions' evidence. Two of my own choices
+made that likely and invisible at once: a shared default location, and a gitignore rule that kept
+the collision out of `git status`. A path-scoped delete cannot tell whose files it is removing.
+
+So this toolkit **never deletes by path**. It deletes only specific file paths it created and
+recorded in the same run, and `tests/testing/incident-toolkit-safety.test.ts` fails the build if any
+script here grows an `rm -rf`, a recursive `rmSync`, or an in-repo backup default.
