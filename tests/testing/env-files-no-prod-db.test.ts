@@ -55,6 +55,35 @@ function looksLikeConnectionString(value: string): boolean {
 /** Guard-defeating switches that must never be shipped pre-set in a file. */
 const OPT_OUT_KEYS = ['KIDS_FUN_ALLOW_NONLOCAL_DB', 'KIDS_FUN_TEST_ALLOW_NONLOCAL_DB_HOST'];
 
+/**
+ * The scan itself, as a PURE function over file CONTENT.
+ *
+ * Pulled out so the matching rules can be proven against synthetic fixtures rather than against
+ * whatever `.env*` files happen to exist on disk. That mattered immediately: once the temporary
+ * clone credential was removed, the repo root held only `.env.example`, and the value-shape net —
+ * the half that provides all the breadth — had nothing left to bite on. A guard whose coverage
+ * depends on a hazard being present is not covered at all.
+ */
+export function managedHostsIn(content: string): { key: string; host: string }[] {
+  const found: { key: string; host: string }[] = [];
+  for (const [key, value] of parseEnv(content)) {
+    if (!value) continue;
+    if (!isDbKey(key) && !looksLikeConnectionString(value)) continue;
+    const host = resolveConnectionHost(value);
+    if (isManagedDatabaseHost(host)) found.push({ key, host: host ?? '' });
+  }
+  return found;
+}
+
+/** Opt-out switches present and enabled in file CONTENT. */
+export function optOutsIn(content: string): string[] {
+  const env = parseEnv(content);
+  return OPT_OUT_KEYS.filter((k) => {
+    const v = env.get(k);
+    return v !== undefined && v !== '' && v !== '0' && v.toLowerCase() !== 'false';
+  });
+}
+
 function envFiles(): string[] {
   return readdirSync(ROOT)
     .filter((f) => f.startsWith('.env'))
@@ -123,5 +152,68 @@ describe('repo-root .env* files never name a managed/hosted database', () => {
     const parsed = parseEnv('export DATABASE_URL=postgres://u:p@db.x.supabase.co:5432/d\nexport KIDS_FUN_ALLOW_NONLOCAL_DB=1\n');
     expect(parsed.get('DATABASE_URL')).toBe('postgres://u:p@db.x.supabase.co:5432/d');
     expect(parsed.get('KIDS_FUN_ALLOW_NONLOCAL_DB')).toBe('1');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SYNTHETIC FIXTURES — coverage that does not depend on what is on disk.
+//
+// Every case below is content, not a file. Before these existed the matching rules were exercised
+// only by whichever `.env*` files happened to be present, so with just `.env.example` at the root
+// the value-shape net was entirely unproven — it could have been deleted without a single test
+// noticing. These pin both halves, in both directions.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('env scan rules, proven against synthetic content', () => {
+  it('catches a managed host under a key nobody enumerated (VALUE-shape net)', () => {
+    // The whole point of the value net: an unlisted key still gets checked because the VALUE
+    // parses as a postgres connection string.
+    const hits = managedHostsIn('SOME_BRAND_NEW_TOOL_TARGET=postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres\n');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe('db.abcdefgh.supabase.co');
+  });
+
+  it('catches a managed host under a conventional key (KEY-shape net)', () => {
+    expect(managedHostsIn('RECOVERY_CLONE_DATABASE_URL=postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres\n')).toHaveLength(1);
+    expect(managedHostsIn('USER_DATABASE_URL=postgresql://u:p@aws-0-ca-central-1.pooler.supabase.com:6543/postgres\n')).toHaveLength(1);
+  });
+
+  it('catches the `export ` form, which `set -a; . file` sources identically', () => {
+    expect(managedHostsIn('export DATABASE_URL=postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres\n')).toHaveLength(1);
+  });
+
+  it('catches the trailing-dot and homoglyph host forms too', () => {
+    expect(managedHostsIn('DATABASE_URL=postgresql://u:p@db.abcdefgh.supabase.co.:5432/postgres\n')).toHaveLength(1);
+    expect(managedHostsIn('DATABASE_URL=postgresql://u:p@db.abcdefgh.supabase．co:5432/postgres\n')).toHaveLength(1);
+  });
+
+  it('does NOT flag the public Supabase API origin (the false positive a reviewer planted)', () => {
+    // https://<ref>.supabase.co is the REST/API origin, not a connection string, and it belongs in
+    // env files. Flagging it would train everyone to ignore this test.
+    expect(managedHostsIn('NEXT_PUBLIC_SUPABASE_URL=https://abcdefghijkl.supabase.co\nSUPABASE_ANON_KEY=fake.anon.key\n')).toHaveLength(0);
+  });
+
+  it('does NOT flag local targets, comments, or blank values', () => {
+    expect(managedHostsIn('DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres\n')).toHaveLength(0);
+    expect(managedHostsIn('# DATABASE_URL=postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres\n')).toHaveLength(0);
+    expect(managedHostsIn('DATABASE_URL=\n')).toHaveLength(0);
+  });
+
+  it('detects opt-out switches in either form, and only when actually enabled', () => {
+    expect(optOutsIn('KIDS_FUN_ALLOW_NONLOCAL_DB=1\n')).toEqual(['KIDS_FUN_ALLOW_NONLOCAL_DB']);
+    expect(optOutsIn('export KIDS_FUN_ALLOW_NONLOCAL_DB=true\n')).toEqual(['KIDS_FUN_ALLOW_NONLOCAL_DB']);
+    expect(optOutsIn('KIDS_FUN_TEST_ALLOW_NONLOCAL_DB_HOST=db.x.internal\n')).toEqual(['KIDS_FUN_TEST_ALLOW_NONLOCAL_DB_HOST']);
+    expect(optOutsIn('KIDS_FUN_ALLOW_NONLOCAL_DB=0\n')).toEqual([]);
+    expect(optOutsIn('KIDS_FUN_ALLOW_NONLOCAL_DB=false\n')).toEqual([]);
+  });
+
+  it('reproduces the 2026-09-21 incident file verbatim and flags BOTH hazards', () => {
+    const incidentFile = [
+      'export DATABASE_URL=postgresql://postgres:REDACTED@db.rnqaofjhiqmqaipqpiua.supabase.co:5432/postgres',
+      'export USER_DATABASE_URL=postgresql://kids_fun_user_app.rnqaofjhiqmqaipqpiua:REDACTED@aws-0-ca-central-1.pooler.supabase.com:6543/postgres',
+      'export KIDS_FUN_ALLOW_NONLOCAL_DB=1',
+      '',
+    ].join('\n');
+    expect(managedHostsIn(incidentFile)).toHaveLength(2);
+    expect(optOutsIn(incidentFile)).toEqual(['KIDS_FUN_ALLOW_NONLOCAL_DB']);
   });
 });

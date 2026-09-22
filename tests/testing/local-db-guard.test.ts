@@ -11,6 +11,7 @@ import {
   isManagedDatabaseHost,
   TEST_HOST_OVERRIDE_ENV,
 } from '@/lib/testing/local-db-guard';
+import { hasNonAsciiHost } from '@/lib/db/connection-host';
 
 describe('local-db-guard: isLocalDatabaseHost', () => {
   it('accepts loopback / local hosts', () => {
@@ -185,6 +186,54 @@ describe('local-db-guard: assertTestDatabaseUrl (test path — no boolean overri
     process.env.KIDS_FUN_ALLOW_NONLOCAL_DB = '1';
     process.env[TEST_HOST_OVERRIDE_ENV] = 'db.rnqaofjhiqmqaipqpiua.supabase.co.';
     expect(() => assertTestDatabaseUrl(DOTTED)).toThrow(/REFUSING TO RUN/);
+  });
+
+  // ═══ HOMOGLYPH FULL STOPS — the trailing-dot fix was NOT enough ═══
+  // `db.<ref>.supabase．co` with U+FF0E (also U+3002 IDEOGRAPHIC FULL STOP and U+FF61 HALFWIDTH
+  // IDEOGRAPHIC FULL STOP) is a different STRING from the ASCII form but resolvers map it onto the
+  // same HOST — a reviewer demonstrated it end to end. It therefore matched none of the managed
+  // patterns and fell through to the OVERRIDABLE branch, defeating the "no env var can permit
+  // this" guarantee a second time, by a second route.
+  //
+  // These exist because the fix was landed with no test at all: a one-line refactor dropping the
+  // non-ASCII check would have left every other test green while silently reopening a bypass that
+  // had been proven live. That is the failure mode worth spending a test on.
+  it.each([
+    ['U+FF0E FULLWIDTH FULL STOP', 'db.rnqaofjhiqmqaipqpiua.supabase．co'],
+    ['U+3002 IDEOGRAPHIC FULL STOP', 'db.rnqaofjhiqmqaipqpiua.supabase。co'],
+    ['U+FF61 HALFWIDTH IDEOGRAPHIC FULL STOP', 'db.rnqaofjhiqmqaipqpiua.supabase｡co'],
+  ])('refuses a homoglyph managed host (%s)', (_label, host) => {
+    expect(hasNonAsciiHost(host)).toBe(true);
+    // never classified local, and never allowed to reach the overridable branch
+    expect(isLocalDatabaseHost(host)).toBe(false);
+    expect(isManagedDatabaseHost(host)).toBe(true);
+    expect(() => assertTestDatabaseUrl(`postgresql://postgres:pw@${host}:5432/postgres`)).toThrow(
+      /REFUSING TO RUN/
+    );
+  });
+
+  it('no env var rescues a homoglyph host — including one that names it exactly', () => {
+    const host = 'db.rnqaofjhiqmqaipqpiua.supabase．co';
+    process.env.KIDS_FUN_ALLOW_NONLOCAL_DB = '1';
+    process.env[TEST_HOST_OVERRIDE_ENV] = host; // the exact-host override must not apply either
+    expect(() => assertTestDatabaseUrl(`postgresql://postgres:pw@${host}:5432/postgres`)).toThrow(
+      /non-ASCII hostname/
+    );
+  });
+
+  it('a homoglyph smuggled through ?host= is refused too (same as the ASCII case)', () => {
+    // The ?host= parameter is what pg actually dials, so it is the value that must be classified.
+    expect(() =>
+      assertTestDatabaseUrl('postgres://127.0.0.1/db?host=db.x.supabase．co')
+    ).toThrow(/REFUSING TO RUN/);
+  });
+
+  it('leaves ordinary ASCII hosts alone (no false positives from the non-ASCII check)', () => {
+    delete process.env.KIDS_FUN_ALLOW_NONLOCAL_DB;
+    delete process.env[TEST_HOST_OVERRIDE_ENV];
+    expect(hasNonAsciiHost('localhost')).toBe(false);
+    expect(hasNonAsciiHost('db.abcdefgh.supabase.co')).toBe(false);
+    expect(() => assertTestDatabaseUrl('postgres://postgres:p@127.0.0.1:54322/postgres')).not.toThrow();
   });
 
   it('treats the trailing-dot form as the SAME host on the override path (no smuggling)', () => {
