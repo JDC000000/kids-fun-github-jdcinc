@@ -506,6 +506,23 @@ function utcMonthsAgoStart(monthsAgo: number): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 1));
 }
 
+function daysInUtcMonth(monthStart: Date): number {
+  return new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0)).getUTCDate();
+}
+
+/** A recent, COMPLETE 31-day calendar month, for pinning the B5 "31-day blind spot" regression
+ *  test regardless of what month the suite happens to run in. No two CONSECUTIVE calendar months
+ *  are both non-31-day (the five under-31 months — Feb, Apr, Jun, Sep, Nov — are never adjacent
+ *  to each other on the calendar), so checking 2 and then 3 months back is guaranteed to find
+ *  one. */
+function utcRecentComplete31DayMonthStart(): Date {
+  for (const monthsAgo of [2, 3]) {
+    const start = utcMonthsAgoStart(monthsAgo);
+    if (daysInUtcMonth(start) === 31) return start;
+  }
+  throw new Error('no 31-day month found 2-3 months back — should be impossible on the Gregorian calendar');
+}
+
 describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
   afterAll(async () => {
     await closePool();
@@ -751,6 +768,37 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
     const afterTarget = afterSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
 
     expect(beforeTarget, 'target month bucket must exist in a 4-month series').toBeTruthy();
+    expect(afterTarget.activeActors - beforeTarget.activeActors).toBe(0);
+  });
+
+  // 🔴 B5, FINDING 1 REVISED (round 4, same session — a second reviewer found a hole in the FIRST
+  // month-grain fix before it shipped). Anchoring the exclusion window at the bucket's END alone
+  // still misses DAY 1 of any 31-day month specifically: a fixed 30-day width ending on day 31
+  // only reaches back to day 2. A bot bursting on the 1st of a 31-day month would still show
+  // Active=1 for that month (should be 0) — the original incident's exact symptom (bot traffic
+  // inflating a real user-facing count), reappearing in the monthly review. The fix clamps the
+  // window's lower bound to LEAST(pstart, anchor - 29 days), so it never starts later than the
+  // bucket's own first day, widening to a full 31 days for this specific case rather than ever
+  // leaving day 1 uncovered.
+  it('🔴 excludes an actor flagged on DAY 1 of a 31-day month — the blind spot a bucket-end-only anchor still misses', async () => {
+    const targetMonthStart = utcRecentComplete31DayMonthStart();
+    const day1 = new Date(targetMonthStart);
+    const day20 = new Date(targetMonthStart);
+    day20.setUTCDate(20);
+
+    const beforeSeries = await getOperatingPeriodCounts('month', 6);
+    const beforeTarget = beforeSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    // Flagged burst on the 1st — the exact day the bucket-end-only anchor still misses.
+    await insertEventAt(actor, 'listing_viewed', day1, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    // Ordinary activity later the SAME month.
+    await insertEventAt(actor, 'listing_viewed', day20);
+
+    const afterSeries = await getOperatingPeriodCounts('month', 6);
+    const afterTarget = afterSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
+
+    expect(beforeTarget, 'target 31-day month bucket must exist in a 6-month series').toBeTruthy();
     expect(afterTarget.activeActors - beforeTarget.activeActors).toBe(0);
   });
 
