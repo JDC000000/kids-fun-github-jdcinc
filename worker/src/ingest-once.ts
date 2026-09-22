@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { runTermsGatedIngest, type SourceSelector } from '../core/source-runner';
 import type { Environment } from '../core/terms-gate';
 import { captureWorkerException, closeWorkerSentry, initWorkerSentry } from './sentry';
+import { attachConnectionErrorHandlers } from './db';
 
 interface Args {
   selector: SourceSelector;
@@ -37,7 +38,9 @@ async function main(): Promise<number> {
   if (!databaseUrl) throw new Error('DATABASE_URL is required');
 
   const args = parseArgs();
-  const pool = new Pool({ connectionString: databaseUrl });
+  // Own pool (not createPool) to keep this entrypoint's connection settings unchanged; it still
+  // needs the drop handlers, or one recycled idle connection kills the run mid-ingest.
+  const pool = attachConnectionErrorHandlers(new Pool({ connectionString: databaseUrl }));
   try {
     const result = await runTermsGatedIngest(pool, args.selector, args.environment);
     // JSON only; no connection strings or secrets.
