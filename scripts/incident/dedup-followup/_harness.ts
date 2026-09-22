@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
 // Relative, not '@/': run under vite-node, which does not load the Vitest alias.
 import { isLocalDatabaseHost, resolveConnectionHost } from '../../../lib/db/connection-host';
+import { resolveSslFor } from '../_ssl';
 
 export class Abort extends Error {}
 
@@ -252,12 +253,13 @@ export async function runGuarded(
     log('KF_CLEANUP_TARGET_URL is not set. Refusing to guess a target database.');
     process.exit(2);
   }
-  // Decide SSL with the repo's OWN resolver rather than a substring test. A substring match on
-  // "127.0.0.1" is exactly the anti-pattern this whole incident fix exists to remove: it says
-  // nothing about the host pg will actually dial (a `?host=` override flips it), and it was how
-  // the original Round 27 bug worked. resolveConnectionHost delegates to the same parser pg uses.
-  const isLocal = isLocalDatabaseHost(resolveConnectionHost(url));
-  const pool = new Pool({ connectionString: url, ssl: isLocal ? undefined : { rejectUnauthorized: true } });
+  // TLS via the shared decision (scripts/incident/_ssl.ts): verify properly against a supplied CA
+  // for a remote host, no options for loopback, and REFUSE rather than silently disable
+  // verification. `rejectUnauthorized: true` alone was wrong — Supabase's chain is privately
+  // rooted, so it fails outright; a reviewer caught it by dialing the real endpoint, which no
+  // 127.0.0.1 rehearsal could ever have exercised.
+  const { ssl } = resolveSslFor(url);
+  const pool = new Pool({ connectionString: url, ssl });
   const c = await pool.connect();
   let committed = false;
   try {

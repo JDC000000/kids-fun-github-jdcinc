@@ -37,7 +37,14 @@ const ROOT = join(__dirname, '..', '..');
  * checked no matter what it is called.
  */
 function isDbKey(key: string): boolean {
-  return /(^|_)(DATABASE|DB)_URL$/.test(key) || /_URL$/.test(key);
+  // Deliberately NOT a blanket /_URL$/. That over-matched and produced a real false positive a
+  // reviewer planted: NEXT_PUBLIC_SUPABASE_URL is the PUBLIC REST/API origin (https://…), not a
+  // connection string, and it legitimately appears in .env.example. Flagging it would have trained
+  // everyone to ignore this test — the failure mode that kills a guard faster than a missed case.
+  //
+  // Key shape stays narrow; the value-shape net below is what makes coverage broad, because it
+  // keys off `postgres://` rather than off anyone remembering a naming convention.
+  return /(^|_)(DATABASE|DB)_URL$/.test(key);
 }
 
 /** Value-shape net: a postgres/supabase connection string, whatever the key is named. */

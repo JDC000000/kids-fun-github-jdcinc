@@ -1,5 +1,5 @@
 {
- "incident": "2026-09-21 DB-lane test run against production — LLM dedup pipeline residue",
+ "incident": "2026-09-21 DB-lane test run against production \u2014 LLM dedup pipeline residue",
  "generated_at": "2026-09-22T04:38:06.699Z",
  "generated_from": "read-only query against kids-fun production (default_transaction_read_only=on)",
  "window": {
@@ -24,16 +24,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
-   "related_id": "07db5341-9c72-4988-a2d1-7f95312289a9",
-   "custom_id": "dedup-07db5341-9c72-4988-a2d1-7f95312289a9",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Britannia Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "07db5341-9c72-4988-a2d1-7f95312289a9"
-   },
    "created_at": "2026-09-21 18:46:41.030062+00"
   },
   {
@@ -41,16 +32,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "0d83c892-4030-4806-8820-6e513ebaf68b",
-   "related_id": "1b817224-9a6a-4431-95a6-f5bdd82de92c",
-   "custom_id": "dedup-0d83c892-4030-4806-8820-6e513ebaf68b",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kerrisdale Branch\" vs \"Brighouse\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "1b817224-9a6a-4431-95a6-f5bdd82de92c"
-   },
    "created_at": "2026-09-21 18:46:41.323445+00"
   },
   {
@@ -58,16 +40,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "102dfdb0-1632-4bbd-bd11-9b6b0e398f78",
-   "related_id": "2dc2d9d0-b63d-413f-b036-416688c116a6",
-   "custom_id": "dedup-102dfdb0-1632-4bbd-bd11-9b6b0e398f78",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kerrisdale Branch\" vs \"Steveston Library (Easthope Hub)\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "2dc2d9d0-b63d-413f-b036-416688c116a6"
-   },
    "created_at": "2026-09-21 18:46:41.904457+00"
   },
   {
@@ -75,16 +48,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
-   "related_id": "24ae6ebd-c8a2-4a96-abc0-e8db298d7c26",
-   "custom_id": "dedup-24ae6ebd-c8a2-4a96-abc0-e8db298d7c26",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Steveston Library (Easthope Hub)\" vs \"Britannia Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "24ae6ebd-c8a2-4a96-abc0-e8db298d7c26"
-   },
    "created_at": "2026-09-21 18:46:42.485227+00"
   },
   {
@@ -92,16 +56,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
-   "related_id": "3495f1df-597a-431f-8263-6e3f0b3c4083",
-   "custom_id": "dedup-3495f1df-597a-431f-8263-6e3f0b3c4083",
    "action": "route_to_review",
-   "deterministic_score": 0.586206896551724,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 0.59 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Cambie\" vs \"nə́c̓aʔmat ct Strathcona Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "3495f1df-597a-431f-8263-6e3f0b3c4083"
-   },
    "created_at": "2026-09-21 18:46:43.064025+00"
   },
   {
@@ -109,16 +64,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "e98531d4-f143-440c-bd0a-d8bc75fbafe9",
-   "related_id": "3907d120-8c62-45e2-984a-ef874e340091",
-   "custom_id": "dedup-3907d120-8c62-45e2-984a-ef874e340091",
    "action": "route_to_review",
-   "deterministic_score": 0.586206896551724,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 0.59 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"nə́c̓aʔmat ct Strathcona Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "3907d120-8c62-45e2-984a-ef874e340091"
-   },
    "created_at": "2026-09-21 18:46:43.355013+00"
   },
   {
@@ -126,16 +72,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "3e635799-7b78-469b-be07-baaf30b70b02",
-   "related_id": "5df6714b-e977-4035-bab2-3dc396f1c6a7",
-   "custom_id": "dedup-3e635799-7b78-469b-be07-baaf30b70b02",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Steveston Library (Easthope Hub)\" vs \"Kerrisdale Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "5df6714b-e977-4035-bab2-3dc396f1c6a7"
-   },
    "created_at": "2026-09-21 18:46:43.644059+00"
   },
   {
@@ -143,16 +80,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
-   "related_id": "3f712b85-95a2-4a19-9c95-ddf2466e739f",
-   "custom_id": "dedup-3f712b85-95a2-4a19-9c95-ddf2466e739f",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"South Hill Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "3f712b85-95a2-4a19-9c95-ddf2466e739f"
-   },
    "created_at": "2026-09-21 18:46:43.935171+00"
   },
   {
@@ -160,16 +88,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "409b2727-b9d8-4f08-86a5-63ac216e2e23",
-   "related_id": "1b817224-9a6a-4431-95a6-f5bdd82de92c",
-   "custom_id": "dedup-409b2727-b9d8-4f08-86a5-63ac216e2e23",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Britannia Branch\" vs \"Brighouse\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "1b817224-9a6a-4431-95a6-f5bdd82de92c"
-   },
    "created_at": "2026-09-21 18:46:44.224704+00"
   },
   {
@@ -177,16 +96,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
-   "related_id": "41fd9f90-8a48-4c64-8009-63bc719cccfd",
-   "custom_id": "dedup-41fd9f90-8a48-4c64-8009-63bc719cccfd",
    "action": "route_to_review",
-   "deterministic_score": 0.586206896551724,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 0.59 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Ironwood\" vs \"nə́c̓aʔmat ct Strathcona Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "41fd9f90-8a48-4c64-8009-63bc719cccfd"
-   },
    "created_at": "2026-09-21 18:46:44.515492+00"
   },
   {
@@ -194,16 +104,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "436e564a-a00d-412a-ac2f-0c3577c29c09",
-   "related_id": "dbab78ce-a3cf-4054-8fca-502d2d55e376",
-   "custom_id": "dedup-436e564a-a00d-412a-ac2f-0c3577c29c09",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Firehall Branch\" vs \"Brighouse\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "dbab78ce-a3cf-4054-8fca-502d2d55e376"
-   },
    "created_at": "2026-09-21 18:46:44.804268+00"
   },
   {
@@ -211,16 +112,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "4727c155-4979-4c24-9c01-65c6f3c68024",
-   "related_id": "e1d8a214-54e1-4b85-8b7f-87b94cda9e45",
-   "custom_id": "dedup-4727c155-4979-4c24-9c01-65c6f3c68024",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Steveston Library (Easthope Hub)\" vs \"Champlain Heights Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "e1d8a214-54e1-4b85-8b7f-87b94cda9e45"
-   },
    "created_at": "2026-09-21 18:46:45.095479+00"
   },
   {
@@ -228,16 +120,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
-   "related_id": "534c3838-af63-4a42-a7e7-fc160475414b",
-   "custom_id": "dedup-534c3838-af63-4a42-a7e7-fc160475414b",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Central Library\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "534c3838-af63-4a42-a7e7-fc160475414b"
-   },
    "created_at": "2026-09-21 18:46:45.386462+00"
   },
   {
@@ -245,16 +128,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
-   "related_id": "56c25cd2-2fa7-4955-8217-5b9ac33415e2",
-   "custom_id": "dedup-56c25cd2-2fa7-4955-8217-5b9ac33415e2",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Britannia Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "56c25cd2-2fa7-4955-8217-5b9ac33415e2"
-   },
    "created_at": "2026-09-21 18:46:45.673124+00"
   },
   {
@@ -262,16 +136,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "3e635799-7b78-469b-be07-baaf30b70b02",
-   "related_id": "5f9ba28a-5cc5-4650-9b1d-bce7b4b2b178",
-   "custom_id": "dedup-5f9ba28a-5cc5-4650-9b1d-bce7b4b2b178",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Hastings Branch\" vs \"Steveston Library (Easthope Hub)\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "5f9ba28a-5cc5-4650-9b1d-bce7b4b2b178"
-   },
    "created_at": "2026-09-21 18:46:45.961489+00"
   },
   {
@@ -279,16 +144,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "6e0c67bc-2496-4d01-b787-bf7ee71451de",
-   "related_id": "d8cd6f75-a204-4124-be52-b1cae9060793",
-   "custom_id": "dedup-6e0c67bc-2496-4d01-b787-bf7ee71451de",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Steveston Library (Easthope Hub)\" vs \"Kitsilano Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "d8cd6f75-a204-4124-be52-b1cae9060793"
-   },
    "created_at": "2026-09-21 18:46:46.249144+00"
   },
   {
@@ -296,16 +152,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "632814d6-6602-42a8-be3d-b6b21b9a503f",
-   "related_id": "6e5cb326-153f-4596-bde0-e350f9fb5500",
-   "custom_id": "dedup-6e5cb326-153f-4596-bde0-e350f9fb5500",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Ironwood\" vs \"South Hill Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "6e5cb326-153f-4596-bde0-e350f9fb5500"
-   },
    "created_at": "2026-09-21 18:46:46.538919+00"
   },
   {
@@ -313,16 +160,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "8090d5f4-8c78-45f2-bc31-e014af7d59ca",
-   "related_id": "2dc2d9d0-b63d-413f-b036-416688c116a6",
-   "custom_id": "dedup-8090d5f4-8c78-45f2-bc31-e014af7d59ca",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Hastings Branch\" vs \"Steveston Library (Easthope Hub)\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "2dc2d9d0-b63d-413f-b036-416688c116a6"
-   },
    "created_at": "2026-09-21 18:46:47.435716+00"
   },
   {
@@ -330,16 +168,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "844da732-62de-4f06-917c-d820388b6a4a",
-   "related_id": "aaa83fb5-0dc2-4d49-803e-b0c97f678efb",
-   "custom_id": "dedup-844da732-62de-4f06-917c-d820388b6a4a",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Brighouse\" vs \"Firehall Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "aaa83fb5-0dc2-4d49-803e-b0c97f678efb"
-   },
    "created_at": "2026-09-21 18:46:47.724452+00"
   },
   {
@@ -347,16 +176,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
-   "related_id": "8721b8cc-dad2-4bc6-b1f3-901c837adde2",
-   "custom_id": "dedup-8721b8cc-dad2-4bc6-b1f3-901c837adde2",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kitsilano Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "8721b8cc-dad2-4bc6-b1f3-901c837adde2"
-   },
    "created_at": "2026-09-21 18:46:48.015548+00"
   },
   {
@@ -364,16 +184,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
-   "related_id": "aa194c6d-c74d-4046-983f-58be993ff90c",
-   "custom_id": "dedup-aa194c6d-c74d-4046-983f-58be993ff90c",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Central Library\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "aa194c6d-c74d-4046-983f-58be993ff90c"
-   },
    "created_at": "2026-09-21 18:46:48.302586+00"
   },
   {
@@ -381,16 +192,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
-   "related_id": "e0bd469a-f2e8-4866-a781-3056267e920a",
-   "custom_id": "dedup-cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Ironwood\" vs \"South Hill Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "e0bd469a-f2e8-4866-a781-3056267e920a"
-   },
    "created_at": "2026-09-21 18:46:48.87599+00"
   },
   {
@@ -398,16 +200,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
-   "related_id": "cf7c9f61-58ab-477d-951e-3cd48a817bf6",
-   "custom_id": "dedup-cf7c9f61-58ab-477d-951e-3cd48a817bf6",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Brighouse\" vs \"Britannia Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "cf7c9f61-58ab-477d-951e-3cd48a817bf6"
-   },
    "created_at": "2026-09-21 18:46:49.165431+00"
   },
   {
@@ -415,16 +208,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "e07a60f2-b758-47cf-bf9d-7bffbd8f125a",
-   "related_id": "24ae6ebd-c8a2-4a96-abc0-e8db298d7c26",
-   "custom_id": "dedup-e07a60f2-b758-47cf-bf9d-7bffbd8f125a",
    "action": "route_to_review",
-   "deterministic_score": 0.739130434782609,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 0.74 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kerrisdale Branch\" vs \"Steveston Library (Easthope Hub)\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "24ae6ebd-c8a2-4a96-abc0-e8db298d7c26"
-   },
    "created_at": "2026-09-21 18:46:50.025219+00"
   },
   {
@@ -432,16 +216,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "0d83c892-4030-4806-8820-6e513ebaf68b",
-   "related_id": "e40fa0b5-8c16-4d4a-85f4-1909f8b6776f",
-   "custom_id": "dedup-e40fa0b5-8c16-4d4a-85f4-1909f8b6776f",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Steveston Library (Easthope Hub)\" vs \"Kerrisdale Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "e40fa0b5-8c16-4d4a-85f4-1909f8b6776f"
-   },
    "created_at": "2026-09-21 18:46:50.314579+00"
   },
   {
@@ -449,16 +224,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
-   "related_id": "f883343b-595b-4779-88e1-0c641b565b9d",
-   "custom_id": "dedup-f883343b-595b-4779-88e1-0c641b565b9d",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kitsilano Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "f883343b-595b-4779-88e1-0c641b565b9d"
-   },
    "created_at": "2026-09-21 18:46:50.600633+00"
   },
   {
@@ -466,16 +232,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
-   "related_id": "07db5341-9c72-4988-a2d1-7f95312289a9",
-   "custom_id": "dedup-07db5341-9c72-4988-a2d1-7f95312289a9",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Britannia Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "07db5341-9c72-4988-a2d1-7f95312289a9"
-   },
    "created_at": "2026-09-21 18:53:36.428835+00"
   },
   {
@@ -483,16 +240,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "0d83c892-4030-4806-8820-6e513ebaf68b",
-   "related_id": "1b817224-9a6a-4431-95a6-f5bdd82de92c",
-   "custom_id": "dedup-1b817224-9a6a-4431-95a6-f5bdd82de92c",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Brighouse\" vs \"Kerrisdale Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "1b817224-9a6a-4431-95a6-f5bdd82de92c"
-   },
    "created_at": "2026-09-21 18:53:37.313056+00"
   },
   {
@@ -500,16 +248,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
-   "related_id": "24ae6ebd-c8a2-4a96-abc0-e8db298d7c26",
-   "custom_id": "dedup-24ae6ebd-c8a2-4a96-abc0-e8db298d7c26",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Steveston Library (Easthope Hub)\" vs \"Britannia Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "24ae6ebd-c8a2-4a96-abc0-e8db298d7c26"
-   },
    "created_at": "2026-09-21 18:53:37.600446+00"
   },
   {
@@ -517,16 +256,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "102dfdb0-1632-4bbd-bd11-9b6b0e398f78",
-   "related_id": "2dc2d9d0-b63d-413f-b036-416688c116a6",
-   "custom_id": "dedup-2dc2d9d0-b63d-413f-b036-416688c116a6",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Steveston Library (Easthope Hub)\" vs \"Kerrisdale Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "2dc2d9d0-b63d-413f-b036-416688c116a6"
-   },
    "created_at": "2026-09-21 18:53:38.187894+00"
   },
   {
@@ -534,16 +264,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
-   "related_id": "3495f1df-597a-431f-8263-6e3f0b3c4083",
-   "custom_id": "dedup-3495f1df-597a-431f-8263-6e3f0b3c4083",
    "action": "route_to_review",
-   "deterministic_score": 0.586206896551724,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 0.59 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Cambie\" vs \"nə́c̓aʔmat ct Strathcona Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "3495f1df-597a-431f-8263-6e3f0b3c4083"
-   },
    "created_at": "2026-09-21 18:53:38.477244+00"
   },
   {
@@ -551,16 +272,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "e98531d4-f143-440c-bd0a-d8bc75fbafe9",
-   "related_id": "3907d120-8c62-45e2-984a-ef874e340091",
-   "custom_id": "dedup-3907d120-8c62-45e2-984a-ef874e340091",
    "action": "route_to_review",
-   "deterministic_score": 0.586206896551724,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 0.59 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"nə́c̓aʔmat ct Strathcona Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "3907d120-8c62-45e2-984a-ef874e340091"
-   },
    "created_at": "2026-09-21 18:53:38.765325+00"
   },
   {
@@ -568,16 +280,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
-   "related_id": "3f712b85-95a2-4a19-9c95-ddf2466e739f",
-   "custom_id": "dedup-3f712b85-95a2-4a19-9c95-ddf2466e739f",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"South Hill Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "3f712b85-95a2-4a19-9c95-ddf2466e739f"
-   },
    "created_at": "2026-09-21 18:53:39.052839+00"
   },
   {
@@ -585,16 +288,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
-   "related_id": "41fd9f90-8a48-4c64-8009-63bc719cccfd",
-   "custom_id": "dedup-41fd9f90-8a48-4c64-8009-63bc719cccfd",
    "action": "route_to_review",
-   "deterministic_score": 0.586206896551724,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 0.59 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Ironwood\" vs \"nə́c̓aʔmat ct Strathcona Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "41fd9f90-8a48-4c64-8009-63bc719cccfd"
-   },
    "created_at": "2026-09-21 18:53:39.340422+00"
   },
   {
@@ -602,16 +296,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
-   "related_id": "534c3838-af63-4a42-a7e7-fc160475414b",
-   "custom_id": "dedup-534c3838-af63-4a42-a7e7-fc160475414b",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Central Library\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "534c3838-af63-4a42-a7e7-fc160475414b"
-   },
    "created_at": "2026-09-21 18:53:39.629162+00"
   },
   {
@@ -619,16 +304,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
-   "related_id": "56c25cd2-2fa7-4955-8217-5b9ac33415e2",
-   "custom_id": "dedup-56c25cd2-2fa7-4955-8217-5b9ac33415e2",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Britannia Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "56c25cd2-2fa7-4955-8217-5b9ac33415e2"
-   },
    "created_at": "2026-09-21 18:53:39.916227+00"
   },
   {
@@ -636,16 +312,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "3e635799-7b78-469b-be07-baaf30b70b02",
-   "related_id": "5df6714b-e977-4035-bab2-3dc396f1c6a7",
-   "custom_id": "dedup-5df6714b-e977-4035-bab2-3dc396f1c6a7",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kerrisdale Branch\" vs \"Steveston Library (Easthope Hub)\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "5df6714b-e977-4035-bab2-3dc396f1c6a7"
-   },
    "created_at": "2026-09-21 18:53:40.204458+00"
   },
   {
@@ -653,16 +320,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "3e635799-7b78-469b-be07-baaf30b70b02",
-   "related_id": "5f9ba28a-5cc5-4650-9b1d-bce7b4b2b178",
-   "custom_id": "dedup-5f9ba28a-5cc5-4650-9b1d-bce7b4b2b178",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Hastings Branch\" vs \"Steveston Library (Easthope Hub)\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "5f9ba28a-5cc5-4650-9b1d-bce7b4b2b178"
-   },
    "created_at": "2026-09-21 18:53:40.493331+00"
   },
   {
@@ -670,16 +328,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "632814d6-6602-42a8-be3d-b6b21b9a503f",
-   "related_id": "6e5cb326-153f-4596-bde0-e350f9fb5500",
-   "custom_id": "dedup-6e5cb326-153f-4596-bde0-e350f9fb5500",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Ironwood\" vs \"South Hill Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "6e5cb326-153f-4596-bde0-e350f9fb5500"
-   },
    "created_at": "2026-09-21 18:53:40.780655+00"
   },
   {
@@ -687,16 +336,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
-   "related_id": "8721b8cc-dad2-4bc6-b1f3-901c837adde2",
-   "custom_id": "dedup-8721b8cc-dad2-4bc6-b1f3-901c837adde2",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kitsilano Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "8721b8cc-dad2-4bc6-b1f3-901c837adde2"
-   },
    "created_at": "2026-09-21 18:53:41.661606+00"
   },
   {
@@ -704,16 +344,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
-   "related_id": "aa194c6d-c74d-4046-983f-58be993ff90c",
-   "custom_id": "dedup-aa194c6d-c74d-4046-983f-58be993ff90c",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Central Library\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "aa194c6d-c74d-4046-983f-58be993ff90c"
-   },
    "created_at": "2026-09-21 18:53:42.247215+00"
   },
   {
@@ -721,16 +352,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "844da732-62de-4f06-917c-d820388b6a4a",
-   "related_id": "aaa83fb5-0dc2-4d49-803e-b0c97f678efb",
-   "custom_id": "dedup-aaa83fb5-0dc2-4d49-803e-b0c97f678efb",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Firehall Branch\" vs \"Brighouse\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "aaa83fb5-0dc2-4d49-803e-b0c97f678efb"
-   },
    "created_at": "2026-09-21 18:53:42.53389+00"
   },
   {
@@ -738,16 +360,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
-   "related_id": "cf7c9f61-58ab-477d-951e-3cd48a817bf6",
-   "custom_id": "dedup-cf7c9f61-58ab-477d-951e-3cd48a817bf6",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Brighouse\" vs \"Britannia Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "cf7c9f61-58ab-477d-951e-3cd48a817bf6"
-   },
    "created_at": "2026-09-21 18:53:43.110302+00"
   },
   {
@@ -755,16 +368,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "6e0c67bc-2496-4d01-b787-bf7ee71451de",
-   "related_id": "d8cd6f75-a204-4124-be52-b1cae9060793",
-   "custom_id": "dedup-d8cd6f75-a204-4124-be52-b1cae9060793",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kitsilano Branch\" vs \"Steveston Library (Easthope Hub)\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "d8cd6f75-a204-4124-be52-b1cae9060793"
-   },
    "created_at": "2026-09-21 18:53:43.693714+00"
   },
   {
@@ -772,16 +376,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "436e564a-a00d-412a-ac2f-0c3577c29c09",
-   "related_id": "dbab78ce-a3cf-4054-8fca-502d2d55e376",
-   "custom_id": "dedup-dbab78ce-a3cf-4054-8fca-502d2d55e376",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Brighouse\" vs \"Firehall Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "dbab78ce-a3cf-4054-8fca-502d2d55e376"
-   },
    "created_at": "2026-09-21 18:53:43.98077+00"
   },
   {
@@ -789,16 +384,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
-   "related_id": "e0bd469a-f2e8-4866-a781-3056267e920a",
-   "custom_id": "dedup-e0bd469a-f2e8-4866-a781-3056267e920a",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"South Hill Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "e0bd469a-f2e8-4866-a781-3056267e920a"
-   },
    "created_at": "2026-09-21 18:53:44.555031+00"
   },
   {
@@ -806,16 +392,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "4727c155-4979-4c24-9c01-65c6f3c68024",
-   "related_id": "e1d8a214-54e1-4b85-8b7f-87b94cda9e45",
-   "custom_id": "dedup-e1d8a214-54e1-4b85-8b7f-87b94cda9e45",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Champlain Heights Branch\" vs \"Steveston Library (Easthope Hub)\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "e1d8a214-54e1-4b85-8b7f-87b94cda9e45"
-   },
    "created_at": "2026-09-21 18:53:44.842815+00"
   },
   {
@@ -823,16 +400,7 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "0d83c892-4030-4806-8820-6e513ebaf68b",
-   "related_id": "e40fa0b5-8c16-4d4a-85f4-1909f8b6776f",
-   "custom_id": "dedup-e40fa0b5-8c16-4d4a-85f4-1909f8b6776f",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Richmond Public Library BiblioEvents and Vancouver Public Library BiblioEvents — DIFFERENT venue rows — \"Steveston Library (Easthope Hub)\" vs \"Kerrisdale Branch\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "e40fa0b5-8c16-4d4a-85f4-1909f8b6776f"
-   },
    "created_at": "2026-09-21 18:53:45.130577+00"
   },
   {
@@ -840,145 +408,83 @@
    "job_name": "llm_dedup_adjudication",
    "use_case": "dedup",
    "target_id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
-   "related_id": "f883343b-595b-4779-88e1-0c641b565b9d",
-   "custom_id": "dedup-f883343b-595b-4779-88e1-0c641b565b9d",
    "action": "route_to_review",
-   "deterministic_score": 1,
-   "llm_confidence": null,
-   "detail": {
-    "reason": "Deterministic title match 1.00 at an identical start time, across Vancouver Public Library BiblioEvents and Richmond Public Library BiblioEvents — DIFFERENT venue rows — \"Kitsilano Branch\" vs \"Ironwood\". No model was consulted; a human decides whether these are the same event.",
-    "venueSignal": "different_venue",
-    "suspectedDuplicateOf": "f883343b-595b-4779-88e1-0c641b565b9d"
-   },
    "created_at": "2026-09-21 18:53:45.711898+00"
   }
  ],
  "distinct_targets": [
   {
    "id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-30 18:00:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-28 18:00:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "409b2727-b9d8-4f08-86a5-63ac216e2e23",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-08-06 17:30:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   },
   {
    "id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-23 18:00:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "e07a60f2-b758-47cf-bf9d-7bffbd8f125a",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-30 17:30:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   },
   {
    "id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-08-04 18:00:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "436e564a-a00d-412a-ac2f-0c3577c29c09",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-08-05 21:00:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   },
   {
    "id": "e98531d4-f143-440c-bd0a-d8bc75fbafe9",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-29 17:30:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-30 17:30:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   },
   {
    "id": "6e0c67bc-2496-4d01-b787-bf7ee71451de",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-29 18:00:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "844da732-62de-4f06-917c-d820388b6a4a",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-29 21:00:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "632814d6-6602-42a8-be3d-b6b21b9a503f",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-08-06 18:00:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   },
   {
    "id": "0d83c892-4030-4806-8820-6e513ebaf68b",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-08-06 17:30:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   },
   {
    "id": "3e635799-7b78-469b-be07-baaf30b70b02",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-31 18:00:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "102dfdb0-1632-4bbd-bd11-9b6b0e398f78",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-24 18:00:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   },
   {
    "id": "4727c155-4979-4c24-9c01-65c6f3c68024",
-   "source_name": "Richmond Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-27 17:30:00+00",
-   "future_dated": false
+   "source_name": "Richmond Public Library BiblioEvents"
   },
   {
    "id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-08-05 17:30:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   },
   {
    "id": "8090d5f4-8c78-45f2-bc31-e014af7d59ca",
-   "source_name": "Vancouver Public Library BiblioEvents",
-   "status_state": "manual_candidate",
-   "start_datetime_utc": "2026-07-24 18:00:00+00",
-   "future_dated": false
+   "source_name": "Vancouver Public Library BiblioEvents"
   }
- ]
+ ],
+ "note_on_fields": "Decision rows carry ONLY the fields the fingerprint check reads (id, job_name, use_case, target_id, action, created_at). The originally-captured detail/related_id/custom_id/deterministic_score/llm_confidence were never read by the script and embedded REAL PRODUCTION ROW CONTENT (listing and venue text) in a committed file, so they were removed. The backup the script writes before deleting still captures every column live from the database, so restore fidelity is unchanged. distinct_targets keeps id (read by the script) and source_name (a public organisation name, useful when reviewing which sources were touched); its per-row status/date values were unused row content and were removed."
 }

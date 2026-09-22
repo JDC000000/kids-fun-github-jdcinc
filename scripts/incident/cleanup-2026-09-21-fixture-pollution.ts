@@ -54,6 +54,7 @@ import { join } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
 // Relative, not '@/': these scripts run under vite-node, which does not load the Vitest alias.
 import { isLocalDatabaseHost, resolveConnectionHost } from '../../lib/db/connection-host';
+import { resolveSslFor } from './_ssl';
 
 interface SourceRow { id: string; family: string; name: string; terms_status: string; created_at: string }
 interface VenueRow { id: string; name: string; created_at: string }
@@ -145,11 +146,11 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Host resolution via the repo's own helper, not a substring test — a substring match says
-  // nothing about the host pg will actually dial, and disabling certificate verification on a
-  // PRODUCTION SUPERUSER connection is not a defensible default for a remediation tool.
-  const isLocal = isLocalDatabaseHost(resolveConnectionHost(url));
-  const pool = new Pool({ connectionString: url, ssl: isLocal ? undefined : { rejectUnauthorized: true } });
+  // TLS via the shared decision (./_ssl.ts). Disabling certificate verification on a PRODUCTION
+  // SUPERUSER connection is not a defensible default, and `rejectUnauthorized: true` alone does not
+  // work either — Supabase's chain is privately rooted. So: verify against a supplied CA, or refuse.
+  const { ssl } = resolveSslFor(url);
+  const pool = new Pool({ connectionString: url, ssl });
   const c = await pool.connect();
   let committed = false;
   try {
@@ -179,16 +180,28 @@ async function main(): Promise<void> {
     // manifest trust alone, while the docs claimed "every id is re-verified". Rather than soften
     // the claim, make it true: each id must still hang off the fixture graph (or, for venues,
     // still match its recorded name), so a manifest pointing at anything else cannot delete it.
+    const missingVenues = m.fixture_venues.length - (await count(c,
+      `SELECT count(*) n FROM venue WHERE id = ANY($1::uuid[])`, [m.fixture_venues.map((v) => v.id)]));
+    require_(missingVenues === 0, `${missingVenues} manifest venue id(s) do not exist in this database — refusing.`);
     const strayVenues = await count(c,
       `SELECT count(*) n FROM venue v
         WHERE v.id = ANY($1::uuid[])
           AND NOT (v.name = ANY($2::text[]))`,
       [m.fixture_venues.map((v) => v.id), m.fixture_venues.map((v) => v.name)]);
     require_(strayVenues === 0, `${strayVenues} manifest venue id(s) no longer carry their recorded name — refusing.`);
+    // Existence first, then membership. Checking only membership let a NONEXISTENT id pass (it
+    // matches no row, so it is not "stray") and surface later as a raw Postgres FK error instead
+    // of a readable refusal. Fails safe either way, but the diagnostic was poor.
+    const missingSeries = m.target_series_ids.length - (await count(c,
+      `SELECT count(*) n FROM activity_series WHERE id = ANY($1::uuid[])`, [m.target_series_ids]));
+    require_(missingSeries === 0, `${missingSeries} manifest series id(s) do not exist in this database — refusing.`);
     const straySeries = await count(c,
       `SELECT count(*) n FROM activity_series WHERE id = ANY($1::uuid[]) AND NOT (source_id = ANY($2::uuid[]))`,
       [m.target_series_ids, targetIds]);
     require_(straySeries === 0, `${straySeries} manifest series id(s) do not belong to a target source — refusing.`);
+    const missingOcc = m.target_occurrence_ids.length - (await count(c,
+      `SELECT count(*) n FROM activity_occurrence WHERE id = ANY($1::uuid[])`, [m.target_occurrence_ids]));
+    require_(missingOcc === 0, `${missingOcc} manifest occurrence id(s) do not exist in this database — refusing.`);
     const strayOcc = await count(c,
       `SELECT count(*) n FROM activity_occurrence WHERE id = ANY($1::uuid[]) AND NOT (series_id = ANY($2::uuid[]))`,
       [m.target_occurrence_ids, m.target_series_ids]);
@@ -305,8 +318,24 @@ async function main(): Promise<void> {
     // The manifest DECLARES expected_dependent_counts for nine tables; the first version never read
     // them, so the dependent deletes were printed but not bounded — the "blast radius is exactly
     // what was planned" guarantee was not actually enforced for those tables. It is now.
+    // An UNRECOGNISED key must refuse, not be skipped. The first version's `continue` meant a
+    // renamed or misspelled table key silently dropped its own assertion, and the script then
+    // exited 0 claiming success while an unbounded delete had actually run — the identical bug
+    // class already fixed one loop earlier for expected_preconditions. A reviewer proved it by
+    // renaming a key. The only legitimate reason a declared table is absent from `removed` is an
+    // opt-in section that did not run this invocation, so that is enumerated explicitly rather
+    // than inferred from absence.
+    const OPTIONAL_TABLES = new Set(['admin_audit_log', 'admin_user', 'user_profile']); // --include-admin-fixtures
     for (const [table, want] of Object.entries(m.expected_dependent_counts)) {
-      if (!(table in removed)) continue; // not part of this invocation (e.g. admin fixtures skipped)
+      if (!(table in removed)) {
+        require_(
+          OPTIONAL_TABLES.has(table) && !args.includeAdminFixtures,
+          `manifest declares expected_dependent_counts["${table}"] but this run deleted nothing ` +
+            `from that table and it is not one of the opt-in tables. Either the key is misspelled ` +
+            `or a delete is missing — refusing rather than skipping the assertion silently.`
+        );
+        continue;
+      }
       require_(removed[table] === want,
         `dependent table ${table}: deleted ${removed[table]}, manifest expected ${want}. ` +
           `Blast radius differs from the plan — rolling back.`);
