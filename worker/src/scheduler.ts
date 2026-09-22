@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import { enqueueDueJobs } from '../scheduler/tiered';
 import { enqueueDueGlobalJobs } from '../scheduler/global-jobs';
 import { dequeue, markDone, markFailed, resolveWorkerId, type Job } from '../core/queue';
-import { reconcileAbandonedRuns } from '../core/reconcile';
+import { ABANDONED_RUN_THRESHOLD_MS, reconcileAbandonedRuns } from '../core/reconcile';
 import {
   claimGlobalJobRun,
   finishGlobalJobRun,
@@ -136,9 +136,13 @@ export interface GlobalScheduleHealthSnapshot {
  * this file; nothing runtime can widen the set.
  *
  * One kind per site that records an error, matching the labels the log lines already used:
- *   'poll'                    — dequeue/markDone/markFailed threw (connectivity, not a job
- *                               failing: a job failure is retried by the queue and never
- *                               reaches here).
+ *   'poll'                    — a call OUTSIDE processOneJob's job try/catch threw: dequeue,
+ *                               markFailed, or the Sentry report of a job failure. Which one
+ *                               is the PollStep below, carried on the log line and as the
+ *                               Sentry tag `poll_step`. NOT markDone, claimGlobalJobRun or the
+ *                               handler — those are inside the try and record 'job' — and not
+ *                               finalizeGlobalRun, which records 'global_run_ledger'.
+ *                               tests/scheduler/poll-lane-attribution.test.ts executes each.
  *   'job'                     — a claimed job's handler threw.
  *   'tick'                    — the TIERED producer (enqueueDueJobs) threw.
  *   'global_tick'             — the GLOBAL producer (enqueueDueGlobalJobs) threw.
@@ -156,6 +160,19 @@ export type SchedulerErrorKind =
   | 'reconcile'
   | 'global_schedule_health'
   | 'global_run_ledger';
+
+/**
+ * WHICH CALL a 'poll' error escaped from. The three are not interchangeable:
+ *   'dequeue'     — nothing was claimed; nothing is lost. The loop backs off and retries.
+ *   'mark_failed' — a job WAS claimed, its handler failed, and recording that failure also
+ *                   failed. The row stays status='running' until the reconcile sweep reclaims
+ *                   it (ABANDONED_RUN_THRESHOLD_MS). Production 2026-09-22 18:09:39: job
+ *                   804c4d45 stranded this way for 3h17m while the database was unreachable.
+ *   'report'      — the Sentry report of a job failure threw, so markFailed never ran; same
+ *                   stranding as 'mark_failed'.
+ * Before this existed all three logged the identical `poll error: <driver text>`.
+ */
+export type PollStep = 'dequeue' | 'mark_failed' | 'report';
 
 /** The human label each kind carries in the LOG line and in `lastError`. Log-side only. */
 const ERROR_KIND_LABEL: Record<SchedulerErrorKind, string> = {
@@ -365,6 +382,27 @@ export interface SchedulerMetrics {
    * for a reader to assume the stronger reading.
    */
   errorCount: number;
+  /**
+   * THE POLL LANE'S CURRENT STATE — the thing `lastErrorKind` cannot say.
+   *
+   * Poll-loop iterations that have failed IN A ROW; reset to 0 by the next iteration that
+   * completes (a job claimed and finalised, or an idle queue confirmed). 0 = the most recent
+   * poll round-trip worked. Unlike every error field above, this is not a high-water mark.
+   *
+   * Why it exists: on 2026-09-22 the worker was rebooted with a corrected DATABASE_URL, the
+   * pooler's auth circuit breaker stayed open for ~11s, and the poll lane recorded the last
+   * three of those errors. Twenty minutes of clean polling later /healthz still read
+   * `lastErrorKind: 'poll'`, which was taken as "the poll loop is still failing".
+   */
+  consecutivePollErrors: number;
+  /**
+   * When a poll-loop iteration last COMPLETED without error. Null = never since boot.
+   *
+   * Only moves between jobs: while a claimed job runs (an ActiveNet Vancouver run takes
+   * ~23-27 minutes) the loop is inside that job and this holds the claim instant. Read it
+   * with `jobsProcessed - jobsSucceeded - jobsFailed`, which is the number of jobs in flight.
+   */
+  lastPollOkAt: string | null;
 }
 
 export interface SchedulerOptions {
@@ -488,6 +526,8 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     lastErrorKind: null,
     lastErrorAt: null,
     errorCount: 0,
+    consecutivePollErrors: 0,
+    lastPollOkAt: null,
   };
 
   /**
@@ -698,15 +738,30 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
     });
   }
 
+  /**
+   * Where processOneJob is when something escapes it — read by queueLoop's catch. Set
+   * immediately before each await that CAN escape (there are exactly three; see PollStep),
+   * so the catch names the call that threw without wrapping the error: the original error,
+   * stack and all, is what reaches Sentry.
+   */
+  interface PollProgress {
+    step: PollStep;
+    /** The job this iteration claimed, if it got that far. */
+    jobId: string | null;
+  }
+
   // Claim + run one due job using the existing queue primitives (dequeue /
   // markDone / markFailed). Returns true when a job was processed so the loop can
-  // immediately drain the next one. A *job* failure is marked/retried by the
-  // queue and never escapes; only a *connectivity* failure (dequeue/markX itself
-  // throwing) propagates to the loop, which records it and keeps the worker — and
+  // immediately drain the next one. A *job* failure — including claimGlobalJobRun or
+  // markDone throwing — is marked/retried by the queue and never escapes. What DOES
+  // escape is dequeue, markFailed, or the Sentry report before markFailed throwing
+  // (`progress.step` says which); the loop records it and keeps the worker — and
   // therefore /healthz — alive instead of crashing the machine.
-  async function processOneJob(): Promise<boolean> {
+  async function processOneJob(progress: PollProgress): Promise<boolean> {
+    progress.step = 'dequeue';
     const job: Job | null = await dequeue(pool, workerId);
     if (!job) return false;
+    progress.jobId = job.id;
     metrics.jobsProcessed += 1;
     metrics.lastJobAt = new Date().toISOString();
     // Registered BEFORE the handler runs and cleared only after the job is finalised, so
@@ -729,6 +784,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
       noteError('job', errMsg(err), job.id);
       // eslint-disable-next-line no-console
       console.error(`[scheduler] job ${job.id} failed:`, errMsg(err));
+      progress.step = 'report';
       await captureWorkerException(err, {
         tags: {
           component: 'scheduler',
@@ -743,6 +799,7 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
           maxAttempts: job.maxAttempts,
         },
       });
+      progress.step = 'mark_failed';
       await markFailed(pool, job.id, errMsg(err));
     } finally {
       inFlight.delete(job.id);
@@ -756,16 +813,30 @@ export function startScheduler(pool: Pool, opts: SchedulerOptions = {}): Schedul
   async function queueLoop(): Promise<void> {
     while (!signal?.aborted) {
       let processed = false;
+      const progress: PollProgress = { step: 'dequeue', jobId: null };
       try {
-        processed = await tracked(processOneJob);
+        processed = await tracked(() => processOneJob(progress));
+        metrics.consecutivePollErrors = 0;
+        metrics.lastPollOkAt = new Date().toISOString();
       } catch (err) {
-        // dequeue / markDone / markFailed failed (e.g. DB unreachable). Record and
+        // dequeue / markFailed / the failure report threw (e.g. DB unreachable). Record and
         // back off — never crash the process, so the health server survives.
-        noteError('poll', errMsg(err));
+        metrics.consecutivePollErrors += 1;
+        const { step, jobId } = progress;
+        noteError('poll', errMsg(err), jobId === null ? step : `${step} job ${jobId}`);
+        // A claimed job whose failure could not be recorded is still status='running' in
+        // the database. Say so at the moment it happens: otherwise the only later trace is
+        // the sweep's generic "abandoned: worker process died", which is not what happened.
+        const stranded =
+          jobId === null
+            ? ''
+            : ` — job ${jobId} is left status='running'; the reconcile sweep reclaims it ` +
+              `once it is ${ABANDONED_RUN_THRESHOLD_MS / 60_000} min old`;
         // eslint-disable-next-line no-console
-        console.error('[scheduler] poll error:', errMsg(err));
+        console.error(`[scheduler] poll error at ${step}${stranded}:`, errMsg(err));
         await captureWorkerException(err, {
-          tags: { component: 'scheduler', operation: 'poll', environment },
+          tags: { component: 'scheduler', operation: 'poll', poll_step: step, environment },
+          ...(jobId === null ? {} : { extra: { jobId } }),
         });
       }
       if (!processed) await sleep(pollIntervalMs, signal);
