@@ -27,7 +27,17 @@ W="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HELP="$W/scripts/incident/negative"
 U="${KF_CLEANUP_TARGET_URL:?KF_CLEANUP_TARGET_URL must be set (a LOCAL replica, never production)}"
 M="$W/scripts/incident/manifest-2026-09-21-fixture-pollution.json"
-RESET="${KF_REPLICA_RESET:-}"
+# REQUIRED, not optional. Several cases mutate the replica, and every case assumes a clean one,
+# so without a reset between them the database drifts and later cases fail for reasons that
+# have nothing to do with the guard under test. An earlier version made this optional and
+# "degraded gracefully": it produced 11 passes, 5 spurious failures and 2 skips — a result that
+# looks like findings and is noise. A suite that refuses to run beats one that invents failures.
+if [ -z "${KF_REPLICA_RESET:-}" ]; then
+  echo "KF_REPLICA_RESET must be set: a command that restores the replica to the manifest's" >&2
+  echo "preconditions, e.g. KF_REPLICA_RESET='node /path/to/reset-replica.cjs'." >&2
+  exit 2
+fi
+RESET="$KF_REPLICA_RESET"
 cd "$W" || exit 9
 pass=0; fail=0; skip=0
 reset_db() { [ -n "$RESET" ] && eval "$RESET" >/dev/null 2>&1; }

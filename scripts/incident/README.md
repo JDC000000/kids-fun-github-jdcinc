@@ -164,8 +164,14 @@ Operator-archived row inside the target set, and an orphan profile that turns ou
 `auth.users` row.
 
 The replica seeding tooling deliberately lives **outside** this repo: it is built from
-production-derived data. Without `KF_REPLICA_RESET` the two database-mutating cases skip and the
-rest still run.
+production-derived data.
+
+**Both variables are required.** An earlier version of this note claimed the suite degraded
+gracefully without `KF_REPLICA_RESET` — it does not, and that claim was written before it was
+tested. Several cases mutate the replica and every case assumes a clean one, so without a reset the
+database drifts and later cases fail for reasons unrelated to the guard under test: 11 passes, 5
+spurious failures, 2 skips. It now refuses to start instead, because a suite that invents failures
+is worse than one that declines to run.
 
 **Post-condition assertions are not covered by this suite, by design.** Checks like
 `post.occ_stale === pre.occ_stale` fire only if the delete itself misbehaves, so no bad input can
