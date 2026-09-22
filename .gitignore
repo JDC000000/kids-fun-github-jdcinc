@@ -70,3 +70,14 @@ test-results/
 # data pulled from a live database — it is an artefact an operator produces and ships out of
 # band, never something that belongs in git history where it cannot be deleted.
 /.snapshots/
+
+# Throwaway reviewer/verification probes — see TEST_INCLUDE in vitest.workspace.ts.
+# The README is tracked (it documents the convention); the probes themselves never are.
+.qa-probes/*
+!.qa-probes/README.md
+
+# Legacy in-repo backup directories from the incident toolkit's FIRST (wrong) design. Nothing
+# writes here any more — backups now go to a per-run directory outside the repo — but the leftover
+# files hold REAL PRODUCTION ROW VALUES and must never enter the tree. Kept ignored rather than
+# deleted: this toolkit does not delete files it cannot prove it owns.
+scripts/incident/**/backups/

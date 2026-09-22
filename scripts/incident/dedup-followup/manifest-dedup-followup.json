@@ -1,0 +1,490 @@
+{
+ "incident": "2026-09-21 DB-lane test run against production \u2014 LLM dedup pipeline residue",
+ "generated_at": "2026-09-22T04:38:06.699Z",
+ "generated_from": "read-only query against kids-fun production (default_transaction_read_only=on)",
+ "window": {
+  "from": "2026-09-21 18:42:11+00",
+  "to": "2026-09-21 18:54:07+00"
+ },
+ "watermark_rows": [
+  {
+   "job_name": "llm_dedup_adjudication",
+   "last_watermark": "2026-09-21 18:53:36.054623+00",
+   "last_run_at": "2026-09-21 18:53:45.999174+00",
+   "last_status": "ok_deterministic",
+   "records_considered": 33,
+   "records_actioned": 8,
+   "updated_at": "2026-09-21 18:53:45.999174+00"
+  }
+ ],
+ "expected_llm_batch_decision_total_in_table": 49,
+ "decisions": [
+  {
+   "id": "b1576cfb-1082-4f8b-a53e-3bc23163116d",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:41.030062+00"
+  },
+  {
+   "id": "aa60244c-399e-47cf-9249-ca48a727b2c2",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "0d83c892-4030-4806-8820-6e513ebaf68b",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:41.323445+00"
+  },
+  {
+   "id": "99cd7164-b038-4258-9baa-cd527c3c0a51",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "102dfdb0-1632-4bbd-bd11-9b6b0e398f78",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:41.904457+00"
+  },
+  {
+   "id": "0af6334b-6556-4525-b5c7-b155e3ae524c",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:42.485227+00"
+  },
+  {
+   "id": "5a0c8068-c9f5-4722-b41a-24a063e5997d",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:43.064025+00"
+  },
+  {
+   "id": "210cbec7-7000-41ed-85cb-f6c133ec4ea5",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "e98531d4-f143-440c-bd0a-d8bc75fbafe9",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:43.355013+00"
+  },
+  {
+   "id": "31df4819-9300-4f12-86f7-02c54a1afd7f",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "3e635799-7b78-469b-be07-baaf30b70b02",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:43.644059+00"
+  },
+  {
+   "id": "64a5c87f-3e66-46f9-9b4b-9eec91312b77",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:43.935171+00"
+  },
+  {
+   "id": "d85f2cf5-70c6-43c4-920c-1f39f0c4e1e6",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "409b2727-b9d8-4f08-86a5-63ac216e2e23",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:44.224704+00"
+  },
+  {
+   "id": "7d8142e3-623f-4eec-b914-e29bc89be0bc",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:44.515492+00"
+  },
+  {
+   "id": "7cee60e0-dc84-490d-87d4-8b3645bbd2ef",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "436e564a-a00d-412a-ac2f-0c3577c29c09",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:44.804268+00"
+  },
+  {
+   "id": "57a6cbb4-012d-4272-a166-e1079932ab99",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "4727c155-4979-4c24-9c01-65c6f3c68024",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:45.095479+00"
+  },
+  {
+   "id": "ef7fef3e-05c0-4701-b473-2fef5cf2858e",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:45.386462+00"
+  },
+  {
+   "id": "97503b70-f2db-4d8c-bc26-1bdccd527022",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:45.673124+00"
+  },
+  {
+   "id": "6fa2e9cd-b391-4edd-bcef-8a491d6f71c2",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "3e635799-7b78-469b-be07-baaf30b70b02",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:45.961489+00"
+  },
+  {
+   "id": "bad61add-14cf-49ed-9fa7-045a52ddeedb",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "6e0c67bc-2496-4d01-b787-bf7ee71451de",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:46.249144+00"
+  },
+  {
+   "id": "e3ccb981-a36c-434a-89b3-bfe990b930a0",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "632814d6-6602-42a8-be3d-b6b21b9a503f",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:46.538919+00"
+  },
+  {
+   "id": "1d863ebc-b36d-4b48-82d2-044b4f0c756d",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "8090d5f4-8c78-45f2-bc31-e014af7d59ca",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:47.435716+00"
+  },
+  {
+   "id": "cda231de-7ee7-46d8-bdc1-8a03e3f84c2d",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "844da732-62de-4f06-917c-d820388b6a4a",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:47.724452+00"
+  },
+  {
+   "id": "c86fa7f1-ed8e-4c9b-a8df-d4e6218ec4bd",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:48.015548+00"
+  },
+  {
+   "id": "9f657a9d-6485-48b2-b91d-b278e2ead850",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:48.302586+00"
+  },
+  {
+   "id": "fede08ba-2ef2-49af-b414-7b238fd91782",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:48.87599+00"
+  },
+  {
+   "id": "99c115ad-a8c6-462a-bf1a-8179df679bf7",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:49.165431+00"
+  },
+  {
+   "id": "f5c9b73d-b40a-47db-82ed-21e7aebe3f36",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "e07a60f2-b758-47cf-bf9d-7bffbd8f125a",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:50.025219+00"
+  },
+  {
+   "id": "1a5d03d8-22ea-4bfa-a873-e283dfa4cb6c",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "0d83c892-4030-4806-8820-6e513ebaf68b",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:50.314579+00"
+  },
+  {
+   "id": "87fc390c-76ed-49b7-8047-97e984033d10",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:46:50.600633+00"
+  },
+  {
+   "id": "4196d091-2cb8-4a1e-913c-9bc7ca0dc224",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:36.428835+00"
+  },
+  {
+   "id": "a7f4c4aa-ebc3-41ce-a39f-7cb9de997bb1",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "0d83c892-4030-4806-8820-6e513ebaf68b",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:37.313056+00"
+  },
+  {
+   "id": "1cfd39f5-a560-424e-bac8-683147bdf474",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:37.600446+00"
+  },
+  {
+   "id": "5c36e861-48a6-4090-ab06-fd9f65e2b291",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "102dfdb0-1632-4bbd-bd11-9b6b0e398f78",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:38.187894+00"
+  },
+  {
+   "id": "7d4ca48b-f6e5-41bc-b469-43c0986e1938",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:38.477244+00"
+  },
+  {
+   "id": "61417f13-be4a-4ba3-a4d6-a46cb111739b",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "e98531d4-f143-440c-bd0a-d8bc75fbafe9",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:38.765325+00"
+  },
+  {
+   "id": "c7761ff8-e803-4151-8cac-537cd7f61423",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:39.052839+00"
+  },
+  {
+   "id": "46208d55-f80c-4bb3-aef3-25d2d602e78d",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:39.340422+00"
+  },
+  {
+   "id": "0b542c67-a75a-4635-b310-ad0b0d8cf281",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:39.629162+00"
+  },
+  {
+   "id": "07ed36d9-e33c-4b43-974e-78bd3ab72da3",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:39.916227+00"
+  },
+  {
+   "id": "602a4913-660d-437c-ac3c-8b6b52072e9f",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "3e635799-7b78-469b-be07-baaf30b70b02",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:40.204458+00"
+  },
+  {
+   "id": "a400de35-234b-4500-890c-54264ad7be0e",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "3e635799-7b78-469b-be07-baaf30b70b02",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:40.493331+00"
+  },
+  {
+   "id": "a763a6e2-0520-4dbe-9e09-72a9d97e1da9",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "632814d6-6602-42a8-be3d-b6b21b9a503f",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:40.780655+00"
+  },
+  {
+   "id": "70114f5b-27fa-4f64-bac4-896610d0f825",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:41.661606+00"
+  },
+  {
+   "id": "33387695-d37d-48bb-8cf9-857c4a6205d2",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:42.247215+00"
+  },
+  {
+   "id": "a776acd9-c046-4a90-a012-666b1999af7e",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "844da732-62de-4f06-917c-d820388b6a4a",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:42.53389+00"
+  },
+  {
+   "id": "7aba4db9-35e5-46b4-8e6b-4cea252cad66",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:43.110302+00"
+  },
+  {
+   "id": "c90b5509-807d-4259-86b9-775e45cb60bb",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "6e0c67bc-2496-4d01-b787-bf7ee71451de",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:43.693714+00"
+  },
+  {
+   "id": "497eedde-661b-4bd3-8217-8db1eefa2db1",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "436e564a-a00d-412a-ac2f-0c3577c29c09",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:43.98077+00"
+  },
+  {
+   "id": "249932b9-1450-410e-864e-80798f07e4bb",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:44.555031+00"
+  },
+  {
+   "id": "6324d28c-b77e-4933-90fd-2996f65bcfb7",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "4727c155-4979-4c24-9c01-65c6f3c68024",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:44.842815+00"
+  },
+  {
+   "id": "c6089b4b-ebe9-423d-8bc1-02bf2dfc3ea5",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "0d83c892-4030-4806-8820-6e513ebaf68b",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:45.130577+00"
+  },
+  {
+   "id": "46a026e2-70ac-437e-8a16-9ab153892cbd",
+   "job_name": "llm_dedup_adjudication",
+   "use_case": "dedup",
+   "target_id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
+   "action": "route_to_review",
+   "created_at": "2026-09-21 18:53:45.711898+00"
+  }
+ ],
+ "distinct_targets": [
+  {
+   "id": "f39c2406-a045-4c0e-a3cf-4eaa699b32a9",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "b128c95c-a98d-45d2-a9cb-d172e00c7695",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "409b2727-b9d8-4f08-86a5-63ac216e2e23",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  },
+  {
+   "id": "cb32f31e-89c2-4c38-9bf3-b7b987012cfb",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "e07a60f2-b758-47cf-bf9d-7bffbd8f125a",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  },
+  {
+   "id": "8c5e51ba-20dc-45e8-8566-118f0c394655",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "436e564a-a00d-412a-ac2f-0c3577c29c09",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  },
+  {
+   "id": "e98531d4-f143-440c-bd0a-d8bc75fbafe9",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "c476ed25-3eeb-4729-9aef-09f9b21ec0d3",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  },
+  {
+   "id": "6e0c67bc-2496-4d01-b787-bf7ee71451de",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "844da732-62de-4f06-917c-d820388b6a4a",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "632814d6-6602-42a8-be3d-b6b21b9a503f",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  },
+  {
+   "id": "0d83c892-4030-4806-8820-6e513ebaf68b",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  },
+  {
+   "id": "3e635799-7b78-469b-be07-baaf30b70b02",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "102dfdb0-1632-4bbd-bd11-9b6b0e398f78",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  },
+  {
+   "id": "4727c155-4979-4c24-9c01-65c6f3c68024",
+   "source_name": "Richmond Public Library BiblioEvents"
+  },
+  {
+   "id": "35f1b979-ab56-4219-b34c-8cc48ea7f58b",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  },
+  {
+   "id": "8090d5f4-8c78-45f2-bc31-e014af7d59ca",
+   "source_name": "Vancouver Public Library BiblioEvents"
+  }
+ ],
+ "note_on_fields": "Decision rows carry ONLY the fields the fingerprint check reads (id, job_name, use_case, target_id, action, created_at). The originally-captured detail/related_id/custom_id/deterministic_score/llm_confidence were never read by the script and embedded REAL PRODUCTION ROW CONTENT (listing and venue text) in a committed file, so they were removed. The backup the script writes before deleting still captures every column live from the database, so restore fidelity is unchanged. distinct_targets keeps id (read by the script) and source_name (a public organisation name, useful when reviewing which sources were touched); its per-row status/date values were unused row content and were removed."
+}
