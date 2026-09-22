@@ -1,0 +1,484 @@
+{
+ "incident": "2026-09-21 DB-lane test run against production",
+ "generated_at": "2026-09-22T03:54:27.963Z",
+ "generated_from": "read-only query against kids-fun production (default_transaction_read_only=on)",
+ "window": {
+  "from": "2026-09-21 18:39:00+00",
+  "to": "2026-09-21 18:55:00+00"
+ },
+ "containment_archived_at_floor": "2026-09-21 19:00:00+00",
+ "leave_alone_source_ids": [
+  "0054b078-7426-4f68-afc3-dd952a4f3bd3",
+  "204657ff-cf19-48e4-816a-9983cba875e1",
+  "2b6ada6f-1098-4232-b8ad-ea251dc77a98",
+  "32d1e4c3-e45e-4087-a4d4-005d04a3a973",
+  "83fa77da-b4cf-4a65-9ae9-a91d32e4f0d7",
+  "919d6e63-f905-4911-8704-8f44636b8e17",
+  "979ba9f0-2180-426a-944c-eaa9761d3f61",
+  "9950a579-cc7a-4b82-a652-0abca87ef852",
+  "de7841f5-5521-4c7c-b8f7-48e545cbbdaf",
+  "f30fd261-1353-486d-b639-88800e32b62f",
+  "faf6aa6a-5be6-4d32-be15-3dbf04d8a2a8"
+ ],
+ "target_sources": [
+  {
+   "id": "1b751851-2555-4ca3-89be-e0b3a4b149c0",
+   "family": "test_global_sched",
+   "name": "Global Schedule Test Source 86506543",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:42:15.872Z"
+  },
+  {
+   "id": "517089ae-b4b0-4c22-88a3-4d991aa1bdb9",
+   "family": "test_adjudication",
+   "name": "Toddler Music Circle src ta",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:46:38.996Z"
+  },
+  {
+   "id": "caeea20d-83d2-45b9-8294-778c23a8e708",
+   "family": "test_adjudication",
+   "name": "Toddler Music Circle src tb",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:46:39.296Z"
+  },
+  {
+   "id": "f45649cd-380d-4c73-b1c7-09d613016261",
+   "family": "test_adjudication",
+   "name": "Toddler Music Circle src tc",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:46:39.594Z"
+  },
+  {
+   "id": "e0e79383-cef9-4c30-8229-3368ed1d4441",
+   "family": "noop",
+   "name": "Ingest Runner Source e3fbb030-2f44-4f7a-a0ad-8f31d66e8f77",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:17.581Z"
+  },
+  {
+   "id": "1ea8d4d1-bba2-40a7-9678-717e5d947b91",
+   "family": "perfectmind",
+   "name": "Title Normalise Source 43c2ee1c-d11e-43a5-b9d3-16314e2143f2",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:20.012Z"
+  },
+  {
+   "id": "56a08ce3-96f1-4710-906b-016481408a3a",
+   "family": "editorial_roundup",
+   "name": "Editorial Candidate Source 1c104942-1975-4ba6-9a92-4cb62303b274",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:47:21.002Z"
+  },
+  {
+   "id": "c5e16686-7aac-4ed1-8aef-ab66ee0dadc1",
+   "family": "noop",
+   "name": "Assess Run Source 6df81fd8-19a8-4f8e-9dc2-5ffb29805fe9",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:22.422Z"
+  },
+  {
+   "id": "293de6ea-e52d-4ac4-a9d7-ac7e2b104d2c",
+   "family": "noop",
+   "name": "Assess Run Sustained 953a2d43-bbaa-48e9-a8e0-5d6ee9ea900e",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:24.601Z"
+  },
+  {
+   "id": "75f735f7-9479-4208-82ba-3b71066a246b",
+   "family": "noop",
+   "name": "Assess Run Switching 5c36861b-7a36-4df6-ab46-505f5bfceeb5",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:26.912Z"
+  },
+  {
+   "id": "f68a0f8a-34b0-4d45-b7f6-b5e976fcdf0f",
+   "family": "noop",
+   "name": "Assess Run OK Source 6b965cb5-4e35-4426-b53e-ec855f48f8da",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:29.121Z"
+  },
+  {
+   "id": "8af8c041-6495-4b93-bc8e-f9f837033be8",
+   "family": "noop",
+   "name": "Ingest Idempotent Source 725dadac-2b8b-4d11-bd37-ed243236a39d",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:30.396Z"
+  },
+  {
+   "id": "2817a28f-4c43-49fb-8b4e-8e249184acc4",
+   "family": "noop",
+   "name": "AssessRun Alert Source 12220279-2ec6-426d-b601-92a33ac98ae2",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:33.461Z"
+  },
+  {
+   "id": "1dcee41f-a7ea-4e47-a02d-503537db1da7",
+   "family": "noop",
+   "name": "AssessRun Quiet Source c1ff0839-d152-4ad2-85b2-5b64198e2a66",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:47:34.641Z"
+  },
+  {
+   "id": "9ff9b24d-c69e-4728-aa2f-40e65ebe2db6",
+   "family": "noop",
+   "name": "Age Wiring Source 7c07d44c-57a6-49a2-8395-80a7a25a2fe7",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:47:50.192Z"
+  },
+  {
+   "id": "d6ebfc25-5ff2-4863-ae21-722413b93d05",
+   "family": "library_bibliocommons",
+   "name": "Registration Roundtrip Source 8432a8ca-72a9-4bbb-a2be-b0898d4fafa0",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:48:14.647Z"
+  },
+  {
+   "id": "b42a2d69-2745-4728-afe7-ba996dfddaa3",
+   "family": "library_bibliocommons",
+   "name": "Visibility Test Source 32204410-7b2f-4bdb-b371-7f431c1bd527",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:48:20.163Z"
+  },
+  {
+   "id": "123d13dd-d62b-4d11-b4ec-2c01ea1c97d9",
+   "family": "manual",
+   "name": "stage-c-db-fixture",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:48:46.066Z"
+  },
+  {
+   "id": "7f1ef31e-b732-432c-87c0-dc6129431b77",
+   "family": "test_job_dispatch",
+   "name": "Job Dispatch Test Source 71a1ac4d",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:49:00.275Z"
+  },
+  {
+   "id": "4cb12add-2e71-46e7-b0bd-c6d283062b7b",
+   "family": "test_job_dispatch",
+   "name": "Job Dispatch Blocked Source 59826a40",
+   "terms_status": "blocked",
+   "created_at": "2026-09-21T18:49:00.352Z"
+  },
+  {
+   "id": "59efb7b2-1ce3-4e38-a449-6cdfb9fc0928",
+   "family": "test_job_dispatch",
+   "name": "Job Dispatch Manual Source b5314bc5",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:49:00.425Z"
+  },
+  {
+   "id": "6e76af9e-5a5a-45d0-a023-32701e80b027",
+   "family": "noop",
+   "name": "f11_1790016607924_122156 hard-failure",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:50:09.212Z"
+  },
+  {
+   "id": "2d584dfb-aab9-44cc-ac2e-f6a04c05aad3",
+   "family": "noop",
+   "name": "f11_1790016607924_122156 write-path",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:50:10.220Z"
+  },
+  {
+   "id": "9aa0081f-b231-4cb6-83ca-263bedd92f31",
+   "family": "noop",
+   "name": "f11_1790016607924_122156 activenet-recorder",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:50:10.803Z"
+  },
+  {
+   "id": "dcd0a4f4-a1e3-432a-a661-d48ba6ae92e5",
+   "family": "noop",
+   "name": "f11_1790016607924_122156 perfectmind-recorder",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:50:10.876Z"
+  },
+  {
+   "id": "99824cac-56b2-4edf-8d9c-bb305c4b8fbc",
+   "family": "noop",
+   "name": "f11_1790016607924_122156 legacy-backfill",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:50:11.838Z"
+  },
+  {
+   "id": "9d1ec816-9224-4310-8285-fc50564f18fe",
+   "family": "noop",
+   "name": "f11_1790016607924_122156 infra-closeout",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:50:12.695Z"
+  },
+  {
+   "id": "000b4e69-b314-43b9-bfc5-87b5e4c9f91b",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #0 allowed robots, approved terms (every live source today)",
+   "terms_status": "summarise_only",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "69480db8-64b0-4053-bff5-d8e953b43823",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #1 allowed robots, terms allowed",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "0b3c48ec-4123-40ff-b48d-a5c958e461da",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #10 terms pending, robots allowed",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "c71af766-6fbc-4a0c-871e-6f186d916f0e",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #11 terms blocked, robots allowed",
+   "terms_status": "blocked",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "d681c15b-afc4-4c95-835b-45b01d034850",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #2 pending robots (never checked)",
+   "terms_status": "summarise_only",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "1159a7fc-2656-4bbc-9ba5-9bcdf54ba911",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #3 disallowed robots (read, and it said no)",
+   "terms_status": "summarise_only",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "ec4a57e3-ca12-445e-bd73-45034f9bde4c",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #4 unknown robots, NO decision — never checked, stays closed",
+   "terms_status": "summarise_only",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "af75e674-873e-4310-bc32-4c4fac492971",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #5 unknown robots + decision D-12 — the NVDPL case",
+   "terms_status": "summarise_only",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "c4b5d216-41ef-46d3-91be-cae7aa1953c9",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #6 unknown robots + decision, but terms still pending",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "b530ba75-4eb9-4eba-9d4c-dc17671b306f",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #7 unknown robots + decision, but terms disallowed",
+   "terms_status": "disallowed",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "55a07121-be2a-4024-870d-39566954435c",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #8 allowed robots + a stray decision reference (override irrelevant)",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "dbf1c116-f6d7-4990-85d9-c196128a44ca",
+   "family": "noop",
+   "name": "f5robots_1790016634329_331983 #9 pending robots + a decision reference (override does not apply)",
+   "terms_status": "summarise_only",
+   "created_at": "2026-09-21T18:50:34.915Z"
+  },
+  {
+   "id": "7c914d96-7e23-4f53-83ec-8f198d9718ac",
+   "family": "manual",
+   "name": "stage-d-db-fixture",
+   "terms_status": "pending",
+   "created_at": "2026-09-21T18:51:56.586Z"
+  },
+  {
+   "id": "46d8f492-bc7b-47d7-9501-badb9a8840e9",
+   "family": "activenet",
+   "name": "t41test_1790016754044_930262 Operating Source",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:52:35.006Z"
+  },
+  {
+   "id": "a1229041-9375-4d91-8911-bd759b97f39f",
+   "family": "test_optd_dedup",
+   "name": "Preschool Storytime src canon",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:53:28.226Z"
+  },
+  {
+   "id": "6052c121-e1fd-40b2-b6c0-58e9a75d89aa",
+   "family": "test_optd_dedup",
+   "name": "Preschool Storytime src dup",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:53:28.662Z"
+  },
+  {
+   "id": "88cf5dc4-566f-4ca8-91b8-f3d35bdb0189",
+   "family": "test_optd_dedup",
+   "name": "Babytime Drop-In src rpl",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:53:34.439Z"
+  },
+  {
+   "id": "4c5d7cf4-7491-4b0f-ab6f-5656a253cad3",
+   "family": "test_optd_dedup",
+   "name": "Babytime Drop-In src vpl",
+   "terms_status": "allowed",
+   "created_at": "2026-09-21T18:53:34.919Z"
+  }
+ ],
+ "target_series_ids": [
+  "068f0232-53f3-47f5-9743-22272e8a50f1",
+  "0ab19cce-1c0d-4850-abe0-f5acaaf97a7b",
+  "2123e87d-a065-4eac-b419-281cbbfcb30a",
+  "23506d39-1891-4729-a897-252f454fac29",
+  "35a64840-4710-4207-b8d6-a386d812c41a",
+  "3fbb7e33-c117-4441-a7d0-6ada20a3b475",
+  "4080e2c2-eb29-465d-a04b-a8b90cf58faa",
+  "40e0a5d3-dc46-4d69-a0c0-2e964599c1a9",
+  "4300e1c9-e8b2-4f51-9d1b-e5934d087ec3",
+  "4496ac33-7a0c-4c1c-bfef-b6d1b92737a2",
+  "64193409-aed6-42c4-b997-c8561c99f1cd",
+  "6c198096-9b49-4389-b9f7-520ff7e46614",
+  "70433a3d-7eef-4b34-8742-c8bc10cf4280",
+  "7a111163-9b7a-44c3-aa18-278b14eeafae",
+  "81d86bec-2090-4871-9048-374e37739a0a",
+  "8a5286b4-2819-4d5d-8272-f0da67906bf3",
+  "909efd9b-7295-4e5b-a7f2-5b6867dae1d7",
+  "98f423ea-12ee-4bac-ba50-868f13ef6bef",
+  "a305331a-6a0a-46ad-875b-2f923df9ce8c",
+  "aa6c84e1-2fed-4889-88e6-abd7dc2577fb",
+  "c76efeb2-22cf-4cc0-88d8-8612987f2590",
+  "c8275136-229b-4cde-bc08-b0fe829c3fa5",
+  "ca91dbaa-ae7b-4251-9691-da3e9302e3a0",
+  "cab867a9-b082-42de-8d66-236aa79596e1",
+  "ce74860d-72b7-4d24-ad1a-6caf2dd11136",
+  "d0bf9631-3100-4d8e-8422-8ad1298049e2",
+  "d10bb0fc-9dee-412f-ba06-d123bfd193c1"
+ ],
+ "target_occurrence_ids": [
+  "00b296c7-810e-42b8-a120-956480a96733",
+  "0afd7dc5-3a02-41fa-8ae1-7fb81b295956",
+  "0e4f4e95-a1ed-47ad-85ff-d9b208fcce0a",
+  "10cff527-81ff-4686-b847-2f5a762e678c",
+  "16c78d91-5ec5-493a-932b-85ea1b6f1fb8",
+  "24c4f2be-65d7-4b29-aa32-549b3c5357ce",
+  "2f96e045-3e43-4f93-9a01-867cca40be43",
+  "301fe1d9-3ba1-4636-9fe2-9c239c930f9c",
+  "3df3fb21-61a1-4415-9476-473dc40ead74",
+  "476c8a82-4bb3-4dc6-bfe1-18ecc454c06a",
+  "4958f473-688b-49bb-9dfe-8817bad573e4",
+  "4ce29baa-9f4a-4919-8081-5c694df180cf",
+  "7e3804e7-fc34-4257-a3fb-5e53bb08d680",
+  "8243f381-18c9-4d51-8163-8f86debe4000",
+  "8552dd14-3dc7-42af-a602-178b94e954ec",
+  "85ab0c59-691e-4bde-9084-c6ad76b39c54",
+  "8a05e5b8-9a4a-4949-b167-36de72a97902",
+  "8b7d245b-b96e-4fa9-89e8-c018f06ab0d5",
+  "9d177200-8ee2-4011-a306-2133f33de292",
+  "a0760038-4939-4ef0-a79c-76e9f5757fb6",
+  "b32e7e70-4c63-4ad9-a702-766b2e703d8f",
+  "c76e9f6f-3bbd-48ae-936c-7aee9f8f9d4b",
+  "c98e7d8d-978b-413b-a66d-f82b9c7ff4bf",
+  "ca3d6a90-bdd4-4204-be5e-9ced06fb792c",
+  "cd34ad0a-4c4d-4e2e-b5ff-211007367461",
+  "d226c236-61c0-4322-9cd3-0a3f6d0a9937",
+  "d6e71469-39c0-44ac-9774-f4af99194b3b",
+  "db897080-2359-4617-9c9d-80a00962dd8f",
+  "ddeecf18-1c87-41ba-ae7a-f693a24e6067",
+  "ddf28c74-c622-4ff3-bd91-585da1d7522c",
+  "e7fd8b3f-010a-439c-b858-5650458b5d98",
+  "ecb02441-a261-47fe-a435-f47078b8f1b1",
+  "f14bf801-a18b-4eb6-b996-8bfac0db8e46"
+ ],
+ "fixture_venues": [
+  {
+   "id": "77463055-8047-4cff-84da-b5edbb5ea6ac",
+   "name": "GVGEO0-918ff92e west point grey community centre - aberthau",
+   "created_at": "2026-09-21T18:46:36.103Z"
+  },
+  {
+   "id": "99cf0476-0e96-47e3-a5ee-fa9283947ff6",
+   "name": "Brighouse Branch [test_adjudication]",
+   "created_at": "2026-09-21T18:46:38.380Z"
+  },
+  {
+   "id": "cd4966ab-4d1e-4721-9c69-fd0920c7d02b",
+   "name": "Kitsilano Branch [test_adjudication]",
+   "created_at": "2026-09-21T18:46:38.772Z"
+  },
+  {
+   "id": "217eafab-64a5-482b-b075-26e840d739ce",
+   "name": "Ta Branch [test_adjudication]",
+   "created_at": "2026-09-21T18:46:39.069Z"
+  },
+  {
+   "id": "916ab1de-295b-4074-af2e-a26492062f75",
+   "name": "Tb Branch [test_adjudication]",
+   "created_at": "2026-09-21T18:46:39.369Z"
+  },
+  {
+   "id": "930fb17d-3db3-4e1e-8891-bd292f82c9f5",
+   "name": "Tc Branch [test_adjudication]",
+   "created_at": "2026-09-21T18:46:39.666Z"
+  },
+  {
+   "id": "56613ff3-6224-4a95-96c3-b9634f8da813",
+   "name": "Phone Test Centre 664ee7a6-09ab-454a-adf0-24ee85bbb1a2",
+   "created_at": "2026-09-21T18:48:12.465Z"
+  },
+  {
+   "id": "a15ec95c-273a-4dff-9325-8151a9e583bd",
+   "name": "Phoneless Test Branch 664ee7a6-09ab-454a-adf0-24ee85bbb1a2",
+   "created_at": "2026-09-21T18:48:12.537Z"
+  },
+  {
+   "id": "835bbf0d-cbd1-459c-ac8f-a9e9a64d92f6",
+   "name": "t41test_1790016754044_930262 Rec Centre",
+   "created_at": "2026-09-21T18:52:35.302Z"
+  },
+  {
+   "id": "40644663-6d00-4b21-8930-ae886af2002d",
+   "name": "Brighouse Branch [test_optd_dedup]",
+   "created_at": "2026-09-21T18:53:34.527Z"
+  },
+  {
+   "id": "fa4f167e-9b1e-4377-8cc7-37a5b84333c4",
+   "name": "Kitsilano Branch [test_optd_dedup]",
+   "created_at": "2026-09-21T18:53:34.993Z"
+  }
+ ],
+ "orphan_profile_ids": [
+  "ac8c236b-d332-4a1a-8dc7-06664398e57e",
+  "4e4d2359-9da6-4570-ae06-c41ff936c940"
+ ],
+ "expected_dependent_counts": {
+  "provenance": 29,
+  "occurrence_age": 1,
+  "occurrence_category_tag": 5,
+  "correction_report": 0,
+  "sms_click_event": 0,
+  "analytics_event": 0,
+  "source_check_run": 29,
+  "job_queue": 0,
+  "admin_audit_log": 3
+ },
+ "expected_preconditions": {
+  "sources_total": 73,
+  "sources_outside_window": 17,
+  "occ_total": 31979,
+  "occ_stale": 16561,
+  "venues_total": 439,
+  "admin_users_total": 3
+ }
+}

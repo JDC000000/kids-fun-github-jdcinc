@@ -18,19 +18,42 @@
 // (a confirmed occurrence can never persist against a non-terms-approved source). This
 // guard stops the *accident vector* — a test aimed at prod — one layer earlier.
 //
-// Escape hatch (deliberate, loud — mirrors migrate.sh's MIGRATE_ALLOW_CHECKSUM_MISMATCH):
-//   KIDS_FUN_ALLOW_NONLOCAL_DB=1   downgrades the refusal to allow, for the rare case
-//   an operator intentionally runs read-only checks against a remote DB. NEVER set this
-//   in CI or when a suite writes fixtures.
+// ═══ 2026-09-21 INCIDENT: WHY THE ESCAPE HATCH NO LONGER APPLIES TO TEST RUNS ═══
+// The Round 27 design above had ONE bypass: KIDS_FUN_ALLOW_NONLOCAL_DB=1 downgraded the
+// refusal to an allow for ANY non-local host, so that an operator could point a read-only
+// probe at a remote DB. On 2026-09-21 an env file (.env.qa in a QA worktree) bundled, in a
+// single file, a PRODUCTION superuser DATABASE_URL *and* KIDS_FUN_ALLOW_NONLOCAL_DB=1. One
+// `set -a; . .env.qa; npm test` later, the whole DB lane had run against production: 56
+// fixture `source` rows, an unscoped `DELETE FROM job_queue`
+// that destroyed pending prod ingest jobs, a corrupted llm_batch_run watermark, two orphan
+// `admin_user` rows, and — the real damage — 16,561 REAL occurrences flipped to 'stale' by
+// the genuine scheduler that tests/scheduler/*-db.test.ts deliberately runs for real.
+//
+// THE LESSON IS ABOUT THE SHAPE OF THE OVERRIDE, NOT ABOUT DISCIPLINE. A boolean env var is
+// exactly the wrong shape for this: it is target-independent, so it keeps applying to every
+// database the process is later pointed at, and it is sticky — `export`ed once for a
+// legitimate read probe, it silently authorises the next thing that runs in that shell. The
+// snapshot runbook already warned against setting it and leaving it set; the warning was
+// correct and insufficient, because the failure mode did not require anyone to ignore it.
+//
+// SO THE TEST PATH NOW HAS NO BOOLEAN OVERRIDE AT ALL (assertTestDatabaseUrl below):
+//   • a MANAGED/hosted host (db.*.supabase.co, *.pooler.supabase.com, RDS, …) is refused
+//     ABSOLUTELY — no env var can permit it, because no such host is ever a disposable DB;
+//   • any other non-local host is refused unless KIDS_FUN_TEST_ALLOW_NONLOCAL_DB_HOST names
+//     that EXACT resolved host. Naming the target is what makes the override non-sticky: a
+//     value left over from another database simply does not match, and fails closed.
+//
+// `assertLocalDatabaseUrl` keeps its original boolean-hatch semantics for NON-TEST callers
+// (operator read-probe scripts that import it directly). Nothing in the test path calls it.
 
 // Host classification + resolution live in a shared, side-effect-free module so this guard
 // and the runtime pool config (lib/db/pool-config.ts) resolve the connection host the SAME
 // way node-postgres does — honoring a `?host=` override. See lib/db/connection-host.ts for
 // the full rationale (Round 27 approval-bypass incident).
-import { isLocalDatabaseHost, resolveConnectionHost } from '@/lib/db/connection-host';
+import { isLocalDatabaseHost, isManagedDatabaseHost, normaliseHost, resolveConnectionHost } from '@/lib/db/connection-host';
 
-// Re-exported so existing importers (and tests) can keep importing it from this module.
-export { isLocalDatabaseHost };
+// Re-exported so existing importers (and tests) can keep importing them from this module.
+export { isLocalDatabaseHost, isManagedDatabaseHost };
 
 /**
  * Extract the host node-postgres will ACTUALLY connect to for a Postgres URL — honoring a
@@ -77,7 +100,67 @@ export function assertLocalDatabaseUrl(url: string | undefined, label = 'DATABAS
   }
 }
 
+/** Env var that may name ONE exact non-local, non-managed host as a permitted test target. */
+export const TEST_HOST_OVERRIDE_ENV = 'KIDS_FUN_TEST_ALLOW_NONLOCAL_DB_HOST';
+
+/**
+ * The assertion the TEST path uses. Unlike assertLocalDatabaseUrl it has no boolean override:
+ *
+ *   • unset URL            → no-op (DB-gated suites skip themselves via their own `hasDb`)
+ *   • local host           → allowed
+ *   • unparseable          → refused (fails closed; unverifiable target)
+ *   • MANAGED/hosted host  → refused ABSOLUTELY, no override honoured
+ *   • other non-local host → refused unless KIDS_FUN_TEST_ALLOW_NONLOCAL_DB_HOST === that host
+ *
+ * The override compares against the RESOLVED host (so a `?host=` override cannot smuggle a
+ * different target past it) and must match exactly — case-insensitively, brackets stripped.
+ */
+export function assertTestDatabaseUrl(url: string | undefined, label = 'DATABASE_URL'): void {
+  if (!url) return;
+
+  const host = resolveConnectionHost(url);
+  if (host === null) {
+    throw new Error(
+      `[local-db-guard] ${label} is set but is not a parseable connection URL — refusing to ` +
+        `run DB-backed tests against an unverifiable target. Check the value, or unset it.`
+    );
+  }
+  if (isLocalDatabaseHost(host)) return;
+
+  if (isManagedDatabaseHost(host)) {
+    throw new Error(
+      `[local-db-guard] REFUSING TO RUN: ${label} points at the MANAGED/HOSTED database host ` +
+        `"${host}". DB-backed suites here mint fixtures AND run the real scheduler, whose writes ` +
+        `(flipStaleOccurrences, DELETE FROM job_queue) are table-wide — on 2026-09-21 exactly ` +
+        `this mistake flipped 16,561 real production occurrences to 'stale'. There is NO ` +
+        `environment variable that permits this: a hosted endpoint is never a disposable test ` +
+        `database. Point ${label} at a local Postgres (scripts/local-db-bootstrap.sh), or unset ` +
+        `it to skip the DB suites. If you need to READ production, use a purpose-built ` +
+        `read-only probe with its own env var — never ${label}.`
+    );
+  }
+
+  // Both sides go through the SAME normaliser, so `db.x.supabase.co.` cannot be presented as a
+  // different host from `db.x.supabase.co` to slip past an allowlist entry (or past the managed
+  // check above).
+  const allowed = normaliseHost(process.env[TEST_HOST_OVERRIDE_ENV] ?? '');
+  const normalised = normaliseHost(host);
+  if (allowed !== '' && allowed === normalised) return;
+
+  throw new Error(
+    `[local-db-guard] ${label} points at non-local host "${host}". DB-backed integration tests ` +
+      `write throwaway fixtures and run table-wide scheduler writes, so they must NEVER target a ` +
+      `real or staging database (Round 27 approval-bypass incident; 2026-09-21 production ` +
+      `pollution). Point it at a local Postgres (localhost / 127.0.0.1 — e.g. ` +
+      `scripts/local-db-bootstrap.sh). If this really is a disposable remote test database, name ` +
+      `it EXACTLY: ${TEST_HOST_OVERRIDE_ENV}="${normalised}". A boolean opt-out is deliberately ` +
+      `not accepted here — it was the 2026-09-21 root cause.`
+  );
+}
+
 // Self-execute when loaded as a Vitest setup file: guard every DB URL a test pool may
 // connect to (lib/db/client → DATABASE_URL; lib/db/user-scoped-client → USER_DATABASE_URL).
-assertLocalDatabaseUrl(process.env.DATABASE_URL, 'DATABASE_URL');
-assertLocalDatabaseUrl(process.env.USER_DATABASE_URL, 'USER_DATABASE_URL');
+// NOTE: assertTestDatabaseUrl, NOT assertLocalDatabaseUrl — the test path does not honour the
+// KIDS_FUN_ALLOW_NONLOCAL_DB boolean (see the incident note in this file's header).
+assertTestDatabaseUrl(process.env.DATABASE_URL, 'DATABASE_URL');
+assertTestDatabaseUrl(process.env.USER_DATABASE_URL, 'USER_DATABASE_URL');

@@ -166,6 +166,19 @@ export const TEST_INCLUDE = [
   'app/**/*.test.{ts,tsx}',
   'evals/**/*.test.ts',
   'components/**/*.test.{ts,tsx}',
+  // ── A SANCTIONED HOME FOR THROWAWAY VERIFICATION PROBES (gitignored) ──────────────
+  // Raised by a reviewer during the 2026-09-21 incident review, and it is the structural
+  // cause of a real mess: the globs above only reach tests/|app/|evals/|components/, so an
+  // ad-hoc probe written anywhere else exits "No test files found". Anyone doing programmatic
+  // verification was therefore FORCED to write into the TRACKED tree — which is how two
+  // concurrent reviewers ended up leaving stray *.test.ts files in a shared worktree, one of
+  // which broke `tsc` and was briefly misattributed to someone else.
+  //
+  // `.qa-probes/` is gitignored, outside every TEST_ROOTS walk in
+  // tests/vitest-lane-split.test.ts (so it is exempt from the lane partition guard by
+  // construction, not by an exemption), and cannot reach a database any more than any other
+  // unit-lane file. Write probes there instead of into tests/.
+  '.qa-probes/**/*.test.{ts,tsx}',
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,6 +217,11 @@ export default defineWorkspace([
     test: {
       name: 'db',
       include: DB_INTEGRATION_SUITES,
+      // MERGES with vitest.config.ts's setupFiles (array options merge when extending), so the db
+      // lane runs the address guard AND then the disposability proof. It lives here and not in the
+      // base config because it opens a connection, which the unit lane must never do — see the
+      // header of lib/testing/disposable-db-setup.ts.
+      setupFiles: ['./lib/testing/disposable-db-setup.ts'],
     },
   },
   {

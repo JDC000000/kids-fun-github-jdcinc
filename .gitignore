@@ -70,3 +70,8 @@ test-results/
 # data pulled from a live database — it is an artefact an operator produces and ships out of
 # band, never something that belongs in git history where it cannot be deleted.
 /.snapshots/
+
+# Throwaway reviewer/verification probes — see TEST_INCLUDE in vitest.workspace.ts.
+# The README is tracked (it documents the convention); the probes themselves never are.
+.qa-probes/*
+!.qa-probes/README.md

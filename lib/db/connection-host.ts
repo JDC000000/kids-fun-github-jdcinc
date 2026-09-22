@@ -27,6 +27,30 @@
 //   connects — not just today's understanding of the precedence rule.
 import { parse } from 'pg-connection-string';
 
+/**
+ * Canonical form of a host, for classification only.
+ *
+ * ═══ WHY THE TRAILING DOT MATTERS (both reviewers found this independently) ═══
+ * `db.<ref>.supabase.co.` — with a trailing dot — is the DNS-ABSOLUTE (fully-qualified) form of
+ * the same name. Resolvers and therefore node-postgres dial it identically, but a naive string
+ * comparison does not: it is one character different, so it was NOT matching the managed-host
+ * patterns and NOT matching the exact-host override's equality check. That defeated the
+ * "refused absolutely, no env var can permit it" guarantee with a single keystroke, and QA
+ * demonstrated it live — the connection got past both guards as far as a real DNS lookup.
+ *
+ * Normalising here rather than in each caller is deliberate: this is the one place that decides
+ * what a host "is", so the local check, the managed check and the override comparison cannot
+ * drift apart on the question of what counts as the same name.
+ */
+export function normaliseHost(rawHost: string): string {
+  return rawHost
+    .trim()
+    .toLowerCase()
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .replace(/\.+$/, ''); // DNS-absolute form: `host.` is the same host as `host`
+}
+
 /** Loopback / local host literals a disposable/local database may legitimately use. */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '::ffff:127.0.0.1']);
 
@@ -55,12 +79,63 @@ export function resolveConnectionHost(connectionString: string): string | null {
 }
 
 /**
+ * True when `rawHost` is a MANAGED/HOSTED Postgres endpoint — i.e. a host that, by its very
+ * shape, can only be a real hosted database and never a disposable local one.
+ *
+ * ═══ WHY THIS EXISTS SEPARATELY FROM isLocalDatabaseHost ═══
+ * "not local" and "definitely a real hosted database" are different claims, and the 2026-09-21
+ * pollution incident turned on the difference. The test guard only asked "is this local?", and
+ * its escape hatch (KIDS_FUN_ALLOW_NONLOCAL_DB=1) could then answer "run anyway" for ANY
+ * non-local host — including the production Supabase endpoint. A full DB-lane run went into
+ * production, minting 56 fixture `source` rows and, far worse, triggering the real scheduler's
+ * table-wide writes against live data.
+ *
+ * A host matching THIS predicate is never a legitimate test target under any override, because
+ * no local/disposable Postgres is ever reachable at one of these names: Supabase's local stack
+ * serves 127.0.0.1:54322, and CI serves localhost. So the test guard refuses these outright
+ * rather than making refusal contingent on an env var that can be set once and left set.
+ *
+ * Deliberately NOT used for the SSL decision (lib/db/pool-config.ts) — that correctly keys off
+ * isLocalDatabaseHost, because a self-hosted remote Postgres also needs SSL.
+ */
+export function isManagedDatabaseHost(rawHost: string | null | undefined): boolean {
+  if (rawHost == null) return false;
+  const host = normaliseHost(rawHost);
+  if (host === '' || host.startsWith('/')) return false;
+  if (isLocalDatabaseHost(host)) return false; // e.g. a ?host=127.0.0.1 override really is local
+  return MANAGED_HOST_PATTERNS.some((re) => re.test(host));
+}
+
+/**
+ * Host shapes that only ever denote a hosted/managed Postgres. Kept narrow and literal: each
+ * entry is a provider endpoint format, not a guess about private infrastructure. A remote host
+ * that is NOT on this list is still refused by the test guard by default — this list only marks
+ * the hosts for which refusal is absolute (no override).
+ */
+const MANAGED_HOST_PATTERNS: readonly RegExp[] = [
+  /(^|\.)supabase\.co$/, // db.<ref>.supabase.co — Supabase direct connection
+  /(^|\.)supabase\.com$/, // aws-0-<region>.pooler.supabase.com — Supabase pooler
+  /(^|\.)supabase\.net$/,
+  /(^|\.)rds\.amazonaws\.com$/,
+  /(^|\.)neon\.tech$/,
+  /(^|\.)render\.com$/,
+  /(^|\.)railway\.app$/,
+  /(^|\.)azure\.com$/,
+  /(^|\.)cloudsql\..*\.goog$/,
+  /(^|\.)timescaledb\.io$/,
+  /(^|\.)cockroachlabs\.cloud$/,
+  /(^|\.)digitalocean\.com$/,
+  /(^|\.)fly\.dev$/,
+  /(^|\.)heroku(app)?\.com$/,
+];
+
+/**
  * True when `rawHost` is a loopback/local database host. An empty/omitted host (unix socket or
  * libpq default) is treated as local — those never reach a remote server.
  */
 export function isLocalDatabaseHost(rawHost: string | null | undefined): boolean {
   if (rawHost == null) return true; // no TCP host at all → local (unix socket / default)
-  const host = rawHost.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  const host = normaliseHost(rawHost);
   if (host === '') return true; // empty host → local
   if (host.startsWith('/')) return true; // unix-socket path (e.g. ?host=/var/run/postgresql)
   if (LOOPBACK_HOSTS.has(host)) return true; // localhost / 127.0.0.1 / 0.0.0.0 / ::1
