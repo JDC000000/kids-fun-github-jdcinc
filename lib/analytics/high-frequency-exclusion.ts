@@ -31,10 +31,13 @@
 // fixed at least once (see trends.ts's and operating.ts's own extensive measured-regression
 // comments). Generating the SQL TEXT keeps every caller's query a single statement Postgres
 // plans as a whole — callers correlating against `analytics_event` directly get an ordinary
-// (often planner-flattened, see the anti-join note below) correlated subquery; trends.ts
-// correlates against its OWN small `flagged` pre-aggregation instead (see
-// `highFrequencyExclusionAgainstFlagged` below) for the identical reason `scan` itself exists:
-// so a per-day check touches a bounded, tiny relation, never the whole event table again.
+// (often planner-flattened, see the anti-join note below) correlated subquery; trends.ts AND
+// operating.ts (both have PER-BUCKET/PER-DAY metrics sharing one wider scan-once window — see
+// `highFrequencyExclusionAgainstRaw`'s own docstring below for why that disqualifies them from
+// the raw form) correlate against their OWN small `flagged` pre-aggregation instead (see
+// `highFrequencyExclusionAgainstFlagged` below) for the identical reason trends.ts's `scan`
+// itself exists: so a per-bucket check touches a bounded, tiny relation, never the whole event
+// table again.
 //
 // ═══ NOT EXISTS vs ANTI-JOIN ═══
 // `highFrequencyExclusionAgainstRaw` emits `NOT EXISTS`, matching kpi.ts's already-tested,
@@ -77,9 +80,17 @@ export interface RawExclusionOptions {
 
 /**
  * The exclusion predicate for a caller correlating directly against raw `analytics_event` under
- * a SINGLE window (kpi.ts's getActiveUsers/getAccountValue, operating.ts's getEngagementSeries —
- * anywhere the query's own `bounds`/window-bound expression IS ALREADY the exact window the
- * metric is computed over, with no per-row variation).
+ * a SINGLE window shared by the WHOLE query (kpi.ts's getActiveUsers/getAccountValue — one
+ * window for the whole statement, with dau/wau/mau all derived from the same excluded-actor set
+ * afterward, never a window that varies by output row/metric).
+ *
+ * ⚠ operating.ts's getEngagementSeries/getLifecycleSeries do NOT use this one, even though their
+ * own `bounds` CTE looks like a single window at first glance: `bounds` spans the WHOLE requested
+ * period range (e.g. all 30 days), while active_actors/signed_in_actors/seen are PER-PERIOD
+ * metrics — one independent count per bucket, the same shape as trends.ts's per-day DAU. That
+ * makes `bounds` a scan-once convenience window, not any one bucket's own window (identical
+ * reasoning to why trends.ts can't use this function either) — see `highFrequencyExclusionAgainstFlagged`
+ * below, which both of them use instead.
  */
 export function highFrequencyExclusionAgainstRaw(opts: RawExclusionOptions): string {
   const actorColumn = opts.actorColumn ?? 'user_or_session';
@@ -121,7 +132,8 @@ export function highFrequencyFlaggedDaysCte(opts: FlaggedDaysCteOptions): string
 }
 
 export interface FlaggedExclusionOptions {
-  /** Alias of the pre-aggregated per-day relation being tested (e.g. trends.ts's `s` from `scan`). */
+  /** Alias of the pre-aggregated per-day/per-bucket relation being tested (e.g. trends.ts's `s`
+   *  from `scan`, or operating.ts's `e` from its own per-bucket subquery). */
   actorAlias: string;
   /** Column on `actorAlias` holding the actor id in the pre-aggregated relation. */
   actorColumn: string;
@@ -132,16 +144,29 @@ export interface FlaggedExclusionOptions {
   flaggedCteName?: string;
   /**
    * Raw SQL boolean expression bounding `f.d` against `${actorAlias}.${dayColumn}` — THIS is
-   * where each metric's own correct window finally applies (DAU: `f.d = s.d`; WAU: `f.d <= s.d
-   * AND f.d > s.d - $2::int`; MAU: the same shape with $3). Must match the calling subquery's OWN
-   * window bound exactly, for the identical reason `RawExclusionOptions.windowSql` must.
+   * where the correct window finally applies. Must match the calling query's OWN window bound
+   * exactly, for the identical reason `RawExclusionOptions.windowSql` must.
+   *
+   * ⚠ 2026-09-22, SECOND version of this bug (caught by two independent reviewers, 0bab6a97 and
+   * 6f176ae2): trends.ts's dau/wau/mau/events used to each pass a DIFFERENT dayWindowSql here —
+   * `f.d = d.day` for dau, `f.d <= d.day AND f.d > d.day - $2::int` for wau, `...$3::int` for mau
+   * — matching each metric's own DISPLAY period. That sounds principled but is not what kpi.ts's
+   * tiles do: kpi.ts excludes over ONE shared MAU-width window and derives dau/wau/mau from what
+   * survives, so a per-metric window here (a) disagreed with kpi.ts's tiles on dau/wau specifically
+   * (an actor flagged 10 days ago sits inside kpi.ts's 30-day window but outside dau's 1-day/wau's
+   * 7-day windows) and (b) broke the dau <= wau <= mau invariant (a wider window, mau, could
+   * exclude an actor a narrower one, dau, did not). The fix: every metric passes the SAME
+   * dayWindowSql — day D's trailing MAU-width window — reproducing kpi.ts's one-shared-window
+   * shape per plotted day. Do not let a future caller reintroduce a narrower per-metric window
+   * here "to match that metric's own period" — that is precisely this bug.
    */
   dayWindowSql: string;
 }
 
 /** The exclusion predicate for a caller correlating against a `flagged` pre-aggregation (built
  *  via `highFrequencyFlaggedDaysCte`) instead of raw `analytics_event` — trends.ts's per-day
- *  DAU/WAU/MAU/events sub-selects, each with their OWN window over the SAME `flagged` relation. */
+ *  DAU/WAU/MAU/events sub-selects (all sharing ONE window per day, see `dayWindowSql` above) and
+ *  operating.ts's per-bucket active_actors/signed_in_actors/seen (each bucket its own window). */
 export function highFrequencyExclusionAgainstFlagged(opts: FlaggedExclusionOptions): string {
   const flaggedCteName = opts.flaggedCteName ?? 'flagged';
   return `NOT EXISTS (
