@@ -51,7 +51,11 @@ const FORBIDDEN_DELETES: RegExp[] = [
         // and I predicted `cd /tmp && rm -f n*.json` would be caught by it. It was not — the path
         // comes first there, and so it does in `T=/tmp; rm -f $T/n*.json`. Two lookaheads, so the
         // line only has to CONTAIN both.
-        /^(?=[^\n]*\brm\b)(?=[^\n]*(?:\/tmp|\/var\/tmp))[^\n]*$/m,
+        // Keyed on the ACT of deleting, not on the tool. The previous version keyed on `rm`, so
+  // `find /tmp -name 'n*.json' -delete` walked straight past it — no `rm` anywhere on the line.
+  // Adding a `find` pattern would have been the third round of spelling whack-a-mole; naming the
+  // verbs is the version that stops the game.
+  /^(?=[^\n]*(?:\brm\b|-delete\b|\bunlink\b|\bshred\b))(?=[^\n]*(?:\/tmp|\/var\/tmp))[^\n]*$/m,
       ];
 describe('incident toolkit: no path-scoped deletion, ever', () => {
   it('finds the toolkit sources (guards against a vacuous pass)', () => {
@@ -125,6 +129,10 @@ describe('incident toolkit: the deletion patterns actually catch these spellings
     ['variable holding /tmp', 'T=/tmp; rm -f $T/n*.json'],
     ['no glob at all, still shared', 'rm -f /tmp/known-name.json'],
     ['/var/tmp', 'rm -f /var/tmp/n*.json'],
+    ['find with -delete', "find /tmp -name 'n*.json' -delete"],
+    ['find with -exec rm', 'find /tmp -name "n*.json" -exec rm {} \\;'],
+    ['xargs rm', 'find /tmp -name "n*" | xargs rm -f'],
+    ['unlink', 'unlink /tmp/n1.json'],
     ['rmSync recursive', 'rmSync(dir, { recursive: true })'],
   ])('refuses %s', (_label, line) => {
     expect(caught(line)).toBe(true);
