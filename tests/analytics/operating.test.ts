@@ -523,6 +523,20 @@ function utcRecentComplete31DayMonthStart(): Date {
   throw new Error('no 31-day month found 2-3 months back — should be impossible on the Gregorian calendar');
 }
 
+/** A recent, COMPLETE February (28 or 29 days) — the ONLY month length where the LEAST-clamped
+ *  exclusion window actually reaches back into the PRIOR month (verified: for days_in_month
+ *  days, the window's lower bound is pstart + (days_in_month - 30); that is negative — i.e.
+ *  before pstart — only when days_in_month < 30, which on the Gregorian calendar is February
+ *  alone). Scans up to 14 months back, since February is 12 months apart and "this month" (if it
+ *  happens to be February) must be excluded as not-yet-complete. */
+function utcRecentCompleteFebruaryStart(): Date {
+  for (let monthsAgo = 1; monthsAgo <= 14; monthsAgo++) {
+    const start = utcMonthsAgoStart(monthsAgo);
+    if (start.getUTCMonth() === 1) return start; // 0-indexed: January=0, February=1
+  }
+  throw new Error('no complete February found in the last 14 months — should be impossible');
+}
+
 describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
   afterAll(async () => {
     await closePool();
@@ -813,6 +827,59 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
         afterTarget.newActors + afterTarget.returningActors - (beforeTarget.newActors + beforeTarget.returningActors),
         `day ${day} newActors+returningActors`
       ).toBe(0);
+    }
+  });
+
+  // The bucket's own intended LOOKBACK, the one case in the scenario table above that is NOT a
+  // bug: for any month SHORTER than 30 days -- on the Gregorian calendar, February alone (28 or
+  // 29 days) -- the LEAST-clamped window's lower bound is `pstart + (days_in_month - 30)`,
+  // strictly BEFORE pstart, so the window deliberately reaches a day or two into January. An
+  // actor flagged on January's own last day, with ordinary activity early in February, must be
+  // excluded from February's own count -- this is the SAME "shared 30-day window" design
+  // 2febba9 established, not a leak. (30/31-day months do NOT do this -- verified algebraically:
+  // the offset is `days_in_month - 30`, non-negative for every month except February.)
+  it('excludes an actor from a SHORT month (February) when flagged on the LAST day of the PRIOR month — the window’s intended lookback, not a leak', async () => {
+    const targetMonthStart = utcRecentCompleteFebruaryStart();
+    const priorMonthLastDay = new Date(targetMonthStart);
+    priorMonthLastDay.setUTCDate(0); // day 0 of this month == the last day of the PRIOR month
+    const day10 = new Date(targetMonthStart);
+    day10.setUTCDate(10);
+    const periodKey = targetMonthStart.toISOString().slice(0, 10);
+
+    const beforeSeries = await getOperatingPeriodCounts('month', 15); // reach the prior Feb-1yr too
+    const beforeTarget = beforeSeries.find((p) => p.period === periodKey) as OperatingPeriodCounts;
+    expect(beforeTarget, 'target February bucket must exist in the series').toBeTruthy();
+
+    const actor = randomUUID();
+    await insertEventAt(actor, 'listing_viewed', priorMonthLastDay, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEventAt(actor, 'listing_viewed', day10); // ordinary activity early IN February
+
+    const afterSeries = await getOperatingPeriodCounts('month', 15);
+    const afterTarget = afterSeries.find((p) => p.period === periodKey) as OperatingPeriodCounts;
+
+    expect(afterTarget.activeActors - beforeTarget.activeActors).toBe(0);
+    expect(afterTarget.newActors + afterTarget.returningActors - (beforeTarget.newActors + beforeTarget.returningActors)).toBe(0);
+  });
+
+  // 0bab6a97's suggestion: run the SAME general identity (not a scenario-specific delta) at
+  // MONTH grain too, not just day grain — a scenario-agnostic guard that would catch a uniformly
+  // wrong row regardless of which specific edge case someone thought to seed. Seeded against the
+  // tightest month-grain edge (day 1 of a 31-day month, the exact B5/B7 boundary) so this isn't
+  // just passively re-bucketing whatever day-grain fixtures happen to already be in the table.
+  it('🔴 IDENTITY: new_actors + returning_actors === active_actors for every period, always — MONTH grain too', async () => {
+    const targetMonthStart = utcRecentComplete31DayMonthStart();
+    const day1 = new Date(targetMonthStart);
+    const day20 = new Date(targetMonthStart);
+    day20.setUTCDate(20);
+
+    const flagged = randomUUID();
+    await insertEventAt(flagged, 'listing_viewed', day1, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    const clean = randomUUID();
+    await insertEventAt(clean, 'listing_viewed', day20);
+
+    const series = await getOperatingPeriodCounts('month', 6);
+    for (const p of series) {
+      expect(p.newActors + p.returningActors, p.period).toBe(p.activeActors);
     }
   });
 
