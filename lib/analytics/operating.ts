@@ -248,6 +248,32 @@ const PERIODS_CTE = `
     ) AS gs
   )`;
 
+// The high-frequency exclusion window's ANCHOR, shared by every dayWindowSql in this file
+// (getEngagementSeries's actor_counts/signed_in_counts, getLifecycleSeries's seen) -- written
+// ONCE here and referenced everywhere, specifically so it cannot drift between call sites the
+// way the window WIDTH already did once (round 4, B5, 0bab6a97/6f176ae2, both findings below).
+//
+// FINDING 1 (regression, round 4): pstart alone (the bucket's START) is the right anchor for a
+// DAY-grain bucket -- the bucket's single day IS its own start AND end -- but is WRONG for a
+// MONTH-grain bucket: "the 30 days ending at the 1st of the month" never overlaps the month being
+// counted at all (only the 1st itself lands inside it), so a bot bursting on the 9th or 19th went
+// completely unexcluded. Anchoring at the bucket's END (pstart + one grain interval - 1 day)
+// instead leaves day-grain buckets byte-identical (start == end when the interval is 1 day) and
+// makes a month-grain bucket's window actually reach into the month it counts -- missing at most
+// its first day or two against a fixed 30-day width for a 30/31-day month, an accepted,
+// documented imprecision (MAU_WINDOW_DAYS is a fixed constant, not month-length-aware -- see
+// kpi.ts's own header for why it is fixed at all), not a silent miss.
+//
+// FINDING 2 (off-by-one, round 4): the width itself was `$6::int - 1` (29 days), one short of
+// trends.ts's own `f.d > d.day - $3::int` (a true 30, no "-1"). At exactly the 29-day mark this
+// file and trends.ts's chart disagreed again -- the identical same-page failure mode 2febba9
+// exists to close, just moved from 10 days to 29. Fixed by dropping the "-1": `$6::int` alone.
+//
+// Both findings surfaced because the whole month-grain exclusion path had ZERO test coverage
+// (round 4 confirmed a no-op mutant: reverting the day-precision change still passed 115/115) --
+// see tests/analytics/operating.test.ts's dedicated month-grain tests, added alongside this fix.
+const HIGH_FREQUENCY_WINDOW_ANCHOR = "date_trunc($1::text, e.created_at) + $2::interval - interval '1 day'";
+
 /**
  * Per-period engagement/search/account counters.
  *
@@ -470,8 +496,7 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
              actorAlias: 'e',
              actorColumn: 'user_or_session',
              dayColumn: 'pstart',
-             dayWindowSql:
-               "f.d <= date_trunc($1::text, e.created_at) AND f.d > date_trunc($1::text, e.created_at) - ($6::int - 1) * interval '1 day'",
+             dayWindowSql: `f.d <= ${HIGH_FREQUENCY_WINDOW_ANCHOR} AND f.d > ${HIGH_FREQUENCY_WINDOW_ANCHOR} - $6::int * interval '1 day'`,
            })}
          GROUP BY 1, 2
       ) d
@@ -489,8 +514,7 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
              actorAlias: 'e',
              actorColumn: 'user_or_session',
              dayColumn: 'pstart',
-             dayWindowSql:
-               "f.d <= date_trunc($1::text, e.created_at) AND f.d > date_trunc($1::text, e.created_at) - ($6::int - 1) * interval '1 day'",
+             dayWindowSql: `f.d <= ${HIGH_FREQUENCY_WINDOW_ANCHOR} AND f.d > ${HIGH_FREQUENCY_WINDOW_ANCHOR} - $6::int * interval '1 day'`,
            })}
          GROUP BY 1, 2
       ) d
@@ -606,8 +630,7 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
           actorAlias: 'e',
           actorColumn: 'user_or_session',
           dayColumn: 'pstart',
-          dayWindowSql:
-            "f.d <= date_trunc($1::text, e.created_at) AND f.d > date_trunc($1::text, e.created_at) - ($6::int - 1) * interval '1 day'",
+          dayWindowSql: `f.d <= ${HIGH_FREQUENCY_WINDOW_ANCHOR} AND f.d > ${HIGH_FREQUENCY_WINDOW_ANCHOR} - $6::int * interval '1 day'`,
         })}
       GROUP BY 1, 2
     ),

@@ -481,6 +481,31 @@ async function insertEvent(
   );
 }
 
+/** Insert one analytics_event at an EXPLICIT timestamp — unlike insertEvent's minutesAgo (which
+ *  is fragile for month-grain tests: "N days ago" can land in a different calendar month
+ *  depending on what day of the month the test happens to run on), this pins created_at to a
+ *  specific instant so a month-grain test is deterministic regardless of today's date. */
+async function insertEventAt(
+  session: string,
+  eventType: string,
+  createdAt: Date,
+  searchMinuteRequestCount: number | null = null
+): Promise<void> {
+  await query(
+    `INSERT INTO analytics_event (event_type, user_or_session, created_at, search_minute_request_count)
+       VALUES ($1, $2, $3, $4)`,
+    [eventType, session, createdAt.toISOString(), searchMinuteRequestCount]
+  );
+}
+
+/** The UTC start-of-month instant N months before the current month (0 = this month). Used to
+ *  pin a test's activity to a specific, COMPLETE (non-partial) month bucket regardless of what
+ *  day of the month the suite happens to run on. */
+function utcMonthsAgoStart(monthsAgo: number): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 1));
+}
+
 describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
   afterAll(async () => {
     await closePool();
@@ -673,6 +698,60 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
     const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
 
     expect(afterToday.activeActors - beforeToday.activeActors).toBe(1);
+  });
+
+  // 🔴 B5 FINDING 2 (round 4, off-by-one): the window used to be ($6::int - 1) = 29 days wide,
+  // one short of trends.ts's own true 30 (`f.d > d.day - $3::int`, no "-1"). An actor flagged
+  // EXACTLY 29 days ago sits inside trends.ts's/kpi.ts's 30-day window but was outside this
+  // file's old 29-day one — the identical same-page disagreement 2febba9 exists to close, just
+  // moved from the 10-day mark to the 29-day mark instead of being closed. Ages up to 28 days
+  // already agreed by coincidence (both windows covered them), which is how this shipped in
+  // 2febba9 undetected — this test pins the exact boundary that distinguishes the two.
+  it('🔴 excludes an actor flagged EXACTLY 29 days ago — the off-by-one boundary trends.ts’s 30-day window already covers', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 29 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
+    expect(afterToday.activeActors - beforeToday.activeActors).toBe(0);
+  });
+
+  // 🔴 B5 FINDING 1 (round 4, regression, month-grain — PREVIOUSLY ZERO TEST COVERAGE on this
+  // path, confirmed by round 4 via a no-op mutant: reverting the day-precision fix still passed
+  // 115/115). At month grain, pstart is the 1st of the month — "30 days ending at the 1st" never
+  // overlaps the month itself except on the 1st, so a bot bursting mid-month (the 9th, the 19th,
+  // here the 15th) went completely unexcluded. Anchoring the window at the bucket's END
+  // (pstart + one grain interval - 1 day) instead fixes this: a month-grain window now actually
+  // reaches into the month it counts. Uses explicit timestamps (insertEventAt), not
+  // minutesAgo-relative ones, pinned to a COMPLETE (non-partial) historical month — "N days ago"
+  // would be fragile here, landing in a different calendar month depending what day of the month
+  // the suite happens to run on.
+  it('🔴 excludes an actor flagged MID-MONTH from that month’s activeActors (month grain) — the anchor regression', async () => {
+    const targetMonthStart = utcMonthsAgoStart(2); // a complete month, never "this month so far"
+    const day15 = new Date(targetMonthStart);
+    day15.setUTCDate(15);
+    const day27 = new Date(targetMonthStart);
+    day27.setUTCDate(27);
+
+    const beforeSeries = await getOperatingPeriodCounts('month', 4);
+    const beforeTarget = beforeSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    // Flagged burst on the 15th — nowhere near the bucket's own 1st-of-month start.
+    await insertEventAt(actor, 'listing_viewed', day15, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    // Ordinary activity later the SAME month.
+    await insertEventAt(actor, 'listing_viewed', day27);
+
+    const afterSeries = await getOperatingPeriodCounts('month', 4);
+    const afterTarget = afterSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
+
+    expect(beforeTarget, 'target month bucket must exist in a 4-month series').toBeTruthy();
+    expect(afterTarget.activeActors - beforeTarget.activeActors).toBe(0);
   });
 
   // Direct SAME-PAGE agreement check — the actual property 6f176ae2's finding is about.
