@@ -16,6 +16,11 @@ import { writeAnalyticsEvent } from './events';
 export interface EmitRefs {
   occurrenceId?: string | null;
   sourceId?: string | null;
+  /** analytics_event.search_minute_request_count (migration 0052) — see lib/analytics/types.ts's
+   *  `AnalyticsEventWrite.searchMinuteRequestCount` for what this is and why it lives on the write
+   *  contract rather than in searchContext/resultSummary (it is a moderation signal, not product
+   *  data, and lib/analytics/kpi.ts needs it as a real column to index and filter on). */
+  searchMinuteRequestCount?: number | null;
 }
 
 /**
@@ -37,5 +42,6 @@ export async function emitEvent(
     resultSummary: resultSummary ?? null,
     occurrenceId: refs?.occurrenceId ?? null,
     sourceId: refs?.sourceId ?? null,
+    searchMinuteRequestCount: refs?.searchMinuteRequestCount ?? null,
   });
 }

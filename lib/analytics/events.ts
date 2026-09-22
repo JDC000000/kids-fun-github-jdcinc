@@ -28,8 +28,8 @@ export async function writeAnalyticsEvent(event: AnalyticsEventWrite): Promise<{
     // property and the retention job (lib/analytics/retention.ts) can enforce it.
     await query(
       `INSERT INTO analytics_event
-         (event_type, user_or_session, occurrence_id, source_id, search_context_json, result_summary_json, retained_until)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         (event_type, user_or_session, occurrence_id, source_id, search_context_json, result_summary_json, retained_until, search_minute_request_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         event.eventType,
         event.userOrSession ?? null,
@@ -38,6 +38,7 @@ export async function writeAnalyticsEvent(event: AnalyticsEventWrite): Promise<{
         searchContext,
         resultSummary,
         retainedUntil().toISOString(),
+        event.searchMinuteRequestCount ?? null,
       ]
     );
     return { ok: true };

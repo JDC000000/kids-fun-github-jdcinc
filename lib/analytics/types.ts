@@ -120,4 +120,13 @@ export interface AnalyticsEventWrite {
   sourceId?: string | null;
   searchContext?: Record<string, unknown> | null;
   resultSummary?: Record<string, unknown> | null;
+  /**
+   * `analytics_event.search_minute_request_count` (migration 0052, 2026-09-22 incident). The RAW
+   * count from lib/security/search-rate-limit.ts's minute bucket — NOT a pre-thresholded boolean;
+   * see that module's `ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD` for why the cutoff lives at read
+   * time in lib/analytics/kpi.ts instead. `null`/omitted (the default, and what every event type
+   * except `search_performed` always sends) means "not measured", a materially different fact
+   * from "measured, and low".
+   */
+  searchMinuteRequestCount?: number | null;
 }

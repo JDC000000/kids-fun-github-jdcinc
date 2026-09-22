@@ -24,6 +24,7 @@ import {
   zeroResultPct,
   type ProductHealthKpis,
 } from '../../lib/analytics/kpi';
+import { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } from '../../lib/security/search-rate-limit';
 
 // ── Layer 1: pure helpers (no DB) ────────────────────────────────────────────
 describe('kpi pure helpers', () => {
@@ -67,15 +68,19 @@ async function insertEvent(opts: {
   session: string;
   hoursAgo: number;
   resultSummary?: Record<string, unknown> | null;
+  /** analytics_event.search_minute_request_count — the RAW count, not a boolean. Omit/null for
+   *  an ordinary row ("not measured"). */
+  searchMinuteRequestCount?: number | null;
 }): Promise<void> {
   await query(
-    `INSERT INTO analytics_event (event_type, user_or_session, result_summary_json, created_at)
-       VALUES ($1, $2, $3::jsonb, now() - ($4 || ' hours')::interval)`,
+    `INSERT INTO analytics_event (event_type, user_or_session, result_summary_json, created_at, search_minute_request_count)
+       VALUES ($1, $2, $3::jsonb, now() - ($4 || ' hours')::interval, $5)`,
     [
       opts.eventType,
       opts.session,
       opts.resultSummary == null ? null : JSON.stringify(opts.resultSummary),
       String(opts.hoursAgo),
+      opts.searchMinuteRequestCount ?? null,
     ]
   );
 }
@@ -171,5 +176,59 @@ describe.skipIf(!hasDb)('getProductHealthKpis (real Postgres)', () => {
       mauDays: 30,
       accountDays: 30,
     });
+  });
+
+  // 2026-09-22 incident (supabase/migrations/0052_analytics_event_high_frequency_flag.sql):
+  // a session with even ONE row at/above ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD must be excluded
+  // from DAU/WAU/MAU ENTIRELY, including its OTHER, ordinary rows — the row is evidence about the
+  // ACTOR, not just about itself. Session E below fires two ordinary-looking rows plus one at the
+  // threshold; none of the three should move the active-user counts.
+  it('excludes a session from DAU/WAU/MAU entirely once ANY of its rows reaches the exclusion threshold', async () => {
+    const E = `${prefix}-e`;
+    const beforeFlag = await getProductHealthKpis();
+
+    await insertEvent({ eventType: 'search_performed', session: E, hoursAgo: 1, resultSummary: { total: 4 } });
+    await insertEvent({
+      eventType: 'search_performed',
+      session: E,
+      hoursAgo: 1,
+      resultSummary: { total: 4 },
+      searchMinuteRequestCount: ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD,
+    });
+    await insertEvent({ eventType: 'listing_viewed', session: E, hoursAgo: 1, resultSummary: { id: 'w' } });
+
+    const afterFlag = await getProductHealthKpis();
+
+    expect(afterFlag.activeUsers.dau - beforeFlag.activeUsers.dau).toBe(0);
+    expect(afterFlag.activeUsers.wau - beforeFlag.activeUsers.wau).toBe(0);
+    expect(afterFlag.activeUsers.mau - beforeFlag.activeUsers.mau).toBe(0);
+
+    // Sanity check the OPPOSITE case in the same test — a session with the identical shape but
+    // NO qualifying row must count normally, so the exclusion is proven to key off the count
+    // crossing the threshold and not off some accidental property of the seed (e.g. "3 events in
+    // an hour").
+    const F = `${prefix}-f`;
+    await insertEvent({ eventType: 'search_performed', session: F, hoursAgo: 1, resultSummary: { total: 4 } });
+    await insertEvent({ eventType: 'search_performed', session: F, hoursAgo: 1, resultSummary: { total: 4 } });
+    await insertEvent({ eventType: 'listing_viewed', session: F, hoursAgo: 1, resultSummary: { id: 'w' } });
+    const afterUnflagged = await getProductHealthKpis();
+    expect(afterUnflagged.activeUsers.dau - afterFlag.activeUsers.dau).toBe(1);
+  });
+
+  // The BOUNDARY, exactly: one request below the threshold is an ordinary, fast-but-real
+  // session (the whole point of the 2026-09-22 revision — a parent clicking several filter
+  // chips inside a minute must never be silently erased); AT the threshold, it's excluded.
+  it('does not exclude a session whose peak count is exactly ONE below the threshold', async () => {
+    const G = `${prefix}-g`;
+    const before = await getProductHealthKpis();
+    await insertEvent({
+      eventType: 'search_performed',
+      session: G,
+      hoursAgo: 1,
+      resultSummary: { total: 4 },
+      searchMinuteRequestCount: ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD - 1,
+    });
+    const after = await getProductHealthKpis();
+    expect(after.activeUsers.dau - before.activeUsers.dau).toBe(1);
   });
 });

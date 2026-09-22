@@ -20,6 +20,11 @@
 // (every count returns 0 and the ratio helpers return null → the UI shows "—").
 import { queryWithTimeout } from '@/lib/db/client';
 import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
+// Not a write-side import (see the header above) — lib/security/search-rate-limit.ts is the
+// security module that PRODUCES search_minute_request_count; this file only reads the constant
+// that decides the DAU/WAU/MAU exclusion cutoff for it, single-sourced so the app-code default
+// and this query can never silently drift apart.
+import { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } from '@/lib/security/search-rate-limit';
 
 // ── Rolling windows (calendar days). Kept as named constants so tests, the data
 //    layer, and the UI copy all read the exact same number. ──
@@ -186,15 +191,42 @@ async function getActiveUsers(): Promise<ActiveUsers> {
   // confusing half hour; do not re-derive it across separate statements.)
   //
   // `now()` is stable within a statement, so the CTE and the outer FILTERs share one clock.
+  //
+  // ═══ high_frequency_actors: THE 2026-09-22 INCIDENT EXCLUSION ═══
+  // migration 0052 stamps analytics_event.search_minute_request_count at write time with the RAW
+  // per-minute request count from lib/security/search-rate-limit.ts — a rate the no-typeahead,
+  // submit-driven /search UI cannot produce from a human at ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD
+  // or above. The cutoff is applied HERE, at read time, against the stored count — not baked into
+  // a write-time boolean — specifically so a mis-tuned threshold is a query change, not a
+  // backfill: see that constant's header for the incident this replaced (a 5/min write-time flag
+  // that erased real parents clicking a handful of filter chips). A session that produced even
+  // ONE row at/above the cutoff is excluded from DAU/WAU/MAU ENTIRELY, not just that row — see
+  // migration 0052's header for why a single qualifying request disqualifies the whole actor for
+  // this window rather than being discounted in isolation.
+  //
+  // `NOT EXISTS` rather than `NOT IN`: the `NOT IN` this replaced silently zeroes the WHOLE result
+  // if the negated set ever contained a NULL (any NULL on the right makes every `NOT IN` row
+  // evaluate to NULL, i.e. excluded) — not reachable today (user_or_session is never NULL in
+  // high_frequency_actors, matching the same guard actors' own WHERE already applies three lines
+  // below) but a correlated `NOT EXISTS` is immune to it AND is what actually uses
+  // idx_analytics_event_high_frequency (a partial index WHERE search_minute_request_count is
+  // above the threshold — see that index's own migration comment) rather than materialising the
+  // whole high_frequency_actors set first.
   const rows = await queryWithTimeout<{ dau: number; wau: number; mau: number }>(
     `
     WITH actors AS (
-      SELECT user_or_session, max(created_at) AS last_seen
-        FROM analytics_event
-       WHERE created_at >= now() - ($3::int * interval '1 day')
-         AND user_or_session IS NOT NULL
-         AND user_or_session <> ''
-       GROUP BY user_or_session
+      SELECT ae.user_or_session, max(ae.created_at) AS last_seen
+        FROM analytics_event ae
+       WHERE ae.created_at >= now() - ($3::int * interval '1 day')
+         AND ae.user_or_session IS NOT NULL
+         AND ae.user_or_session <> ''
+         AND NOT EXISTS (
+               SELECT 1 FROM analytics_event hf
+                WHERE hf.user_or_session = ae.user_or_session
+                  AND hf.created_at >= now() - ($3::int * interval '1 day')
+                  AND hf.search_minute_request_count >= $4::int
+             )
+       GROUP BY ae.user_or_session
     )
     SELECT
       count(*) FILTER (WHERE last_seen >= now() - ($1::int * interval '1 day'))::int AS dau,
@@ -202,7 +234,7 @@ async function getActiveUsers(): Promise<ActiveUsers> {
       count(*)::int AS mau
     FROM actors
     `,
-    [DAU_WINDOW_DAYS, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS],
+    [DAU_WINDOW_DAYS, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD],
     adminAnalyticsQueryTimeoutMs()
   );
   const r = rows[0];

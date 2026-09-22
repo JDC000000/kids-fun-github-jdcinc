@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { headers } from 'next/headers';
+import { forwardedIdentityHeaders } from '@/lib/http/request-context';
 import { ActivityCard } from '../preview/_components/ActivityCard';
 import { partitionSections } from '../preview/_data/filter';
 import { mapSearchResponseToActivities, type SearchItemDto, type SearchResponseDto } from '../preview/_data/search-api';
@@ -91,6 +92,14 @@ type SearchApiResponse = SearchResponseDto & {
   // this type describes a fetched payload, it does not verify one — and the derivation reads an
   // absent array as "no area was selected", which renders nothing.
   regionCoverage?: RegionCoverage[];
+  // lib/security/search-rate-limit.ts's signal, riding along outside SearchResponse proper
+  // (app/api/search/route.ts's `json()` helper adds it, deliberately not as a new
+  // lib/search/engine.ts SearchResponse.meta field — see that helper's comment). Absent on a
+  // degraded request (no salt/subject/DB error — "not measured"); the RAW per-minute request
+  // count otherwise, NOT a pre-thresholded boolean — lib/analytics/kpi.ts decides the DAU/WAU/MAU
+  // exclusion cutoff at read time. Forwarded to recordSearchPerformed below, which is the ONLY
+  // consumer — 2026-09-22 incident, see supabase/migrations/0052_analytics_event_high_frequency_flag.sql.
+  rateLimit?: { searchMinuteRequestCount: number };
 };
 
 function baseUrl(): string {
@@ -106,15 +115,30 @@ interface FetchResult {
   error?: string;
 }
 
-async function runSearch(state: SearchState, savedOrigin: SavedOrigin | null): Promise<FetchResult> {
+/**
+ * Exported ONLY for tests/search/page-rate-limit-identity.test.ts — both 2026-09-22 reviews
+ * pointed out that every existing test hit /api/search directly and none exercised this PAGE's
+ * own fetch, which is exactly where the identity-forwarding blocker lived (this function is the
+ * one that builds the internal request). Not part of any other module's public surface.
+ */
+export async function runSearch(state: SearchState, savedOrigin: SavedOrigin | null): Promise<FetchResult> {
   try {
     // `facets: true` asks the same request for per-filter-value counts. They cost a few
     // in-memory passes over the candidate set this search already built (no second query —
     // see lib/search/facets.ts), and they are what lets the desktop rail show live counts
     // AND fold away the groups that cannot narrow this query.
+    //
+    // FORWARD THE REAL VISITOR'S IDENTITY (2026-09-22 incident follow-up). Node's `fetch()` has
+    // no cookie jar and no idea what request it is running inside of — a bare `{ accept: ... }`
+    // header set makes this call indistinguishable from the server calling itself, which is
+    // exactly what silently defeated lib/security/search-rate-limit.ts's session/IP identity on
+    // this, the actual visitor-facing path (a direct call to /api/search still worked correctly;
+    // only this internal hop needed it). See lib/http/request-context.ts's
+    // `forwardedIdentityHeaders` for the full writeup — same-origin server-to-server call, same
+    // trust boundary, so forwarding the cookie here is not a cross-origin leak.
     const res = await fetch(`${baseUrl()}/api/search?${apiQuery(state, savedOrigin, { facets: true })}`, {
       cache: 'no-store',
-      headers: { accept: 'application/json' },
+      headers: forwardedIdentityHeaders(headers(), { accept: 'application/json' }),
     });
     if (!res.ok) return { ok: false, error: `Search API returned ${res.status}` };
     return { ok: true, body: (await res.json()) as SearchApiResponse };
@@ -412,6 +436,7 @@ export default async function SearchPage({
         expected: expected.length,
         backend: result.body?.meta.backend,
         broadened: (result.body?.broadening?.applied?.length ?? 0) > 0,
+        searchMinuteRequestCount: result.body?.rateLimit?.searchMinuteRequestCount ?? null,
       }
     );
   }
