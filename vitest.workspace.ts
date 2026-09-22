@@ -139,6 +139,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/scheduler/cadence.test.ts',
   'tests/scheduler/global-jobs-db.test.ts',
   'tests/scheduler/job-dispatch-db.test.ts',
+  'tests/scheduler/pool-connection-drop-db.test.ts',
   'tests/scheduler/robots-override-db.test.ts',
   'tests/scheduler/shutdown-sql-db.test.ts',
   // Stage A: the first suites on this branch that write a real sms_consent row.
