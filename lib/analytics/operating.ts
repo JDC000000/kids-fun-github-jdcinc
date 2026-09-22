@@ -412,6 +412,29 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
     -- actor) pair that crossed the threshold anywhere in the wide scan range (cheap candidate
     -- list, per highFrequencyFlaggedDaysCte's own contract), and each subquery below then checks
     -- ONLY that row's own bucket against flagged, via highFrequencyExclusionAgainstFlagged.
+    --
+    -- === DELIBERATE ARCHITECTURAL DECISION (2026-09-22 review round, 0bab6a97) ===
+    -- kpi.ts's tiles and trends.ts's trend line share ONE 30-day (MAU-width) exclusion window
+    -- across dau/wau/mau, because those queries derive MULTIPLE different-width metrics from the
+    -- SAME row/CTE and need internal nesting (dau <= wau <= mau) plus tile/trend-line agreement.
+    -- operating.ts does NOT adopt that shared window, and this is chosen, not an oversight:
+    -- active_actors/signed_in_actors/seen each output exactly ONE metric per period -- there is
+    -- no coexisting narrower/wider statistic on the same row that needs to nest or agree with a
+    -- sibling, the way DAU/WAU/MAU do on trends.ts's single row per day. A period here is closer
+    -- to a standalone DAU-shaped snapshot than to a rolling MAU tile, so its own bucket window IS
+    -- its correct exclusion window, per this file's own per-bucket reasoning above.
+    -- KNOWN, ACCEPTED CONSEQUENCE: /admin/operating's "today" activeActors will not always equal
+    -- /admin/product-health's "today" DAU, specifically for an actor flagged sometime in the
+    -- trailing 30 days but not on the exact day being compared -- trends.ts's dau now excludes
+    -- that actor (shared 30-day window), operating.ts's activeActors does not (bucket-only
+    -- window). If this drift is reported as a bug, it is this decision surfacing, not new
+    -- contamination -- re-open this comment before changing the code. Pinned by
+    -- tests/analytics/operating.test.ts's two 🔴 cross-period regression tests (~line 639,
+    -- ~line 687): both assert an actor flagged in ONE period is NOT excluded from an unrelated
+    -- period, i.e. per-bucket-only exclusion. If a future change moves operating.ts onto the
+    -- shared 30-day window instead, those two tests MUST be rewritten to match (not deleted or
+    -- weakened) -- they are what stands between this file and the original wide-window bug
+    -- reappearing here.
     flagged AS (
       ${highFrequencyFlaggedDaysCte({
         scanWindowSql:

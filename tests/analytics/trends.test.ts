@@ -16,6 +16,7 @@ import {
   type TrendPoint,
   type TrendRow,
 } from '../../lib/analytics/trends';
+import { getProductHealthKpis } from '../../lib/analytics/kpi';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
@@ -284,18 +285,20 @@ describe.skipIf(!hasDb)('getActivityTrend (DB)', () => {
   });
 
   // 🔴 Two independent reviewers (0bab6a97, 6f176ae2) caught the OVERCORRECTION: giving
-  // dau/wau/mau/events each their OWN exclusion window (matching that metric's own display
-  // period) instead of kpi.ts's ONE shared MAU-width window. An actor flagged 10 days ago sits
-  // INSIDE kpi.ts's 30-day tile window (excluded from ALL three tiles) but OUTSIDE dau's 1-day
-  // and wau's 7-day per-metric windows — so a per-metric version would retain them in dau/wau
-  // while excluding them from mau only, disagreeing with kpi.ts's tiles on dau/wau specifically
+  // dau/wau/mau each their OWN exclusion window (matching that metric's own display period)
+  // instead of kpi.ts's ONE shared MAU-width window. An actor flagged 10 days ago sits INSIDE
+  // kpi.ts's 30-day tile window (excluded from ALL three tiles) but OUTSIDE dau's 1-day and
+  // wau's 7-day per-metric windows — so a per-metric version would retain them in dau/wau while
+  // excluding them from mau only, disagreeing with kpi.ts's tiles on dau/wau specifically
   // (blocker 1), AND — because a wider per-metric window (mau) can then exclude an actor a
   // narrower one (dau) does not — break the dau <= wau <= mau invariant
   // (tests/analytics/trend-query-db.test.ts's own nesting test; blocker 2). The fix is one
-  // shared MAU-width exclusion window applied to dau/wau/mau/events alike, exactly like kpi.ts's
-  // tiles all read off the same excluded-actor set. This actor must be excluded from ALL FOUR,
-  // uniformly — not just mau.
-  it('🔴 excludes an actor from DAU/WAU/MAU/events UNIFORMLY when flagged inside the shared 30-day window but outside dau/wau’s own display period', async () => {
+  // shared MAU-width exclusion window applied to dau/wau/mau alike, exactly like kpi.ts's tiles
+  // all read off the same excluded-actor set. This actor must be excluded from all THREE,
+  // uniformly. `events` is a raw volume counter with no such nesting duty and DELIBERATELY stays
+  // on its own per-day window (see getActivityTrend's own header) — this actor's ordinary TODAY
+  // row is not on the flagged day, so it correctly still counts toward today's events.
+  it('🔴 excludes an actor from DAU/WAU/MAU UNIFORMLY when flagged inside the shared 30-day window but outside dau/wau’s own display period — leaving events (no nesting duty) unaffected', async () => {
     const { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } = await import('../../lib/security/search-rate-limit');
     const before = await getActivityTrend();
     const last0 = before.points[before.points.length - 1];
@@ -313,6 +316,50 @@ describe.skipIf(!hasDb)('getActivityTrend (DB)', () => {
     expect(last1.dau! - last0.dau!).toBe(0);
     expect(last1.wau! - last0.wau!).toBe(0);
     expect(last1.mau! - last0.mau!).toBe(0);
-    expect(last1.events! - last0.events!).toBe(0);
+    // events stays on its own per-day window (volume metric, no nesting duty) — the flag is 10
+    // days ago, not today, so today's ordinary row is NOT excluded from today's events.
+    expect(last1.events! - last0.events!).toBe(1);
+  });
+
+  // Direct CROSS-FILE agreement check — the property the two window-mismatch bugs this session
+  // both violated (kpi.ts vs trends.ts's ~58-day scan window; then kpi.ts vs trends.ts's
+  // per-metric windows), asserted here by calling BOTH modules in the SAME test against the SAME
+  // actor, rather than trusting two separately-correct per-file tests to imply agreement between
+  // files. (Prompted by 0bab6a97's qa-probe/p1.test.ts, a manual TRUNCATE-based diagnostic script
+  // not suited to this repo's shared, non-destructive, delta-based test convention — this is the
+  // same scenario it explores, translated into a real, committable assertion.) An actor flagged
+  // 10 days ago plus ordinary activity today must be excluded from kpi.ts's DAU/WAU/MAU tiles
+  // AND trends.ts's today's DAU/WAU/MAU point, by the same amount — zero drift between the two
+  // surfaces admin/product-health renders side by side.
+  it('🔴 kpi.ts tiles and trends.ts’s today point agree on the SAME flagged actor — DAU/WAU/MAU move together, not just each in isolation', async () => {
+    const { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } = await import('../../lib/security/search-rate-limit');
+
+    const kpiBefore = await getProductHealthKpis();
+    const trendBefore = await getActivityTrend();
+    const trendLast0 = trendBefore.points[trendBefore.points.length - 1];
+
+    const actor = randomUUID();
+    await insertEvent(actor, 10 * 24, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD); // flagged, 10 days ago
+    await insertEvent(actor, 0); // ordinary activity TODAY
+
+    const kpiAfter = await getProductHealthKpis();
+    const trendAfter = await getActivityTrend();
+    const trendLast1 = trendAfter.points[trendAfter.points.length - 1];
+
+    const kpiDauDelta = kpiAfter.activeUsers.dau - kpiBefore.activeUsers.dau;
+    const kpiWauDelta = kpiAfter.activeUsers.wau - kpiBefore.activeUsers.wau;
+    const kpiMauDelta = kpiAfter.activeUsers.mau - kpiBefore.activeUsers.mau;
+    const trendDauDelta = trendLast1.dau! - trendLast0.dau!;
+    const trendWauDelta = trendLast1.wau! - trendLast0.wau!;
+    const trendMauDelta = trendLast1.mau! - trendLast0.mau!;
+
+    // Both surfaces exclude this actor (delta 0), and they agree WITH EACH OTHER, not just
+    // separately with an expected constant — the actual property at stake.
+    expect(kpiDauDelta).toBe(trendDauDelta);
+    expect(kpiWauDelta).toBe(trendWauDelta);
+    expect(kpiMauDelta).toBe(trendMauDelta);
+    expect(kpiDauDelta).toBe(0);
+    expect(kpiWauDelta).toBe(0);
+    expect(kpiMauDelta).toBe(0);
   });
 });
