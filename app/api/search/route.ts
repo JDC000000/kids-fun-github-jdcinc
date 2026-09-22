@@ -34,6 +34,10 @@ import { resolvePreciseSavedHomeGeocoder } from '@/lib/geo/saved-home-geocoder';
 import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 import type { Geocoder, OriginRequest } from '@/lib/geo/origin';
 import type { AgeBandKey, SortKey } from '@/lib/search/types';
+import { readCookie } from '@/lib/http/request-context';
+import { clientIpFrom } from '@/lib/sms/client-ip';
+import { ANON_SESSION_COOKIE } from '@/lib/db/session';
+import { checkSearchRateLimit } from '@/lib/security/search-rate-limit';
 // Stage 2a — reuse the rail's own vocabulary for the new typed params (age/when/time) rather
 // than duplicating the allowed-value lists, so route.ts and the /search page can never accept
 // different sets. See app/search/_lib/params.ts's header for the structured-vs-composed split.
@@ -54,6 +58,36 @@ export const GET = withObservedRoute(searchGet, { tags: { route: 'api/search' } 
 
 /** GET /api/search?q=open+gym&lat=..&lng=..&sort=..&region=van,bby&includeRegistration=1&limit=20 */
 async function searchGet(request: Request): Promise<NextResponse> {
+  // ═══ RATE LIMIT, FIRST, BEFORE ANY WORK ═══ (2026-09-22 incident — see
+  // supabase/migrations/0051_search_rate_limit.sql and lib/security/search-rate-limit.ts for the
+  // full writeup). Checked before the listing/alias/region loads below so a refused caller never
+  // pays for them, and before buildSearchRequest so a malformed query string can't be used to
+  // dodge the check. app/search/page.tsx only calls recordSearchPerformed when this fetch
+  // succeeds (`result.ok`), so a 429 here ALSO stops the analytics_event write — enforcement and
+  // the analytics fix are the same choke point, deliberately.
+  const rateLimit = await checkSearchRateLimit({
+    ip: clientIpFrom(request.headers),
+    sessionId: readCookie(request.headers, ANON_SESSION_COOKIE) ?? null,
+  });
+  if (rateLimit.degraded && (rateLimit.degradedReason === 'db_error' || rateLimit.degradedReason === 'no_salt')) {
+    // db_error: expected once, harmlessly, the moment this ships ahead of migration 0051 being
+    // applied to an environment; anything after that is a real counter-table outage worth seeing.
+    // no_salt: SMS_PHONE_HASH_SALT unset/rotated means the limiter is a COMPLETE, SILENT no-op —
+    // every request degrades open with no subject to count against. That is expected in dev/test
+    // (captureAndFlush no-ops with no Sentry DSN configured, so this costs nothing there) but is
+    // exactly the kind of "the limiter has been inert since Tuesday" failure that must not go
+    // unnoticed in an environment where it does have a DSN. 'no_subject' (a request with neither
+    // an IP nor a session — now rare after forwardedIdentityHeaders, see app/search/page.tsx) is
+    // NOT reported: it is a property of one request, not a standing misconfiguration.
+    await captureAndFlush(new Error(`search_rate_limit_degraded:${rateLimit.degradedReason}`), undefined, {
+      route: 'api/search',
+      operation: 'check_search_rate_limit',
+    });
+  }
+  if (!rateLimit.allowed) {
+    return jsonRateLimited(rateLimit.retryAfterSeconds);
+  }
+
   const url = new URL(request.url);
   const searchRequest = buildSearchRequest(url.searchParams);
 
@@ -66,9 +100,22 @@ async function searchGet(request: Request): Promise<NextResponse> {
     searchRequest.signedIn ?? false
   );
 
+  // Surfaced to app/search/page.tsx so it can stamp analytics_event.search_minute_request_count
+  // (migration 0052) without a second rate-limit query — see lib/analytics/record.ts. The RAW
+  // count, not a boolean: lib/analytics/kpi.ts decides the exclusion threshold at READ time, so
+  // a mis-tuned cutoff is a query change, not a re-migration — see search-rate-limit.ts's header
+  // on why a silent write-time boolean was the wrong shape for this.
+  //
+  // 🟡 F3 (2026-09-22 independent recheck): `sessionMinuteAttempts`, NEVER `minuteAttempts`. The
+  // latter falls back to the ip-scope count when no session was available, and an ip-derived
+  // count is not attributable to one visitor — see SearchRateLimitResult.sessionMinuteAttempts's
+  // header for the reproduced failure this caused (a shared IP's real, ordinary traffic silently
+  // excluding every one of its distinct visitors from DAU/WAU/MAU).
+  const searchMinuteRequestCount = rateLimit.sessionMinuteAttempts;
+
   if (process.env.KIDS_FUN_SEARCH_BACKEND === 'database') {
     const dbResult = await searchDatabase(searchRequest, preciseGeocoder);
-    if (dbResult.ok) return json(dbResult.response, dbResult.header);
+    if (dbResult.ok) return json(dbResult.response, dbResult.header, searchMinuteRequestCount);
     // Genuine DB outage in LIVE database mode: fail honestly with a 5xx so each client
     // renders its existing "couldn't load — try again" state. We deliberately do NOT fall
     // through to the fixture path below — real production visitors must NEVER be shown
@@ -80,7 +127,7 @@ async function searchGet(request: Request): Promise<NextResponse> {
   // /preview demo shell intentionally run on hand-authored fixtures. This is NOT the live
   // production data path, so returning fixtures here is correct and unchanged.
   const response = searchFixtures(searchRequest, preciseGeocoder);
-  return json(response, 'fixture');
+  return json(response, 'fixture', searchMinuteRequestCount);
 }
 
 async function searchDatabase(
@@ -186,8 +233,24 @@ function withoutInternalAgeMarkers(response: SearchResponse): SearchResponse {
   return touched ? { ...response, results } : response;
 }
 
-function json(response: SearchResponse, source: string): NextResponse {
-  return NextResponse.json(withoutInternalAgeMarkers(response), {
+/**
+ * `rateLimit` rides along OUTSIDE the typed `SearchResponse` shape (a bag-on-the-side field, not
+ * a new member of lib/search/engine.ts's `SearchResponse.meta`) so this rate-limit signal never
+ * has to be threaded through the search engine itself — every caller of the engine (tests,
+ * /preview, the fixture path) stays exactly as typed as before. app/search/page.tsx reads it as
+ * an optional field on its own local response type; see `SearchApiResponse.rateLimit` there.
+ *
+ * The RAW minute-bucket count, not a pre-thresholded boolean — see the header on
+ * `searchMinuteRequestCount` above and lib/analytics/kpi.ts for why the exclusion cutoff lives at
+ * read time. `null`/absent means "not measured" (degraded — no salt, no subject, or a DB error),
+ * which is a materially different fact from "measured, and low" (a real, small number).
+ */
+function json(response: SearchResponse, source: string, searchMinuteRequestCount: number | null = null): NextResponse {
+  const body: SearchResponse & { rateLimit?: { searchMinuteRequestCount: number } } = {
+    ...withoutInternalAgeMarkers(response),
+    ...(searchMinuteRequestCount !== null ? { rateLimit: { searchMinuteRequestCount } } : {}),
+  };
+  return NextResponse.json(body, {
     headers: { 'x-data-source': source },
   });
 }
@@ -198,6 +261,28 @@ function json(response: SearchResponse, source: string): NextResponse {
  *  real empty result. */
 function jsonError(reason: string, status: number): NextResponse {
   return NextResponse.json({ error: reason }, { status, headers: { 'x-data-source': 'database-error' } });
+}
+
+/**
+ * Refused by lib/security/search-rate-limit.ts (2026-09-22 incident). `Retry-After` is the real
+ * HTTP mechanism for this (RFC 9110 §10.2.3) so a well-behaved caller — including any future
+ * synthetic monitor — knows to back off rather than retry immediately. The body error string is
+ * deliberately generic: it is never shown to a real visitor (app/search/page.tsx's existing
+ * "couldn't load — try again" state renders on any non-2xx, same as a genuine 503), so there is
+ * nothing to gain by being more specific here and a small cost (telling a probing caller exactly
+ * which knob to tune) to being more specific.
+ */
+function jsonRateLimited(retryAfterSeconds: number): NextResponse {
+  return NextResponse.json(
+    { error: 'too many requests' },
+    {
+      status: 429,
+      headers: {
+        'x-data-source': 'rate-limited',
+        'Retry-After': String(Math.max(1, retryAfterSeconds)),
+      },
+    }
+  );
 }
 
 function buildSearchRequest(p: URLSearchParams): SearchRequest {

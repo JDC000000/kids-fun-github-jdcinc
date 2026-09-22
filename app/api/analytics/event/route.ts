@@ -12,6 +12,7 @@ import { writeAnalyticsEvent } from '@/lib/analytics/events';
 import { parseAnalyticsEventBody } from '@/lib/analytics/validate';
 import { MAX_ANALYTICS_PAYLOAD_BYTES } from '@/lib/analytics/types';
 import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
+import { readCookie } from '@/lib/http/request-context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // pg pool needs the Node runtime, not edge.
@@ -48,7 +49,7 @@ async function analyticsPost(request: Request): Promise<NextResponse> {
   }
 
   // 5. Trust the server-derived anon id, not any client-supplied session.
-  const incomingCookie = readCookie(request, ANON_SESSION_COOKIE);
+  const incomingCookie = readCookie(request.headers, ANON_SESSION_COOKIE);
   const anonId = getOrCreateAnonId(incomingCookie);
 
   // 6. Best-effort write — a DB hiccup must not fail the request.
@@ -74,18 +75,4 @@ async function analyticsPost(request: Request): Promise<NextResponse> {
   }
 
   return response;
-}
-
-/** Read a single cookie value from the request header (testable without a request scope). */
-function readCookie(request: Request, name: string): string | undefined {
-  const header = request.headers.get('cookie');
-  if (!header) return undefined;
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=');
-    if (eq === -1) continue;
-    if (part.slice(0, eq).trim() === name) {
-      return decodeURIComponent(part.slice(eq + 1).trim());
-    }
-  }
-  return undefined;
 }

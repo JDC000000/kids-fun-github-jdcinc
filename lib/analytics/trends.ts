@@ -28,6 +28,14 @@ import { queryWithTimeout } from '@/lib/db/client';
 import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 import { WAU_WINDOW_DAYS, MAU_WINDOW_DAYS } from './kpi';
 import { anchorMsFromIso, isPreHistory } from './prehistory';
+// The ONE shared exclusion-predicate generator — see that module's header for the 2026-09-22
+// window-mismatch bug a hand-copied version of this exact predicate (this file's own previous
+// version included) caused between this trend line and kpi.ts's tiles.
+import {
+  ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD,
+  highFrequencyFlaggedDaysCte,
+  highFrequencyExclusionAgainstFlagged,
+} from './high-frequency-exclusion';
 
 /** How many trailing calendar days the trend charts plot by default. */
 export const TREND_WINDOW_DAYS = 30;
@@ -219,6 +227,71 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
      *
      * NULLIF(user_or_session,'') collapses the old `IS NOT NULL AND <> ''` pair into one value, so
      * the per-day aggregates below only have to test for NULL.
+     *
+     * ═══ THE 2026-09-22 EXCLUSION — ONE SHARED WINDOW PER DAY, MATCHING kpi.ts EXACTLY ═══
+     * lib/analytics/kpi.ts's getActiveUsers (the admin TILES) builds ONE `actors` CTE over its
+     * MAU_WINDOW_DAYS (30-day) window, excludes any actor with a search_minute_request_count row
+     * at/above ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD *from that same 30-day window* entirely,
+     * and only THEN derives dau/wau/mau from what's left via FILTER on last_seen — so all three
+     * TILES share ONE exclusion window (the MAU width), never a narrower one per metric. Migration
+     * 0052's own header says why: "excluded entirely... not just that row" for "this window" —
+     * one window, shared, not one per displayed statistic. This query is the trend LINE plotted
+     * right next to those same tiles (app/admin/product-health/page.tsx renders both), so it has
+     * to reproduce that SAME shared-window shape per plotted day, not invent a different one.
+     *
+     * ═══ THE BUG THIS REPLACES — SECOND VERSION, TWO INDEPENDENT REVIEWERS (0bab6a97, 6f176ae2) ═══
+     * A first version of this fix put the `NOT EXISTS` inside `scan` itself, using `scan`'s own
+     * WHERE bound — WIDER than any single day's own window (see the "$1-1)+($3-1) DAYS DEEP" note
+     * above). 2dfdbb2c reproduced the consequence: an actor flagged 40 days ago, active TODAY, was
+     * counted by kpi.ts's tiles (outside ITS 30-day window) and excluded by this trend line
+     * (inside `scan`'s ~58-day window).
+     *
+     * The SECOND version (this file's previous state) overcorrected: it gave dau/wau/mau/events
+     * each their OWN window width (day/`$2`/`$3`/day respectively) instead of kpi.ts's ONE shared
+     * MAU-width window — matching each metric's own DISPLAY period, which sounds right but is not
+     * what kpi.ts or migration 0052 actually do. Two independent reviewers reproduced two
+     * consequences of that mistake, each with controlled single-actor deltas:
+     *   (a) tiles vs trend line STILL disagreed, just moved from MAU to DAU/WAU — an actor flagged
+     *       10 days ago is inside kpi.ts's 30-day tile window (excluded from ALL three tiles) but
+     *       outside dau's 1-day / wau's 7-day per-metric windows (NOT excluded from this trend
+     *       line's dau/wau, only its mau).
+     *   (b) dau <= wau <= mau, an invariant the pre-rewrite correlated-subquery version guaranteed
+     *       structurally (tests/analytics/trend-query-db.test.ts), became breakable: a WIDER
+     *       per-metric window (wau/mau) can exclude an actor a NARROWER one (dau) does not, so dau
+     *       can come out greater than wau.
+     *
+     * The fix is the one kpi.ts and 0052 already use: dau, wau, AND mau for day D all check
+     * `flagged` against the SAME window, day D's trailing MAU_WINDOW_DAYS (`$3`), exactly as
+     * kpi.ts's tiles all share one 30-day exclusion window regardless of which of dau/wau/mau is
+     * being read off the same `actors` CTE. Because the excluded-actor SET is now identical
+     * across dau/wau/mau for a given day, and the un-excluded active-actor sets already nest
+     * (day ⊆ week ⊆ month), removing the same set from all three preserves the nesting — closing
+     * both (a) and (b) together, not as two separate patches.
+     *
+     * `events` DELIBERATELY STAYS ON ITS OWN PER-DAY WINDOW (`f.d = d.day`), not widened to `$3`
+     * (6f176ae2 caught an earlier draft of this fix widening it too, by analogy with dau/wau/mau —
+     * wrong). `events` is a raw daily VOLUME counter with no nesting duty (the only invariant it
+     * participates in is `events >= dau`, which a NARROWER exclusion only makes easier to satisfy,
+     * never harder) — it is not one of the three tiles kpi.ts derives from one shared-window
+     * `actors` CTE, so it has no counterpart to stay consistent with. Widening it to the 30-day
+     * window would zero out TODAY's legitimate volume for every actor flagged at any point in the
+     * last month, which is a real loss of signal on the one line that exists to show raw traffic,
+     * not a correctness fix.
+     *
+     * `flagged` (below) still finds every (day, actor) pair that EVER crossed the threshold
+     * anywhere in `scan`'s wide span — cheap, and correctness-neutral: it is only a CANDIDATE
+     * list; the per-metric window is applied where `flagged` is actually consulted, below. No
+     * change to `scan`'s own WHERE bound or `flagged`'s scanWindowSql was needed for this fix —
+     * verified (6f176ae2): `scan` already reaches back ($1-1)+($3-1) days, which for the OLDEST
+     * plotted day is EXACTLY that day's own trailing MAU_WINDOW_DAYS lower bound, so the existing
+     * wide candidate scan already covers every day's 30-day exclusion window; only the three
+     * dayWindowSql values below changed. Generated by highFrequencyExclusionAgainstFlagged
+     * (lib/analytics/high-frequency-exclusion.ts) so the WORDING cannot vary by hand-typing.
+     *
+     * ⚠ EXPECT HISTORICAL VALUES TO VISIBLY MOVE once this ships: any day whose DAU/WAU/MAU used
+     * to count an actor flagged 8-30 days before it (inside the new shared window, outside the
+     * old per-metric one) will now show that actor excluded, so those numbers will drop. That is
+     * the fix taking effect, not a new bug — noted here so it is not mistaken for a regression.
      */
     `
     WITH days AS (
@@ -239,21 +312,53 @@ export async function getActivityTrend(days: number = TREND_WINDOW_DAYS): Promis
          AND e.created_at <  date_trunc('day', now()) + interval '1 day'
        GROUP BY 1, 2
     ),
+    flagged AS (${highFrequencyFlaggedDaysCte({
+      scanWindowSql:
+        "e.created_at >= date_trunc('day', now()) - ((($1::int - 1) + ($3::int - 1)) * interval '1 day') AND e.created_at < date_trunc('day', now()) + interval '1 day'",
+      dayExpr: "date_trunc('day', e.created_at)::date",
+      thresholdParam: '$4',
+    })}
+    ),
     anchor AS (SELECT min(created_at) AS first_event_at FROM analytics_event)
     SELECT
       to_char(d.day, 'YYYY-MM-DD') AS date,
       (SELECT first_event_at FROM anchor) AS first_event_at,
       (SELECT count(*)::int FROM scan s
-        WHERE s.u IS NOT NULL AND s.d = d.day) AS dau,
+        WHERE s.u IS NOT NULL AND s.d = d.day
+          AND ${highFrequencyExclusionAgainstFlagged({
+            actorAlias: 's',
+            actorColumn: 'u',
+            dayColumn: 'd',
+            dayWindowSql: 'f.d <= d.day AND f.d > d.day - $3::int',
+          })}) AS dau,
       (SELECT count(DISTINCT s.u)::int FROM scan s
-        WHERE s.u IS NOT NULL AND s.d <= d.day AND s.d > d.day - $2::int) AS wau,
+        WHERE s.u IS NOT NULL AND s.d <= d.day AND s.d > d.day - $2::int
+          AND ${highFrequencyExclusionAgainstFlagged({
+            actorAlias: 's',
+            actorColumn: 'u',
+            dayColumn: 'd',
+            dayWindowSql: 'f.d <= d.day AND f.d > d.day - $3::int',
+          })}) AS wau,
       (SELECT count(DISTINCT s.u)::int FROM scan s
-        WHERE s.u IS NOT NULL AND s.d <= d.day AND s.d > d.day - $3::int) AS mau,
-      COALESCE((SELECT sum(s.n)::int FROM scan s WHERE s.d = d.day), 0) AS events
+        WHERE s.u IS NOT NULL AND s.d <= d.day AND s.d > d.day - $3::int
+          AND ${highFrequencyExclusionAgainstFlagged({
+            actorAlias: 's',
+            actorColumn: 'u',
+            dayColumn: 'd',
+            dayWindowSql: 'f.d <= d.day AND f.d > d.day - $3::int',
+          })}) AS mau,
+      COALESCE((SELECT sum(s.n)::int FROM scan s
+        WHERE s.d = d.day
+          AND ${highFrequencyExclusionAgainstFlagged({
+            actorAlias: 's',
+            actorColumn: 'u',
+            dayColumn: 'd',
+            dayWindowSql: 'f.d = d.day',
+          })}), 0) AS events
     FROM days d
     ORDER BY d.day
     `,
-    [windowDays, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS],
+    [windowDays, WAU_WINDOW_DAYS, MAU_WINDOW_DAYS, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD],
     adminAnalyticsQueryTimeoutMs()
   );
 

@@ -1,5 +1,8 @@
 import Link from 'next/link';
 import { headers } from 'next/headers';
+import { forwardedIdentityHeaders } from '@/lib/http/request-context';
+import { ANON_SESSION_COOKIE } from '@/lib/db/session';
+import { GET as searchApiGet } from '@/app/api/search/route';
 import { ActivityCard } from '../preview/_components/ActivityCard';
 import { partitionSections } from '../preview/_data/filter';
 import { mapSearchResponseToActivities, type SearchItemDto, type SearchResponseDto } from '../preview/_data/search-api';
@@ -91,13 +94,36 @@ type SearchApiResponse = SearchResponseDto & {
   // this type describes a fetched payload, it does not verify one — and the derivation reads an
   // absent array as "no area was selected", which renders nothing.
   regionCoverage?: RegionCoverage[];
+  // lib/security/search-rate-limit.ts's signal, riding along outside SearchResponse proper
+  // (app/api/search/route.ts's `json()` helper adds it, deliberately not as a new
+  // lib/search/engine.ts SearchResponse.meta field — see that helper's comment). Absent on a
+  // degraded request (no salt/subject/DB error — "not measured"); the RAW per-minute request
+  // count otherwise, NOT a pre-thresholded boolean — lib/analytics/kpi.ts decides the DAU/WAU/MAU
+  // exclusion cutoff at read time. Forwarded to recordSearchPerformed below, which is the ONLY
+  // consumer — 2026-09-22 incident, see supabase/migrations/0052_analytics_event_high_frequency_flag.sql.
+  rateLimit?: { searchMinuteRequestCount: number };
 };
 
+/**
+ * A syntactically-valid absolute URL for the synthetic `/api/search` `Request` `runSearch` builds
+ * below. NOT a network address any more (see `runSearch`'s header) — `searchGet` only ever calls
+ * `new URL(request.url)` to read `searchParams` off it, so any well-formed absolute URL works.
+ * Kept CONFIGURED rather than derived from the incoming request's `Host` anyway (same posture as
+ * lib/sms/config.ts's `webhookPublicUrl()` — "the expected URL is CONFIGURED, not inferred") as a
+ * second, independent reason `runSearch` can never be tricked into pointing at an attacker-chosen
+ * origin: even if this returned something wrong, there is no actual outbound connection for it to
+ * misdirect (see `runSearch`), only a `URL` object being parsed in memory.
+ */
 function baseUrl(): string {
-  const h = headers();
-  const host = h.get('host') ?? 'localhost:3000';
-  const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https');
-  return `${proto}://${host}`;
+  const configured = process.env.NEXT_PUBLIC_SITE_URL;
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      /* unparseable — fall through to loopback, never to the request's Host header */
+    }
+  }
+  return `http://127.0.0.1:${process.env.PORT ?? '3000'}`;
 }
 
 interface FetchResult {
@@ -106,16 +132,44 @@ interface FetchResult {
   error?: string;
 }
 
-async function runSearch(state: SearchState, savedOrigin: SavedOrigin | null): Promise<FetchResult> {
+/**
+ * Exported ONLY for tests/search/page-rate-limit-identity.test.ts — both 2026-09-22 reviews
+ * pointed out that every existing test hit /api/search directly and none exercised this PAGE's
+ * own request construction, which is exactly where the identity-forwarding blocker lived (this
+ * function is the one that builds it). Not part of any other module's public surface.
+ *
+ * ═══ 🔴 F7 (2026-09-22 independent recheck): NO NETWORK HOP AT ALL, NOT JUST FORWARDED HEADERS ═══
+ * The previous version made a real `fetch()` back out to this app's own public URL — even after
+ * forwarding the right headers, that request still had to leave the process and re-enter through
+ * whatever actually fronts the deployment (Vercel's edge). F7's (unverified, live-deployment-only)
+ * concern: if that fronting layer overwrites `x-real-ip` with the SERVER's own egress address on
+ * the way back in — plausible, and consistent with the ORIGINAL incident's "only ip_* rows, never
+ * session_*" signature — the ip-scoped limits stop being per-visitor and become one GLOBAL
+ * site-wide budget instead, which a real burst of traffic could exhaust for EVERY visitor at
+ * once. No local test can rule this in or out; it depends on platform behaviour this repo does
+ * not control.
+ *
+ * Rather than arrange a live check for a risk a network hop creates, this removes the network hop:
+ * `searchApiGet` is `/api/search`'s OWN exported `GET` (app/api/search/route.ts), called directly,
+ * in-process, with a `Request` object carrying the SAME headers a real fetch would have sent.
+ * `searchGet` reads identity only from its `request` parameter (never ambiently via
+ * `next/headers`), so this is behaviourally identical to the HTTP call it replaces — same
+ * function, same backend-selection/fixture-fallback logic (app/search/page.tsx's header comment's
+ * "/api/search as a black box" still holds: this calls the exact black box, just via a normal
+ * function call instead of routing it through the internet and back), same `Response`-shaped
+ * return value (`NextResponse` satisfies `Response` — `.ok`/`.status`/`.json()` all still work
+ * unchanged below) — except now there is no fronting layer for F7's risk to live in at all.
+ */
+export async function runSearch(state: SearchState, savedOrigin: SavedOrigin | null): Promise<FetchResult> {
   try {
     // `facets: true` asks the same request for per-filter-value counts. They cost a few
     // in-memory passes over the candidate set this search already built (no second query —
     // see lib/search/facets.ts), and they are what lets the desktop rail show live counts
     // AND fold away the groups that cannot narrow this query.
-    const res = await fetch(`${baseUrl()}/api/search?${apiQuery(state, savedOrigin, { facets: true })}`, {
-      cache: 'no-store',
-      headers: { accept: 'application/json' },
+    const req = new Request(`${baseUrl()}/api/search?${apiQuery(state, savedOrigin, { facets: true })}`, {
+      headers: forwardedIdentityHeaders(headers(), ANON_SESSION_COOKIE, { accept: 'application/json' }),
     });
+    const res = await searchApiGet(req);
     if (!res.ok) return { ok: false, error: `Search API returned ${res.status}` };
     return { ok: true, body: (await res.json()) as SearchApiResponse };
   } catch (err) {
@@ -412,6 +466,7 @@ export default async function SearchPage({
         expected: expected.length,
         backend: result.body?.meta.backend,
         broadened: (result.body?.broadening?.applied?.length ?? 0) > 0,
+        searchMinuteRequestCount: result.body?.rateLimit?.searchMinuteRequestCount ?? null,
       }
     );
   }

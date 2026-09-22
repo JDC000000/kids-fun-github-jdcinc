@@ -114,6 +114,17 @@ export interface SearchPerformedSummary {
   backend?: string;
   /** Whether the engine broadened the query to fill a thin result set. */
   broadened?: boolean;
+  /**
+   * Forwarded from GET /api/search's response (`body.rateLimit.searchMinuteRequestCount` —
+   * lib/security/search-rate-limit.ts / app/api/search/route.ts), NOT recomputed here: the
+   * signal is "how many requests had this ip/session already made in the current minute", which
+   * is a property of the /api/search call this page render just made, not of the analytics write
+   * itself. Stamps analytics_event.search_minute_request_count (migration 0052) — the RAW count,
+   * not a threshold decision, so lib/analytics/kpi.ts can decide (and later adjust) the DAU/WAU/MAU
+   * exclusion cutoff at read time. See that module and lib/security/search-rate-limit.ts for the
+   * full 2026-09-22 incident context and why a write-time boolean was the wrong shape for this.
+   */
+  searchMinuteRequestCount?: number | null;
 }
 
 /**
@@ -154,7 +165,8 @@ export async function recordSearchPerformed(
       broadened: summary.broadened ?? false,
       hasQuery: q.length > 0,
     },
-    currentAnonId()
+    currentAnonId(),
+    { searchMinuteRequestCount: summary.searchMinuteRequestCount ?? null }
   );
 }
 

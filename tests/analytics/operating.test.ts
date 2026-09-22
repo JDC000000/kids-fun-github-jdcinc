@@ -47,6 +47,8 @@ import {
   type OperatingPeriodCounts,
 } from '../../lib/analytics/operating';
 import { SOURCE_CTR_TARGET_PCT } from '../../lib/analytics/kpi';
+import { getActivityTrend } from '../../lib/analytics/trends';
+import { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } from '../../lib/security/search-rate-limit';
 import {
   MAU_TARGET,
   SEARCHES_PER_DAY_TARGET,
@@ -455,18 +457,84 @@ describe('buildOperatingKpis', () => {
 // Layer 2: the real SQL against real Postgres
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Insert one analytics_event at a chosen age (minutes) for a chosen session. */
+/** Insert one analytics_event at a chosen age (minutes) for a chosen session. Optionally
+ *  stamps `search_minute_request_count` (the 2026-09-22 high-frequency signal — see
+ *  lib/analytics/high-frequency-exclusion.ts) so a test can mint a threshold-crossing row. */
 async function insertEvent(
   session: string,
   eventType: string,
   minutesAgo: number,
-  resultSummary?: Record<string, unknown>
+  resultSummary?: Record<string, unknown>,
+  searchMinuteRequestCount: number | null = null
 ): Promise<void> {
   await query(
-    `INSERT INTO analytics_event (event_type, user_or_session, created_at, result_summary_json)
-       VALUES ($1, $2, now() - ($3 || ' minutes')::interval, $4)`,
-    [eventType, session, String(minutesAgo), resultSummary ? JSON.stringify(resultSummary) : null]
+    `INSERT INTO analytics_event
+       (event_type, user_or_session, created_at, result_summary_json, search_minute_request_count)
+       VALUES ($1, $2, now() - ($3 || ' minutes')::interval, $4, $5)`,
+    [
+      eventType,
+      session,
+      String(minutesAgo),
+      resultSummary ? JSON.stringify(resultSummary) : null,
+      searchMinuteRequestCount,
+    ]
   );
+}
+
+/** Insert one analytics_event at an EXPLICIT timestamp — unlike insertEvent's minutesAgo (which
+ *  is fragile for month-grain tests: "N days ago" can land in a different calendar month
+ *  depending on what day of the month the test happens to run on), this pins created_at to a
+ *  specific instant so a month-grain test is deterministic regardless of today's date. */
+async function insertEventAt(
+  session: string,
+  eventType: string,
+  createdAt: Date,
+  searchMinuteRequestCount: number | null = null
+): Promise<void> {
+  await query(
+    `INSERT INTO analytics_event (event_type, user_or_session, created_at, search_minute_request_count)
+       VALUES ($1, $2, $3, $4)`,
+    [eventType, session, createdAt.toISOString(), searchMinuteRequestCount]
+  );
+}
+
+/** The UTC start-of-month instant N months before the current month (0 = this month). Used to
+ *  pin a test's activity to a specific, COMPLETE (non-partial) month bucket regardless of what
+ *  day of the month the suite happens to run on. */
+function utcMonthsAgoStart(monthsAgo: number): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 1));
+}
+
+function daysInUtcMonth(monthStart: Date): number {
+  return new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0)).getUTCDate();
+}
+
+/** A recent, COMPLETE 31-day calendar month, for pinning the B5 "31-day blind spot" regression
+ *  test regardless of what month the suite happens to run in. No two CONSECUTIVE calendar months
+ *  are both non-31-day (the five under-31 months — Feb, Apr, Jun, Sep, Nov — are never adjacent
+ *  to each other on the calendar), so checking 2 and then 3 months back is guaranteed to find
+ *  one. */
+function utcRecentComplete31DayMonthStart(): Date {
+  for (const monthsAgo of [2, 3]) {
+    const start = utcMonthsAgoStart(monthsAgo);
+    if (daysInUtcMonth(start) === 31) return start;
+  }
+  throw new Error('no 31-day month found 2-3 months back — should be impossible on the Gregorian calendar');
+}
+
+/** A recent, COMPLETE February (28 or 29 days) — the ONLY month length where the LEAST-clamped
+ *  exclusion window actually reaches back into the PRIOR month (verified: for days_in_month
+ *  days, the window's lower bound is pstart + (days_in_month - 30); that is negative — i.e.
+ *  before pstart — only when days_in_month < 30, which on the Gregorian calendar is February
+ *  alone). Scans up to 14 months back, since February is 12 months apart and "this month" (if it
+ *  happens to be February) must be excluded as not-yet-complete. */
+function utcRecentCompleteFebruaryStart(): Date {
+  for (let monthsAgo = 1; monthsAgo <= 14; monthsAgo++) {
+    const start = utcMonthsAgoStart(monthsAgo);
+    if (start.getUTCMonth() === 1) return start; // 0-indexed: January=0, February=1
+  }
+  throw new Error('no complete February found in the last 14 months — should be impossible');
 }
 
 describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
@@ -594,6 +662,343 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
     const after = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
 
     expect(after.emailOptIns - before.emailOptIns).toBe(1);
+  });
+
+  // The 2026-09-22 high-frequency exclusion (lib/analytics/high-frequency-exclusion.ts), wired
+  // into getEngagementSeries/getLifecycleSeries. Baseline: a session that fires a
+  // threshold-crossing row in ITS OWN period must be excluded from that period's
+  // activeActors/signedInActors — same contract kpi.ts and trends.ts already prove.
+  it('excludes a flagged actor from active_actors and signed_in_actors within its own period', async () => {
+    const before = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
+
+    const flagged = randomUUID();
+    await insertEvent(flagged, 'account_signed_in', 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+
+    const clean = randomUUID();
+    await insertEvent(clean, 'account_signed_in', 5);
+
+    const after = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
+
+    // Only the clean control actor is counted; the flagged one is excluded entirely.
+    expect(after.activeActors - before.activeActors).toBe(1);
+    expect(after.signedInActors - before.signedInActors).toBe(1);
+  });
+
+  // REVISED (2026-09-22, THIRD review round, 6f176ae2): this test used to pin active_actors to
+  // PER-BUCKET-ONLY exclusion (a flag 5 days ago must not affect today's count). That behaviour
+  // was superseded when active_actors/signed_in_actors moved onto kpi.ts's/trends.ts's shared
+  // 30-day window — see the "DELIBERATE ARCHITECTURAL DECISION, REVISED" comment above
+  // getEngagementSeries's `flagged` CTE for why: /admin/operating renders the DAU chart
+  // (getActivityTrend, already on the shared window) directly above this table's "Active" column,
+  // and the two must not show different numbers for the same day. Per the reviewers' own
+  // standard, this test is REWRITTEN to match the new intended behaviour, not deleted or
+  // weakened — it still needs to prove active_actors' exclusion window is BOUNDED (exactly
+  // MAU_WINDOW_DAYS), not the two wrong extremes: not the whole per-page scan range (unbounded
+  // — the original wide-window bug) and not still per-bucket-only (the now-superseded
+  // behaviour this test used to pin).
+  it('excludes an actor from TODAY when flagged within the shared 30-day window (matching trends.ts’s dau), even on an unrelated day', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    // 20 days ago: well outside the 10-day DISPLAYED series, but inside the shared 30-day
+    // exclusion window — must still reach today, proving the window is neither "this page's
+    // display range" nor "this bucket alone", but the actual MAU_WINDOW_DAYS width.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 20 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
+    expect(afterToday.activeActors - beforeToday.activeActors).toBe(0);
+  });
+
+  // 🔴 The OTHER extreme: the window must be BOUNDED at MAU_WINDOW_DAYS, not the actor's whole
+  // history — the exact 40-vs-30-day gap 2dfdbb2c originally caught between kpi.ts and trends.ts,
+  // reproduced here as a regression test one file over rather than assumed safe by analogy.
+  it('🔴 does NOT exclude an actor from TODAY when their only qualifying row is OUTSIDE the shared 30-day window', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    // 40 days ago: outside MAU_WINDOW_DAYS (30) from today — must NOT reach today.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 40 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
+    expect(afterToday.activeActors - beforeToday.activeActors).toBe(1);
+  });
+
+  // 🔴 B5 FINDING 2 (round 4, off-by-one): the window used to be ($6::int - 1) = 29 days wide,
+  // one short of trends.ts's own true 30 (`f.d > d.day - $3::int`, no "-1"). An actor flagged
+  // EXACTLY 29 days ago sits inside trends.ts's/kpi.ts's 30-day window but was outside this
+  // file's old 29-day one — the identical same-page disagreement 2febba9 exists to close, just
+  // moved from the 10-day mark to the 29-day mark instead of being closed. Ages up to 28 days
+  // already agreed by coincidence (both windows covered them), which is how this shipped in
+  // 2febba9 undetected — this test pins the exact boundary that distinguishes the two.
+  it('🔴 excludes an actor flagged EXACTLY 29 days ago — the off-by-one boundary trends.ts’s 30-day window already covers', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 29 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
+    expect(afterToday.activeActors - beforeToday.activeActors).toBe(0);
+  });
+
+  // 🔴 B5 FINDING 1 (round 4, regression, month-grain — PREVIOUSLY ZERO TEST COVERAGE on this
+  // path, confirmed by round 4 via a no-op mutant: reverting the day-precision fix still passed
+  // 115/115). At month grain, pstart is the 1st of the month — "30 days ending at the 1st" never
+  // overlaps the month itself except on the 1st, so a bot bursting mid-month (the 9th, the 19th,
+  // here the 15th) went completely unexcluded. Anchoring the window at the bucket's END
+  // (pstart + one grain interval - 1 day) instead fixes this: a month-grain window now actually
+  // reaches into the month it counts. Uses explicit timestamps (insertEventAt), not
+  // minutesAgo-relative ones, pinned to a COMPLETE (non-partial) historical month — "N days ago"
+  // would be fragile here, landing in a different calendar month depending what day of the month
+  // the suite happens to run on.
+  it('🔴 excludes an actor flagged MID-MONTH from that month’s activeActors (month grain) — the anchor regression', async () => {
+    const targetMonthStart = utcMonthsAgoStart(2); // a complete month, never "this month so far"
+    const day15 = new Date(targetMonthStart);
+    day15.setUTCDate(15);
+    const day27 = new Date(targetMonthStart);
+    day27.setUTCDate(27);
+
+    const beforeSeries = await getOperatingPeriodCounts('month', 4);
+    const beforeTarget = beforeSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    // Flagged burst on the 15th — nowhere near the bucket's own 1st-of-month start.
+    await insertEventAt(actor, 'listing_viewed', day15, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    // Ordinary activity later the SAME month.
+    await insertEventAt(actor, 'listing_viewed', day27);
+
+    const afterSeries = await getOperatingPeriodCounts('month', 4);
+    const afterTarget = afterSeries.find((p) => p.period === targetMonthStart.toISOString().slice(0, 10)) as OperatingPeriodCounts;
+
+    expect(beforeTarget, 'target month bucket must exist in a 4-month series').toBeTruthy();
+    expect(afterTarget.activeActors - beforeTarget.activeActors).toBe(0);
+    // 0bab6a97 (twice): New+Returning=Active is an IDENTITY (pinned separately, B4), so it holds
+    // even when every number in a row is UNIFORMLY wrong — checking Active alone cannot rule that
+    // out. Assert New+Returning directly too, so this test proves what it claims to, not just
+    // that the row stayed internally self-consistent.
+    expect(afterTarget.newActors + afterTarget.returningActors - (beforeTarget.newActors + beforeTarget.returningActors)).toBe(0);
+  });
+
+  // 🔴 B5/B7 (round 4-6): a bucket-end-only anchor still leaves DAY 1 of any 31-day month
+  // uncovered (a fixed 30-day width ending on day 31 only reaches back to day 2) -- fixed by
+  // clamping the window's lower bound to LEAST(pstart, anchor - 29 days), so it never starts
+  // later than the bucket's own first day. A LATER round (B7) reported this reproducing again on
+  // a "pure bot, day 1 only" scenario; reproducing that exact shape here empirically before
+  // trusting or dismissing it -- confirmed CLEAN against this fix (activeActors/newActors delta
+  // 0 for day 1 specifically, verified live against the scratch DB before this test was written,
+  // not assumed) -- most likely B7 was measured against the pre-LEAST-clamp state (19f375e) and
+  // crossed in transit with the fix landing, the same pattern as several earlier rounds in this
+  // thread. Sweeps day 1, mid-month, and the LAST day of a 31-day month in one test (0bab6a97's
+  // own recommendation, after noting the earlier day-15-only test could not have caught a
+  // day-1-specific gap) -- each as an independent single-event "pure bot" actor (one row, no
+  // control row), the exact shape B7 was reported against, and each checked immediately after
+  // its own insert so one day's assertion can't be confused by another's.
+  it('🔴 excludes a PURE-BOT actor (single event, no control row) at DAY 1, MID-MONTH, and the LAST DAY of a 31-day month', async () => {
+    const targetMonthStart = utcRecentComplete31DayMonthStart();
+    const lastDay = daysInUtcMonth(targetMonthStart);
+    const periodKey = targetMonthStart.toISOString().slice(0, 10);
+
+    for (const day of [1, 15, lastDay]) {
+      const beforeSeries = await getOperatingPeriodCounts('month', 6);
+      const beforeTarget = beforeSeries.find((p) => p.period === periodKey) as OperatingPeriodCounts;
+      expect(beforeTarget, `target 31-day month bucket must exist before inserting day ${day}`).toBeTruthy();
+
+      const at = new Date(targetMonthStart);
+      at.setUTCDate(day);
+      const actor = randomUUID();
+      await insertEventAt(actor, 'listing_viewed', at, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+
+      const afterSeries = await getOperatingPeriodCounts('month', 6);
+      const afterTarget = afterSeries.find((p) => p.period === periodKey) as OperatingPeriodCounts;
+
+      expect(afterTarget.activeActors - beforeTarget.activeActors, `day ${day} activeActors`).toBe(0);
+      expect(
+        afterTarget.newActors + afterTarget.returningActors - (beforeTarget.newActors + beforeTarget.returningActors),
+        `day ${day} newActors+returningActors`
+      ).toBe(0);
+    }
+  });
+
+  // The bucket's own intended LOOKBACK, the one case in the scenario table above that is NOT a
+  // bug: for any month SHORTER than 30 days -- on the Gregorian calendar, February alone (28 or
+  // 29 days) -- the LEAST-clamped window's lower bound is `pstart + (days_in_month - 30)`,
+  // strictly BEFORE pstart, so the window deliberately reaches a day or two into January. An
+  // actor flagged on January's own last day, with ordinary activity early in February, must be
+  // excluded from February's own count -- this is the SAME "shared 30-day window" design
+  // 2febba9 established, not a leak. (30/31-day months do NOT do this -- verified algebraically:
+  // the offset is `days_in_month - 30`, non-negative for every month except February.)
+  it('excludes an actor from a SHORT month (February) when flagged on the LAST day of the PRIOR month — the window’s intended lookback, not a leak', async () => {
+    const targetMonthStart = utcRecentCompleteFebruaryStart();
+    const priorMonthLastDay = new Date(targetMonthStart);
+    priorMonthLastDay.setUTCDate(0); // day 0 of this month == the last day of the PRIOR month
+    const day10 = new Date(targetMonthStart);
+    day10.setUTCDate(10);
+    const periodKey = targetMonthStart.toISOString().slice(0, 10);
+
+    const beforeSeries = await getOperatingPeriodCounts('month', 15); // reach the prior Feb-1yr too
+    const beforeTarget = beforeSeries.find((p) => p.period === periodKey) as OperatingPeriodCounts;
+    expect(beforeTarget, 'target February bucket must exist in the series').toBeTruthy();
+
+    const actor = randomUUID();
+    await insertEventAt(actor, 'listing_viewed', priorMonthLastDay, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEventAt(actor, 'listing_viewed', day10); // ordinary activity early IN February
+
+    const afterSeries = await getOperatingPeriodCounts('month', 15);
+    const afterTarget = afterSeries.find((p) => p.period === periodKey) as OperatingPeriodCounts;
+
+    expect(afterTarget.activeActors - beforeTarget.activeActors).toBe(0);
+    expect(afterTarget.newActors + afterTarget.returningActors - (beforeTarget.newActors + beforeTarget.returningActors)).toBe(0);
+  });
+
+  // 0bab6a97's suggestion: run the SAME general identity (not a scenario-specific delta) at
+  // MONTH grain too, not just day grain — a scenario-agnostic guard that would catch a uniformly
+  // wrong row regardless of which specific edge case someone thought to seed. Seeded against the
+  // tightest month-grain edge (day 1 of a 31-day month, the exact B5/B7 boundary) so this isn't
+  // just passively re-bucketing whatever day-grain fixtures happen to already be in the table.
+  it('🔴 IDENTITY: new_actors + returning_actors === active_actors for every period, always — MONTH grain too', async () => {
+    const targetMonthStart = utcRecentComplete31DayMonthStart();
+    const day1 = new Date(targetMonthStart);
+    const day20 = new Date(targetMonthStart);
+    day20.setUTCDate(20);
+
+    const flagged = randomUUID();
+    await insertEventAt(flagged, 'listing_viewed', day1, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    const clean = randomUUID();
+    await insertEventAt(clean, 'listing_viewed', day20);
+
+    const series = await getOperatingPeriodCounts('month', 6);
+    for (const p of series) {
+      expect(p.newActors + p.returningActors, p.period).toBe(p.activeActors);
+    }
+  });
+
+  // Direct SAME-PAGE agreement check — the actual property 6f176ae2's finding is about.
+  // /admin/operating renders getActivityTrend's DAU chart directly above this table's "Active"
+  // column (getOperatingPeriodCounts's activeActors); a reader has no reason to expect those two
+  // numbers to mean different things unless told so. Calls BOTH in the SAME test against the SAME
+  // flagged actor, asserting their deltas are IDENTICAL — not just separately correct — mirroring
+  // tests/analytics/trends.test.ts's kpi.ts-vs-trends.ts cross-file test for the same reason.
+  it('🔴 activeActors (this table’s “Active” column) agrees with trends.ts’s DAU (the chart on the SAME page) for the SAME flagged actor', async () => {
+    const opsBefore = await getOperatingPeriodCounts('day', 10);
+    const opsTodayBefore = opsBefore.at(-1) as OperatingPeriodCounts;
+    const trendBefore = await getActivityTrend();
+    const trendTodayBefore = trendBefore.points[trendBefore.points.length - 1];
+
+    const actor = randomUUID();
+    // 10 days ago — the exact scenario 6f176ae2 measured: inside the shared 30-day window, so
+    // both surfaces must exclude it from TODAY.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 10 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const opsAfter = await getOperatingPeriodCounts('day', 10);
+    const opsTodayAfter = opsAfter.at(-1) as OperatingPeriodCounts;
+    const trendAfter = await getActivityTrend();
+    const trendTodayAfter = trendAfter.points[trendAfter.points.length - 1];
+
+    const opsDelta = opsTodayAfter.activeActors - opsTodayBefore.activeActors;
+    const trendDauDelta = trendTodayAfter.dau! - trendTodayBefore.dau!;
+
+    expect(opsDelta).toBe(trendDauDelta);
+    expect(opsDelta).toBe(0);
+  });
+
+  // Baseline for the lifecycle site specifically (new/activated/returning/retained), verified
+  // against real Postgres rather than inferred from the cross-period test below or from reading
+  // the SQL — 2dfdbb2c flagged that this call site had only been checked by reading the query,
+  // not by reproducing against a live DB, so this closes that gap directly: a brand-new actor
+  // whose ONLY activity is a threshold-crossing burst must not be counted as new, activated, or
+  // returning at all today.
+  it('excludes a flagged actor from the lifecycle cohorts (new/activated/returning) within its own period', async () => {
+    const before = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
+
+    const flagged = randomUUID();
+    await insertEvent(flagged, ACTIVATION_EVENT_TYPES[0], 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+
+    const clean = randomUUID();
+    await insertEvent(clean, ACTIVATION_EVENT_TYPES[0], 5);
+
+    const after = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
+
+    // Only the clean control actor is counted as new+activated; the flagged one contributes
+    // nothing to new, activated, or returning.
+    expect(after.newActors - before.newActors).toBe(1);
+    expect(after.activatedNewActors - before.activatedNewActors).toBe(1);
+    expect(after.returningActors - before.returningActors).toBe(0);
+  });
+
+  // REVISED (2026-09-22, round 4, B4, 0bab6a97): this test used to pin new_actors/returning_actors
+  // to PER-BUCKET-ONLY exclusion — the same behaviour active_actors had before 2febba9. That
+  // became a bug the moment active_actors moved to the shared 30-day window and seen did not:
+  // new_actors + returning_actors is an IDENTITY equal to |seen| for a period (see the "REVISED A
+  // FOURTH TIME" comment above getLifecycleSeries's `seen` CTE for the exact mechanism), so
+  // seen's exclusion window diverging from active_actors's produced literally self-contradictory
+  // rows ("Active=0, New=0, Returning=1"). seen now shares the identical window, so per the
+  // established standard this test is REWRITTEN, not deleted or weakened — same shape as
+  // actor_counts's equivalent pair below getEngagementSeries.
+  it('lifecycle presence reaches 20 days back, matching the shared 30-day window (not per-bucket-only)', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    // 20 days ago: well outside the 10-day DISPLAYED series, inside the shared 30-day window.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 20 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
+    expect(afterToday.newActors + afterToday.returningActors - (beforeToday.newActors + beforeToday.returningActors)).toBe(0);
+  });
+
+  // 🔴 The other extreme: bounded at MAU_WINDOW_DAYS (30), not unbounded — mirrors
+  // actor_counts's equivalent 40-day boundary test and kpi.ts's/trends.ts's own.
+  it('🔴 does NOT exclude lifecycle presence when the only qualifying row is OUTSIDE the shared 30-day window', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 40 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
+    expect(afterToday.newActors + afterToday.returningActors - (beforeToday.newActors + beforeToday.returningActors)).toBe(1);
+  });
+
+  // 🔴 B4 (0bab6a97, round 4): the actual IDENTITY that broke, asserted directly and
+  // permanently — not inferred from the two tests above. new_actors + returning_actors
+  // PARTITIONS every actor `seen` counts for a period (per_actor's two FILTER conditions,
+  // af.first_at >= p.pstart vs < p.pstart, are exhaustive and mutually exclusive over every
+  // non-null seen row), so this must equal active_actors for EVERY period, always — with or
+  // without a bot actor in play, seeded or not. This is the guard the reviewer asked for: had it
+  // existed before 2febba9, it would have failed the moment active_actors moved to the shared
+  // window while seen stayed per-bucket, independent of any specific flagged-actor scenario.
+  it('🔴 IDENTITY: new_actors + returning_actors === active_actors for every period, always', async () => {
+    // A flagged actor plus a clean actor, both touching multiple periods, so the identity is
+    // exercised under real exclusion activity rather than trivially on an all-clean series.
+    const flagged = randomUUID();
+    await insertEvent(flagged, 'listing_viewed', 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(flagged, 'listing_viewed', 60 * 24 * 3 + 5);
+    const clean = randomUUID();
+    await insertEvent(clean, 'listing_viewed', 5);
+    await insertEvent(clean, 'listing_viewed', 60 * 24 * 6 + 5);
+
+    const series = await getOperatingPeriodCounts('day', 10);
+    for (const p of series) {
+      expect(p.newActors + p.returningActors, p.period).toBe(p.activeActors);
+    }
   });
 });
 
