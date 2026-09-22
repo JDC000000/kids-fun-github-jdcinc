@@ -142,6 +142,39 @@ numbers are a real execution rather than a prediction. Run it in a quiet window,
 4 of the 11 fixture venues are **kept** and named in the output: they are still referenced by
 series under the Operator-contained sources, and become deletable once those are closed out.
 
+## Negative suite (`negative-suite.sh`)
+
+The guards above are only worth what exercises them. A mutation sweep — neutralising each
+`require_()` condition in turn and re-running — found **17 of 29 unexercised**: they could have been
+deleted and nothing would have noticed. They had only ever been checked by ad-hoc shell commands
+typed by hand during review, which is not a test.
+
+```bash
+KF_CLEANUP_TARGET_URL='postgres://…local replica…' \
+KF_REPLICA_RESET='node /path/to/reset-replica.cjs' \
+  bash scripts/incident/negative-suite.sh
+```
+
+18 cases, covering a baseline that must SUCCEED (so the suite cannot pass by breaking everything)
+plus the refusals: wrong database, source fingerprint and `created_at` drift, duplicate target ids,
+a `leave_alone` id smuggled into the target set, an undeclared/misspelled precondition or
+dependent-count key, a dependent-count mismatch, nonexistent series/occurrence/venue ids, an
+occurrence hanging off a non-target series, a renamed venue, an empty target set, an
+Operator-archived row inside the target set, and an orphan profile that turns out to have a real
+`auth.users` row.
+
+The replica seeding tooling deliberately lives **outside** this repo: it is built from
+production-derived data. Without `KF_REPLICA_RESET` the two database-mutating cases skip and the
+rest still run.
+
+**Post-condition assertions are not covered by this suite, by design.** Checks like
+`post.occ_stale === pre.occ_stale` fire only if the delete itself misbehaves, so no bad input can
+reach them — they need fault injection. Three were demonstrated that way (making the final
+`DELETE FROM source` a no-op; flipping an extra row to `stale` mid-transaction; dragging a real
+source's `created_at` into the incident window), and each was caught by the intended assertion
+rather than by a Postgres error. The rest are the same shape but have not been individually
+demonstrated.
+
 ## How it was verified (and how to re-verify)
 
 A local replica was built matching production on every asserted count — 73 sources, 31,979
