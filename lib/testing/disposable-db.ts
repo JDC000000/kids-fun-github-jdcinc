@@ -61,20 +61,29 @@ export const CREATE_MARKER_SQL = `
 /**
  * Is the marker present AND readable by THIS role?
  *
- * `to_regclass()` raises `42501 permission denied for schema` for a role without USAGE on the
+ * A query against the marker raises `42501 permission denied` for a role without USAGE on the
  * marker's schema — a low-privilege role such as CI's `authenticated` hits exactly that. An
  * exception there must not become an unhandled crash, and it must not be read as "present":
- * a marker this connection cannot verify is a marker it does not have. Fails CLOSED.
+ * a marker this connection cannot verify is a marker it does not have. Fails CLOSED. Note that it
+ * must not be read as "exists but hidden" either — see markerState.
  */
-export type MarkerState = 'present' | 'absent' | 'unreadable';
+export type MarkerState = 'present' | 'absent' | 'indeterminate';
 
 /**
- * Distinguishes ABSENT from UNREADABLE.
+ * Distinguishes ABSENT from INDETERMINATE.
  *
- * Both mean "not verified", but they need opposite advice: if the marker is missing you create it;
- * if it exists and this role cannot read it you grant. The first version collapsed them and told
- * everyone to create a table that might already be there — advice that, followed literally against
- * a database someone cares about, is precisely the mistake this guard exists to prevent.
+ * Three answers, because there are genuinely three situations and only two of them are knowledge:
+ *
+ *   present       — read it, it is there
+ *   absent        — the server said the table or schema does not exist (42P01 / 3F000)
+ *   indeterminate — this role cannot look, so nothing can be concluded either way (42501)
+ *
+ * The first version collapsed present/absent and told everyone to create a table that might
+ * already be there. The second version split them but named the third state "unreadable" and had
+ * the guard say "it already exists" — swapping one false claim for its mirror image, because
+ * Postgres raises 42501 from the permission check BEFORE it looks for the table. Both versions
+ * made an assertion they could not support, in a message written for someone about to act on it.
+ * A guard is allowed to say "I cannot tell"; it is not allowed to guess and sound certain.
  */
 export async function markerState(pool: Pool): Promise<MarkerState> {
   try {
@@ -83,7 +92,15 @@ export async function markerState(pool: Pool): Promise<MarkerState> {
   } catch (err) {
     const code = (err as { code?: string } | null)?.code;
     if (code === '42P01' || code === '3F000') return 'absent';    // no such table / no such schema
-    if (code === '42501') return 'unreadable';                    // exists, but not for this role
+    // ═══ 42501 DOES NOT MEAN "IT EXISTS" ═══
+    // This returned 'unreadable', and the guard then told the operator "it already exists, do not
+    // create a second one." Postgres checks PERMISSION BEFORE EXISTENCE, so a role without USAGE
+    // on the schema gets 42501 whether or not the table is there. The old answer therefore
+    // asserted, in an error message aimed at someone about to act on it, something it could not
+    // know — and the advice it gave (don't create it) is the advice that leaves a genuinely
+    // unmarked database unmarked. 'indeterminate' is the honest answer: not absent, not present,
+    // not knowable from here.
+    if (code === '42501') return 'indeterminate';
     throw err;
   }
 }
@@ -181,13 +198,22 @@ export async function assertDisposableDatabase(pool: Pool, connectionString: str
   // Non-local but permitted by the exact-host override. The database must vouch for itself.
   const state = await markerState(pool);
   if (state === 'present') return;
-  if (state === 'unreadable') {
+  if (state === 'indeterminate') {
     throw new Error(
-      `[disposable-db] REFUSING: "${host}" carries a ${DISPOSABLE_MARKER_TABLE} marker, but THIS ` +
-        `role cannot read it, so it cannot be verified — and unverifiable is not verified.\n\n` +
-        `Do NOT create a second marker; it already exists. Grant the read instead:\n` +
+      `[disposable-db] REFUSING: "${host}" — this role cannot read schema ` +
+        `${DISPOSABLE_MARKER_SCHEMA}, so whether a ${DISPOSABLE_MARKER_TABLE} marker exists there ` +
+        `CANNOT BE DETERMINED from this connection. Unverifiable is not verified.\n\n` +
+        `This message used to tell you the marker "already exists" and not to create a second ` +
+        `one. That was an assertion it had no way to make: Postgres reports 42501 for the ` +
+        `permission failure BEFORE it ever checks whether the table is there, so this error looks ` +
+        `identical either way.\n\n` +
+        `Find out, then act — do not guess:\n` +
+        `    psql "$DATABASE_URL" -c "SELECT to_regclass('${DISPOSABLE_MARKER_TABLE}')"   # as a role WITH access\n` +
+        `  If it exists, grant the read:\n` +
         `    GRANT USAGE ON SCHEMA ${DISPOSABLE_MARKER_SCHEMA} TO <role>;\n` +
-        `    GRANT SELECT ON ${DISPOSABLE_MARKER_TABLE} TO <role>;`
+        `    GRANT SELECT ON ${DISPOSABLE_MARKER_TABLE} TO <role>;\n` +
+        `  If it does not, and this database really is disposable, create it (see the message for ` +
+        `an unmarked database).`
     );
   }
 

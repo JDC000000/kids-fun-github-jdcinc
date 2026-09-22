@@ -9,13 +9,23 @@
 #
 # ═══ RUNNING IT ═══
 #   KF_CLEANUP_TARGET_URL='postgres://…local replica…'   # REQUIRED — never production
-#   KF_REPLICA_RESET='node /path/to/reset-replica.cjs'   # optional; restores the replica between cases
+#   KF_REPLICA_RESET='KF_SESSION_ID=<your-session-id> node /path/to/reset-replica.cjs'
+#                                                        # REQUIRED — restores the replica between cases
+#                                                        # must reset the SAME database as the URL above
 #   bash scripts/incident/negative-suite.sh
 #
 # The replica must be seeded to match the manifest's preconditions. That seeding tooling lives
 # outside this repo on purpose: it is built from production-derived data and has no business being
-# committed. Without KF_REPLICA_RESET the two cases that mutate the database are skipped, and the
-# rest still run.
+# committed.
+#
+# KF_REPLICA_RESET is REQUIRED and the suite exits 2 without it. This header previously called it
+# optional and said the mutating cases would be "skipped" — text left over from a version that did
+# degrade gracefully, and wrong since the required check went in. An operator reads the header
+# first, so a stale header is not a documentation nit: it tells them the run they just did was
+# valid when it was not. Measured, before it was made required: 11 pass, 5 spurious fail, 2 skip.
+#
+# The suite also PROVES the two variables name the same database before it starts (see the reset
+# sentinel below) rather than trusting that they do.
 #
 # ═══ A TRAP THIS SUITE ITSELF FELL INTO ═══
 # The first version piped each run into `grep -q` under `set -o pipefail`. grep -q exits on the
@@ -39,8 +49,33 @@ if [ -z "${KF_REPLICA_RESET:-}" ]; then
 fi
 RESET="$KF_REPLICA_RESET"
 cd "$W" || exit 9
-pass=0; fail=0; skip=0
-reset_db() { [ -n "$RESET" ] && eval "$RESET" >/dev/null 2>&1; }
+# No `skip` counter. There used to be one, initialised and then never incremented or printed —
+# left from the version where a missing KF_REPLICA_RESET skipped the mutating cases. Nothing skips
+# any more: a case that cannot run aborts the suite instead, so the only honest counters are these
+# two, and a dead one would imply the suite still has a silent third outcome.
+pass=0; fail=0
+# ═══ A FAILED RESET USED TO BE INVISIBLE ═══
+# This was `eval "$RESET" >/dev/null 2>&1`, which discards stdout, stderr AND the exit status. If
+# the reset command failed — wrong path, database not running, a typo in the variable — the suite
+# carried on and reported pass/fail counts as though every case had run against a freshly restored
+# replica. Those results are indistinguishable from real findings, which makes them worse than no
+# results at all. The suite now stops on the first failed reset and prints what the command said.
+reset_db() {
+  local out rc
+  out="$(eval "$RESET" 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    {
+      echo ""
+      echo "FATAL: KF_REPLICA_RESET failed (exit $rc) — aborting rather than reporting."
+      echo "  command: $RESET"
+      echo "  output:"
+      printf '%s\n' "$out" | sed 's/^/    /'
+      echo "  Every case assumes a freshly reset replica. Continuing would surface stale drift as"
+      echo "  guard findings, which look exactly like signal. A suite that stops beats one that lies."
+    } >&2
+    exit 4
+  fi
+}
 note() { printf '  %-46s %s\n' "$1" "$2"; }
 run() { KF_CLEANUP_TARGET_URL="$U" timeout 240 bash scripts/incident/cleanup-2026-09-21-fixture-pollution.sh "$@" 2>&1; }
 expect() { # expect <label> <pattern> <args...>
@@ -51,7 +86,22 @@ expect() { # expect <label> <pattern> <args...>
 }
 mutate_json() { python3 -c "$1" ; }
 
+# ═══ KF_CLEANUP_TARGET_URL AND KF_REPLICA_RESET MUST NAME THE SAME DATABASE ═══
+# They are independent variables, so nothing stopped the suite resetting one database while running
+# the cleanup script and the write-helpers against another. Every case would then execute against a
+# replica nobody restored.
+#
+# This does not ask the reset command what it targets — a declaration is only as good as the thing
+# declaring it, and trusting a declaration over the actual target is the root of the incident this
+# toolkit exists to clean up. It plants a uniquely-named sentinel table in the database the suite
+# will really use, resets, and requires the sentinel to be GONE.
+SENTINEL="s$(date +%s)_$$"
+if ! KF_CLEANUP_TARGET_URL="$U" node "$HELP/assert-reset-targets.cjs" plant "$SENTINEL"; then
+  echo "could not plant the reset sentinel in KF_CLEANUP_TARGET_URL — refusing to run." >&2
+  exit 5
+fi
 reset_db
+KF_CLEANUP_TARGET_URL="$U" node "$HELP/assert-reset-targets.cjs" verify "$SENTINEL" || exit 3
 
 # 0. baseline must SUCCEED (guards against a suite that passes by breaking everything)
 base="$(run --include-admin-fixtures)"
@@ -116,21 +166,57 @@ mutate_json "
 import json;m=json.load(open('$M'));m['target_occurrence_ids'].append('00000000-0000-4000-8000-0000000000bb');json.dump(m,open('/tmp/n13.json','w'))"
 expect "nonexistent occurrence id" "occurrence id\\(s\\) do not exist" --manifest=/tmp/n13.json
 
+# ═══ HELPER FAILURES WERE INVISIBLE, AND ONE OF THEM COULD HANG THE SUITE ═══
+# These three invocations discarded stderr and ignored the exit status, and unlike run() none of
+# them had a `timeout`. A helper that hung took the whole suite with it (reproduced: exit 124),
+# and a helper that merely failed let its case be skipped or misattributed to the guard under
+# test. Both are the same disease as findings E and F: a broken run that still reports cleanly.
+run_helper() { # run_helper <file> — prints stdout, aborts the suite on any failure
+  local f="$1" out rc
+  out="$(U="$U" timeout 60 node "$HELP/$f" 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    {
+      echo ""
+      [ "$rc" -eq 124 ] && echo "FATAL: $f TIMED OUT after 60s — aborting." \
+                        || echo "FATAL: $f failed (exit $rc) — aborting."
+      echo "  output:"; printf '%s\n' "$out" | sed 's/^/    /'
+      echo "  The case this helper sets up cannot run, and a suite that quietly drops a case"
+      echo "  still prints a clean summary. Fix the helper rather than trusting the total."
+    } >&2
+    exit 6
+  fi
+  printf '%s' "$out"
+}
+
 # an occurrence that exists but hangs off a NON-target series (one of the contained sources)
-STRAY_OCC="$(U="$U" node "$HELP/helper-stray-occ.cjs" 2>/dev/null)"
-if [ -n "$STRAY_OCC" ]; then
-  mutate_json "
-import json;m=json.load(open('$M'));m['target_occurrence_ids'].append('$STRAY_OCC');json.dump(m,open('/tmp/n14.json','w'))"
-  expect "occurrence outside the target series" "do not belong to a target series" --manifest=/tmp/n14.json
+# NOTE THE `|| exit $?`, WHICH IS NOT DECORATION.
+# run_helper aborts with `exit 6`, but this call site is a COMMAND SUBSTITUTION, so that exit
+# kills only the subshell and the parent carries blithely on. The first version of this fix had
+# exactly that hole: an injected helper failure printed "FATAL ... aborting" and then the suite
+# kept running — it happened to stop at the empty-result check below, which made the guard look
+# like it worked. A control that reports success while the thing it guards continues is worse
+# than no control, and this is the second time tonight a subshell has hidden a status.
+STRAY_OCC="$(run_helper helper-stray-occ.cjs)" || exit $?
+# An empty result is NOT a pass. It means the replica has no occurrence in the shape this case
+# needs, so the guard simply goes untested — and the old code skipped the case inside `if [ -n ]`
+# with no counter and no message, leaving the summary reading as a full clean run.
+if [ -z "$STRAY_OCC" ]; then
+  echo "FATAL: helper-stray-occ.cjs returned no occurrence, so the containment case cannot run." >&2
+  echo "  The replica is not seeded to the manifest's preconditions. Refusing to report a" >&2
+  echo "  partial run as a clean one." >&2
+  exit 7
 fi
+mutate_json "
+import json;m=json.load(open('$M'));m['target_occurrence_ids'].append('$STRAY_OCC');json.dump(m,open('/tmp/n14.json','w'))"
+expect "occurrence outside the target series" "do not belong to a target series" --manifest=/tmp/n14.json
 
 # containment trespass: archive a TARGET occurrence the way the Operator did
-U="$U" node "$HELP/helper-archive-target.cjs" >/dev/null 2>&1
+run_helper helper-archive-target.cjs >/dev/null
 expect "Operator-archived row inside target set" "were archived by the Operator"
 reset_db
 
 # an orphan profile that turns out to have a real auth.users row => a REAL person
-U="$U" node "$HELP/helper-real-person.cjs" >/dev/null 2>&1
+run_helper helper-real-person.cjs >/dev/null
 expect "orphan profile has an auth.users row" "is a REAL account" --include-admin-fixtures
 reset_db
 

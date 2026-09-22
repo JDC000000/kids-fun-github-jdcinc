@@ -8,6 +8,7 @@ import {
   DISPOSABLE_MARKER_SCHEMA,
   DISPOSABLE_MARKER_TABLE,
   markerExists,
+  markerState,
 } from '@/lib/testing/disposable-db';
 
 /**
@@ -75,6 +76,43 @@ describe('disposable-db: loopback provisioning swallows ONLY privilege errors', 
     ).rejects.toThrow(/ECONNREFUSED/);
   });
 
+  // ═══ B-RESIDUAL: the two tests around this one cannot tell the fix from the bug ═══
+  // A reviewer re-ran my own original mutation against my own fix instead of trusting it, and
+  // found the gap. The ECONNREFUSED case re-throws under BOTH the old substring match and the new
+  // SQLSTATE check (its message has no "permission denied" in it), and the genuine-42501 case is
+  // swallowed under both. So they pin that a re-throw EXISTS, not that it discriminates.
+  //
+  // This is the case that separates them: the WORDING of a privilege error with NO SQLSTATE at
+  // all. The old `message.includes('permission denied')` swallowed it; only a code-based check
+  // re-throws. That matters because anything can put those two words in a message — a proxy, a
+  // connection pooler, a wrapper library — and swallowing it silently reports an unverified
+  // database as disposable.
+  // (Do not merge these with the similarly-named markerExists test further down — that one guards
+  // markerState's own SQLSTATE switch, a different call site. Confirmed disjoint by mutation.)
+  it('a "permission denied" MESSAGE with no SQLSTATE is re-thrown, not swallowed', async () => {
+    const pool = {
+      query: vi.fn(async () => { throw new Error('permission denied for table kf_testing.marker'); }),
+    } as unknown as Pool;
+    await expect(
+      assertDisposableDatabase(pool, 'postgres://postgres@127.0.0.1:54322/db')
+    ).rejects.toThrow(/permission denied/);
+  });
+
+  it('a privilege-WORDED error carrying a different SQLSTATE is also re-thrown', async () => {
+    // 42P01 undefined_table: the marker schema is missing, which is a real failure to provision,
+    // not a permissions grant we are entitled to tolerate.
+    const pool = {
+      query: vi.fn(async () => {
+        const e = new Error('permission denied — actually the relation does not exist') as Error & { code: string };
+        e.code = '42P01';
+        throw e;
+      }),
+    } as unknown as Pool;
+    await expect(
+      assertDisposableDatabase(pool, 'postgres://postgres@127.0.0.1:54322/db')
+    ).rejects.toThrow(/does not exist/);
+  });
+
   it('a privilege failure is still tolerated on loopback (the CI case)', async () => {
     const pool = {
       query: vi.fn(async () => {
@@ -124,6 +162,41 @@ describe('disposable-db: a non-local, non-managed host must vouch for itself', (
   });
 });
 
+// ═══ F4: 42501 IS NOT EVIDENCE OF EXISTENCE ═══
+// Postgres raises the permission error BEFORE it checks whether the relation is there, so this
+// SQLSTATE looks identical for "exists, hidden from you" and "never existed". The guard used to
+// tell the operator the marker "already exists" and not to create a second one — a claim it could
+// not support, and one that leaves a genuinely unmarked database unmarked.
+describe('disposable-db: an unlookable schema is reported as unknown, not as present', () => {
+  const privErr = () => {
+    const e = new Error('permission denied for schema kf_testing') as Error & { code: string };
+    e.code = '42501';
+    return e;
+  };
+
+  it('markerState says indeterminate', async () => {
+    const pool = { query: vi.fn(async () => { throw privErr(); }) } as unknown as Pool;
+    await expect(markerState(pool)).resolves.toBe('indeterminate');
+  });
+
+  it('markerExists stays false — unverifiable is never a pass', async () => {
+    const pool = { query: vi.fn(async () => { throw privErr(); }) } as unknown as Pool;
+    await expect(markerExists(pool)).resolves.toBe(false);
+  });
+
+  it('the refusal does NOT claim the marker exists, and says how to find out', async () => {
+    const pool = { query: vi.fn(async () => { throw privErr(); }) } as unknown as Pool;
+    const err = await assertDisposableDatabase(pool, REMOTE).catch((e: Error) => e);
+    const msg = String((err as Error).message);
+    expect(msg).toMatch(/CANNOT BE DETERMINED/);
+    expect(msg).toMatch(/to_regclass/);          // tells them how to actually check
+    expect(msg).toMatch(/GRANT USAGE ON SCHEMA/); // and both branches of what to do next
+    // The specific false claim, in the specific shape it had. Not a substring check on "exists",
+    // which the corrected message legitimately still contains while explaining the old error.
+    expect(msg).not.toMatch(/Do NOT create a second marker; it already exists/);
+  });
+});
+
 describe('disposable-db: unverifiable target', () => {
   it('fails closed on an unparseable connection string', async () => {
     const { pool } = stubPool(true);
@@ -157,6 +230,14 @@ describe('disposable-db: markerExists', () => {
 
   it('does NOT swallow an unrelated error that merely says "permission denied"', async () => {
     // The old implementation matched on message text, which made its own comment false.
+    //
+    // ⚠ THIS TEST DOES NOT COVER THE LOOPBACK PROVISIONING BRANCH, despite reading as if it might.
+    // It exercises markerExists -> markerState, which has its OWN inline SQLSTATE switch. The
+    // separate narrowing in isPrivilegeError() (used only by assertDisposableDatabase's loopback
+    // branch) is pinned by the two tests above marked B-RESIDUAL. The paths are disjoint, proved by
+    // mutation: breaking isPrivilegeError fails ONLY those two and leaves this one green, and
+    // breaking markerState's 42501 branch fails ONLY this one. Two reviewers read this test as
+    // already covering the loopback case; it does not.
     const pool = {
       query: vi.fn(async () => { throw new Error('permission denied by some unrelated client layer'); }),
     } as unknown as Pool;

@@ -94,7 +94,17 @@ export function resolveSslFor(connectionString: string): SslDecision {
 
   // Effective host: a hostless URL is dialed via PGHOST, so deciding TLS on the parsed host would
   // silently skip verification for a remote target that the URL never mentions.
-  const { host } = resolveEffectiveHost(connectionString);
+  const { host, source } = resolveEffectiveHost(connectionString);
+
+  // FAIL CLOSED on an unverifiable target. Discarding `source` here is precisely what let a
+  // malformed connection string reach isLocalDatabaseHost(null) -> true -> "no TLS options".
+  if (source === 'unparseable' || host === null) {
+    throw new Error(
+      `refusing to connect: the connection string could not be parsed, so the target cannot be ` +
+        `verified. An unreadable URL is not a local one — it is an unknown one, and this tool will ` +
+        `not decide TLS for a host it cannot name.`
+    );
+  }
   if (isLocalDatabaseHost(host)) {
     return { ssl: undefined, reason: `local host (${host || 'socket'}) — no TLS options` };
   }

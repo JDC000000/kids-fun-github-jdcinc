@@ -11,7 +11,7 @@ import {
   isManagedDatabaseHost,
   TEST_HOST_OVERRIDE_ENV,
 } from '@/lib/testing/local-db-guard';
-import { hasNonAsciiHost, resolveEffectiveHost } from '@/lib/db/connection-host';
+import { hasIllegalHostChars, resolveEffectiveHost } from '@/lib/db/connection-host';
 
 describe('local-db-guard: isLocalDatabaseHost', () => {
   it('accepts loopback / local hosts', () => {
@@ -203,7 +203,7 @@ describe('local-db-guard: assertTestDatabaseUrl (test path — no boolean overri
     ['U+3002 IDEOGRAPHIC FULL STOP', 'db.rnqaofjhiqmqaipqpiua.supabase。co'],
     ['U+FF61 HALFWIDTH IDEOGRAPHIC FULL STOP', 'db.rnqaofjhiqmqaipqpiua.supabase｡co'],
   ])('refuses a homoglyph managed host (%s)', (_label, host) => {
-    expect(hasNonAsciiHost(host)).toBe(true);
+    expect(hasIllegalHostChars(host)).toBe(true);
     // never classified local, and never allowed to reach the overridable branch
     expect(isLocalDatabaseHost(host)).toBe(false);
     expect(isManagedDatabaseHost(host)).toBe(true);
@@ -237,7 +237,7 @@ describe('local-db-guard: assertTestDatabaseUrl (test path — no boolean overri
   it('does not classify a homoglyph LOOPBACK host as local (isLocalDatabaseHost branch)', () => {
     const cyrillic = '\u0435vil.localhost'; // U+0435 CYRILLIC SMALL LETTER IE, not ASCII 'e'
     expect(cyrillic).not.toBe('evil.localhost');
-    expect(hasNonAsciiHost(cyrillic)).toBe(true);
+    expect(hasIllegalHostChars(cyrillic)).toBe(true);
     expect(isLocalDatabaseHost(cyrillic)).toBe(false); // ← the branch under test
     expect(() => assertTestDatabaseUrl(`postgres://u:p@${cyrillic}:5432/db`)).toThrow(/non-ASCII hostname/);
   });
@@ -245,8 +245,8 @@ describe('local-db-guard: assertTestDatabaseUrl (test path — no boolean overri
   it('leaves ordinary ASCII hosts alone (no false positives from the non-ASCII check)', () => {
     delete process.env.KIDS_FUN_ALLOW_NONLOCAL_DB;
     delete process.env[TEST_HOST_OVERRIDE_ENV];
-    expect(hasNonAsciiHost('localhost')).toBe(false);
-    expect(hasNonAsciiHost('db.abcdefgh.supabase.co')).toBe(false);
+    expect(hasIllegalHostChars('localhost')).toBe(false);
+    expect(hasIllegalHostChars('db.abcdefgh.supabase.co')).toBe(false);
     expect(() => assertTestDatabaseUrl('postgres://postgres:p@127.0.0.1:54322/postgres')).not.toThrow();
   });
 
@@ -378,6 +378,48 @@ describe('local-db-guard: PGHOST resolution (parser parity is not connection par
   afterEach(() => {
     if (saved === undefined) delete process.env.PGHOST;
     else process.env.PGHOST = saved;
+  });
+
+  // F11: the check was "is it non-ASCII", written for homoglyphs. NUL/TAB/CR/LF/the other C0
+  // controls and SPACE are all INSIDE \x00-\x7F, so they read as ordinary ASCII and survived into
+  // the hostname, breaking the suffix match exactly the way a homoglyph does.
+  it.each([
+    ['NUL', '\u0000'], ['TAB', '\t'], ['CR', '\r'], ['LF', '\n'], ['US', '\u001f'], ['SPACE', ' '],
+  ])('refuses a host carrying a %s control character', (_name, ch) => {
+    const host = `db.abcdefgh.supabase.co${ch}.evil.example`;
+    expect(hasIllegalHostChars(host)).toBe(true);
+    expect(isLocalDatabaseHost(host)).toBe(false);   // never classified local
+    expect(isManagedDatabaseHost(host)).toBe(true);  // refused absolutely
+  });
+
+  it('still accepts every character a real host legitimately uses (positive control)', () => {
+    for (const ok of ['localhost', 'db.abcdefgh.supabase.co', '127.0.0.1', '::1', '[::1]',
+                      'my-host_1.example.com', '/var/run/postgresql', 'host:5432']) {
+      expect(hasIllegalHostChars(ok), ok).toBe(false);
+    }
+  });
+
+  it('treats the IPv4-mapped IPv6 loopback as local, in the form URL parsing actually produces', () => {
+    // '::ffff:127.0.0.1' was in LOOPBACK_HOSTS and could never match: WHATWG URL normalises it to
+    // '::ffff:7f00:1'. Dead code that looked like coverage.
+    expect(isLocalDatabaseHost('::ffff:7f00:1')).toBe(true);
+    expect(isLocalDatabaseHost('::ffff:7f00:2')).toBe(true);   // 127.0.0.2 mapped — only the regex can see this
+    expect(isLocalDatabaseHost('[::ffff:7f00:1]')).toBe(true);
+    expect(resolveEffectiveHost('postgres://u@[::ffff:127.0.0.1]:5432/db').host).toBe('[::ffff:7f00:1]');
+    expect(isLocalDatabaseHost('::ffff:8efa:1')).toBe(false); // 142.250.x.x mapped — NOT loopback
+  });
+
+  it('reports UNPARSEABLE distinctly from absent — they are different answers', () => {
+    // Both return host:null, so a caller checking only `host` behaves identically and a mutation
+    // reverting this to source:'url' survives in _ssl.ts. Pinned HERE, at the source, because the
+    // distinction is what stops the next caller repeating the F1 bug: it destructured `host`
+    // alone, fed null to isLocalDatabaseHost (true for null, legitimately), and routed a malformed
+    // connection string to the no-TLS branch.
+    expect(resolveEffectiveHost('::::not-a-url::::')).toEqual({ host: null, source: 'unparseable' });
+    expect(resolveEffectiveHost('not a url at all')).toEqual({ host: null, source: 'unparseable' });
+    // …and a genuinely hostless-but-VALID url is 'default', not 'unparseable'
+    delete process.env.PGHOST;
+    expect(resolveEffectiveHost('postgres:///db')).toEqual({ host: 'localhost', source: 'default' });
   });
 
   it('resolves the host the way pg actually does', () => {

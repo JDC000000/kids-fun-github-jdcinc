@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { poolConfigFor } from '../lib/db/pool-config';
 import { ADMIN_ANALYTICS_QUERY_TIMEOUT_MS } from '../lib/db/budgets';
 
@@ -30,6 +30,47 @@ describe('poolConfigFor', () => {
     expect(
       poolConfigFor('postgres://postgres:secret@db.example.supabase.co:5432/postgres?host=127.0.0.1').ssl
     ).toBeUndefined();
+  });
+
+  // ═══ FINDING A (round-5 review) ═══
+  // The `?host=` cases above made this file LOOK covered, and item 9 of the review was reported
+  // PASS on the strength of them. They all spell a host in the URL. The one call shape nobody
+  // tested is the one with NO host in the URL at all, where pg falls back to PGHOST — and that is
+  // the shape that disabled SSL on a real Supabase connection.
+  describe('the host pg DIALS, not the one the string spells', () => {
+    const saved = process.env.PGHOST;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.PGHOST;
+      else process.env.PGHOST = saved;
+    });
+
+    it('requires SSL when a hostless URL is dialed via a remote PGHOST', () => {
+      process.env.PGHOST = 'db.example.supabase.co';
+      expect(poolConfigFor('postgres:///postgres').ssl).toBeDefined();
+    });
+
+    it('does not force SSL when PGHOST is loopback (no false positive)', () => {
+      process.env.PGHOST = '127.0.0.1';
+      expect(poolConfigFor('postgres:///postgres').ssl).toBeUndefined();
+    });
+
+    it('lets an explicit URL host win over PGHOST, as pg does', () => {
+      process.env.PGHOST = 'db.example.supabase.co';
+      expect(poolConfigFor('postgres://postgres:p@127.0.0.1:5432/kids_fun').ssl).toBeUndefined();
+    });
+
+    it('fails CLOSED on an unparseable connection string rather than dropping SSL', () => {
+      // Previously `return false` out of the URL catch: the least-understood input got the
+      // least protection. Requiring TLS against a local server is a loud error; skipping it
+      // against a remote one is a cleartext superuser password.
+      delete process.env.PGHOST;
+      expect(poolConfigFor('::::not-a-url::::').ssl).toBeDefined();
+    });
+
+    it('still honours an explicit sslmode=disable (operator intent is not overridden)', () => {
+      process.env.PGHOST = 'db.example.supabase.co';
+      expect(poolConfigFor('postgres:///postgres?sslmode=disable').ssl).toBeUndefined();
+    });
   });
 
   // 2026-09-14: `connectionTimeoutMillis` was unset, and node-postgres reads unset as WAIT

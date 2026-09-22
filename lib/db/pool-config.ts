@@ -4,7 +4,7 @@
 // without embedding sslmode requirements into stored secrets.
 import type { PoolConfig } from 'pg';
 
-import { isLocalDatabaseHost, resolveConnectionHost } from './connection-host';
+import { isLocalDatabaseHost, resolveEffectiveHost } from './connection-host';
 
 /**
  * How long `pool.connect()` may wait for a free connection before giving up.
@@ -78,14 +78,15 @@ export function poolConfigFor(connectionString: string): PoolConfig {
 }
 
 function shouldUseSsl(connectionString: string): boolean {
-  let url: URL;
+  // An UNREADABLE sslmode is not an absent one. This used to `return false` straight out of the
+  // catch — failing OPEN on exactly the input we understand least. A string we cannot parse now
+  // simply carries no sslmode opinion, and the host check below decides it (and fails closed).
+  let sslMode: string | null = null;
   try {
-    url = new URL(connectionString);
+    sslMode = new URL(connectionString).searchParams.get('sslmode');
   } catch {
-    return false;
+    sslMode = null;
   }
-
-  const sslMode = url.searchParams.get('sslmode');
   if (sslMode === 'disable') return false;
   if (sslMode === 'require' || sslMode === 'verify-ca' || sslMode === 'verify-full') return true;
 
@@ -95,7 +96,18 @@ function shouldUseSsl(connectionString: string): boolean {
   // lands on remote Supabase, requiring SSL) looked local here and disabled SSL — the same
   // root-cause gap fixed in lib/testing/local-db-guard.ts (Round 27 approval-bypass incident).
   // Local / loopback / unix-socket → no SSL; anything else (real Supabase/RDS) → SSL.
-  const host = resolveConnectionHost(connectionString);
-  if (host === null) return false; // unparseable — consistent with the new URL() guard above
+  //
+  // ═══ FINDING A (round-5 review): THE SAME BUG SHAPE, IN THE PRODUCTION RUNTIME ═══
+  // This resolved the host with the URL-only parser, which reports the host a string SPELLS — not
+  // the one pg DIALS. pg falls back to PGHOST for a hostless connection string, so
+  // `postgres:///postgres` with PGHOST=db.<project>.supabase.co resolved to '',
+  // isLocalDatabaseHost('') is true, and SSL was DISABLED on a connection that really lands on
+  // remote Supabase. The incident tooling's F1 was this same category error; this is the copy of it
+  // sitting in the pool the application actually uses on every request.
+  const { host, source } = resolveEffectiveHost(connectionString);
+  // Fail CLOSED on a target we cannot name. The two failure modes are not symmetric: wrongly
+  // requiring TLS against a local server is a loud, immediate connection error, while wrongly
+  // skipping it against a remote one puts a superuser password on the wire in cleartext.
+  if (source === 'unparseable' || host === null) return true;
   return !isLocalDatabaseHost(host);
 }

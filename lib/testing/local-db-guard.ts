@@ -50,7 +50,7 @@
 // and the runtime pool config (lib/db/pool-config.ts) resolve the connection host the SAME
 // way node-postgres does — honoring a `?host=` override. See lib/db/connection-host.ts for
 // the full rationale (Round 27 approval-bypass incident).
-import { hasNonAsciiHost, isLocalDatabaseHost, isManagedDatabaseHost, normaliseHost, resolveConnectionHost, resolveEffectiveHost } from '@/lib/db/connection-host';
+import { hasIllegalHostChars, isLocalDatabaseHost, isManagedDatabaseHost, normaliseHost, resolveConnectionHost, resolveEffectiveHost } from '@/lib/db/connection-host';
 
 // Re-exported so existing importers (and tests) can keep importing them from this module.
 export { isLocalDatabaseHost, isManagedDatabaseHost };
@@ -158,7 +158,7 @@ export function assertTestDatabaseUrl(url: string | undefined, label = 'DATABASE
   // different STRING from `supabase.co` but resolvers map it to the same HOST, so pattern matching
   // cannot be trusted on it. Refused outright rather than normalised — this is a guard, not a DNS
   // client, and it only has to be un-foolable.
-  if (hasNonAsciiHost(host)) {
+  if (hasIllegalHostChars(host)) {
     throw new Error(
       `[local-db-guard] REFUSING TO RUN: ${label} has a non-ASCII hostname ("${host}"). ` +
         `Homoglyph characters (U+FF0E / U+3002 / U+FF61 full stops, among others) resolve to the ` +

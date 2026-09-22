@@ -18,6 +18,7 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { parse as pgParse } from 'pg-connection-string';
 import { isManagedDatabaseHost } from '@/lib/testing/local-db-guard';
 import { resolveConnectionHost } from '@/lib/db/connection-host';
 
@@ -95,6 +96,60 @@ const OPT_OUT_KEYS = ['KIDS_FUN_ALLOW_NONLOCAL_DB', 'KIDS_FUN_TEST_ALLOW_NONLOCA
  * the half that provides all the breadth — had nothing left to bite on. A guard whose coverage
  * depends on a hazard being present is not covered at all.
  */
+/**
+ * Pull a host out of the two forms `new URL()` cannot read.
+ *
+ * ═══ WHY THIS EXISTS: THE SHAPE PREDICATE WAS PASSING WHILE THE SCAN FAILED ═══
+ * looksLikeConnectionString() correctly returns true for a JDBC URL and a libpq keyword DSN, and a
+ * test asserted exactly that — so both forms looked covered. They were not. The value then went to
+ * resolveConnectionHost(), which uses `new URL()`:
+ *   · `jdbc:postgresql://db.x.supabase.co:5432/db` does NOT throw — protocol becomes "jdbc:" and
+ *     the host parses as the EMPTY STRING, so the real host is silently lost
+ *   · `host=db.x.supabase.co dbname=postgres` throws, and resolveConnectionHost returns null
+ * Either way managedHostsIn reported ZERO hits for an env file parking a live production host.
+ * The test asserted the predicate, not the outcome, which is why it survived two reviews.
+ */
+function hostFromExoticForm(value: string): string | null {
+  const v = value.trim();
+  const jdbc = /^jdbc:postgresql:\/\/([^/?#:]+)/i.exec(v);
+  if (jdbc) return jdbc[1];
+  const kw = /(?:^|\s)host\s*=\s*([^\s]+)/i.exec(v);
+  if (kw && /(?:^|\s)(?:dbname|user)\s*=/i.test(v)) return kw[1];
+
+  // ═══ THE THIRD SHAPE, AND WHY NEITHER REGEX ABOVE SEES IT ═══
+  //     postgres://user:pw@/dbname?host=db.<ref>.supabase.co
+  // `new URL()` THROWS on this (userinfo with an empty host), so resolveConnectionHost returns
+  // null and the scanner reported no host at all — an env file naming a real production endpoint
+  // scanned clean. The libpq regex above does not rescue it either: it requires start-of-string or
+  // whitespace before `host=`, and here `host=` follows a `?`.
+  //
+  // pg-connection-string parses it natively — and it is the parser pg ITSELF uses, so its answer
+  // is the host that would really be dialled. Deliberately narrow: only for values that actually
+  // look like a postgres URL, because parse() never throws and invents a placeholder host for
+  // arbitrary garbage, which is the very reason resolveConnectionHost gates on new URL() first.
+  if (/^postgres(ql)?:\/\//i.test(v)) {
+    let urlParsed = true;
+    try {
+      new URL(v);
+    } catch {
+      urlParsed = false;
+    }
+    if (!urlParsed) {
+      // pgParse THROWS on some malformed values ('postgres://[' raises TypeError: Invalid URL).
+      // The first version of this fix called it straight out of the catch above, unguarded, so a
+      // single malformed env value crashed the scanner that exists to read untrusted env files.
+      // Found by probing my own fix rather than by a test asking for it.
+      try {
+        const parsed = pgParse(v).host;
+        if (parsed) return parsed;
+      } catch {
+        return null; // unparseable by BOTH parsers — nothing to report, and the guards fail closed
+      }
+    }
+  }
+  return null;
+}
+
 export function managedHostsIn(content: string): { key: string; host: string }[] {
   const found: { key: string; host: string }[] = [];
   // A parked PGHOST is itself a target, with no connection string required.
@@ -103,7 +158,9 @@ export function managedHostsIn(content: string): { key: string; host: string }[]
   for (const [key, value] of parseEnv(content)) {
     if (!value) continue;
     if (!isDbKey(key) && !looksLikeConnectionString(value)) continue;
-    const host = resolveConnectionHost(value);
+    // Exotic forms first: resolveConnectionHost silently loses the host for both of them.
+    const exotic = hostFromExoticForm(value);
+    const host = exotic ?? resolveConnectionHost(value);
     if (isManagedDatabaseHost(host)) found.push({ key, host: host ?? '' });
   }
   return found;
@@ -198,6 +255,28 @@ describe('repo-root .env* files never name a managed/hosted database', () => {
 // noticing. These pin both halves, in both directions.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('env scan rules, proven against synthetic content', () => {
+  // F3, third shape. The first two (JDBC, libpq keyword DSN) were fixed earlier; this one still
+  // scanned clean because new URL() throws on `@/` with userinfo and the libpq regex needs
+  // whitespace before `host=`, not a `?`.
+  it('flags a managed host hidden in the @/ + ?host= URL form', () => {
+    const hits = managedHostsIn('DATABASE_URL=postgres://postgres:pw@/postgres?host=db.abcdefgh.supabase.co');
+    expect(hits).toEqual([{ key: 'DATABASE_URL', host: 'db.abcdefgh.supabase.co' }]);
+  });
+
+  it('survives a malformed postgres:// value instead of crashing the scan', () => {
+    // pg-connection-string THROWS on some inputs ('postgres://[' → TypeError: Invalid URL). The
+    // first version of the @/ fix called it unguarded, so one malformed value crashed the scanner
+    // whose entire job is reading untrusted env files. A guard that dies on bad input is not a
+    // guard. Found by probing my own fix, not by a test that asked for it.
+    expect(() => managedHostsIn('DATABASE_URL=postgres://[')).not.toThrow();
+    expect(() => managedHostsIn('DATABASE_URL=postgres://][')).not.toThrow();
+    expect(managedHostsIn('DATABASE_URL=postgres://[')).toEqual([]);
+  });
+
+  it('does not flag the same shape pointing at a unix socket', () => {
+    expect(managedHostsIn('DATABASE_URL=postgres://u:p@/db?host=/var/run/postgresql')).toEqual([]);
+  });
+
   it('catches a managed host under a key nobody enumerated (VALUE-shape net)', () => {
     // The whole point of the value net: an unlisted key still gets checked because the VALUE
     // parses as a postgres connection string.
@@ -258,12 +337,25 @@ describe('env scan rules, proven against synthetic content', () => {
     expect(libpqVarsIn('DATABASE_URL=postgres://u@127.0.0.1/db\n')).toEqual([]);
   });
 
-  it('catches a hostless URL, a libpq keyword DSN and a JDBC URL', () => {
-    // hostless: the value itself names no host, so it is caught by SHAPE and the PGHOST check
-    expect(looksLikeConnectionString('postgres:///dbname')).toBe(true);
-    expect(looksLikeConnectionString('host=db.abcdefgh.supabase.co dbname=postgres user=postgres')).toBe(true);
-    expect(looksLikeConnectionString('jdbc:postgresql://db.abcdefgh.supabase.co:5432/postgres')).toBe(true);
+  it('catches a libpq keyword DSN and a JDBC URL — the OUTCOME, not just the shape', () => {
+    // The previous version of this test only asserted looksLikeConnectionString() returned true.
+    // Both forms passed that predicate and then lost their host inside resolveConnectionHost, so
+    // the scan reported zero hits while the test stayed green. Assert what actually matters: the
+    // managed host is FOUND.
+    expect(managedHostsIn('JDBC_TARGET=jdbc:postgresql://db.abcdefgh.supabase.co:5432/postgres\n')).toEqual([
+      { key: 'JDBC_TARGET', host: 'db.abcdefgh.supabase.co' },
+    ]);
+    expect(managedHostsIn('LIBPQ=host=db.abcdefgh.supabase.co dbname=postgres user=postgres\n')).toEqual([
+      { key: 'LIBPQ', host: 'db.abcdefgh.supabase.co' },
+    ]);
+    // a hostless URL names no host itself; it is the PGHOST check that catches that vector
+    expect(managedHostsIn('DATABASE_URL=postgres:///dbname\nPGHOST=db.abcdefgh.supabase.co\n'))
+      .toContainEqual({ key: 'PGHOST', host: 'db.abcdefgh.supabase.co' });
+    // and the shape predicate still behaves
     expect(looksLikeConnectionString('https://abcdefghijkl.supabase.co')).toBe(false);
+    // local exotic forms must NOT be flagged
+    expect(managedHostsIn('LIBPQ=host=127.0.0.1 dbname=postgres user=postgres\n')).toHaveLength(0);
+    expect(managedHostsIn('JDBC_TARGET=jdbc:postgresql://localhost:5432/postgres\n')).toHaveLength(0);
   });
 
   it('detects opt-out switches in either form, and only when actually enabled', () => {

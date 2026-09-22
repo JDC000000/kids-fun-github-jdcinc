@@ -49,10 +49,31 @@ import { parse } from 'pg-connection-string';
  * host (one．one．one．one resolves to 1.1.1.1). Full IDNA normalisation would be the general
  * answer, but this is a SAFETY GUARD, not a DNS client: it does not need to understand every
  * internationalised name, it needs to never be fooled by one. So any non-ASCII hostname is treated
- * as unverifiable and refused outright — see hasNonAsciiHost and its callers.
+ * as unverifiable and refused outright — see hasIllegalHostChars and its callers.
  */
-export function hasNonAsciiHost(rawHost: string | null | undefined): boolean {
-  return typeof rawHost === 'string' && /[^\x00-\x7F]/.test(rawHost);
+/**
+ * Characters a host may legitimately contain: hostnames, IPv4/IPv6 literals (with their brackets
+ * and colons), and unix-socket paths, which is why `/` is in the set.
+ *
+ * ═══ WHY AN ALLOWLIST, AFTER "IS IT ASCII" FAILED ═══
+ * This check used to be `/[^\x00-\x7F]/` — "does it contain a non-ASCII character" — which was
+ * written for homoglyph attacks and is correct for those. But NUL, TAB, CR, LF, the other C0
+ * controls and plain SPACE are all INSIDE \x00-\x7F, so they read as ordinary ASCII and survived
+ * into the hostname. `db.<ref>.supabase.co\u0000.evil.example` then passed as neither managed nor
+ * suspicious, breaking the suffix match exactly the way the homoglyph case did.
+ *
+ * The lesson is the same one this incident keeps teaching: a denylist answers "is it one of the
+ * bad things I thought of", an allowlist answers "is it one of the things I know are fine". Only
+ * the second is safe when the question is whether to trust a host.
+ */
+const LEGAL_HOST_CHARS = /^[A-Za-z0-9.\-_:[\]/]*$/;
+
+/**
+ * True when `rawHost` contains any character a real host cannot. Refused outright by callers:
+ * a host we cannot even spell is not one we can verify.
+ */
+export function hasIllegalHostChars(rawHost: string | null | undefined): boolean {
+  return typeof rawHost === 'string' && !LEGAL_HOST_CHARS.test(rawHost);
 }
 
 export function normaliseHost(rawHost: string): string {
@@ -65,7 +86,20 @@ export function normaliseHost(rawHost: string): string {
 }
 
 /** Loopback / local host literals a disposable/local database may legitimately use. */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '::ffff:127.0.0.1']);
+// '::ffff:127.0.0.1' USED TO BE IN THIS SET AND COULD NEVER MATCH. WHATWG URL normalises an
+// IPv4-mapped IPv6 literal to its hex form — `[::ffff:127.0.0.1]` arrives here as `::ffff:7f00:1`
+// — so the readable spelling was dead code that looked like coverage. Fail-closed, so it was only
+// ever a missed loopback rather than a hole, but it is the same shape as the dead guard found in
+// reset-replica.cjs: a check written against a value the code can never actually see.
+//
+// The mapped range is handled by MAPPED_IPV4_LOOPBACK below and NOT by an entry here. My first
+// attempt put the corrected spelling '::ffff:7f00:1' in this set as well, and the two mechanisms
+// then masked each other: deleting either one left every test green. Replacing dead code with
+// redundant code is not a fix — one mechanism, pinned by its own test.
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1']);
+
+/** 127.0.0.0/8 in IPv4-mapped IPv6 hex form, matching the plain-IPv4 rule below. */
+const MAPPED_IPV4_LOOPBACK = /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/;
 
 /**
  * Resolve the host node-postgres will ACTUALLY connect to for `connectionString`, honoring a
@@ -135,7 +169,7 @@ export function isManagedDatabaseHost(rawHost: string | null | undefined): boole
   if (isLocalDatabaseHost(host)) return false; // e.g. a ?host=127.0.0.1 override really is local
   // A homoglyph host cannot be pattern-matched safely; treat it as managed so it can never take
   // the overridable branch. Callers that can produce a better message refuse it earlier.
-  if (hasNonAsciiHost(rawHost)) return true;
+  if (hasIllegalHostChars(rawHost)) return true;
   return MANAGED_HOST_PATTERNS.some((re) => re.test(host));
 }
 
@@ -163,7 +197,7 @@ const MANAGED_HOST_PATTERNS: readonly RegExp[] = [
 ];
 
 /** Where the effective host came from. `default` means nothing specified it — see resolveEffectiveHost. */
-export type HostSource = 'url' | 'PGHOST' | 'default';
+export type HostSource = 'url' | 'PGHOST' | 'default' | 'unparseable';
 
 export interface EffectiveHost {
   /** The host pg will actually dial, or null when the connection string is unparseable. */
@@ -200,10 +234,17 @@ export interface EffectiveHost {
  */
 export function resolveEffectiveHost(connectionString: string): EffectiveHost {
   const parsed = resolveConnectionHost(connectionString);
-  // Behaviour-neutral early-out, verified by mutation: `parsed !== ''` below is true for null and
-  // returns the identical value. Explicit because "unparseable" and "absent" are different ideas
-  // even when they take the same branch.
-  if (parsed === null) return { host: null, source: 'url' };
+  // ═══ THIS WAS THE BUG, AND MY OWN MUTATION SWEEP MISLABELLED IT ═══
+  // An earlier comment here called this branch "behaviour-neutral, verified by mutation" because
+  // `parsed !== ''` below returns the identical value for null. The equivalence was real — and it
+  // was the defect. "Unparseable" and "absent" were taking the same branch and reporting the same
+  // source, so a caller that destructured only `host` fed null to isLocalDatabaseHost(), whose
+  // first line answers TRUE for null (legitimately: no TCP host means a unix socket). A MALFORMED
+  // connection string was therefore classified LOCAL and routed to the no-TLS branch.
+  //
+  // A surviving mutant can mean the two paths SHOULD NOT be equivalent. Naming this state makes
+  // the distinction unmissable at every call site.
+  if (parsed === null) return { host: null, source: 'unparseable' };
   if (parsed !== '') return { host: parsed, source: 'url' };
 
   const pgHost = (process.env.PGHOST ?? '').trim();
@@ -223,12 +264,13 @@ export function resolveEffectiveHost(connectionString: string): EffectiveHost {
  */
 export function isLocalDatabaseHost(rawHost: string | null | undefined): boolean {
   if (rawHost == null) return true; // no TCP host at all → local (unix socket / default)
-  if (hasNonAsciiHost(rawHost)) return false; // homoglyphs are never classified local
+  if (hasIllegalHostChars(rawHost)) return false; // homoglyphs/control chars are never local
   const host = normaliseHost(rawHost);
   if (host === '') return true; // empty host → local
   if (host.startsWith('/')) return true; // unix-socket path (e.g. ?host=/var/run/postgresql)
   if (LOOPBACK_HOSTS.has(host)) return true; // localhost / 127.0.0.1 / 0.0.0.0 / ::1
   if (host.endsWith('.localhost')) return true; // RFC 6761 loopback TLD (e.g. db.localhost)
   if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true; // 127.0.0.0/8
+  if (MAPPED_IPV4_LOOPBACK.test(host)) return true; // the same range, IPv4-mapped IPv6 form
   return false;
 }

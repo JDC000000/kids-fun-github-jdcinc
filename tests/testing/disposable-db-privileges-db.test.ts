@@ -96,18 +96,26 @@ describe.skipIf(!hasDb)('disposable-db guard under a real low-privilege role', (
     const pool = new Pool({ connectionString: lowPrivUrl(), max: 1 });
     try {
       await expect(markerExists(pool), 'cannot-verify must fail closed').resolves.toBe(false);
-      // The message must say the marker EXISTS BUT IS UNREADABLE, and advise a GRANT. The earlier
-      // wording said 'no marker' and told the reader to create one that was already there —
-      // advice which, followed literally against a database someone cares about, is the exact
-      // mistake this guard exists to prevent.
+      // ═══ THIS TEST HAS NOW CORRECTED THE GUARD'S WORDING TWICE, IN OPPOSITE DIRECTIONS ═══
+      // v1 said "no marker, create one" — wrong, and it told the reader to create a table that
+      // was already there. v2 (which this assertion used to pin) said "it already exists, do NOT
+      // create a second one" — also wrong, because Postgres raises 42501 from the permission
+      // check BEFORE it looks for the relation, so the guard cannot see the difference. The
+      // marker really does exist in THIS test, which is exactly why the case is instructive: even
+      // here, where the claim would happen to be true, the code has no way to know it.
+      //
+      // So the assertion is no longer about which of the two stories the message tells. It is
+      // that the message tells NEITHER, states the limit plainly, and hands the reader a way to
+      // find out for themselves.
       const err: Error = await assertDisposableDatabase(pool, 'postgres://u:p@10.0.0.5:5432/db').then(
         () => { throw new Error('expected a refusal, got success'); },
         (e: Error) => e
       );
-      expect(err.message).toMatch(/cannot read it/);
-      expect(err.message).toMatch(/Do NOT create a second marker/);
-      expect(err.message).toMatch(/GRANT SELECT/);
-      expect(err.message).not.toMatch(/carries no disposability marker/);
+      expect(err.message).toMatch(/CANNOT BE DETERMINED/);
+      expect(err.message).toMatch(/to_regclass/);            // how to actually settle it
+      expect(err.message).toMatch(/GRANT SELECT/);           // what to do if it is there
+      expect(err.message).not.toMatch(/carries no disposability marker/); // v1's false claim
+      expect(err.message).not.toMatch(/it already exists/);               // v2's false claim
     } finally {
       await pool.end();
     }
