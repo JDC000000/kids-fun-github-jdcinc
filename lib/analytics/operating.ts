@@ -570,21 +570,27 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
     bounds AS (
       SELECT min(pstart) - $2::interval AS lo, max(pstart) + $2::interval AS hi FROM periods
     ),
-    -- The 2026-09-22 exclusion, via the shared generator (lib/analytics/high-frequency-
-    -- exclusion.ts). seen is a PER-PERIOD relation -- one (pstart, actor) row per bucket, the
-    -- same shape as getEngagementSeries's actor_counts (see that function's own comment for the
-    -- full reasoning) -- so bounds (b.lo/b.hi, which here additionally spans one extra period
-    -- on the low end for the carryover comparison) is a scan-once convenience window across ALL
-    -- buckets, never any ONE bucket's own window. Excluding against the wide b.lo/b.hi range
-    -- would purge an actor from every period in the series over a threshold crossing in a single
-    -- unrelated period -- so, exactly as in getEngagementSeries, flagged finds threshold-
-    -- crossing (period-bucket, actor) candidates anywhere in the wide scan range, and seen
-    -- checks only its OWN bucket against it.
+    -- === THE 2026-09-22 EXCLUSION, REVISED A FOURTH TIME (0bab6a97, round 4: B4) ===
+    -- seen used to check its OWN bucket only, matching what getEngagementSeries's actor_counts
+    -- did before 2febba9 -- and that comment (copied from here originally) is exactly why this
+    -- one was missed when actor_counts moved: this file's per_actor CTE below computes
+    -- new_actors := count(s.actor) FILTER (WHERE af.first_at >= p.pstart) and
+    -- returning_actors := count(s.actor) FILTER (WHERE af.first_at < p.pstart) -- two conditions
+    -- that PARTITION every non-null seen row for a period, so new_actors + returning_actors is
+    -- ALWAYS EXACTLY |seen| for that period. That is an IDENTITY, not a coincidence, so seen's
+    -- exclusion window cannot silently diverge from actor_counts's without breaking it -- and it
+    -- did: 0bab6a97's round-4 repro showed a table row reading "Active=0, New=0, Returning=1" --
+    -- self-contradictory (a "returning" actor is by definition one who WAS active).
+    -- seen now shares the identical MAU_WINDOW_DAYS (30-day) trailing window actor_counts and
+    -- signed_in_actors use (see getEngagementSeries's own "DELIBERATE ARCHITECTURAL DECISION,
+    -- REVISED" comment for the full same-page reasoning that put those two there) -- every
+    -- actor-derived metric in this file now shares ONE exclusion set. retained_actors/
+    -- prior_actors (carryover, below) derive from seen too and inherit this automatically.
     flagged AS (
       ${highFrequencyFlaggedDaysCte({
         scanWindowSql:
-          'e.created_at >= (SELECT lo FROM bounds) AND e.created_at < (SELECT hi FROM bounds)',
-        dayExpr: 'date_trunc($1::text, e.created_at)',
+          "e.created_at >= (SELECT lo FROM bounds) - (($6::int - 1) * interval '1 day') AND e.created_at < (SELECT hi FROM bounds)",
+        dayExpr: "date_trunc('day', e.created_at)",
         thresholdParam: '$5',
       })}
     ),
@@ -600,7 +606,8 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
           actorAlias: 'e',
           actorColumn: 'user_or_session',
           dayColumn: 'pstart',
-          dayWindowSql: 'f.d = date_trunc($1::text, e.created_at)',
+          dayWindowSql:
+            "f.d <= date_trunc($1::text, e.created_at) AND f.d > date_trunc($1::text, e.created_at) - ($6::int - 1) * interval '1 day'",
         })}
       GROUP BY 1, 2
     ),
@@ -676,6 +683,7 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
       periods,
       [...ACTIVATION_EVENT_TYPES],
       ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD,
+      MAU_WINDOW_DAYS,
     ],
     adminAnalyticsQueryTimeoutMs()
   );

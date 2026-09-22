@@ -729,23 +729,68 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
     expect(after.returningActors - before.returningActors).toBe(0);
   });
 
-  // Same bug class, lifecycle side: `seen` (new/activated/returning) is also a per-period
-  // relation, fed by the identical flagged-CTE pattern (see getLifecycleSeries's own comment).
-  it('🔴 lifecycle: a flagged burst in one period does not purge an actor from an unrelated period’s new/returning counts', async () => {
+  // REVISED (2026-09-22, round 4, B4, 0bab6a97): this test used to pin new_actors/returning_actors
+  // to PER-BUCKET-ONLY exclusion — the same behaviour active_actors had before 2febba9. That
+  // became a bug the moment active_actors moved to the shared 30-day window and seen did not:
+  // new_actors + returning_actors is an IDENTITY equal to |seen| for a period (see the "REVISED A
+  // FOURTH TIME" comment above getLifecycleSeries's `seen` CTE for the exact mechanism), so
+  // seen's exclusion window diverging from active_actors's produced literally self-contradictory
+  // rows ("Active=0, New=0, Returning=1"). seen now shares the identical window, so per the
+  // established standard this test is REWRITTEN, not deleted or weakened — same shape as
+  // actor_counts's equivalent pair below getEngagementSeries.
+  it('lifecycle presence reaches 20 days back, matching the shared 30-day window (not per-bucket-only)', async () => {
     const beforeSeries = await getOperatingPeriodCounts('day', 10);
-    const beforePresence = beforeSeries.reduce((sum, p) => sum + p.newActors + p.returningActors, 0);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
 
     const actor = randomUUID();
-    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity today
-    await insertEvent(actor, 'listing_viewed', 60 * 24 * 5 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD); // flagged, 5 days ago
+    // 20 days ago: well outside the 10-day DISPLAYED series, inside the shared 30-day window.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 20 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
 
     const afterSeries = await getOperatingPeriodCounts('day', 10);
-    const afterPresence = afterSeries.reduce((sum, p) => sum + p.newActors + p.returningActors, 0);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
 
-    // The actor is present (as new or returning — either is fine, this test does not care
-    // which) in exactly the one unflagged period, not zero (wide-window bug) and not two
-    // (flagged bucket wrongly counted).
-    expect(afterPresence - beforePresence).toBe(1);
+    expect(afterToday.newActors + afterToday.returningActors - (beforeToday.newActors + beforeToday.returningActors)).toBe(0);
+  });
+
+  // 🔴 The other extreme: bounded at MAU_WINDOW_DAYS (30), not unbounded — mirrors
+  // actor_counts's equivalent 40-day boundary test and kpi.ts's/trends.ts's own.
+  it('🔴 does NOT exclude lifecycle presence when the only qualifying row is OUTSIDE the shared 30-day window', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 40 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity TODAY
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
+    expect(afterToday.newActors + afterToday.returningActors - (beforeToday.newActors + beforeToday.returningActors)).toBe(1);
+  });
+
+  // 🔴 B4 (0bab6a97, round 4): the actual IDENTITY that broke, asserted directly and
+  // permanently — not inferred from the two tests above. new_actors + returning_actors
+  // PARTITIONS every actor `seen` counts for a period (per_actor's two FILTER conditions,
+  // af.first_at >= p.pstart vs < p.pstart, are exhaustive and mutually exclusive over every
+  // non-null seen row), so this must equal active_actors for EVERY period, always — with or
+  // without a bot actor in play, seeded or not. This is the guard the reviewer asked for: had it
+  // existed before 2febba9, it would have failed the moment active_actors moved to the shared
+  // window while seen stayed per-bucket, independent of any specific flagged-actor scenario.
+  it('🔴 IDENTITY: new_actors + returning_actors === active_actors for every period, always', async () => {
+    // A flagged actor plus a clean actor, both touching multiple periods, so the identity is
+    // exercised under real exclusion activity rather than trivially on an all-clean series.
+    const flagged = randomUUID();
+    await insertEvent(flagged, 'listing_viewed', 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(flagged, 'listing_viewed', 60 * 24 * 3 + 5);
+    const clean = randomUUID();
+    await insertEvent(clean, 'listing_viewed', 5);
+    await insertEvent(clean, 'listing_viewed', 60 * 24 * 6 + 5);
+
+    const series = await getOperatingPeriodCounts('day', 10);
+    for (const p of series) {
+      expect(p.newActors + p.returningActors, p.period).toBe(p.activeActors);
+    }
   });
 });
 
