@@ -73,28 +73,30 @@ export interface SslDecision {
 }
 
 export function resolveSslFor(connectionString: string): SslDecision {
+  // ═══ REFUSED FOR *EVERY* TARGET, NOT JUST REMOTE ONES ═══
+  // Refusing only on the remote branch left a LOCAL string carrying `?ssl=false` to reach pg, where
+  // it does not mean "no TLS": pg-connection-string yields the STRING "false" (truthy), and pg then
+  // dies on `'key' in ssl` with an unhandled TypeError. Refusing everywhere removes that crash and
+  // costs nothing — the local branch sets no ssl options at all.
+  const tlsParams = tlsParamsIn(connectionString);
+  if (tlsParams.length > 0) {
+    throw new Error(
+      `refusing a connection string carrying TLS parameter(s) ` +
+        `${tlsParams.map((x) => x).join(', ')}.\n\n` +
+        `node-postgres merges the PARSED connection string OVER any ssl object supplied in code, so ` +
+        `for a REMOTE target these silently discard the CA this tool enforces — measured: ` +
+        `?sslmode=no-verify drops the CA and sets rejectUnauthorized=false; ?sslmode=disable turns ` +
+        `TLS off entirely and sends the password in cleartext. For a LOCAL target they are ` +
+        `redundant, and ?ssl=false crashes pg outright.\n\n` +
+        `Remove the parameter(s). Verification is controlled solely by ${CA_ENV}, deliberately.`
+    );
+  }
+
   // Effective host: a hostless URL is dialed via PGHOST, so deciding TLS on the parsed host would
   // silently skip verification for a remote target that the URL never mentions.
   const { host } = resolveEffectiveHost(connectionString);
   if (isLocalDatabaseHost(host)) {
     return { ssl: undefined, reason: `local host (${host || 'socket'}) — no TLS options` };
-  }
-
-  // Refuse BEFORE looking at the CA: a URL that can override our ssl object makes the CA moot.
-  const tlsParams = tlsParamsIn(connectionString);
-  if (tlsParams.length > 0) {
-    throw new Error(
-      `refusing to connect to the remote host "${host}": the connection string carries TLS ` +
-        `parameter(s) ${tlsParams.map((p) => `\`${p}\``).join(', ')}.\n\n` +
-        `node-postgres merges the PARSED connection string OVER any ssl object supplied in code ` +
-        `(Object.assign({}, config, parse(connectionString))), so these would silently discard the ` +
-        `CA this tool enforces. Measured: ?sslmode=no-verify drops the CA and sets ` +
-        `rejectUnauthorized=false; ?sslmode=disable turns TLS off entirely and sends the password ` +
-        `in cleartext.\n\n` +
-        `Remove the parameter(s) from the connection string. Verification here is controlled ` +
-        `solely by ${CA_ENV}, deliberately — this tool has no way to weaken it, and a URL ` +
-        `parameter must not become one.`
-    );
   }
 
   const caPath = process.env[CA_ENV];
@@ -107,9 +109,11 @@ export function resolveSslFor(connectionString: string): SslDecision {
         `This tool will NOT fall back to disabling verification: that would leave a production\n` +
         `superuser connection unauthenticated, which is the class of problem this toolkit exists to\n` +
         `clean up. Supply the CA instead:\n\n` +
-        `    curl -fsSL -o /tmp/supabase-prod-ca.crt \\\n` +
-        `      https://supabase.com/downloads/prod-ca-2021.crt\n` +
-        `    export ${CA_ENV}=/tmp/supabase-prod-ca.crt\n\n` +
+        `  1. Supabase dashboard -> Project -> Settings -> Database -> SSL Configuration ->\n` +
+        `     "Download certificate". There is no stable public download URL for this; an\n` +
+        `     earlier version of this message pointed at\n` +
+        `     https://supabase.com/downloads/prod-ca-2021.crt, which returns 404.\n` +
+        `  2. export ${CA_ENV}=/path/to/prod-ca.crt\n\n` +
         `Verify it before trusting it — the root's CN must read "Supabase Root 2021 CA":\n` +
         `    openssl x509 -in "$${CA_ENV}" -noout -subject -issuer -fingerprint -sha256`
     );

@@ -66,23 +66,32 @@ export const CREATE_MARKER_SQL = `
  * exception there must not become an unhandled crash, and it must not be read as "present":
  * a marker this connection cannot verify is a marker it does not have. Fails CLOSED.
  */
-export async function markerExists(pool: Pool): Promise<boolean> {
+export type MarkerState = 'present' | 'absent' | 'unreadable';
+
+/**
+ * Distinguishes ABSENT from UNREADABLE.
+ *
+ * Both mean "not verified", but they need opposite advice: if the marker is missing you create it;
+ * if it exists and this role cannot read it you grant. The first version collapsed them and told
+ * everyone to create a table that might already be there — advice that, followed literally against
+ * a database someone cares about, is precisely the mistake this guard exists to prevent.
+ */
+export async function markerState(pool: Pool): Promise<MarkerState> {
   try {
-    // Actually READ the marker rather than merely resolving its name. `to_regclass()` alone only
-    // proves the identifier is visible; "this database vouches for itself" should mean the
-    // connection can genuinely read the voucher, which needs USAGE on the schema AND SELECT on the
-    // table. Resolving-but-unreadable is exactly the ambiguous state that should not count.
-    const { rows } = await pool.query<{ ok: boolean }>(
-      `SELECT count(*) >= 0 AS ok FROM ${DISPOSABLE_MARKER_TABLE}`
-    );
-    return rows[0]?.ok === true;
+    await pool.query(`SELECT count(*) FROM ${DISPOSABLE_MARKER_TABLE}`);
+    return 'present';
   } catch (err) {
-    // 42501 = cannot read it ⇒ not verified. 42P01 = table absent ⇒ not marked. Both are
-    // legitimate "no" answers; anything else is a real fault and must surface.
     const code = (err as { code?: string } | null)?.code;
-    if (code === '42501' || code === '42P01' || code === '3F000') return false;
+    if (code === '42P01' || code === '3F000') return 'absent';    // no such table / no such schema
+    if (code === '42501') return 'unreadable';                    // exists, but not for this role
     throw err;
   }
+}
+
+export async function markerExists(pool: Pool): Promise<boolean> {
+  // Actually READ the marker rather than merely resolving its name: "this database vouches for
+  // itself" should mean the connection can genuinely read the voucher.
+  return (await markerState(pool)) === 'present';
 }
 
 /**
@@ -170,7 +179,17 @@ export async function assertDisposableDatabase(pool: Pool, connectionString: str
   }
 
   // Non-local but permitted by the exact-host override. The database must vouch for itself.
-  if (await markerExists(pool)) return;
+  const state = await markerState(pool);
+  if (state === 'present') return;
+  if (state === 'unreadable') {
+    throw new Error(
+      `[disposable-db] REFUSING: "${host}" carries a ${DISPOSABLE_MARKER_TABLE} marker, but THIS ` +
+        `role cannot read it, so it cannot be verified — and unverifiable is not verified.\n\n` +
+        `Do NOT create a second marker; it already exists. Grant the read instead:\n` +
+        `    GRANT USAGE ON SCHEMA ${DISPOSABLE_MARKER_SCHEMA} TO <role>;\n` +
+        `    GRANT SELECT ON ${DISPOSABLE_MARKER_TABLE} TO <role>;`
+    );
+  }
 
   throw new Error(
     `[disposable-db] REFUSING: "${host}" is not a loopback host and carries no disposability ` +

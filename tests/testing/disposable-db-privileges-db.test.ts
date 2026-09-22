@@ -13,13 +13,16 @@
 //   2. a non-local host + a role that cannot READ the marker -> REFUSED, even when the marker
 //      physically exists. "Cannot verify" must never read as "verified".
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { Pool } from 'pg';
 import { getPool, query } from '@/lib/db/client';
 import { assertDisposableDatabase, DISPOSABLE_MARKER_SCHEMA, markerExists } from '@/lib/testing/disposable-db';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const ROLE = 'kf_disposable_lowpriv_probe';
-const PASSWORD = 'lowpriv_probe_local_only';
+/** Generated per run rather than hardcoded — a fixed password in a test file is a credential that
+ *  outlives the test, and this role is created on whatever local database the lane is pointed at. */
+const PASSWORD = `probe_${randomBytes(12).toString('hex')}`;
 
 /** The low-privilege URL, built from DATABASE_URL so it targets the same database. */
 function lowPrivUrl(): string {
@@ -50,10 +53,24 @@ describe.skipIf(!hasDb)('disposable-db guard under a real low-privilege role', (
   });
 
   afterAll(async () => {
-    // Drop only what this file created, by name. Never a blanket sweep.
+    // Restore what this file revoked. The second test REVOKEs on the marker schema to force the
+    // unreadable state; leaving that in place would silently change the marker's behaviour for
+    // every later run against the same database — a test that mutates shared state and does not
+    // put it back is a flaky neighbour, which is exactly the class of problem this suite exists
+    // to prevent.
+    await query(`GRANT USAGE ON SCHEMA ${DISPOSABLE_MARKER_SCHEMA} TO PUBLIC`).catch(() => {});
+
+    // Drop only what this file created, by name. Never a blanket sweep — and never silently: a
+    // failure here leaves a login role behind, which is worth seeing rather than swallowing.
     await query(`REVOKE ALL ON SCHEMA public FROM ${ROLE}`).catch(() => {});
     await query(`REVOKE ALL ON DATABASE "${dbName}" FROM ${ROLE}`).catch(() => {});
-    await query(`DROP ROLE IF EXISTS ${ROLE}`).catch(() => {});
+    try {
+      await query(`DROP ROLE IF EXISTS ${ROLE}`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[privileges-db] FAILED to drop probe role ${ROLE}: ${(err as Error).message}`);
+      throw err;
+    }
     await getPool().end().catch(() => {});
   });
 
@@ -79,9 +96,18 @@ describe.skipIf(!hasDb)('disposable-db guard under a real low-privilege role', (
     const pool = new Pool({ connectionString: lowPrivUrl(), max: 1 });
     try {
       await expect(markerExists(pool), 'cannot-verify must fail closed').resolves.toBe(false);
-      await expect(
-        assertDisposableDatabase(pool, 'postgres://u:p@10.0.0.5:5432/db')
-      ).rejects.toThrow(/carries no disposability marker/);
+      // The message must say the marker EXISTS BUT IS UNREADABLE, and advise a GRANT. The earlier
+      // wording said 'no marker' and told the reader to create one that was already there —
+      // advice which, followed literally against a database someone cares about, is the exact
+      // mistake this guard exists to prevent.
+      const err: Error = await assertDisposableDatabase(pool, 'postgres://u:p@10.0.0.5:5432/db').then(
+        () => { throw new Error('expected a refusal, got success'); },
+        (e: Error) => e
+      );
+      expect(err.message).toMatch(/cannot read it/);
+      expect(err.message).toMatch(/Do NOT create a second marker/);
+      expect(err.message).toMatch(/GRANT SELECT/);
+      expect(err.message).not.toMatch(/carries no disposability marker/);
     } finally {
       await pool.end();
     }

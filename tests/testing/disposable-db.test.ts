@@ -23,8 +23,8 @@ function stubPool(present: boolean) {
   const pool = {
     query: vi.fn(async (text: string) => {
       statements.push(text);
-      if (/SELECT count\(\*\) >= 0/.test(text)) {
-        if (present) return { rows: [{ ok: true }] };
+      if (/SELECT count\(\*\) FROM/.test(text)) {
+        if (present) return { rows: [{ count: '0' }] };
         const err = new Error('relation "kf_testing.kf_disposable_test_db" does not exist') as Error & { code: string };
         err.code = '42P01';
         throw err;

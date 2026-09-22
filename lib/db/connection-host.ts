@@ -110,6 +110,19 @@ export function resolveConnectionHost(connectionString: string): string | null {
  *
  * Deliberately NOT used for the SSL decision (lib/db/pool-config.ts) — that correctly keys off
  * isLocalDatabaseHost, because a self-hosted remote Postgres also needs SSL.
+ *
+ * ═══ TWO KNOWN LIMITS, STATED RATHER THAN IMPLIED ═══
+ * 1. A managed database reached by RAW IP is not matched. These patterns are hostname shapes, and
+ *    an IP carries no name to match. Such a host still falls to the non-local branch and therefore
+ *    still needs the exact-host override plus a disposability marker — it is not silently allowed —
+ *    but it will not get the "refused absolutely" treatment a named endpoint does.
+ * 2. A unix-socket path (`?host=/var/run/postgresql`) is trusted unconditionally as local. That is
+ *    correct for a real socket, but a socket is a filesystem object and nothing here proves what is
+ *    on the other end of it.
+ * Both are narrower than the loopback port-forward gap documented in lib/testing/disposable-db.ts,
+ * and all three share one root: an ADDRESS is not an IDENTITY. Closing them properly means asking
+ * the server who it is (pg_control_system(), inet_server_addr()), which is a design change owed its
+ * own review rather than a mid-incident patch.
  */
 export function isManagedDatabaseHost(rawHost: string | null | undefined): boolean {
   if (rawHost == null) return false;

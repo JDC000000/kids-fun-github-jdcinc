@@ -164,9 +164,17 @@ describe('incident toolkit: TLS cannot be weakened from the connection string', 
       .toThrow(/TLS parameter/);
   });
 
-  it('leaves LOCAL connection strings alone — sslmode there is not a hazard', () => {
+  it('refuses TLS params on LOCAL strings too — ?ssl=false crashes pg with a TypeError', () => {
+    // pg-connection-string yields the STRING "false" (truthy), and pg later dies on `'key' in ssl`.
+    // Refusing costs nothing locally: the local branch sets no ssl options anyway.
+    expect(() => resolveSslFor('postgres://postgres:postgres@127.0.0.1:54322/postgres?ssl=false'))
+      .toThrow(/TLS parameter/);
     expect(() => resolveSslFor('postgres://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable'))
-      .not.toThrow();
+      .toThrow(/TLS parameter/);
+  });
+
+  it('a clean local string is still accepted', () => {
+    expect(resolveSslFor('postgres://postgres:postgres@127.0.0.1:54322/postgres').ssl).toBeUndefined();
   });
 
   it('decides TLS on the host pg DIALS, so a hostless URL cannot skip it via PGHOST', () => {
