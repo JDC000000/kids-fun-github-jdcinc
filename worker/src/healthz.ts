@@ -265,6 +265,14 @@ export interface PublicSchedulerMetrics {
   lastErrorAt: string | null;
   /** Errors recorded since boot, all lanes. One blip vs a storm. Monotonic. */
   errorCount: number;
+  /**
+   * CURRENT STATE of the poll lane: failed iterations in a row, 0 = the last one worked.
+   * The counterpart `lastErrorKind` lacks — 'poll' there with 0 here means "it failed, and
+   * has since recovered". See SchedulerMetrics.consecutivePollErrors.
+   */
+  consecutivePollErrors: number;
+  /** When a poll iteration last completed cleanly. Null = never. Judge age against YOUR clock. */
+  lastPollOkAt: string | null;
 }
 
 /**
@@ -457,6 +465,8 @@ export function schedulerReport(scheduler: SchedulerMetrics | null | undefined):
     lastErrorKind: scheduler.lastErrorKind,
     lastErrorAt: scheduler.lastErrorAt,
     errorCount: scheduler.errorCount,
+    consecutivePollErrors: scheduler.consecutivePollErrors,
+    lastPollOkAt: scheduler.lastPollOkAt,
     // NOT PUBLISHED, and each one is a channel that WAS publishing until this unit:
     //   scheduler.lastError                  — raw driver text; a since-boot high-water mark
     //   scheduler.globalScheduleHealthError  — raw driver text

@@ -91,6 +91,8 @@ function metrics(overrides: Partial<SchedulerMetrics> = {}): SchedulerMetrics {
     lastErrorKind: null,
     lastErrorAt: null,
     errorCount: 0,
+    consecutivePollErrors: 0,
+    lastPollOkAt: null,
     ...overrides,
   };
 }
@@ -578,6 +580,7 @@ describe('/healthz — a sweep that found NOTHING is not a sweep that never RAN 
  * contract. See those tests for what each one can and cannot catch.
  */
 const REPORTED_ARM_KEYS = [
+  'consecutivePollErrors',
   'enabled',
   'environment',
   'errorCount',
@@ -595,6 +598,7 @@ const REPORTED_ARM_KEYS = [
   'lastErrorKind',
   'lastGlobalEnqueueCount',
   'lastJobAt',
+  'lastPollOkAt',
   'lastReconcileAt',
   'lastReconcileAttemptAt',
   'lastTickAt',
