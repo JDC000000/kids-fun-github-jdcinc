@@ -254,4 +254,32 @@ describe.skipIf(!hasDb)('getActivityTrend (DB)', () => {
     expect(last2.dau! - last1.dau!).toBe(1);
     expect(last2.events! - last1.events!).toBe(2);
   });
+
+  // 🔴 2dfdbb2c's window-mismatch finding, reproduced then fixed: a first version of this
+  // exclusion applied it inside `scan`, which is WIDER than any single day's own MAU window
+  // (needed so the OLDEST plotted day still gets its full lookback — see this function's own
+  // "$1-1)+($3-1) DAYS DEEP" comment). An actor flagged outside TODAY's own 30-day MAU window
+  // but inside scan's wider internal span was incorrectly excluded from today's counts anyway —
+  // the tiles (kpi.ts, a real 30-day window) and this trend line disagreed, just inverted from
+  // the original incident. This actor is flagged 40 days ago (outside MAU_WINDOW_DAYS from
+  // today) and has ORDINARY activity today; today's counts must be unaffected.
+  it('🔴 does not exclude an actor from TODAY when their only qualifying row is OUTSIDE today’s own MAU window', async () => {
+    const { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } = await import('../../lib/security/search-rate-limit');
+    const before = await getActivityTrend();
+    const last0 = before.points[before.points.length - 1];
+
+    const actor = randomUUID();
+    // 40 days ago: outside today's own trailing 30-day MAU window, but still inside `scan`'s
+    // wider internal span (which reaches back (TREND_WINDOW_DAYS-1)+(MAU_WINDOW_DAYS-1) = 58
+    // days) — exactly the gap the bug lived in.
+    await insertEvent(actor, 40 * 24, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+    await insertEvent(actor, 0); // ordinary activity TODAY, the day under test
+
+    const after = await getActivityTrend();
+    const last1 = after.points[after.points.length - 1];
+
+    expect(last1.dau! - last0.dau!).toBe(1);
+    expect(last1.mau! - last0.mau!).toBe(1);
+    expect(last1.events! - last0.events!).toBe(1);
+  });
 });

@@ -42,6 +42,14 @@ import {
   sourceCtrPct,
   zeroResultPct,
 } from './kpi';
+// The ONE shared exclusion-predicate generator (also used by kpi.ts and trends.ts) — see that
+// module's header for the 2026-09-22 window-mismatch bug a hand-copied version of this predicate
+// caused between two OTHER consumers, and why this file must not add a third hand-typed copy.
+import {
+  ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD,
+  highFrequencyExclusionAgainstFlagged,
+  highFrequencyFlaggedDaysCte,
+} from './high-frequency-exclusion';
 // Targets are IMPORTED, never copied. The UI renders a provenance line naming these
 // very constants as each target's source, so a hardcoded literal here would let a
 // tuned launch goal move /admin/product-health while /admin/operating silently kept
@@ -389,6 +397,29 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
     --
     -- The tell that this was wrong: an actor count does not need engaged, recovered, or any
     -- of the window machinery. It was reading from ev only because ev was already there.
+    --
+    -- === THE 2026-09-22 EXCLUSION, VIA THE SHARED GENERATOR (lib/analytics/high-frequency-
+    -- exclusion.ts) ===
+    -- active_actors/signed_in_actors are PER-PERIOD metrics -- one independent count per
+    -- pstart row, exactly like trends.ts's per-day DAU, not a single aggregate over the whole
+    -- scan range. bounds (b.lo/b.hi) spans ALL requested periods at once (e.g. all 30 days),
+    -- so it is a "scan once" convenience window for THIS query, the same role trends.ts's scan
+    -- plays for its own per-day outputs -- it is NOT any one period's own window. Checking a
+    -- candidate row's flag against the full b.lo/b.hi range (as an earlier version of this fix
+    -- did) would exclude an actor from EVERY period in the series just because they crossed the
+    -- threshold once, on one unrelated day -- the exact tiles/trend-line drift bug this module
+    -- exists to prevent, reproduced one file over. So: flagged finds every (period-bucket,
+    -- actor) pair that crossed the threshold anywhere in the wide scan range (cheap candidate
+    -- list, per highFrequencyFlaggedDaysCte's own contract), and each subquery below then checks
+    -- ONLY that row's own bucket against flagged, via highFrequencyExclusionAgainstFlagged.
+    flagged AS (
+      ${highFrequencyFlaggedDaysCte({
+        scanWindowSql:
+          'e.created_at >= (SELECT lo FROM bounds) AND e.created_at < (SELECT hi FROM bounds)',
+        dayExpr: 'date_trunc($1::text, e.created_at)',
+        thresholdParam: '$5',
+      })}
+    ),
     actor_counts AS (
       SELECT pstart, count(*)::int AS active_actors
       FROM (
@@ -396,6 +427,12 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
           FROM analytics_event e, bounds b
          WHERE e.created_at >= b.lo AND e.created_at < b.hi
            AND e.user_or_session IS NOT NULL AND e.user_or_session <> ''
+           AND ${highFrequencyExclusionAgainstFlagged({
+             actorAlias: 'e',
+             actorColumn: 'user_or_session',
+             dayColumn: 'pstart',
+             dayWindowSql: 'f.d = date_trunc($1::text, e.created_at)',
+           })}
          GROUP BY 1, 2
       ) d
       GROUP BY pstart
@@ -408,6 +445,12 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
          WHERE e.created_at >= b.lo AND e.created_at < b.hi
            AND e.event_type = 'account_signed_in'
            AND e.user_or_session IS NOT NULL AND e.user_or_session <> ''
+           AND ${highFrequencyExclusionAgainstFlagged({
+             actorAlias: 'e',
+             actorColumn: 'user_or_session',
+             dayColumn: 'pstart',
+             dayWindowSql: 'f.d = date_trunc($1::text, e.created_at)',
+           })}
          GROUP BY 1, 2
       ) d
       GROUP BY pstart
@@ -435,7 +478,7 @@ async function getEngagementSeries(grain: OperatingGrain, periods: number): Prom
     LEFT JOIN signed_in_counts si ON si.pstart = p.pstart
     ORDER BY p.pstart
     `,
-    [grain, grainInterval(grain), periods, SEARCH_OUTCOME_WINDOW_MINUTES],
+    [grain, grainInterval(grain), periods, SEARCH_OUTCOME_WINDOW_MINUTES, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD],
     adminAnalyticsQueryTimeoutMs()
   );
 }
@@ -479,6 +522,24 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
     bounds AS (
       SELECT min(pstart) - $2::interval AS lo, max(pstart) + $2::interval AS hi FROM periods
     ),
+    -- The 2026-09-22 exclusion, via the shared generator (lib/analytics/high-frequency-
+    -- exclusion.ts). seen is a PER-PERIOD relation -- one (pstart, actor) row per bucket, the
+    -- same shape as getEngagementSeries's actor_counts (see that function's own comment for the
+    -- full reasoning) -- so bounds (b.lo/b.hi, which here additionally spans one extra period
+    -- on the low end for the carryover comparison) is a scan-once convenience window across ALL
+    -- buckets, never any ONE bucket's own window. Excluding against the wide b.lo/b.hi range
+    -- would purge an actor from every period in the series over a threshold crossing in a single
+    -- unrelated period -- so, exactly as in getEngagementSeries, flagged finds threshold-
+    -- crossing (period-bucket, actor) candidates anywhere in the wide scan range, and seen
+    -- checks only its OWN bucket against it.
+    flagged AS (
+      ${highFrequencyFlaggedDaysCte({
+        scanWindowSql:
+          'e.created_at >= (SELECT lo FROM bounds) AND e.created_at < (SELECT hi FROM bounds)',
+        dayExpr: 'date_trunc($1::text, e.created_at)',
+        thresholdParam: '$5',
+      })}
+    ),
     seen AS (
       SELECT
         date_trunc($1::text, e.created_at)          AS pstart,
@@ -487,6 +548,12 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
       FROM analytics_event e, bounds b
       WHERE e.created_at >= b.lo AND e.created_at < b.hi
         AND e.user_or_session IS NOT NULL AND e.user_or_session <> ''
+        AND ${highFrequencyExclusionAgainstFlagged({
+          actorAlias: 'e',
+          actorColumn: 'user_or_session',
+          dayColumn: 'pstart',
+          dayWindowSql: 'f.d = date_trunc($1::text, e.created_at)',
+        })}
       GROUP BY 1, 2
     ),
     -- Lifetime first-seen, for the actors seen HAS ALREADY MATERIALISED — not for every
@@ -555,7 +622,13 @@ async function getLifecycleSeries(grain: OperatingGrain, periods: number): Promi
     LEFT JOIN carryover c ON c.pstart = p.pstart
     ORDER BY p.pstart
     `,
-    [grain, grainInterval(grain), periods, [...ACTIVATION_EVENT_TYPES]],
+    [
+      grain,
+      grainInterval(grain),
+      periods,
+      [...ACTIVATION_EVENT_TYPES],
+      ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD,
+    ],
     adminAnalyticsQueryTimeoutMs()
   );
 }

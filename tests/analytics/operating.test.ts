@@ -47,6 +47,7 @@ import {
   type OperatingPeriodCounts,
 } from '../../lib/analytics/operating';
 import { SOURCE_CTR_TARGET_PCT } from '../../lib/analytics/kpi';
+import { ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD } from '../../lib/security/search-rate-limit';
 import {
   MAU_TARGET,
   SEARCHES_PER_DAY_TARGET,
@@ -455,17 +456,27 @@ describe('buildOperatingKpis', () => {
 // Layer 2: the real SQL against real Postgres
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Insert one analytics_event at a chosen age (minutes) for a chosen session. */
+/** Insert one analytics_event at a chosen age (minutes) for a chosen session. Optionally
+ *  stamps `search_minute_request_count` (the 2026-09-22 high-frequency signal — see
+ *  lib/analytics/high-frequency-exclusion.ts) so a test can mint a threshold-crossing row. */
 async function insertEvent(
   session: string,
   eventType: string,
   minutesAgo: number,
-  resultSummary?: Record<string, unknown>
+  resultSummary?: Record<string, unknown>,
+  searchMinuteRequestCount: number | null = null
 ): Promise<void> {
   await query(
-    `INSERT INTO analytics_event (event_type, user_or_session, created_at, result_summary_json)
-       VALUES ($1, $2, now() - ($3 || ' minutes')::interval, $4)`,
-    [eventType, session, String(minutesAgo), resultSummary ? JSON.stringify(resultSummary) : null]
+    `INSERT INTO analytics_event
+       (event_type, user_or_session, created_at, result_summary_json, search_minute_request_count)
+       VALUES ($1, $2, now() - ($3 || ' minutes')::interval, $4, $5)`,
+    [
+      eventType,
+      session,
+      String(minutesAgo),
+      resultSummary ? JSON.stringify(resultSummary) : null,
+      searchMinuteRequestCount,
+    ]
   );
 }
 
@@ -594,6 +605,76 @@ describe.skipIf(!hasDb)('getOperatingPeriodCounts (DB)', () => {
     const after = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
 
     expect(after.emailOptIns - before.emailOptIns).toBe(1);
+  });
+
+  // The 2026-09-22 high-frequency exclusion (lib/analytics/high-frequency-exclusion.ts), wired
+  // into getEngagementSeries/getLifecycleSeries. Baseline: a session that fires a
+  // threshold-crossing row in ITS OWN period must be excluded from that period's
+  // activeActors/signedInActors — same contract kpi.ts and trends.ts already prove.
+  it('excludes a flagged actor from active_actors and signed_in_actors within its own period', async () => {
+    const before = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
+
+    const flagged = randomUUID();
+    await insertEvent(flagged, 'account_signed_in', 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+
+    const clean = randomUUID();
+    await insertEvent(clean, 'account_signed_in', 5);
+
+    const after = (await getOperatingPeriodCounts('day', 2)).at(-1) as OperatingPeriodCounts;
+
+    // Only the clean control actor is counted; the flagged one is excluded entirely.
+    expect(after.activeActors - before.activeActors).toBe(1);
+    expect(after.signedInActors - before.signedInActors).toBe(1);
+  });
+
+  // 🔴 Regression for the SAME window-mismatch bug class 2dfdbb2c caught between kpi.ts and
+  // trends.ts (see lib/analytics/high-frequency-exclusion.ts's header), reproduced here one
+  // file over. active_actors/signed_in_actors are PER-PERIOD metrics — one independent count
+  // per bucket in a 10-bucket series — not a single aggregate over the whole requested range.
+  // An early version of this fix checked a candidate row's flag against `bounds` (the query's
+  // whole 10-day scan range) instead of that ONE bucket's own window, which would purge a
+  // flagged actor from EVERY period in the series, not just the period they were flagged in.
+  // This actor is flagged 5 days ago and has ORDINARY activity today; today's count must be
+  // unaffected, and the actor must still be excluded from the specific day they were flagged.
+  it('🔴 does not exclude an actor from TODAY when their only qualifying row is in a DIFFERENT period of the same series', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforeTotal = beforeSeries.reduce((sum, p) => sum + p.activeActors, 0);
+    const beforeToday = beforeSeries.at(-1) as OperatingPeriodCounts;
+
+    const actor = randomUUID();
+    // Ordinary activity TODAY.
+    await insertEvent(actor, 'listing_viewed', 5);
+    // A threshold-crossing burst 5 days ago — flags THAT bucket only.
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 5 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD);
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterTotal = afterSeries.reduce((sum, p) => sum + p.activeActors, 0);
+    const afterToday = afterSeries.at(-1) as OperatingPeriodCounts;
+
+    // +1 for today's ordinary row only: the flagged bucket correctly excludes ITSELF (so not
+    // +2), and today is correctly NOT purged by a flag raised on an unrelated day (so not +0,
+    // which is what the wide-window bug would have produced).
+    expect(afterTotal - beforeTotal).toBe(1);
+    expect(afterToday.activeActors - beforeToday.activeActors).toBe(1);
+  });
+
+  // Same bug class, lifecycle side: `seen` (new/activated/returning) is also a per-period
+  // relation, fed by the identical flagged-CTE pattern (see getLifecycleSeries's own comment).
+  it('🔴 lifecycle: a flagged burst in one period does not purge an actor from an unrelated period’s new/returning counts', async () => {
+    const beforeSeries = await getOperatingPeriodCounts('day', 10);
+    const beforePresence = beforeSeries.reduce((sum, p) => sum + p.newActors + p.returningActors, 0);
+
+    const actor = randomUUID();
+    await insertEvent(actor, 'listing_viewed', 5); // ordinary activity today
+    await insertEvent(actor, 'listing_viewed', 60 * 24 * 5 + 5, undefined, ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD); // flagged, 5 days ago
+
+    const afterSeries = await getOperatingPeriodCounts('day', 10);
+    const afterPresence = afterSeries.reduce((sum, p) => sum + p.newActors + p.returningActors, 0);
+
+    // The actor is present (as new or returning — either is fine, this test does not care
+    // which) in exactly the one unflagged period, not zero (wide-window bug) and not two
+    // (flagged bucket wrongly counted).
+    expect(afterPresence - beforePresence).toBe(1);
   });
 });
 

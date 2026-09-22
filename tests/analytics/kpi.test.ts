@@ -231,4 +231,41 @@ describe.skipIf(!hasDb)('getProductHealthKpis (real Postgres)', () => {
     const after = await getProductHealthKpis();
     expect(after.activeUsers.dau - before.activeUsers.dau).toBe(1);
   });
+
+  // F9 (2026-09-22, third+fourth independent recheck): signedInSharePct(signedInUsers, mau)
+  // pairs getAccountValue's signed_in_users against getActiveUsers's mau. Before this fix
+  // signed_in_users had NO exclusion while mau did — a signed-in actor who also tripped the
+  // exclusion shrank the denominator but not the numerator, inflating the ratio (and, with a
+  // small enough real MAU, able to push it mathematically past 100%). Reproduced directly:
+  // session H signs in AND fires a qualifying high-frequency row; it must be excluded from
+  // BOTH signed_in_users and mau, so the pair stays consistent.
+  it('excludes a flagged actor from signed_in_users exactly like it excludes them from mau, keeping signedInSharePct <= 100', async () => {
+    const H = `${prefix}-h`;
+    const before = await getProductHealthKpis();
+
+    await insertEvent({ eventType: 'account_signed_in', session: H, hoursAgo: 1, resultSummary: { method: 'google' } });
+    await insertEvent({
+      eventType: 'search_performed',
+      session: H,
+      hoursAgo: 1,
+      resultSummary: { total: 4 },
+      searchMinuteRequestCount: ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD,
+    });
+
+    const after = await getProductHealthKpis();
+
+    // Excluded from BOTH sides of the ratio, not just one.
+    expect(after.accountValue.signedInUsers - before.accountValue.signedInUsers).toBe(0);
+    expect(after.activeUsers.mau - before.activeUsers.mau).toBe(0);
+
+    // Sanity control: an identically-shaped signed-in actor with NO flagged row counts on
+    // both sides normally, proving the exclusion keys off the threshold and nothing else.
+    const I = `${prefix}-i`;
+    await insertEvent({ eventType: 'account_signed_in', session: I, hoursAgo: 1, resultSummary: { method: 'google' } });
+    const after2 = await getProductHealthKpis();
+    expect(after2.accountValue.signedInUsers - after.accountValue.signedInUsers).toBe(1);
+    expect(after2.activeUsers.mau - after.activeUsers.mau).toBe(1);
+
+    expect(signedInSharePct(after2.accountValue.signedInUsers, after2.activeUsers.mau)).toBeLessThanOrEqual(100);
+  });
 });
