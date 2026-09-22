@@ -127,6 +127,10 @@ export function resolveConnectionHost(connectionString: string): string | null {
 export function isManagedDatabaseHost(rawHost: string | null | undefined): boolean {
   if (rawHost == null) return false;
   const host = normaliseHost(rawHost);
+  // Behaviour-neutral early-out, verified by mutation: the isLocalDatabaseHost check below answers
+  // false for both of these anyway. Kept for readability, and labelled so a future mutation sweep
+  // does not mistake a surviving mutant here for an untested branch — it is untestable, not
+  // untested.
   if (host === '' || host.startsWith('/')) return false;
   if (isLocalDatabaseHost(host)) return false; // e.g. a ?host=127.0.0.1 override really is local
   // A homoglyph host cannot be pattern-matched safely; treat it as managed so it can never take
@@ -196,6 +200,9 @@ export interface EffectiveHost {
  */
 export function resolveEffectiveHost(connectionString: string): EffectiveHost {
   const parsed = resolveConnectionHost(connectionString);
+  // Behaviour-neutral early-out, verified by mutation: `parsed !== ''` below is true for null and
+  // returns the identical value. Explicit because "unparseable" and "absent" are different ideas
+  // even when they take the same branch.
   if (parsed === null) return { host: null, source: 'url' };
   if (parsed !== '') return { host: parsed, source: 'url' };
 

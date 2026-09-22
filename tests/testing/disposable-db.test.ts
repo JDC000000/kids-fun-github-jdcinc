@@ -60,6 +60,35 @@ describe('disposable-db: loopback auto-provisions (zero friction on the common p
   });
 });
 
+describe('disposable-db: loopback provisioning swallows ONLY privilege errors', () => {
+  // Found by a per-branch mutation sweep of my own guard surface, not by a reviewer. Deleting
+  // `if (!isPrivilegeError(err)) throw err;` from the loopback branch caused ZERO failures, because
+  // every existing test exercised either a privilege error or the happy path. The branch is real:
+  // without it ANY provisioning failure — a refused connection, a syntax error, a disk-full — is
+  // silently swallowed and the guard reports the target as fine.
+  it('a NON-privilege failure during provisioning surfaces instead of being swallowed', async () => {
+    const pool = {
+      query: vi.fn(async () => { throw new Error('ECONNREFUSED 127.0.0.1:54322'); }),
+    } as unknown as Pool;
+    await expect(
+      assertDisposableDatabase(pool, 'postgres://postgres@127.0.0.1:54322/db')
+    ).rejects.toThrow(/ECONNREFUSED/);
+  });
+
+  it('a privilege failure is still tolerated on loopback (the CI case)', async () => {
+    const pool = {
+      query: vi.fn(async () => {
+        const e = new Error('permission denied for database ci') as Error & { code: string };
+        e.code = '42501';
+        throw e;
+      }),
+    } as unknown as Pool;
+    await expect(
+      assertDisposableDatabase(pool, 'postgres://postgres@127.0.0.1:54322/db')
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe('disposable-db: a managed host is refused outright', () => {
   it('throws, and does not create a marker in someone’s production database', async () => {
     const { pool, statements } = stubPool(false);
