@@ -392,6 +392,14 @@ describe('local-db-guard: PGHOST resolution (parser parity is not connection par
     expect(isManagedDatabaseHost(host)).toBe(true);  // refused absolutely
   });
 
+  // The allowlist's BOUNDARY, not just its contents: a reviewer noted that widening it to admit
+  // '%' or '\\' survived a full mutation sweep untouched. Harmless today, but '%' is reachable
+  // through ?host= percent-encoding, and an allowlist nobody pins is an allowlist that drifts.
+  it.each([['percent', '%'], ['backslash', '\\'], ['at', '@'], ['quote', "'"], ['backtick', '`']])(
+    'refuses a host containing a %s', (_name, ch) => {
+      expect(hasIllegalHostChars(`db.abcdefgh.supabase.co${ch}evil`)).toBe(true);
+    }
+  );
   it('still accepts every character a real host legitimately uses (positive control)', () => {
     for (const ok of ['localhost', 'db.abcdefgh.supabase.co', '127.0.0.1', '::1', '[::1]',
                       'my-host_1.example.com', '/var/run/postgresql', 'host:5432']) {

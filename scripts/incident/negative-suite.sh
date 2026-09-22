@@ -84,7 +84,38 @@ expect() { # expect <label> <pattern> <args...>
   if printf '%s' "$out" | grep -qE "$pat"; then note "$label" "ok"; pass=$((pass+1));
   else note "$label" "MISSED"; fail=$((fail+1)); fi
 }
-mutate_json() { python3 -c "$1" ; }
+# ═══ F3/F4: FIXED /tmp PATHS AND AN UNCHECKED MUTATION ═══
+# The mutated manifests were written to fixed, unscoped paths ($SUITE_TMP/n1.json … $SUITE_TMP/n14.json) shared
+# by every concurrent run, and mutate_json never checked whether python actually succeeded. A
+# failed mutation therefore left a STALE file from another session in place and the suite scored a
+# PASS against the wrong data. That happened to a reviewer live, mid-session, from a genuinely
+# concurrent run — it is not hypothetical. Cleanup was `rm -f /tmp/n*.json`, which deletes any
+# matching file in shared /tmp whether or not this suite created it: the same path-scoped deletion
+# that destroyed two reviewers' backups earlier in this incident, in a smaller costume.
+#
+# Both are fixed by the same change: one private directory per run, removed by trap, and a
+# mutation that must succeed or the suite stops.
+SUITE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/kf-negative-suite-XXXXXX")" || exit 9
+# Cleanup uses the NARROWEST primitive that can do the job, not `rm -rf`: the files this run
+# created, then rmdir, which REFUSES a non-empty directory instead of removing whatever it finds.
+# `rm -rf` on a directory path is the exact instrument that destroyed two reviewers' backups
+# during this incident, and the toolkit's own safety test rejects it — correctly; it caught this
+# line when I first wrote it that way.
+trap 'rm -f "$SUITE_TMP"/*.json "$SUITE_TMP"/*.err 2>/dev/null; rmdir "$SUITE_TMP" 2>/dev/null' EXIT
+
+mutate_json() { # mutate_json <python>
+  local err
+  err="$(python3 -c "$1" 2>&1)" || {
+    {
+      echo ""
+      echo "FATAL: a manifest mutation failed — aborting rather than testing stale data."
+      printf '%s\n' "$err" | sed 's/^/    /'
+      echo "  The mutated manifest was not written. Continuing would score a case against whatever"
+      echo "  file happened to sit at that path, which is a PASS that means nothing."
+    } >&2
+    exit 10
+  }
+}
 
 # ═══ KF_CLEANUP_TARGET_URL AND KF_REPLICA_RESET MUST NAME THE SAME DATABASE ═══
 # They are independent variables, so nothing stopped the suite resetting one database while running
@@ -113,58 +144,58 @@ if printf '%s' "$wrongout" | grep -qE "does not match the manifest"; then note "
 else note "wrong database" "MISSED"; fail=$((fail+1)); fi
 
 mutate_json "
-import json;m=json.load(open('$M'));m['target_sources'][0]['name']='DRIFTED';json.dump(m,open('/tmp/n1.json','w'))"
-expect "source fingerprint drift" "fingerprint drift" --manifest=/tmp/n1.json
+import json;m=json.load(open('$M'));m['target_sources'][0]['name']='DRIFTED';json.dump(m,open('$SUITE_TMP/n1.json','w'))"
+expect "source fingerprint drift" "fingerprint drift" --manifest=$SUITE_TMP/n1.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['target_sources'].append(m['target_sources'][0]);json.dump(m,open('/tmp/n2.json','w'))"
-expect "duplicate target ids" "duplicate target source ids" --manifest=/tmp/n2.json
+import json;m=json.load(open('$M'));m['target_sources'].append(m['target_sources'][0]);json.dump(m,open('$SUITE_TMP/n2.json','w'))"
+expect "duplicate target ids" "duplicate target source ids" --manifest=$SUITE_TMP/n2.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['target_sources'].append({'id':m['leave_alone_source_ids'][0],'family':'x','name':'x','terms_status':'allowed','created_at':'2026-09-21T18:46:38.305Z'});json.dump(m,open('/tmp/n3.json','w'))"
-expect "leave_alone id inside target set" "ALSO leave_alone" --manifest=/tmp/n3.json
+import json;m=json.load(open('$M'));m['target_sources'].append({'id':m['leave_alone_source_ids'][0],'family':'x','name':'x','terms_status':'allowed','created_at':'2026-09-21T18:46:38.305Z'});json.dump(m,open('$SUITE_TMP/n3.json','w'))"
+expect "leave_alone id inside target set" "ALSO leave_alone" --manifest=$SUITE_TMP/n3.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['expected_preconditions']['bogus_key']=1;json.dump(m,open('/tmp/n4.json','w'))"
-expect "manifest declares unknown precondition" "no query for it" --manifest=/tmp/n4.json
+import json;m=json.load(open('$M'));m['expected_preconditions']['bogus_key']=1;json.dump(m,open('$SUITE_TMP/n4.json','w'))"
+expect "manifest declares unknown precondition" "no query for it" --manifest=$SUITE_TMP/n4.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['expected_preconditions']['occ_total']=999999;json.dump(m,open('/tmp/n5.json','w'))"
-expect "precondition value drift" "precondition occ_total" --manifest=/tmp/n5.json
+import json;m=json.load(open('$M'));m['expected_preconditions']['occ_total']=999999;json.dump(m,open('$SUITE_TMP/n5.json','w'))"
+expect "precondition value drift" "precondition occ_total" --manifest=$SUITE_TMP/n5.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['expected_dependent_counts']['provenaance']=m['expected_dependent_counts'].pop('provenance');json.dump(m,open('/tmp/n6.json','w'))"
-expect "misspelled dependent-count key" "is misspelled or a delete is missing" --manifest=/tmp/n6.json --include-admin-fixtures
+import json;m=json.load(open('$M'));m['expected_dependent_counts']['provenaance']=m['expected_dependent_counts'].pop('provenance');json.dump(m,open('$SUITE_TMP/n6.json','w'))"
+expect "misspelled dependent-count key" "is misspelled or a delete is missing" --manifest=$SUITE_TMP/n6.json --include-admin-fixtures
 
 mutate_json "
-import json;m=json.load(open('$M'));m['expected_dependent_counts']['provenance']=999;json.dump(m,open('/tmp/n7.json','w'))"
-expect "dependent count mismatch" "Blast radius differs" --manifest=/tmp/n7.json --include-admin-fixtures
+import json;m=json.load(open('$M'));m['expected_dependent_counts']['provenance']=999;json.dump(m,open('$SUITE_TMP/n7.json','w'))"
+expect "dependent count mismatch" "Blast radius differs" --manifest=$SUITE_TMP/n7.json --include-admin-fixtures
 
 mutate_json "
-import json;m=json.load(open('$M'));m['target_series_ids'].append('00000000-0000-4000-8000-000000000000');json.dump(m,open('/tmp/n8.json','w'))"
-expect "nonexistent series id" "do not exist in this database" --manifest=/tmp/n8.json
+import json;m=json.load(open('$M'));m['target_series_ids'].append('00000000-0000-4000-8000-000000000000');json.dump(m,open('$SUITE_TMP/n8.json','w'))"
+expect "nonexistent series id" "do not exist in this database" --manifest=$SUITE_TMP/n8.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['fixture_venues'][0]['name']='RENAMED VENUE';json.dump(m,open('/tmp/n9.json','w'))"
-expect "venue name drift" "no longer carry their recorded name" --manifest=/tmp/n9.json
+import json;m=json.load(open('$M'));m['fixture_venues'][0]['name']='RENAMED VENUE';json.dump(m,open('$SUITE_TMP/n9.json','w'))"
+expect "venue name drift" "no longer carry their recorded name" --manifest=$SUITE_TMP/n9.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['target_sources']=[];json.dump(m,open('/tmp/n10.json','w'))"
-expect "empty target set" "no target_sources" --manifest=/tmp/n10.json
+import json;m=json.load(open('$M'));m['target_sources']=[];json.dump(m,open('$SUITE_TMP/n10.json','w'))"
+expect "empty target set" "no target_sources" --manifest=$SUITE_TMP/n10.json
 
 
 # ── cases added after a require_() mutation sweep showed 17 of 29 guards unexercised ──
 mutate_json "
-import json;m=json.load(open('$M'));m['target_sources'][0]['created_at']='2020-01-01T00:00:00+00:00';json.dump(m,open('/tmp/n11.json','w'))"
-expect "source created_at drift" "created_at drift" --manifest=/tmp/n11.json
+import json;m=json.load(open('$M'));m['target_sources'][0]['created_at']='2020-01-01T00:00:00+00:00';json.dump(m,open('$SUITE_TMP/n11.json','w'))"
+expect "source created_at drift" "created_at drift" --manifest=$SUITE_TMP/n11.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['fixture_venues'].append({'id':'00000000-0000-4000-8000-0000000000aa','name':'ghost','created_at':'2026-09-21T18:47:00+00:00'});json.dump(m,open('/tmp/n12.json','w'))"
-expect "nonexistent venue id" "venue id\\(s\\) do not exist" --manifest=/tmp/n12.json
+import json;m=json.load(open('$M'));m['fixture_venues'].append({'id':'00000000-0000-4000-8000-0000000000aa','name':'ghost','created_at':'2026-09-21T18:47:00+00:00'});json.dump(m,open('$SUITE_TMP/n12.json','w'))"
+expect "nonexistent venue id" "venue id\\(s\\) do not exist" --manifest=$SUITE_TMP/n12.json
 
 mutate_json "
-import json;m=json.load(open('$M'));m['target_occurrence_ids'].append('00000000-0000-4000-8000-0000000000bb');json.dump(m,open('/tmp/n13.json','w'))"
-expect "nonexistent occurrence id" "occurrence id\\(s\\) do not exist" --manifest=/tmp/n13.json
+import json;m=json.load(open('$M'));m['target_occurrence_ids'].append('00000000-0000-4000-8000-0000000000bb');json.dump(m,open('$SUITE_TMP/n13.json','w'))"
+expect "nonexistent occurrence id" "occurrence id\\(s\\) do not exist" --manifest=$SUITE_TMP/n13.json
 
 # ═══ HELPER FAILURES WERE INVISIBLE, AND ONE OF THEM COULD HANG THE SUITE ═══
 # These three invocations discarded stderr and ignored the exit status, and unlike run() none of
@@ -173,13 +204,17 @@ expect "nonexistent occurrence id" "occurrence id\\(s\\) do not exist" --manifes
 # test. Both are the same disease as findings E and F: a broken run that still reports cleanly.
 run_helper() { # run_helper <file> — prints stdout, aborts the suite on any failure
   local f="$1" out rc
-  out="$(U="$U" timeout 60 node "$HELP/$f" 2>&1)"; rc=$?
+  # stdout is DATA (a caller captures it); stderr is diagnostics. Merging them let a warning on
+  # stderr — a Node deprecation notice is enough — become part of the value the suite then used.
+  local errf="$SUITE_TMP/${f}.err"
+  out="$(U="$U" timeout 60 node "$HELP/$f" 2>"$errf")"; rc=$?
   if [ "$rc" -ne 0 ]; then
     {
       echo ""
       [ "$rc" -eq 124 ] && echo "FATAL: $f TIMED OUT after 60s — aborting." \
                         || echo "FATAL: $f failed (exit $rc) — aborting."
-      echo "  output:"; printf '%s\n' "$out" | sed 's/^/    /'
+      echo "  stdout:"; printf '%s\n' "$out" | sed 's/^/    /'
+      echo "  stderr:"; sed 's/^/    /' <"$errf"
       echo "  The case this helper sets up cannot run, and a suite that quietly drops a case"
       echo "  still prints a clean summary. Fix the helper rather than trusting the total."
     } >&2
@@ -207,8 +242,8 @@ if [ -z "$STRAY_OCC" ]; then
   exit 7
 fi
 mutate_json "
-import json;m=json.load(open('$M'));m['target_occurrence_ids'].append('$STRAY_OCC');json.dump(m,open('/tmp/n14.json','w'))"
-expect "occurrence outside the target series" "do not belong to a target series" --manifest=/tmp/n14.json
+import json;m=json.load(open('$M'));m['target_occurrence_ids'].append('$STRAY_OCC');json.dump(m,open('$SUITE_TMP/n14.json','w'))"
+expect "occurrence outside the target series" "do not belong to a target series" --manifest=$SUITE_TMP/n14.json
 
 # containment trespass: archive a TARGET occurrence the way the Operator did
 run_helper helper-archive-target.cjs >/dev/null
@@ -220,8 +255,6 @@ run_helper helper-real-person.cjs >/dev/null
 expect "orphan profile has an auth.users row" "is a REAL account" --include-admin-fixtures
 reset_db
 
-rm -f /tmp/n1[1-4].json
 
-rm -f /tmp/n*.json
 echo "  ── pass=$pass fail=$fail ──"
 [ "$fail" -eq 0 ]

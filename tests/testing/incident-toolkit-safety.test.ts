@@ -53,7 +53,19 @@ describe('incident toolkit: no path-scoped deletion, ever', () => {
         .split('\n')
         .filter((l) => !/^\s*(\/\/|#)/.test(l))
         .join('\n');
-      for (const pattern of [/\brm\s+-[a-z]*r/, /rmSync\s*\([^)]*recursive/, /rimraf/, /rmdirSync/]) {
+      // The recursive patterns were the original set. A reviewer showed they were not enough:
+      // `rm -f /tmp/n*.json` is neither recursive nor obviously dangerous, yet it deletes any
+      // matching file in SHARED /tmp — including files this suite never created, from a
+      // concurrent session. That is the same fault as the rm -rf, just quieter, and it sailed
+      // past a test whose stated purpose was to catch exactly this. A glob against a shared temp
+      // root is now refused outright; a run that needs scratch space makes its own mktemp -d.
+      for (const pattern of [
+        /\brm\s+-[a-z]*r/,
+        /rmSync\s*\([^)]*recursive/,
+        /rimraf/,
+        /rmdirSync/,
+        /\brm\s[^\n;|&]*(?:\/tmp|\/var\/tmp)\/[^\s;|&]*\*/,
+      ]) {
         expect(
           pattern.test(code),
           `${full} appears to delete by path (${pattern}). This toolkit deletes only the specific ` +
@@ -201,6 +213,36 @@ describe('incident toolkit: mutating test helpers refuse a non-loopback target',
     expect(() => assertLoopback('::::not-a-url::::')).toThrow(/unverifiable/);
   });
 
+  // ═══ F1: THE GUARD MUST AGREE WITH pg, NOT WITH THE SPELLING ═══
+  // assertLoopback read new URL().hostname and ignored ?host=, so
+  // postgres://127.0.0.1/db?host=db.<ref>.supabase.co read as loopback and was allowed. A reviewer
+  // proved it end to end with a real listener on a non-loopback address catching live pg startup
+  // packets from these helpers. The first repair used searchParams.get('host'), which is ALSO
+  // wrong: it returns the FIRST occurrence of a repeated parameter and pg takes the LAST.
+  it('refuses a managed host smuggled in via ?host=', () => {
+    expect(() => assertLoopback('postgresql://u:p@127.0.0.1:5432/db?host=db.abc.supabase.co'))
+      .toThrow(/refusing/);
+  });
+
+  it('takes the LAST duplicate host parameter, exactly as pg does', () => {
+    // The hole in the first fix: safe value first, dangerous value last.
+    expect(() => assertLoopback('postgresql://u:p@127.0.0.1:5432/db?host=127.0.0.1&host=db.abc.supabase.co'))
+      .toThrow(/refusing/);
+    // ...and the mirror image must still be ALLOWED, or the fix is just 'refuse everything'.
+    expect(() => assertLoopback('postgresql://u:p@127.0.0.1:5432/db?host=db.abc.supabase.co&host=127.0.0.1'))
+      .not.toThrow();
+  });
+
+  it('allows a ?host= override that really does land on loopback', () => {
+    expect(() => assertLoopback('postgresql://u:p@10.0.0.5:5432/db?host=127.0.0.1')).not.toThrow();
+  });
+
+  it('refuses a unix-socket path (documented behaviour change, in the safe direction)', () => {
+    // These helpers only ever target a TCP loopback replica, and a socket path is not in the
+    // loopback allowlist. The old hostname-spelling check let it through.
+    expect(() => assertLoopback('postgresql://u:p@127.0.0.1:5432/db?host=/var/run/postgresql'))
+      .toThrow(/refusing/);
+  });
   it('is not fooled by a trailing dot or uppercase', () => {
     expect(() => assertLoopback('postgresql://u:p@DB.ABC.SUPABASE.CO./postgres')).toThrow(/refusing/);
   });
