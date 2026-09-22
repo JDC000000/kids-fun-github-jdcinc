@@ -23,11 +23,27 @@ import { resolveConnectionHost } from '@/lib/db/connection-host';
 
 const ROOT = join(__dirname, '..', '..');
 /**
- * Connection-string-bearing keys a run can actually pick up. KF_CLEANUP_TARGET_URL is included
- * because the incident-remediation scripts read it and it legitimately points at production — the
- * point is that it must never be PARKED IN A FILE where `set -a; . file` can arm it silently.
+ * Which keys count as connection-string-bearing.
+ *
+ * ═══ WHY A SHAPE TEST AND NOT A LIST ═══
+ * The first version enumerated four names. An enumerated list is always one step behind whatever
+ * script gets written next, and it was already behind: it missed
+ * `.env.recovery-clone.DELETE-AFTER-USE` (RECOVERY_CLONE_DATABASE_URL) sitting in this very
+ * worktree, while listing KF_RESTORE_CLONE_URL, which nothing produces. A guard that has to be
+ * updated to keep working will eventually not be updated.
+ *
+ * So: match on the shape of the KEY, and — as a second net that does not depend on the key name at
+ * all — on the shape of the VALUE. Anything that parses as a postgres connection string gets
+ * checked no matter what it is called.
  */
-const DB_KEYS = ['DATABASE_URL', 'USER_DATABASE_URL', 'KF_CLEANUP_TARGET_URL', 'KF_RESTORE_CLONE_URL'];
+function isDbKey(key: string): boolean {
+  return /(^|_)(DATABASE|DB)_URL$/.test(key) || /_URL$/.test(key);
+}
+
+/** Value-shape net: a postgres/supabase connection string, whatever the key is named. */
+function looksLikeConnectionString(value: string): boolean {
+  return /^postgres(ql)?:\/\//i.test(value.trim());
+}
 
 /** Guard-defeating switches that must never be shipped pre-set in a file. */
 const OPT_OUT_KEYS = ['KIDS_FUN_ALLOW_NONLOCAL_DB', 'KIDS_FUN_TEST_ALLOW_NONLOCAL_DB_HOST'];
@@ -68,9 +84,9 @@ describe('repo-root .env* files never name a managed/hosted database', () => {
 
   it.each(envFiles())('%s — no managed host in a DB connection key', (file) => {
     const env = parseEnv(readFileSync(join(ROOT, file), 'utf8'));
-    for (const key of DB_KEYS) {
-      const value = env.get(key);
+    for (const [key, value] of env) {
       if (!value) continue;
+      if (!isDbKey(key) && !looksLikeConnectionString(value)) continue;
       const host = resolveConnectionHost(value);
       expect(
         isManagedDatabaseHost(host),

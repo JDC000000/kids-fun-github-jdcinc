@@ -50,7 +50,7 @@
 // and the runtime pool config (lib/db/pool-config.ts) resolve the connection host the SAME
 // way node-postgres does — honoring a `?host=` override. See lib/db/connection-host.ts for
 // the full rationale (Round 27 approval-bypass incident).
-import { isLocalDatabaseHost, isManagedDatabaseHost, normaliseHost, resolveConnectionHost } from '@/lib/db/connection-host';
+import { hasNonAsciiHost, isLocalDatabaseHost, isManagedDatabaseHost, normaliseHost, resolveConnectionHost } from '@/lib/db/connection-host';
 
 // Re-exported so existing importers (and tests) can keep importing them from this module.
 export { isLocalDatabaseHost, isManagedDatabaseHost };
@@ -123,6 +123,18 @@ export function assertTestDatabaseUrl(url: string | undefined, label = 'DATABASE
     throw new Error(
       `[local-db-guard] ${label} is set but is not a parseable connection URL — refusing to ` +
         `run DB-backed tests against an unverifiable target. Check the value, or unset it.`
+    );
+  }
+  // A non-ASCII hostname is refused before any classification: `supabase．co` with U+FF0E is a
+  // different STRING from `supabase.co` but resolvers map it to the same HOST, so pattern matching
+  // cannot be trusted on it. Refused outright rather than normalised — this is a guard, not a DNS
+  // client, and it only has to be un-foolable.
+  if (hasNonAsciiHost(host)) {
+    throw new Error(
+      `[local-db-guard] REFUSING TO RUN: ${label} has a non-ASCII hostname ("${host}"). ` +
+        `Homoglyph characters (U+FF0E / U+3002 / U+FF61 full stops, among others) resolve to the ` +
+        `same host as their ASCII form while defeating string matching, so such a host can never ` +
+        `be classified safely here. Use the plain ASCII hostname.`
     );
   }
   if (isLocalDatabaseHost(host)) return;

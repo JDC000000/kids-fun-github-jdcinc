@@ -155,6 +155,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/search/postgres-repository.test.ts',
   'tests/snapshot/catalogue-shape.test.ts',
   'tests/snapshot/policy-schema-guard.test.ts',
+  'tests/testing/disposable-db-privileges-db.test.ts',
   'tests/user_profile_provisioning.test.ts',
   'tests/user_profile_update.test.ts',
   'tests/user_scoped_client.test.ts',

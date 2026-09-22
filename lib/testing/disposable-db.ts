@@ -58,12 +58,33 @@ export const CREATE_MARKER_SQL = `
   )`;
 
 
+/**
+ * Is the marker present AND readable by THIS role?
+ *
+ * `to_regclass()` raises `42501 permission denied for schema` for a role without USAGE on the
+ * marker's schema — a low-privilege role such as CI's `authenticated` hits exactly that. An
+ * exception there must not become an unhandled crash, and it must not be read as "present":
+ * a marker this connection cannot verify is a marker it does not have. Fails CLOSED.
+ */
 export async function markerExists(pool: Pool): Promise<boolean> {
-  const { rows } = await pool.query<{ ok: boolean }>(
-    `SELECT to_regclass($1) IS NOT NULL AS ok`,
-    [DISPOSABLE_MARKER_TABLE]
-  );
-  return rows[0]?.ok === true;
+  try {
+    const { rows } = await pool.query<{ ok: boolean }>(
+      `SELECT to_regclass($1) IS NOT NULL AS ok`,
+      [DISPOSABLE_MARKER_TABLE]
+    );
+    return rows[0]?.ok === true;
+  } catch (err) {
+    if (isPrivilegeError(err)) return false; // cannot verify ⇒ does not count as verified
+    throw err;
+  }
+}
+
+/** Postgres 42501 insufficient_privilege, by code where available and by message otherwise. */
+function isPrivilegeError(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  if (code === '42501') return true;
+  const msg = (err as Error | null)?.message ?? '';
+  return /permission denied/i.test(msg);
 }
 
 /**
@@ -93,13 +114,38 @@ export async function assertDisposableDatabase(pool: Pool, connectionString: str
     );
   }
   if (isLocalDatabaseHost(host)) {
-    await pool.query(CREATE_MARKER_SCHEMA_SQL);
-    await pool.query(CREATE_MARKER_SQL);
-    await pool.query(
-      `INSERT INTO ${DISPOSABLE_MARKER_TABLE} (note)
-       SELECT $1 WHERE NOT EXISTS (SELECT 1 FROM ${DISPOSABLE_MARKER_TABLE})`,
-      ['auto-marked by lib/testing/disposable-db.ts: loopback host, treated as disposable']
-    );
+    // ═══ WHY A PRIVILEGE FAILURE HERE IS TOLERATED, AND ONLY HERE ═══
+    // On loopback the marker is a CONVENIENCE, not the permission: the address check has already
+    // allowed this target, and the marker is written so that a database later reached over a
+    // non-loopback address can still vouch for itself. So if this role simply cannot create it,
+    // nothing about the safety decision changes.
+    //
+    // It is not hypothetical. CI's USER_DATABASE_URL uses a deliberately low-privilege
+    // `authenticated` role with no CREATE on the database, and Postgres checks CREATE-on-database
+    // for `CREATE SCHEMA IF NOT EXISTS` even when the schema already exists — so this threw
+    // `permission denied for database` and took the ENTIRE db lane down in CI. Caught by a
+    // reviewer running a real low-privilege role; my own unit test stubs pg.Pool and could never
+    // have seen it.
+    //
+    // ONLY 42501 is swallowed, and only on the loopback branch. Any other error still propagates,
+    // and a non-local host still REQUIRES a verifiable marker below.
+    try {
+      await pool.query(CREATE_MARKER_SCHEMA_SQL);
+      await pool.query(CREATE_MARKER_SQL);
+      await pool.query(
+        `INSERT INTO ${DISPOSABLE_MARKER_TABLE} (note)
+         SELECT $1 WHERE NOT EXISTS (SELECT 1 FROM ${DISPOSABLE_MARKER_TABLE})`,
+        ['auto-marked by lib/testing/disposable-db.ts: loopback host, treated as disposable']
+      );
+    } catch (err) {
+      if (!isPrivilegeError(err)) throw err;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[disposable-db] loopback target allowed, but this role cannot provision the ` +
+          `${DISPOSABLE_MARKER_TABLE} marker (${(err as Error).message}). Continuing: on loopback ` +
+          `the marker is a convenience, not the permission.`
+      );
+    }
     return;
   }
 

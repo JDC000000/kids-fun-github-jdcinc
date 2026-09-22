@@ -41,7 +41,20 @@ import { parse } from 'pg-connection-string';
  * Normalising here rather than in each caller is deliberate: this is the one place that decides
  * what a host "is", so the local check, the managed check and the override comparison cannot
  * drift apart on the question of what counts as the same name.
+ *
+ * ═══ AND WHY NON-ASCII IS REFUSED RATHER THAN NORMALISED ═══
+ * The trailing-dot fix was not enough: `db.<ref>.supabase．co` written with U+FF0E (or U+3002 /
+ * U+FF61) matched none of the managed patterns and fell through to the overridable branch. A
+ * reviewer showed this is not cosmetic — resolvers really do map those code points onto the real
+ * host (one．one．one．one resolves to 1.1.1.1). Full IDNA normalisation would be the general
+ * answer, but this is a SAFETY GUARD, not a DNS client: it does not need to understand every
+ * internationalised name, it needs to never be fooled by one. So any non-ASCII hostname is treated
+ * as unverifiable and refused outright — see hasNonAsciiHost and its callers.
  */
+export function hasNonAsciiHost(rawHost: string | null | undefined): boolean {
+  return typeof rawHost === 'string' && /[^\x00-\x7F]/.test(rawHost);
+}
+
 export function normaliseHost(rawHost: string): string {
   return rawHost
     .trim()
@@ -103,6 +116,9 @@ export function isManagedDatabaseHost(rawHost: string | null | undefined): boole
   const host = normaliseHost(rawHost);
   if (host === '' || host.startsWith('/')) return false;
   if (isLocalDatabaseHost(host)) return false; // e.g. a ?host=127.0.0.1 override really is local
+  // A homoglyph host cannot be pattern-matched safely; treat it as managed so it can never take
+  // the overridable branch. Callers that can produce a better message refuse it earlier.
+  if (hasNonAsciiHost(rawHost)) return true;
   return MANAGED_HOST_PATTERNS.some((re) => re.test(host));
 }
 
@@ -135,6 +151,7 @@ const MANAGED_HOST_PATTERNS: readonly RegExp[] = [
  */
 export function isLocalDatabaseHost(rawHost: string | null | undefined): boolean {
   if (rawHost == null) return true; // no TCP host at all → local (unix socket / default)
+  if (hasNonAsciiHost(rawHost)) return false; // homoglyphs are never classified local
   const host = normaliseHost(rawHost);
   if (host === '') return true; // empty host → local
   if (host.startsWith('/')) return true; // unix-socket path (e.g. ?host=/var/run/postgresql)
