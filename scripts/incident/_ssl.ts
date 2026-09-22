@@ -22,7 +22,7 @@
 // no one aware of it. A tool that stops and tells you what to fetch is better than one that
 // quietly accepts any certificate. There is deliberately NO env var to skip verification.
 import { readFileSync } from 'node:fs';
-import { isLocalDatabaseHost, resolveConnectionHost } from '../../lib/db/connection-host';
+import { isLocalDatabaseHost, resolveEffectiveHost } from '../../lib/db/connection-host';
 
 export const CA_ENV = 'KF_DB_CA_CERT';
 
@@ -33,7 +33,9 @@ export interface SslDecision {
 }
 
 export function resolveSslFor(connectionString: string): SslDecision {
-  const host = resolveConnectionHost(connectionString);
+  // Effective host: a hostless URL is dialed via PGHOST, so deciding TLS on the parsed host would
+  // silently skip verification for a remote target that the URL never mentions.
+  const { host } = resolveEffectiveHost(connectionString);
   if (isLocalDatabaseHost(host)) {
     return { ssl: undefined, reason: `local host (${host || 'socket'}) — no TLS options` };
   }

@@ -24,7 +24,7 @@
 // loopback host the marker is created automatically and silently, so the common path is unchanged
 // and the friction lands only where the risk actually is.
 import type { Pool } from 'pg';
-import { isLocalDatabaseHost, isManagedDatabaseHost, resolveConnectionHost } from '@/lib/db/connection-host';
+import { isLocalDatabaseHost, isManagedDatabaseHost, resolveEffectiveHost } from '@/lib/db/connection-host';
 
 /** Schema the marker lives in — deliberately NOT `public`. See DISPOSABLE_MARKER_TABLE. */
 export const DISPOSABLE_MARKER_SCHEMA = 'kf_testing';
@@ -68,23 +68,34 @@ export const CREATE_MARKER_SQL = `
  */
 export async function markerExists(pool: Pool): Promise<boolean> {
   try {
+    // Actually READ the marker rather than merely resolving its name. `to_regclass()` alone only
+    // proves the identifier is visible; "this database vouches for itself" should mean the
+    // connection can genuinely read the voucher, which needs USAGE on the schema AND SELECT on the
+    // table. Resolving-but-unreadable is exactly the ambiguous state that should not count.
     const { rows } = await pool.query<{ ok: boolean }>(
-      `SELECT to_regclass($1) IS NOT NULL AS ok`,
-      [DISPOSABLE_MARKER_TABLE]
+      `SELECT count(*) >= 0 AS ok FROM ${DISPOSABLE_MARKER_TABLE}`
     );
     return rows[0]?.ok === true;
   } catch (err) {
-    if (isPrivilegeError(err)) return false; // cannot verify ⇒ does not count as verified
+    // 42501 = cannot read it ⇒ not verified. 42P01 = table absent ⇒ not marked. Both are
+    // legitimate "no" answers; anything else is a real fault and must surface.
+    const code = (err as { code?: string } | null)?.code;
+    if (code === '42501' || code === '42P01' || code === '3F000') return false;
     throw err;
   }
 }
 
-/** Postgres 42501 insufficient_privilege, by code where available and by message otherwise. */
+/**
+ * Strictly Postgres SQLSTATE 42501 (insufficient_privilege).
+ *
+ * The first version also matched any message containing "permission denied", which made the
+ * surrounding comment — and the commit message — false: it would have swallowed a client-side or
+ * unrelated error that merely happened to use that wording. The server always supplies a SQLSTATE
+ * for a real privilege refusal, so nothing legitimate needs the looser test, and an error WITHOUT
+ * a code is by definition not a server privilege refusal and must propagate.
+ */
 function isPrivilegeError(err: unknown): boolean {
-  const code = (err as { code?: string } | null)?.code;
-  if (code === '42501') return true;
-  const msg = (err as Error | null)?.message ?? '';
-  return /permission denied/i.test(msg);
+  return (err as { code?: string } | null)?.code === '42501';
 }
 
 /**
@@ -99,7 +110,16 @@ function isPrivilegeError(err: unknown): boolean {
  * reading the environment instead of the actual connection would reintroduce the whole bug class.
  */
 export async function assertDisposableDatabase(pool: Pool, connectionString: string): Promise<void> {
-  const host = resolveConnectionHost(connectionString);
+  // Effective host, not parsed host: a hostless URL resolves through PGHOST, and provisioning the
+  // marker into a PGHOST-selected REMOTE database would make that host self-vouching forever.
+  const { host, source } = resolveEffectiveHost(connectionString);
+  if (source === 'default') {
+    throw new Error(
+      `[disposable-db] the connection string names no host and PGHOST is unset — the target would ` +
+        `come from node-postgres' built-in default. Refusing to provision or trust a marker in a ` +
+        `database chosen by ambient environment. State the host explicitly.`
+    );
+  }
 
   if (host === null) {
     throw new Error(
@@ -160,6 +180,10 @@ export async function assertDisposableDatabase(pool: Pool, connectionString: str
       `    psql "$DATABASE_URL" -c "CREATE TABLE ${DISPOSABLE_MARKER_TABLE} (marked_at timestamptz ` +
       `NOT NULL DEFAULT now(), note text NOT NULL)" \\\n` +
       `      -c "INSERT INTO ${DISPOSABLE_MARKER_TABLE} (note) VALUES ('disposable: <who/why>')"\n\n` +
+      `If the marker already exists but THIS role cannot read it, the answer is a grant, not a ` +
+      `second marker:\n` +
+      `    GRANT USAGE ON SCHEMA ${DISPOSABLE_MARKER_SCHEMA} TO <role>;\n` +
+      `    GRANT SELECT ON ${DISPOSABLE_MARKER_TABLE} TO <role>;\n\n` +
       `Creating that table in a database you care about is the mistake this guard is asking you ` +
       `not to make.`
   );
@@ -175,7 +199,10 @@ export async function assertDisposableDatabase(pool: Pool, connectionString: str
  * the same lane.
  */
 export async function assertDisposableDatabaseUrl(connectionString: string, label = 'DATABASE_URL'): Promise<void> {
-  const host = resolveConnectionHost(connectionString);
+  const { host, source } = resolveEffectiveHost(connectionString);
+  if (source === 'default') {
+    throw new Error(`[disposable-db] ${label} names no host and PGHOST is unset — refusing an ambient target.`);
+  }
   // Cheap classification first — a managed or unparseable target never earns a connection.
   if (host === null) {
     throw new Error(`[disposable-db] ${label} is not a parseable connection URL — refusing.`);

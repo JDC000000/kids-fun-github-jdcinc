@@ -11,7 +11,7 @@ import {
   isManagedDatabaseHost,
   TEST_HOST_OVERRIDE_ENV,
 } from '@/lib/testing/local-db-guard';
-import { hasNonAsciiHost } from '@/lib/db/connection-host';
+import { hasNonAsciiHost, resolveEffectiveHost } from '@/lib/db/connection-host';
 
 describe('local-db-guard: isLocalDatabaseHost', () => {
   it('accepts loopback / local hosts', () => {
@@ -343,5 +343,59 @@ describe('connection-host: isManagedDatabaseHost', () => {
     expect(isManagedDatabaseHost(databaseUrlHost('postgres://127.0.0.1/db?host=db.x.supabase.co'))).toBe(
       true
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PGHOST — the bypass that defeated ALL THREE guard layers at once.
+//
+// `postgres:///dbname` names no host. The old guard asked the PARSER, got an empty string, and
+// concluded "unix socket, therefore local, therefore allowed". But pg does not ask the parser —
+// pg/lib/connection-parameters.js resolves `config.host || process.env.PGHOST || 'localhost'`, so
+// with PGHOST pointed at a hosted database that URL connects straight to it. A reviewer ran the
+// real exported functions and watched the guard not only allow it but PROVISION THE MARKER inside
+// the remote database, which would have made that host permanently self-vouching for the
+// exact-host override too — the guard poisoning its own last check.
+//
+// Parity with a parser is not parity with a connection.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('local-db-guard: PGHOST resolution (parser parity is not connection parity)', () => {
+  const saved = process.env.PGHOST;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.PGHOST;
+    else process.env.PGHOST = saved;
+  });
+
+  it('resolves the host the way pg actually does', () => {
+    process.env.PGHOST = 'db.x.supabase.co';
+    expect(resolveEffectiveHost('postgres:///db')).toEqual({ host: 'db.x.supabase.co', source: 'PGHOST' });
+    // an explicit host in the URL still wins, exactly as `config.host ||` does
+    expect(resolveEffectiveHost('postgres://u@127.0.0.1:5432/db')).toEqual({ host: '127.0.0.1', source: 'url' });
+    delete process.env.PGHOST;
+    expect(resolveEffectiveHost('postgres:///db')).toEqual({ host: 'localhost', source: 'default' });
+  });
+
+  it('REFUSES a hostless URL when PGHOST points somewhere remote, and says so', () => {
+    process.env.PGHOST = 'db.rnqaofjhiqmqaipqpiua.supabase.co';
+    // The error must name PGHOST — otherwise it reads as nonsense to someone whose URL plainly
+    // contains no supabase host at all.
+    expect(() => assertTestDatabaseUrl('postgres:///postgres')).toThrow(/PGHOST="db\.rnqaofjhiqmqaipqpiua\.supabase\.co"/);
+  });
+
+  it('REFUSES a hostless URL with no PGHOST rather than assuming local', () => {
+    delete process.env.PGHOST;
+    // Deliberately stricter than pg: a destructive lane must not take its target from ambient
+    // defaults, even though pg itself would happily use localhost.
+    expect(() => assertTestDatabaseUrl('postgres:///postgres')).toThrow(/names no host/);
+  });
+
+  it('still allows a hostless URL when PGHOST is loopback (no false refusal)', () => {
+    process.env.PGHOST = '127.0.0.1';
+    expect(() => assertTestDatabaseUrl('postgres:///postgres')).not.toThrow();
+  });
+
+  it('an explicit ?host= socket path is not ambient and still works', () => {
+    process.env.PGHOST = 'db.evil.supabase.co';
+    expect(() => assertTestDatabaseUrl('postgres:///db?host=/var/run/postgresql')).not.toThrow();
   });
 });

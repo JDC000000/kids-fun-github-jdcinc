@@ -53,7 +53,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
 // Relative, not '@/': these scripts run under vite-node, which does not load the Vitest alias.
-import { isLocalDatabaseHost, resolveConnectionHost } from '../../lib/db/connection-host';
+import { isLocalDatabaseHost, resolveEffectiveHost } from '../../lib/db/connection-host';
 import { resolveSslFor } from './_ssl';
 
 interface SourceRow { id: string; family: string; name: string; terms_status: string; created_at: string }
@@ -155,7 +155,12 @@ async function main(): Promise<void> {
   let committed = false;
   try {
     await c.query('BEGIN');
-    log(`\n── target: ${new URL(url).host}  ·  mode: ${args.commit && args.confirmed ? 'COMMIT' : 'DRY RUN (rollback)'} ──\n`);
+    // The host the connection DECISION used, not `new URL(url).host` — they differ for a `?host=`
+    // override or a hostless URL resolved through PGHOST, so the operator's pre-flight confirmation
+    // could otherwise name a different database than the one actually dialed.
+    const target = resolveEffectiveHost(url);
+    const via = target.source === 'url' ? '' : ` (via ${target.source})`;
+    log(`\n── target: ${target.host ?? '<unparseable>'}${via}  ·  mode: ${args.commit && args.confirmed ? 'COMMIT' : 'DRY RUN (rollback)'} ──\n`);
 
     // ── 1. Identity re-verification. Every id must still be the row the manifest fingerprinted.
     const live = (await c.query<SourceRow>(

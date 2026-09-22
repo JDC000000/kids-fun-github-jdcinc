@@ -10,13 +10,25 @@ import {
   markerExists,
 } from '@/lib/testing/disposable-db';
 
-/** Minimal Pool stub: records every statement, and answers the marker probe with `present`. */
+/**
+ * Minimal Pool stub, modelling what a REAL database does rather than what the code happens to ask.
+ *
+ * markerExists now genuinely READS the marker (USAGE + SELECT) instead of merely resolving its name
+ * with to_regclass — "this database vouches for itself" should mean the connection can actually
+ * read the voucher. So when the marker is absent the stub raises SQLSTATE 42P01 exactly as Postgres
+ * would, which is also what pins the error-code handling in markerExists.
+ */
 function stubPool(present: boolean) {
   const statements: string[] = [];
   const pool = {
     query: vi.fn(async (text: string) => {
       statements.push(text);
-      if (text.includes('to_regclass')) return { rows: [{ ok: present }] };
+      if (/SELECT count\(\*\) >= 0/.test(text)) {
+        if (present) return { rows: [{ ok: true }] };
+        const err = new Error('relation "kf_testing.kf_disposable_test_db" does not exist') as Error & { code: string };
+        err.code = '42P01';
+        throw err;
+      }
       return { rows: [] };
     }),
   } as unknown as Pool;
@@ -91,9 +103,34 @@ describe('disposable-db: unverifiable target', () => {
 });
 
 describe('disposable-db: markerExists', () => {
-  it('asks to_regclass for exactly the marker table', async () => {
+  it('READS the marker table (not merely resolving its name)', async () => {
     const { pool, statements } = stubPool(true);
     await expect(markerExists(pool)).resolves.toBe(true);
-    expect(statements[0]).toContain('to_regclass');
+    expect(statements[0]).toContain(DISPOSABLE_MARKER_TABLE);
+    expect(statements[0]).toMatch(/FROM/);
+  });
+
+  it('treats an absent marker (42P01) as "not marked", not as an error', async () => {
+    const { pool } = stubPool(false);
+    await expect(markerExists(pool)).resolves.toBe(false);
+  });
+
+  it('treats an UNREADABLE marker (42501) as "not marked" — cannot verify is not verified', async () => {
+    const pool = {
+      query: vi.fn(async () => {
+        const err = new Error('permission denied for schema kf_testing') as Error & { code: string };
+        err.code = '42501';
+        throw err;
+      }),
+    } as unknown as Pool;
+    await expect(markerExists(pool)).resolves.toBe(false);
+  });
+
+  it('does NOT swallow an unrelated error that merely says "permission denied"', async () => {
+    // The old implementation matched on message text, which made its own comment false.
+    const pool = {
+      query: vi.fn(async () => { throw new Error('permission denied by some unrelated client layer'); }),
+    } as unknown as Pool;
+    await expect(markerExists(pool)).rejects.toThrow(/unrelated client layer/);
   });
 });

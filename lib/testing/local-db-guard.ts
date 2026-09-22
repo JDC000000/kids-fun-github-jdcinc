@@ -50,7 +50,7 @@
 // and the runtime pool config (lib/db/pool-config.ts) resolve the connection host the SAME
 // way node-postgres does — honoring a `?host=` override. See lib/db/connection-host.ts for
 // the full rationale (Round 27 approval-bypass incident).
-import { hasNonAsciiHost, isLocalDatabaseHost, isManagedDatabaseHost, normaliseHost, resolveConnectionHost } from '@/lib/db/connection-host';
+import { hasNonAsciiHost, isLocalDatabaseHost, isManagedDatabaseHost, normaliseHost, resolveConnectionHost, resolveEffectiveHost } from '@/lib/db/connection-host';
 
 // Re-exported so existing importers (and tests) can keep importing them from this module.
 export { isLocalDatabaseHost, isManagedDatabaseHost };
@@ -118,7 +118,36 @@ export const TEST_HOST_OVERRIDE_ENV = 'KIDS_FUN_TEST_ALLOW_NONLOCAL_DB_HOST';
 export function assertTestDatabaseUrl(url: string | undefined, label = 'DATABASE_URL'): void {
   if (!url) return;
 
-  const host = resolveConnectionHost(url);
+  // Classify the host pg will ACTUALLY dial, not the one the URL happens to spell. A URL with no
+  // host resolves through PGHOST, and treating that as "local" was a complete bypass of all three
+  // layers — see resolveEffectiveHost.
+  const { host, source } = resolveEffectiveHost(url);
+
+  // Deliberately STRICTER than pg: pg would fall back to localhost, but a lane that runs
+  // table-wide destructive writes must never take its target from ambient defaults. If nothing
+  // states the host, say so rather than guessing on the operator's behalf.
+  if (source === 'default') {
+    throw new Error(
+      `[local-db-guard] ${label} names no host ("${url}") and PGHOST is unset, so the target would ` +
+        `be decided by node-postgres' built-in default. DB-backed suites run table-wide writes and ` +
+        `must never resolve their target from ambient environment: state the host explicitly ` +
+        `(e.g. postgres://postgres@127.0.0.1:5432/dbname).`
+    );
+  }
+  if (source === 'PGHOST') {
+    // Not refused outright — a loopback PGHOST is perfectly legitimate — but it must be classified
+    // like any other host, and the error must say where the host came from or it reads as nonsense
+    // ("my URL doesn't mention supabase!").
+    if (!isLocalDatabaseHost(host)) {
+      throw new Error(
+        `[local-db-guard] ${label} names no host, so node-postgres would dial PGHOST="${host}" — ` +
+          `which is not local. The connection string looks harmless; the environment is what ` +
+          `chooses the database. Unset PGHOST, or state a local host explicitly in ${label}.`
+      );
+    }
+    return;
+  }
+
   if (host === null) {
     throw new Error(
       `[local-db-guard] ${label} is set but is not a parseable connection URL — refusing to ` +

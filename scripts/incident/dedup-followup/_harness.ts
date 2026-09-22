@@ -14,11 +14,11 @@
 //     ready-to-run restore SQL. Written in dry-run mode too, so the backup can be inspected and
 //     the restore path reviewed before anyone commits anything.
 //   • Any precondition failure aborts the whole transaction — never a partial application.
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
 // Relative, not '@/': run under vite-node, which does not load the Vitest alias.
-import { isLocalDatabaseHost, resolveConnectionHost } from '../../../lib/db/connection-host';
+import { isLocalDatabaseHost, resolveEffectiveHost } from '../../../lib/db/connection-host';
 import { resolveSslFor } from '../_ssl';
 
 export class Abort extends Error {}
@@ -87,8 +87,20 @@ export function backupRunDir(args: Args): string {
   const root = explicit ?? join(repoRoot, '..', DEFAULT_BACKUP_ROOT_NAME);
   const absRoot = isAbsolute(root) ? resolve(root) : resolve(repoRoot, root);
 
-  const rel = relative(repoRoot, absRoot);
-  const insideRepo = rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  // ═══ TWO WAYS THIS CHECK WAS ESCAPABLE, BOTH FOUND BY REVIEW ═══
+  // 1. `relative(repoRoot, repoRoot)` is the EMPTY STRING, and the first version read empty as
+  //    "outside the repo". So `--backup-dir .` — the single most natural thing anyone would type —
+  //    wrote production row dumps straight into the repo root, reinstating the exact hazard this
+  //    function exists to prevent. Empty now means "IS the repo root", i.e. inside.
+  // 2. resolve() does not follow symlinks, so a symlink outside the tree pointing back into it was
+  //    accepted. Both sides are compared through realpath, so a link cannot launder the check.
+  const realOf = (p: string): string => {
+    try { return realpathSync(p); } catch { return resolve(p); } // not created yet → resolve only
+  };
+  const realRepo = realOf(repoRoot);
+  const realTarget = realOf(absRoot);
+  const rel = relative(realRepo, realTarget);
+  const insideRepo = rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
   if (insideRepo) {
     throw new Abort(
       `refusing to write backups inside the repository (${absRoot}). They contain real production ` +
@@ -101,6 +113,16 @@ export function backupRunDir(args: Args): string {
   const runId = process.env.KF_BACKUP_RUN_ID ?? `${new Date().toISOString().replace(/[:.]/g, '-')}-pid${process.pid}`;
   const runDir = join(absRoot, runId);
   mkdirSync(runDir, { recursive: true });
+  // Re-check AFTER creation: realpath can only follow a link once the path exists, so a symlinked
+  // root is not fully resolvable until now.
+  const realRun = realOf(runDir);
+  const relRun = relative(realRepo, realRun);
+  if (relRun === '' || (!relRun.startsWith('..') && !isAbsolute(relRun))) {
+    throw new Abort(
+      `refusing to write backups inside the repository (${realRun}, reached via ${runDir}). ` +
+        `They hold real production row values.`
+    );
+  }
 
   // Per-run by construction, so anything already here was written by someone else.
   const existing = readdirSync(runDir).filter((f) => !written.includes(join(runDir, f)));
@@ -264,7 +286,13 @@ export async function runGuarded(
   let committed = false;
   try {
     await c.query('BEGIN');
-    log(`\n── target: ${new URL(url).host}  ·  mode: ${args.commit && args.confirmed ? 'COMMIT' : 'DRY RUN (rollback)'} ──\n`);
+    // Log the host the connection DECISION was made on, not `new URL(url).host`. Those differ for
+    // a `?host=` override or a hostless URL resolved through PGHOST — so the operator's pre-flight
+    // confirmation could name a different database than the one actually dialed. That is the same
+    // bug class this file's own comments warn about, four lines away from the warning.
+    const target = resolveEffectiveHost(url);
+    const via = target.source === 'url' ? '' : ` (via ${target.source})`;
+    log(`\n── target: ${target.host ?? '<unparseable>'}${via}  ·  mode: ${args.commit && args.confirmed ? 'COMMIT' : 'DRY RUN (rollback)'} ──\n`);
     await body(c);
     if (args.commit && args.confirmed) {
       await c.query('COMMIT');

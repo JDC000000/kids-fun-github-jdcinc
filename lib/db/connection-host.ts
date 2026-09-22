@@ -145,9 +145,61 @@ const MANAGED_HOST_PATTERNS: readonly RegExp[] = [
   /(^|\.)heroku(app)?\.com$/,
 ];
 
+/** Where the effective host came from. `default` means nothing specified it — see resolveEffectiveHost. */
+export type HostSource = 'url' | 'PGHOST' | 'default';
+
+export interface EffectiveHost {
+  /** The host pg will actually dial, or null when the connection string is unparseable. */
+  host: string | null;
+  source: HostSource;
+}
+
 /**
- * True when `rawHost` is a loopback/local database host. An empty/omitted host (unix socket or
- * libpq default) is treated as local — those never reach a remote server.
+ * The host node-postgres will ACTUALLY dial — including its environment fallback.
+ *
+ * ═══ WHY resolveConnectionHost ALONE WAS A BYPASS ═══
+ * resolveConnectionHost achieves parity with pg-connection-string's PARSER. That is not the same
+ * thing as parity with pg's CONNECTION BEHAVIOUR, and the difference was a complete bypass of every
+ * guard built on it. In pg/lib/connection-parameters.js the host is resolved by
+ * `val('host', config)`, and `val` is:
+ *
+ *     config[key] || process.env['PG' + KEY] || defaults[key]      (defaults.host = 'localhost')
+ *
+ * So `postgres:///dbname` — no host at all — parses to an EMPTY host, which the old code classified
+ * as local ("a unix socket never reaches a remote server"), while pg would happily connect to
+ * whatever PGHOST names. A reviewer proved it end to end: with PGHOST pointed at a Supabase host the
+ * guard allowed the connection AND provisioned the disposability marker inside that remote database
+ * — which would then have made that host permanently self-vouching for the exact-host override too,
+ * i.e. the guard poisoning its own strongest remaining check.
+ *
+ * It is not a contrived shape either: `set -a; . file` exports PGHOST exactly the way the original
+ * incident exported KIDS_FUN_ALLOW_NONLOCAL_DB.
+ *
+ * Only PGHOST redirects — verified against that file: `val()` is called for host/port/user/password/
+ * database/options/binary/replication/sslnegotiation, and node-postgres reads neither PGHOSTADDR nor
+ * PGSERVICE. `source` is returned so a caller can be STRICTER than pg where that is appropriate: the
+ * test guard refuses `default`, because a destructive lane must never resolve its target from
+ * ambient defaults, even though pg itself would happily use localhost.
+ */
+export function resolveEffectiveHost(connectionString: string): EffectiveHost {
+  const parsed = resolveConnectionHost(connectionString);
+  if (parsed === null) return { host: null, source: 'url' };
+  if (parsed !== '') return { host: parsed, source: 'url' };
+
+  const pgHost = (process.env.PGHOST ?? '').trim();
+  if (pgHost !== '') return { host: pgHost, source: 'PGHOST' };
+
+  return { host: 'localhost', source: 'default' }; // pg/lib/defaults.js: host = 'localhost'
+}
+
+/**
+ * True when `rawHost` is a loopback/local database host.
+ *
+ * NOTE ON THE EMPTY HOST. This still answers `true` for `''`, because an empty string genuinely is
+ * the unix-socket/default case at the level this predicate operates on. But callers must NOT feed
+ * it the raw parser output: an absent host means "pg will decide", and pg consults PGHOST. Resolve
+ * with resolveEffectiveHost() FIRST and classify that. The old comment here claimed an empty host
+ * "never reaches a remote server", which was simply wrong and was the hinge of a full bypass.
  */
 export function isLocalDatabaseHost(rawHost: string | null | undefined): boolean {
   if (rawHost == null) return true; // no TCP host at all → local (unix socket / default)

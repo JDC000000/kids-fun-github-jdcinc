@@ -12,8 +12,10 @@
 // at run time in _harness.ts. These tests enforce all of it at REVIEW time, because "we agreed not
 // to" is not a control — the agreement was already in place when I broke it.
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { backupRunDir, parseArgs } from '../../scripts/incident/dedup-followup/_harness';
 
 const TOOLKIT = join(__dirname, '..', '..', 'scripts', 'incident');
 
@@ -82,5 +84,41 @@ describe('incident toolkit: backups never default inside the repo', () => {
     expect(harness).toContain('export function writtenBackups');
     // the ownership refusal must be present, not merely documented
     expect(harness).toMatch(/did not create/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Backups must never resolve INSIDE the repository. These hold real production row values, and a
+// directory in the tree is one `git clean` — or one path-scoped `rm` by a session that believes the
+// directory is its own — away from being the rollback that no longer exists.
+//
+// Two escapes were found by review, both reproduced here:
+//   · `relative(repo, repo)` is the EMPTY STRING, which the first version read as "outside". So
+//     `--backup-dir .` — the most natural thing anyone would type — wrote dumps to the repo root.
+//   · resolve() does not follow symlinks, so a link outside the tree pointing back into it passed.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('incident toolkit: backups cannot resolve inside the repo', () => {
+  const REPO = join(__dirname, '..', '..');
+  const argsFor = (dir: string) => parseArgs(['--backup-dir', dir], 'unused.json');
+
+  it.each(['.', './', './/', ''])('refuses --backup-dir %j (empty relative path = IS the repo root)', (dir) => {
+    const target = dir === '' ? REPO : dir;
+    expect(() => backupRunDir(argsFor(target))).toThrow(/inside the repository/);
+  });
+
+  it('refuses a subdirectory of the repo', () => {
+    expect(() => backupRunDir(argsFor(join(REPO, 'scripts', 'incident')))).toThrow(/inside the repository/);
+  });
+
+  it('refuses a symlink that launders a path back into the repo', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'kf-backup-symlink-'));
+    const link = join(tmp, 'looks-external');
+    symlinkSync(join(REPO, 'scripts'), link, 'dir');
+    expect(() => backupRunDir(argsFor(link))).toThrow(/inside the repository/);
+  });
+
+  it('still accepts a genuinely external directory', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'kf-backup-ok-'));
+    expect(() => backupRunDir(argsFor(tmp))).not.toThrow();
   });
 });

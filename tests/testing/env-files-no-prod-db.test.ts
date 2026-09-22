@@ -47,9 +47,40 @@ function isDbKey(key: string): boolean {
   return /(^|_)(DATABASE|DB)_URL$/.test(key);
 }
 
-/** Value-shape net: a postgres/supabase connection string, whatever the key is named. */
+/**
+ * Value-shape net: anything that names a database target, whatever the key is called.
+ *
+ * Broadened after review found four shapes that slipped through BOTH the original enumerated list
+ * and the first narrowed version: libpq keyword DSNs (`host=… dbname=…`), JDBC URLs, and — the one
+ * that matters most — a HOSTLESS `postgres:///db`, whose real target comes from PGHOST. That last
+ * one is the same vector as the F1 bypass, so the scan and the guard now cover it together.
+ */
 function looksLikeConnectionString(value: string): boolean {
-  return /^postgres(ql)?:\/\//i.test(value.trim());
+  const v = value.trim();
+  if (/^postgres(ql)?:\/\//i.test(v)) return true;
+  if (/^jdbc:postgresql:/i.test(v)) return true;
+  if (/(^|\s)host\s*=/.test(v) && /(^|\s)(dbname|user)\s*=/.test(v)) return true; // libpq keyword DSN
+  return false;
+}
+
+/**
+ * libpq SPLIT variables. PGHOST alone silently redirects a hostless connection string, which is
+ * precisely how the guard was bypassed — so a file that parks PGHOST (or PGPASSWORD) is a hazard
+ * even when it contains no connection string at all.
+ */
+const LIBPQ_VARS = ['PGHOST', 'PGHOSTADDR', 'PGPASSWORD', 'PGUSER', 'PGDATABASE', 'PGPORT'];
+
+/** Host named by a libpq split var, if the file sets one. */
+export function libpqHostIn(content: string): string | null {
+  const env = parseEnv(content);
+  const h = env.get('PGHOST') ?? env.get('PGHOSTADDR');
+  return h && h.trim() !== '' ? h.trim() : null;
+}
+
+/** Any libpq split var present at all — reported separately from managed-host detection. */
+export function libpqVarsIn(content: string): string[] {
+  const env = parseEnv(content);
+  return LIBPQ_VARS.filter((k) => (env.get(k) ?? '').trim() !== '');
 }
 
 /** Guard-defeating switches that must never be shipped pre-set in a file. */
@@ -66,6 +97,9 @@ const OPT_OUT_KEYS = ['KIDS_FUN_ALLOW_NONLOCAL_DB', 'KIDS_FUN_TEST_ALLOW_NONLOCA
  */
 export function managedHostsIn(content: string): { key: string; host: string }[] {
   const found: { key: string; host: string }[] = [];
+  // A parked PGHOST is itself a target, with no connection string required.
+  const pgHost = libpqHostIn(content);
+  if (pgHost && isManagedDatabaseHost(pgHost)) found.push({ key: 'PGHOST', host: pgHost });
   for (const [key, value] of parseEnv(content)) {
     if (!value) continue;
     if (!isDbKey(key) && !looksLikeConnectionString(value)) continue;
@@ -196,6 +230,29 @@ describe('env scan rules, proven against synthetic content', () => {
     expect(managedHostsIn('DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres\n')).toHaveLength(0);
     expect(managedHostsIn('# DATABASE_URL=postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres\n')).toHaveLength(0);
     expect(managedHostsIn('DATABASE_URL=\n')).toHaveLength(0);
+  });
+
+  it('catches a parked PGHOST — a target with no connection string at all', () => {
+    // The F1 bypass vector: PGHOST alone silently redirects a hostless URL.
+    expect(managedHostsIn('PGHOST=db.abcdefgh.supabase.co\nPGPASSWORD=hunter2\n')).toEqual([
+      { key: 'PGHOST', host: 'db.abcdefgh.supabase.co' },
+    ]);
+    expect(managedHostsIn('PGHOST=127.0.0.1\n')).toHaveLength(0);
+  });
+
+  it('reports libpq split vars even when no managed host is named', () => {
+    expect(libpqVarsIn('PGHOST=127.0.0.1\nPGPASSWORD=x\nPGUSER=postgres\n').sort()).toEqual(
+      ['PGHOST', 'PGPASSWORD', 'PGUSER']
+    );
+    expect(libpqVarsIn('DATABASE_URL=postgres://u@127.0.0.1/db\n')).toEqual([]);
+  });
+
+  it('catches a hostless URL, a libpq keyword DSN and a JDBC URL', () => {
+    // hostless: the value itself names no host, so it is caught by SHAPE and the PGHOST check
+    expect(looksLikeConnectionString('postgres:///dbname')).toBe(true);
+    expect(looksLikeConnectionString('host=db.abcdefgh.supabase.co dbname=postgres user=postgres')).toBe(true);
+    expect(looksLikeConnectionString('jdbc:postgresql://db.abcdefgh.supabase.co:5432/postgres')).toBe(true);
+    expect(looksLikeConnectionString('https://abcdefghijkl.supabase.co')).toBe(false);
   });
 
   it('detects opt-out switches in either form, and only when actually enabled', () => {
