@@ -11,11 +11,12 @@
 // holding files it did not write, and nothing here ever deletes by path. The first two are enforced
 // at run time in _harness.ts. These tests enforce all of it at REVIEW time, because "we agreed not
 // to" is not a control — the agreement was already in place when I broke it.
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { backupRunDir, parseArgs } from '../../scripts/incident/dedup-followup/_harness';
+import { resolveSslFor, tlsParamsIn, CA_ENV } from '../../scripts/incident/_ssl';
 
 const TOOLKIT = join(__dirname, '..', '..', 'scripts', 'incident');
 
@@ -120,5 +121,58 @@ describe('incident toolkit: backups cannot resolve inside the repo', () => {
   it('still accepts a genuinely external directory', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'kf-backup-ok-'));
     expect(() => backupRunDir(argsFor(tmp))).not.toThrow();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A URL parameter must not be able to switch off certificate verification.
+//
+// pg merges the parsed connection string OVER any ssl object supplied in code
+// (`Object.assign({}, config, parse(connectionString))`), so a single `?sslmode=` silently discards
+// the CA this toolkit enforces. Measured against pg's own ConnectionParameters:
+//   (none)             ca=PRESENT rejectUnauthorized=true
+//   ?sslmode=no-verify ca=ABSENT  rejectUnauthorized=false
+//   ?sslmode=disable   ssl=false  — no TLS at all, production superuser password in cleartext
+// It arrives through the same env channel as the boolean flag that caused the incident. A
+// guarantee a URL parameter can defeat is not a guarantee.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('incident toolkit: TLS cannot be weakened from the connection string', () => {
+  const savedCa = process.env[CA_ENV];
+  const savedPgHost = process.env.PGHOST;
+  afterEach(() => {
+    if (savedCa === undefined) delete process.env[CA_ENV]; else process.env[CA_ENV] = savedCa;
+    if (savedPgHost === undefined) delete process.env.PGHOST; else process.env.PGHOST = savedPgHost;
+  });
+
+  it.each(['sslmode=no-verify', 'sslmode=disable', 'sslmode=require', 'sslrootcert=/tmp/x', 'ssl=true'])(
+    'refuses a remote connection string carrying %s',
+    (param) => {
+      expect(() => resolveSslFor(`postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres?${param}`))
+        .toThrow(/TLS parameter/);
+    }
+  );
+
+  it('detects the parameters case-insensitively', () => {
+    expect(tlsParamsIn('postgresql://u:p@h.example:5432/db?SSLMode=disable')).toEqual(['sslmode']);
+    expect(tlsParamsIn('postgresql://u:p@h.example:5432/db')).toEqual([]);
+  });
+
+  it('refuses BEFORE asking for a CA, so the message names the real problem', () => {
+    delete process.env[CA_ENV];
+    // Without this ordering the operator is told to supply a CA that would then be ignored anyway.
+    expect(() => resolveSslFor('postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres?sslmode=disable'))
+      .toThrow(/TLS parameter/);
+  });
+
+  it('leaves LOCAL connection strings alone — sslmode there is not a hazard', () => {
+    expect(() => resolveSslFor('postgres://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable'))
+      .not.toThrow();
+  });
+
+  it('decides TLS on the host pg DIALS, so a hostless URL cannot skip it via PGHOST', () => {
+    process.env.PGHOST = 'db.abcdefgh.supabase.co';
+    delete process.env[CA_ENV];
+    // Before the effective-host fix this resolved to ssl:undefined — no TLS to a hosted database.
+    expect(() => resolveSslFor('postgres:///postgres')).toThrow(/without a CA certificate/);
   });
 });

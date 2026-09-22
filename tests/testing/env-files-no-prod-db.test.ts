@@ -211,6 +211,17 @@ describe('env scan rules, proven against synthetic content', () => {
     expect(managedHostsIn('USER_DATABASE_URL=postgresql://u:p@aws-0-ca-central-1.pooler.supabase.com:6543/postgres\n')).toHaveLength(1);
   });
 
+  it('exercises the KEY net EXCLUSIVELY — a DB-shaped key whose value is not a postgres URL', () => {
+    // The case above reaches the key net, but its value is a postgres:// URL so the VALUE net would
+    // have caught it anyway — meaning isDbKey could be deleted with the suite staying green. A
+    // mutation matrix found exactly that. This value is https://, which looksLikeConnectionString
+    // rejects, so ONLY the key net can catch it.
+    expect(looksLikeConnectionString('https://db.abcdefgh.supabase.co')).toBe(false);
+    expect(managedHostsIn('DATABASE_URL=https://db.abcdefgh.supabase.co\n')).toEqual([
+      { key: 'DATABASE_URL', host: 'db.abcdefgh.supabase.co' },
+    ]);
+  });
+
   it('catches the `export ` form, which `set -a; . file` sources identically', () => {
     expect(managedHostsIn('export DATABASE_URL=postgresql://u:p@db.abcdefgh.supabase.co:5432/postgres\n')).toHaveLength(1);
   });

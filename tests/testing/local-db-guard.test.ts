@@ -228,6 +228,20 @@ describe('local-db-guard: assertTestDatabaseUrl (test path — no boolean overri
     ).toThrow(/REFUSING TO RUN/);
   });
 
+  // ═══ PINS THE NON-ASCII BRANCH *INSIDE isLocalDatabaseHost* SPECIFICALLY ═══
+  // A per-branch mutation matrix showed that branch was load-bearing but UNPINNED: deleting it
+  // alone caused zero failures, because every other homoglyph case here fails for a different
+  // reason anyway (they match a managed pattern). This one cannot: a Cyrillic 'е' in front of
+  // `.localhost` matches no managed pattern at all, so without the non-ASCII check it normalises
+  // to something ending in `.localhost` and is classified LOCAL — i.e. silently allowed.
+  it('does not classify a homoglyph LOOPBACK host as local (isLocalDatabaseHost branch)', () => {
+    const cyrillic = '\u0435vil.localhost'; // U+0435 CYRILLIC SMALL LETTER IE, not ASCII 'e'
+    expect(cyrillic).not.toBe('evil.localhost');
+    expect(hasNonAsciiHost(cyrillic)).toBe(true);
+    expect(isLocalDatabaseHost(cyrillic)).toBe(false); // ← the branch under test
+    expect(() => assertTestDatabaseUrl(`postgres://u:p@${cyrillic}:5432/db`)).toThrow(/non-ASCII hostname/);
+  });
+
   it('leaves ordinary ASCII hosts alone (no false positives from the non-ASCII check)', () => {
     delete process.env.KIDS_FUN_ALLOW_NONLOCAL_DB;
     delete process.env[TEST_HOST_OVERRIDE_ENV];

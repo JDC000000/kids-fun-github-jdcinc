@@ -26,6 +26,46 @@ import { isLocalDatabaseHost, resolveEffectiveHost } from '../../lib/db/connecti
 
 export const CA_ENV = 'KF_DB_CA_CERT';
 
+/**
+ * Connection-string parameters that decide TLS. Any of these in a REMOTE connection string is
+ * refused outright.
+ *
+ * ═══ WHY REFUSE RATHER THAN IGNORE ═══
+ * pg builds its config as `Object.assign({}, config, parse(connectionString))` — the PARSED STRING
+ * WINS. So a single `?sslmode=…` silently discards the `ssl` object this module carefully builds,
+ * and the whole "there is deliberately no way to skip verification" guarantee evaporates. Measured
+ * against pg's own ConnectionParameters:
+ *
+ *     (no params)        -> ca=PRESENT rejectUnauthorized=true      <- what we intend
+ *     ?sslmode=no-verify -> ca=ABSENT  rejectUnauthorized=false     <- the exact anti-pattern
+ *     ?sslmode=require   -> ca=ABSENT  rejectUnauthorized=undefined
+ *     ?sslmode=disable   -> ssl=false  (NO TLS AT ALL — a production superuser password in cleartext)
+ *
+ * And it arrives through KF_CLEANUP_TARGET_URL: the same environment channel as the boolean flag
+ * that caused the original incident, which this toolkit refused to reintroduce as an escape hatch.
+ * A guarantee that a URL parameter can switch off is not a guarantee.
+ *
+ * Stripping them silently was the alternative. Refusing is better: if an operator wrote sslmode
+ * they had a reason, and quietly doing something else to their connection string is how people end
+ * up mistrusting the tool. The message tells them exactly what to remove.
+ */
+const TLS_PARAMS = ['sslmode', 'ssl', 'sslcert', 'sslkey', 'sslrootcert', 'sslnegotiation', 'uselibpqcompat'];
+
+/** TLS-deciding params present in a connection string, lowercased. */
+export function tlsParamsIn(connectionString: string): string[] {
+  let search: URLSearchParams;
+  try {
+    search = new URL(connectionString).searchParams;
+  } catch {
+    return [];
+  }
+  const found: string[] = [];
+  for (const [k] of search) {
+    if (TLS_PARAMS.includes(k.toLowerCase())) found.push(k.toLowerCase());
+  }
+  return [...new Set(found)];
+}
+
 export interface SslDecision {
   /** Pass straight to `new Pool({ ssl })`. `undefined` means "no TLS options" (local). */
   ssl: undefined | { ca: string; rejectUnauthorized: true };
@@ -38,6 +78,23 @@ export function resolveSslFor(connectionString: string): SslDecision {
   const { host } = resolveEffectiveHost(connectionString);
   if (isLocalDatabaseHost(host)) {
     return { ssl: undefined, reason: `local host (${host || 'socket'}) — no TLS options` };
+  }
+
+  // Refuse BEFORE looking at the CA: a URL that can override our ssl object makes the CA moot.
+  const tlsParams = tlsParamsIn(connectionString);
+  if (tlsParams.length > 0) {
+    throw new Error(
+      `refusing to connect to the remote host "${host}": the connection string carries TLS ` +
+        `parameter(s) ${tlsParams.map((p) => `\`${p}\``).join(', ')}.\n\n` +
+        `node-postgres merges the PARSED connection string OVER any ssl object supplied in code ` +
+        `(Object.assign({}, config, parse(connectionString))), so these would silently discard the ` +
+        `CA this tool enforces. Measured: ?sslmode=no-verify drops the CA and sets ` +
+        `rejectUnauthorized=false; ?sslmode=disable turns TLS off entirely and sends the password ` +
+        `in cleartext.\n\n` +
+        `Remove the parameter(s) from the connection string. Verification here is controlled ` +
+        `solely by ${CA_ENV}, deliberately — this tool has no way to weaken it, and a URL ` +
+        `parameter must not become one.`
+    );
   }
 
   const caPath = process.env[CA_ENV];

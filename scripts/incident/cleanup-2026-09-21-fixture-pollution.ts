@@ -345,7 +345,23 @@ async function main(): Promise<void> {
         `dependent table ${table}: deleted ${removed[table]}, manifest expected ${want}. ` +
           `Blast radius differs from the plan — rolling back.`);
     }
-    log(`✔ dependent deletes matched the manifest for ${Object.keys(m.expected_dependent_counts).filter((t) => t in removed).length} tables`);
+    // …and the OTHER direction. The check above only catches a declared key going missing; a delete
+    // ADDED to this script with no manifest key would carry no assertion at all and pass silently.
+    // Not exploitable today — the six undeclared tables are all bounded by the id arrays — but a
+    // one-directional check is exactly how the first version of the precondition loop went wrong.
+    const ID_BOUNDED = new Set([
+      'activity_occurrence', 'activity_series', 'source', 'venue', 'admin_user', 'user_profile',
+    ]);
+    for (const table of Object.keys(removed)) {
+      if (table in m.expected_dependent_counts) continue;
+      require_(
+        ID_BOUNDED.has(table),
+        `this run deleted from "${table}", which the manifest does not declare an expected count ` +
+          `for and which is not one of the id-array-bounded tables. An unasserted delete is an ` +
+          `unbounded delete — add it to expected_dependent_counts. Refusing.`
+      );
+    }
+    log(`✔ dependent deletes matched the manifest for ${Object.keys(m.expected_dependent_counts).filter((t) => t in removed).length} tables, and every other delete is id-bounded`);
 
     require_(post.sources_outside_window === pre.sources_outside_window,
       `REAL sources changed: ${pre.sources_outside_window} → ${post.sources_outside_window}. Rolling back.`);
