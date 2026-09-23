@@ -153,6 +153,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/sms/inbound_stop_unchanged-db.test.ts',
   'tests/sms/test_number_isolation-db.test.ts',
   'tests/admin/sms-engagement-db.test.ts',
+  'tests/search/catalogue-version-probe-db.test.ts',
   'tests/search/postgres-repository.test.ts',
   'tests/search/route-rate-limit-db.test.ts',
   'tests/snapshot/catalogue-shape.test.ts',

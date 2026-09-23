@@ -7,6 +7,8 @@ import { HIDDEN_STATUSES } from './filters/status';
 import { INDOOR_CATEGORY_KEYS, indoorTextVerdict } from './indoor';
 import type { ConfidenceLabel, CostStatus, ListingRecord, StatusState } from './types';
 import { TtlPromiseCache } from './ttl-cache';
+import { SharedCatalogueCache } from './shared-catalogue-cache';
+import { nextDataCacheStore } from './next-data-cache-store';
 
 interface ListingRow {
   id: string;
@@ -79,8 +81,8 @@ export async function loadPostgresListings(
 /**
  * The catalogue's CONTENT VERSION: a hash, computed inside Postgres, of exactly the rows and
  * columns `loadPostgresListings` reads — minus `last_checked_at` — for the rows visible at `cutoff`.
- * ~100 bytes cross the wire instead of the ~8.4MB catalogue. For the shared catalogue cache
- * (egress Thread 3, Options B + C) to decide whether a reload is needed at all.
+ * ~100 bytes cross the wire instead of the ~8.4MB catalogue. Consumed by the shared catalogue
+ * cache (./shared-catalogue-cache.ts) to decide whether a reload is needed at all.
  *
  * WHY IT REUSES THE LOAD'S OWN SELECT, JOINS AND GROUP BY RATHER THAN HASHING BASE TABLES
  * So it cannot drift from what the load returns. Every column the read model gains is hashed the
@@ -358,7 +360,14 @@ function isAgeBandKey(value: string): value is ListingRecord['ageBandMatches'][n
   return ['under2', '2-4', '5-9', '10-14', '15+'].includes(value);
 }
 
-// ── Short in-process TTL cache for the serverless search route ────────────────────────────────
+// ── Catalogue caching for the serverless read path ────────────────────────────────────────────
+//
+// TWO LAYERS SINCE 2026-09-23 (egress Thread 3, Options B + C). `getCachedPostgresListings` serves
+// from the SHARED, version-gated catalogue cache (./shared-catalogue-cache.ts — read its header for
+// the design, the staleness it trades and why), and falls back to the per-instance TTL cache
+// described below whenever the shared path is switched off (`KIDS_FUN_CATALOGUE_SHARED_CACHE=off`)
+// or misbehaves. Everything below describes that TTL layer, which is unchanged: it is the fallback,
+// the kill-switch path, and exactly the behaviour before the shared cache.
 //
 // WHY THIS EXISTS (it is the completion of the catalogue-cap fix, not a separate optimisation)
 // Removing the 500-row pre-search cap was correct — a parent searching `soccer` got nothing while
@@ -394,10 +403,11 @@ function isAgeBandKey(value: string): value is ListingRecord['ageBandMatches'][n
 // WHAT ONE TTL OF STALENESS ACTUALLY COSTS — stated so it can be judged, not assumed:
 //   · A newly ingested activity takes up to one TTL to become searchable. Ingest runs on a
 //     scheduler measured in minutes-to-hours, so a 10-minute window is inside that cadence.
-//   · `visibleOccurrenceWhereSql` evaluates `now()` in SQL, so a cached model can briefly retain
-//     an occurrence that has just ended. Bounded by the TTL, and activities are hour-scale. The
-//     engine's own date/time filters still run per request against that request's `now`, so this
-//     touches only the "finished within the last TTL" edge.
+//   · `visibleOccurrenceWhereSql` evaluates `now()` in SQL, so a cached model can retain an
+//     occurrence that has ended since it loaded, for up to one TTL. (Corrected 2026-09-23: this
+//     used to say the engine's date/time filters remove such rows per request. They do not — see
+//     "WHY THE ENGINE CANNOT BE LEFT TO DROP ENDED EVENTS" in ./shared-catalogue-cache.ts. The
+//     shared path prunes them itself; this fallback path keeps the old, TTL-bounded edge.)
 //   · An operator hiding or cancelling a listing takes up to one TTL to reach search — and every
 //     other surface that reads this cache through lib/search/server-engine.ts (the homepage's
 //     three picks, the SMS instant-picks route, the signup and account pages, and the sparse-area
@@ -416,9 +426,27 @@ const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>(
   LISTING_CACHE_DEFAULT_MS
 );
 
+/** The fallback / kill-switch layer, exactly as `getCachedPostgresListings` was before the shared cache. */
+const legacyCatalogueCache = {
+  get: (pool: Pool, now: number) =>
+    readModelCache.get(async () => Object.freeze(await loadPostgresListings(pool)), now),
+  clear: () => readModelCache.clear(),
+};
+
+const sharedCatalogueCache = new SharedCatalogueCache({
+  store: nextDataCacheStore,
+  legacy: legacyCatalogueCache,
+  loadListings: loadPostgresListings,
+  probeVersion: probePostgresCatalogueVersion,
+});
+
 /**
- * Cached accessor for the search route: the complete visible catalogue, reloaded from Postgres at
- * most once per TTL window.
+ * Cached accessor for every catalogue-wide surface: the complete visible catalogue, served from the
+ * shared version-gated cache (see ./shared-catalogue-cache.ts), or — with the kill switch set, or
+ * whenever the shared path fails — reloaded from Postgres at most once per TTL window.
+ *
+ * Both paths return the same thing: the records `loadPostgresListings` produces, in its order, in
+ * a frozen array. Callers cannot tell them apart, and must not need to.
  *
  * Deliberately takes NO limit. A cache keyed on nothing but time must only ever hold one
  * population, and for this route that population is "everything a parent could be shown" — the
@@ -427,7 +455,7 @@ const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>(
  *
  * SHARED-ARRAY INVARIANT — read before you write code against the return value.
  * The SAME array, holding the SAME `ListingRecord` objects, is handed to every concurrent request
- * for up to one TTL. It is therefore READ-ONLY: mutating it, or any record in it, corrupts other
+ * for as long as it is cached. It is therefore READ-ONLY: mutating it, or any record in it, corrupts other
  * in-flight requests and every request for the rest of the window. Two levels of enforcement:
  *   · The array itself is frozen, so `push`/`splice`/an in-place `sort` throws immediately (ESM is
  *     strict mode). In-place sorting a "list of listings" is the realistic mistake here, and it is
@@ -436,16 +464,22 @@ const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>(
  *     every reload, a real cost paid on every request path, to defend against a mutation that
  *     exists nowhere in the repo today. Treat records as immutable; copy before you edit.
  *
- * Set `KIDS_FUN_LISTING_CACHE_MS=0` to disable caching entirely (every call reloads).
+ * INCIDENT LEVERS. `KIDS_FUN_CATALOGUE_SHARED_CACHE=off` returns to the per-instance TTL layer.
+ * `KIDS_FUN_LISTING_CACHE_MS` tunes ONLY that layer — so disabling caching entirely (every call
+ * reloads) now takes both: the kill switch off AND `KIDS_FUN_LISTING_CACHE_MS=0`.
  */
 export async function getCachedPostgresListings(
   pool: Pool,
   now: number = Date.now()
 ): Promise<readonly ListingRecord[]> {
-  return readModelCache.get(async () => Object.freeze(await loadPostgresListings(pool)), now);
+  return sharedCatalogueCache.get(pool, now);
 }
 
-/** Test/ops hook: drop the cached read model so the next access reloads from the DB. */
+/**
+ * Test/ops hook: drop this instance's cached read model (both layers) so the next access goes back
+ * to the shared store or the DB. Does not touch the shared store itself.
+ */
 export function clearPostgresListingsCache(): void {
+  sharedCatalogueCache.clear();
   readModelCache.clear();
 }
