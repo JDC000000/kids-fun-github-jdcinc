@@ -447,6 +447,25 @@ describe('4. safety: kill switch and fallback', () => {
     expectSameRecords(recovered, await directAt(h.db, T0 + PROBE));
   });
 
+  it('recovering releases the fallback copy, so a LATER fallback reloads instead of serving an older catalogue', async () => {
+    // QA 83c6: without `legacy.clear()` on the shared path, a second outage inside the per-instance
+    // TTL served the catalogue from BEFORE the first recovery: older than what was just being
+    // served. That mutation survived the suite.
+    process.env.KIDS_FUN_LISTING_CACHE_MS = String(60 * MIN); // a legacy TTL that outlives the scenario
+    const h = fresh();
+    h.store.failWith = new Error('data cache down');
+    await h.at(T0); // fallback: the legacy layer loads the catalogue as it was
+    h.store.failWith = null;
+    await h.at(T0 + PROBE); // recovered: the shared path serves
+
+    h.db.rows = h.db.rows.filter((r) => !r.id.endsWith('5')); // the listing is taken down
+    h.store.failWith = new Error('data cache down again');
+    const out = await h.at(T0 + 2 * PROBE); // second outage: fallback again
+
+    expect(out.some((l) => l.id.endsWith('5'))).toBe(false);
+    expectSameRecords(out, await directAt(h.db, T0 + 2 * PROBE));
+  });
+
   it('logs a recurring failure once per reason, not once per request', async () => {
     const h = fresh();
     h.store.failWith = new Error('down');

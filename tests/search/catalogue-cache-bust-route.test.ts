@@ -125,6 +125,19 @@ describe('POST /api/admin/catalogue-cache/bust — behaviour', () => {
     expect((await res.json()).ok).toBe(false);
   });
 
+  it('with the kill switch on, a bust still clears THIS instance\'s per-instance copy (it does not just report success)', async () => {
+    // QA 83c6: the route promises that with the kill switch set it "can only clear its own
+    // instance". Without this, dropping the per-instance clear from bustSharedCatalogueCache
+    // survived the whole suite, and a bust would answer 200 while serving the old listing for a TTL.
+    process.env.KIDS_FUN_CATALOGUE_SHARED_CACHE = 'off';
+    expect((await getCachedPostgresListings(state.db.pool)).some((l) => l.id.endsWith('5'))).toBe(true);
+    state.db.rows = state.db.rows.filter((r) => !r.id.endsWith('5')); // the listing is taken down
+    expect((await getCachedPostgresListings(state.db.pool)).some((l) => l.id.endsWith('5'))).toBe(true); // cached
+
+    expect((await route.POST(post({ authorization: `Bearer ${SECRET}` }))).status).toBe(200);
+    expect((await getCachedPostgresListings(state.db.pool)).some((l) => l.id.endsWith('5'))).toBe(false);
+  });
+
   it('with the kill switch on, it says so and reports the per-instance TTL as the real bound', async () => {
     process.env.KIDS_FUN_CATALOGUE_SHARED_CACHE = 'off';
     const body = await (await route.POST(post({ authorization: `Bearer ${SECRET}` }))).json();
