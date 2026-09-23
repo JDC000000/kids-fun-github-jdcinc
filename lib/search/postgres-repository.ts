@@ -360,7 +360,8 @@ function isAgeBandKey(value: string): value is ListingRecord['ageBandMatches'][n
 //     touches only the "finished within the last TTL" edge.
 //   · An operator hiding or cancelling a listing takes up to one TTL to reach search — and every
 //     other surface that reads this cache through lib/search/server-engine.ts (the homepage's
-//     three picks, the SMS instant-picks route, the signup and account pages).
+//     three picks, the SMS instant-picks route, the signup and account pages, and the sparse-area
+//     notice's measurement in lib/sms/sparse-measure.ts — /sms/start and /api/sms/waitlist).
 // DELIBERATELY NOT CACHED: `loadPostgresListingById`. A shared or deep link must always render
 // current truth, and a detail lookup has no scan cost to amortise — so the staleness budget stays
 // confined to the list surface that actually benefits from it.
