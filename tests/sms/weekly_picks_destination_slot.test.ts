@@ -245,6 +245,34 @@ describe('already_linked — nothing changes', () => {
   });
 });
 
+describe('already_linked is judged on the SPREAD order — the text that would actually be sent (pinned choice #9)', () => {
+  it('a destination the baseline spread moves OUT of the named block is NOT "already linked": it is promoted back in', () => {
+    // Pre-spread, the museum is in slot 1. But `spreadNamedSlots` phase 1 (age-band fairness)
+    // vacates slot 1 for the ONLY 10–14 pick, because the museum's bands are covered by the other
+    // two named picks — so in the text that would have been sent, the museum is unlinked. Judging
+    // "already linked" on the pre-spread order would return that baseline and silently ship the
+    // week with no linked destination. Judged on the baseline spread (the pinned choice), it is
+    // promoted and seated in a linked slot, and the 10–14 child keeps a link too.
+    const museum = item('museum', { cat: 'museum_venue' });
+    const selection = [
+      museum,
+      ...ordinary(4),
+      item('teen-only', { bands: ['10-14'] }),
+      ...Array.from({ length: 4 }, (_, i) => item(`r${i}`)),
+    ];
+    const requested: AgeBandKey[] = ['2-4', '5-9', '10-14'];
+    // Precondition — the spread alone really does push the museum out of the links.
+    const baseline = spreadNamedSlots(selection, new Set(), DIRECT_LINK_PICKS, requested);
+    expect(ids(baseline.selection).indexOf('museum')).toBeGreaterThanOrEqual(DIRECT_LINK_PICKS);
+
+    const r = applyDestinationSlot(slotInput(selection, [], { requestedBands: requested }));
+    expect(r.summary.outcome).toBe('promoted');
+    expect(ids(r.selection).indexOf('museum')).toBeLessThan(DIRECT_LINK_PICKS);
+    expect(ids(r.selection).slice(0, DIRECT_LINK_PICKS)).toContain('teen-only');
+    expect([...ids(r.selection)].sort()).toEqual([...ids(selection)].sort()); // still a pure reorder
+  });
+});
+
 describe('promoted — in the ten but unlinked: a pure reorder', () => {
   it('moves it into a linked slot; the ten stay the same ten', () => {
     const selection = [...ordinary(6), item('museum', { cat: 'museum_venue' }), ...ordinary(3).map((x, i) => item(`q${i}`))];
@@ -764,6 +792,42 @@ describe('selectWeeklyPicks — wiring', () => {
     expect(result.diversity.destinationSlot).toMatchObject({ outcome: 'not_applicable', reason: 'interests_exclude_destinations' });
     expect(result.picks.some((p) => p.item.listing.id === 'museum')).toBe(false);
     expect(calls).toHaveLength(1);
+  });
+
+  it('#12 end to end: TWO age-forced picks AND a forced destination coexist — its cap is separate from MAX_FORCED_PICKS', () => {
+    // A 1-, 3-, 7- and 12-year-old. Everything nearby is under-2 only, so the coverage swap spends
+    // its full MAX_FORCED_PICKS (2-4 and 5-9; 10-14 goes without, per its cap). The destination slot
+    // must STILL fire — three picks in the ten are now "forced" in some sense — and must land in the
+    // last linked slot, behind the two age-forced picks, without either of them moving.
+    const toddlers = neighbourhood(12).map((l) => ({ ...l, ageBandMatches: ['under2'] as AgeBandKey[], ageMinMonths: 0, ageMaxMonths: 24 }));
+    const older = (['2-4', '5-9', '10-14'] as AgeBandKey[]).map((band, i) =>
+      kid({
+        id: `old-${band}`,
+        activityName: NAMES[12 + i],
+        venueName: `${NAMES[12 + i]} Hall`,
+        primaryCategoryKey: `older-${i}`,
+        geo: north(5_600 + i * 100),
+        ageBandMatches: [band],
+        ageMinMonths: 24 + i * 36,
+        ageMaxMonths: 60 + i * 36,
+      })
+    );
+    // Under-2 only, so the coverage swap cannot take it for a band of its own.
+    const museum = museumAt('museum', 7_000, { ageBandMatches: ['under2'], ageMinMonths: 0, ageMaxMonths: 24 });
+    const result = selectWeeklyPicks(
+      engineInput([...toddlers, ...older, museum], {
+        subscriber: { origin: { geo: HOME, label: 'East Van' }, radiusKm: 10, birthYears: [2025, 2023, 2019, 2014], consecutiveEmptyWeeks: 0 },
+      })
+    );
+    expect(result.ageBands).toEqual(['under2', '2-4', '5-9', '10-14']);
+    expect(result.forcedPicks.map((f) => f.band)).toEqual(['2-4', '5-9']);
+    expect(result.forcedPicks).toHaveLength(MAX_FORCED_PICKS); // the destination is NOT counted here
+    expect(result.diversity.destinationSlot).toMatchObject({ outcome: 'forced', occurrenceId: 'museum' });
+    expect(result.picks).toHaveLength(MAX_PICKS);
+    const order = result.picks.map((p) => p.item.listing.id);
+    expect(order.slice(0, 3)).toEqual(['old-2-4', 'old-5-9', 'museum']); // age-forced unmoved, destination behind them
+    expect(result.picks.slice(0, 3).every((p) => p.linkOrigin === 'direct')).toBe(true);
+    expect(result.picks.filter((p) => p.forcedForBand).map((p) => p.forcedForBand)).toEqual(['2-4', '5-9']);
   });
 
   it('the novelty exclusion still applies to the destination slot (D5 is untouched, not bypassed)', () => {
