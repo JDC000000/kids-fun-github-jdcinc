@@ -31,7 +31,13 @@ primary_region = "yyz"
   force_https = true
   auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 1
+  # min_machines_running = 0 (changed from 1, 2026-09-23, cost audit): staging is a single-machine
+  # app, so with min=1 it could NEVER suspend regardless of actual traffic (verified: ran
+  # continuously since 2026-07-13, ~72 days, zero stop events). Production avoids this because it
+  # runs 2 machines and can shed the spare; staging has nowhere to shed to. Dropping to 0 lets it
+  # actually suspend to $0 when idle and auto-start on the next real request. Cost was ~$5.92/mo
+  # (shared-cpu-1x/1GB, Fly's published rate) charged continuously regardless of use.
+  min_machines_running = 0
 
   [[http_service.checks]]
     method = "get"
