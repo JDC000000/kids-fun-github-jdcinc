@@ -353,8 +353,8 @@ export async function ingestSource(
         if (ageParse?.resolved) {
           facts.push({ occurrenceId, field: 'age_min_months', sourceUrl: record.sourceUrl, sourceFamily: adapter.family });
         }
-        await recordProvenance(pool, facts);
-        provenanceRows += facts.length;
+        // Counts rows actually written: re-confirmations of an unchanged fact are skipped.
+        provenanceRows += await recordProvenance(pool, facts);
       } catch (err) {
         errors.push(`record ${record.sourceRecordId}: ${errMsg(err)}`);
       }
