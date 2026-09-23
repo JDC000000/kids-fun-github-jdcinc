@@ -107,7 +107,7 @@ export async function probePostgresCatalogueVersion(pool: Pool, cutoff: Date): P
             md5(string_agg(md5((to_jsonb(catalogue) - 'last_checked_at')::text), '' ORDER BY catalogue.id)) AS version
        FROM (
          ${listingSelectSql()}
-         WHERE ${visibleOccurrenceWhereSql('$2::timestamptz')}
+         WHERE ${visibleOccurrenceAtCutoffSql()}
            AND o.status_state::text <> ALL($1::text[])
          ${listingGroupBySql()}
        ) AS catalogue`,
@@ -211,12 +211,35 @@ function normalizeLimit(value: number | undefined): number | null {
  * is correct and unchanged; a row that has a date is judged on that date no matter what else it
  * carries.
  */
-function visibleOccurrenceWhereSql(cutoffSql = 'now()'): string {
+function visibleOccurrenceWhereSql(): string {
   return `o.archived_at IS NULL
        AND (
          (o.start_datetime_utc IS NULL AND o.open_hours_state IS NOT NULL)
-         OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= ${cutoffSql}
+         OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now()
        )`;
+}
+
+/**
+ * `visibleOccurrenceWhereSql` with its `now()` instant replaced by the bound cut-off `$2` — the
+ * version probe's visibility rule (see probePostgresCatalogueVersion).
+ *
+ * DERIVED, NOT COPIED, so the probe can never hash a different set of rows than the load returns:
+ * any change to the predicate reaches both. And `visibleOccurrenceWhereSql` itself stays exactly as
+ * it was, because tests/search/today-window-exhaustion.test.ts pins its body to the `now()`
+ * instant (the JS mirror in occurrence-visibility.ts depends on it). If the predicate is ever
+ * rewritten so that it no longer contains exactly one `>= now()`, this throws — the shared cache
+ * then falls back to the direct load, and tests/search/catalogue-snapshot.test.ts goes red.
+ */
+function visibleOccurrenceAtCutoffSql(): string {
+  const instant = '>= now()';
+  const sql = visibleOccurrenceWhereSql();
+  if (sql.split(instant).length !== 2) {
+    throw new Error(
+      'visibleOccurrenceWhereSql no longer contains exactly one `>= now()`; the catalogue version probe ' +
+        'cannot derive its cut-off predicate from it. Update visibleOccurrenceAtCutoffSql.'
+    );
+  }
+  return sql.replace(instant, '>= $2::timestamptz');
 }
 
 function listingGroupBySql(): string {
