@@ -15,19 +15,28 @@
 //      reload every epoch; ended occurrences leave at once.
 //   4. SAFETY — kill switch, and every failure mode falling back to the direct load with
 //      identical output.
-//   5. CONFIGURATION — env parsing for the three knobs.
+//   5. CONFIGURATION — env parsing for the knobs.
+//   6. JON'S PARAMETERS AND THE MANUAL BUST — the 6 h probe / 24 h floor defaults as they behave,
+//      and the bust that lets an urgent correction skip them.
+//
+// Sections 1-4 run at an explicit SHORT configuration (5 min probe and re-check, 60 min floor): the
+// mechanics are scale-free, and hour-long scenarios are easier to read at that scale. Section 6
+// runs at the real defaults.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 import {
   CATALOGUE_FLOOR_DEFAULT_MS,
   CATALOGUE_PROBE_DEFAULT_MS,
   CATALOGUE_PROBE_MIN_MS,
+  CATALOGUE_RECHECK_DEFAULT_MS,
   FRESHNESS_FLOOR_ENV,
   PROBE_INTERVAL_ENV,
+  RECHECK_INTERVAL_ENV,
   SHARED_CACHE_ENV,
   SharedCatalogueCache,
   catalogueFreshnessFloorMs,
   catalogueProbeIntervalMs,
+  catalogueRecheckIntervalMs,
   resetSharedCatalogueCacheWarnings,
   sharedCatalogueCacheEnabled,
 } from '../../lib/search/shared-catalogue-cache';
@@ -51,13 +60,27 @@ import {
 } from './__support__/catalogue-cache-fakes';
 
 const MIN = 60_000;
-const PROBE = CATALOGUE_PROBE_DEFAULT_MS;
-const FLOOR = CATALOGUE_FLOOR_DEFAULT_MS;
+/** The short mechanics configuration of sections 1-4 (see header). */
+const PROBE = 5 * 60_000;
+const FLOOR = 60 * 60_000;
+const HOUR = 60 * MIN;
 /** 10:05 UTC — five minutes into a floor epoch, so "the same epoch" has room on both sides. */
 const T0 = Date.UTC(2026, 8, 24, 10, 5);
 const EPOCH_END = Date.UTC(2026, 8, 24, 11, 0);
 
-const ENV_VARS = [SHARED_CACHE_ENV, PROBE_INTERVAL_ENV, FRESHNESS_FLOOR_ENV, 'KIDS_FUN_LISTING_CACHE_MS'];
+const ENV_VARS = [SHARED_CACHE_ENV, PROBE_INTERVAL_ENV, FRESHNESS_FLOOR_ENV, RECHECK_INTERVAL_ENV, 'KIDS_FUN_LISTING_CACHE_MS'];
+
+/** Sections 1-4: probe and re-check every 5 minutes, floor 60 minutes. */
+function useShortConfig(): void {
+  process.env[PROBE_INTERVAL_ENV] = String(PROBE);
+  process.env[RECHECK_INTERVAL_ENV] = String(PROBE);
+  process.env[FRESHNESS_FLOOR_ENV] = String(FLOOR);
+}
+
+/** Section 5-6: nothing set, i.e. production's defaults. */
+function useDefaults(): void {
+  for (const v of ENV_VARS) delete process.env[v];
+}
 
 interface Harness {
   cache: SharedCatalogueCache;
@@ -122,6 +145,7 @@ let info: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   for (const v of ENV_VARS) delete process.env[v];
+  useShortConfig();
   resetSharedCatalogueCacheWarnings();
   resetCacheTtlWarnings();
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -493,10 +517,22 @@ describe('4. safety: kill switch and fallback', () => {
 });
 
 describe('5. configuration', () => {
-  it('defaults: on, 5-minute probe, 60-minute floor', () => {
+  beforeEach(useDefaults);
+
+  it("defaults (Jon, 2026-09-23): on, 6-hour probe, 24-hour floor, 1-minute store re-check", () => {
     expect(sharedCatalogueCacheEnabled()).toBe(true);
-    expect(catalogueProbeIntervalMs()).toBe(5 * MIN);
-    expect(catalogueFreshnessFloorMs()).toBe(60 * MIN);
+    expect(catalogueProbeIntervalMs()).toBe(6 * HOUR);
+    expect(catalogueFreshnessFloorMs()).toBe(24 * HOUR);
+    expect(catalogueRecheckIntervalMs()).toBe(MIN);
+  });
+
+  it('the re-check interval is tunable, floored, and never longer than the probe interval', () => {
+    process.env[RECHECK_INTERVAL_ENV] = '0';
+    expect(catalogueRecheckIntervalMs()).toBe(5_000);
+    process.env[RECHECK_INTERVAL_ENV] = String(10 * HOUR);
+    expect(catalogueRecheckIntervalMs()).toBe(6 * HOUR);
+    process.env[PROBE_INTERVAL_ENV] = String(2 * MIN);
+    expect(catalogueRecheckIntervalMs()).toBe(2 * MIN);
   });
 
   it.each(['on', 'ON', 'true', '1'])('%j turns it on', (value) => {
@@ -527,8 +563,133 @@ describe('5. configuration', () => {
   it('a blank or unparseable value uses the default and warns', () => {
     process.env[PROBE_INTERVAL_ENV] = '';
     process.env[FRESHNESS_FLOOR_ENV] = 'an hour';
-    expect(catalogueProbeIntervalMs()).toBe(PROBE);
-    expect(catalogueFreshnessFloorMs()).toBe(FLOOR);
+    expect(catalogueProbeIntervalMs()).toBe(CATALOGUE_PROBE_DEFAULT_MS);
+    expect(catalogueFreshnessFloorMs()).toBe(CATALOGUE_FLOOR_DEFAULT_MS);
     expect(warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("6. Jon's parameters (6 h probe, 24 h floor) and the manual bust", () => {
+  beforeEach(useDefaults);
+
+  const MIDNIGHT = Date.UTC(2026, 8, 25, 0, 0); // the first 24-hour epoch boundary after T0
+  const rename = (h: Harness, name: string) => {
+    h.db.rows = h.db.rows.map((r) => (r.id.endsWith('1') ? { ...r, activity_name: name } : r));
+  };
+  const nameAt = async (h: Harness, now: number) => (await h.at(now)).find((l) => l.id.endsWith('1'))!.activityName;
+
+  it('a warm instance re-reads the shared version every minute, but the DATABASE probe runs once per 6 hours', async () => {
+    const h = fresh();
+    await h.at(T0);
+    const hits = h.store.stats.hits;
+    for (let t = T0 + 30_000; t < T0 + HOUR; t += 30_000) await h.at(t);
+    expect(h.store.stats.hits - hits).toBeGreaterThanOrEqual(55); // ~one cheap store read a minute
+    expect(h.db.counts).toMatchObject({ probes: 1, loads: 1 }); // and nothing at the database
+
+    await h.at(T0 + 6 * HOUR);
+    expect(h.db.counts).toMatchObject({ probes: 2, loads: 1 }); // re-derived; unchanged, so not reloaded
+  });
+
+  it('without a bust, a content change arrives within 6 hours plus ~2 re-checks (stale-while-revalidate store)', async () => {
+    const h = fresh();
+    h.store.staleWhileRevalidate = true;
+    await h.at(T0);
+    rename(h, 'Family Storytime (moved)');
+
+    expect(await nameAt(h, T0 + 6 * HOUR - MIN)).toBe('Family Storytime');
+    await h.at(T0 + 6 * HOUR); // the version entry has expired: served once more, refreshed behind
+    await h.store.settle();
+    expect(await nameAt(h, T0 + 6 * HOUR + 2 * MIN)).toBe('Family Storytime (moved)');
+  });
+
+  it('the 24-hour floor reloads unchanged content at the epoch boundary, not before', async () => {
+    const h = fresh();
+    await h.at(T0);
+    for (let t = T0 + HOUR; t < MIDNIGHT; t += HOUR) await h.at(t);
+    await h.at(MIDNIGHT - 1);
+    expect(h.db.counts.loads).toBe(1);
+    await h.at(MIDNIGHT);
+    expect(h.db.counts.loads).toBe(2);
+  });
+
+  it('epoch jitter is capped at 5 minutes even with a 6-hour probe (the floor stays ~24 h, not 30 h)', async () => {
+    const h = fresh(() => 0.999);
+    await h.at(T0);
+    await h.at(MIDNIGHT + 4 * MIN);
+    expect(h.db.counts.loads).toBe(1); // still inside its (offset) epoch
+    await h.at(MIDNIGHT + 5 * MIN);
+    expect(h.db.counts.loads).toBe(2);
+  });
+
+  it('after a shared-path failure the fallback retries within 5 minutes, not 6 hours', async () => {
+    const h = fresh();
+    h.store.failWith = new Error('down');
+    await h.at(T0);
+    h.store.failWith = null;
+    await h.at(T0 + 5 * MIN - 1);
+    expect(h.legacyCalls.count).toBe(2);
+    await h.at(T0 + 5 * MIN);
+    expect(h.legacyCalls.count).toBe(2); // back on the shared path
+  });
+
+  it.each([
+    ['a file-system-style store (the next read misses)', false, 1],
+    ['a stale-while-revalidate store (Vercel: the old value is served once more)', true, 2],
+  ] as const)('MANUAL BUST with %s: an urgent correction reaches OTHER instances within minutes', async (_label, swr, rechecks) => {
+    const store = createFakeSharedStore();
+    store.staleWhileRevalidate = swr;
+    const db = createStubCatalogPool(catalogueRows(T0));
+    const admin = instance(store, db);
+    const other = instance(store, db);
+    await admin.at(T0);
+    await other.at(T0);
+
+    rename(admin, 'Family Storytime (CANCELLED)'); // the correction lands in the database…
+    expect(await nameAt(other, T0 + 30 * MIN)).toBe('Family Storytime'); // …and a 6 h probe would not see it yet
+
+    await admin.at(T0 + 30 * MIN); // the busting instance is warm and freshly confirmed
+    store.now = T0 + 30 * MIN;
+    await admin.cache.bust();
+    expect(store.invalidations).toBe(1);
+    if (!swr) {
+      // It dropped its own copy, so its very next request serves the correction — no re-check wait.
+      expect(await nameAt(admin, T0 + 30 * MIN + 1_000)).toBe('Family Storytime (CANCELLED)');
+    }
+
+    let seen = '';
+    let t = T0 + 30 * MIN;
+    for (let i = 0; i < rechecks; i += 1) {
+      t += CATALOGUE_RECHECK_DEFAULT_MS;
+      seen = await nameAt(other, t);
+      await store.settle();
+    }
+    expect(seen).toBe('Family Storytime (CANCELLED)');
+    expect(await nameAt(admin, t)).toBe('Family Storytime (CANCELLED)');
+    expectSameRecords(await other.at(t), await directAt(db, t));
+  });
+
+  it('a bust with no data change costs little: the catalogue is not reloaded by instances that already hold it', async () => {
+    const store = createFakeSharedStore();
+    const db = createStubCatalogPool(catalogueRows(T0));
+    const admin = instance(store, db);
+    const others = [instance(store, db, () => 0.3), instance(store, db, () => 0.6)];
+    await admin.at(T0);
+    for (const o of others) await o.at(T0);
+    const loads = db.counts.loads;
+
+    store.now = T0 + MIN;
+    await admin.cache.bust();
+    for (const o of others) await o.at(T0 + 2 * MIN);
+    await admin.at(T0 + 2 * MIN);
+    // One re-probe; the other instances confirm the unchanged version and keep their copy. Only the
+    // busting instance, which dropped its own, re-reads — at most one load in total.
+    expect(db.counts.loads - loads).toBeLessThanOrEqual(1);
+  });
+
+  it('a bust propagates the store failure to its caller (the endpoint answers 500, not a false success)', async () => {
+    const h = fresh();
+    await h.at(T0);
+    h.store.failWith = new Error('data cache down');
+    await expect(h.cache.bust()).rejects.toThrow('data cache down');
   });
 });

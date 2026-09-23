@@ -499,6 +499,18 @@ export async function getCachedPostgresListings(
 }
 
 /**
+ * MANUAL BUST, for the rare correction that cannot wait for the probe cycle (a listing that must
+ * come down or change NOW). Invalidates the shared catalogue entries for every instance and drops
+ * this instance's copies; every instance serves the corrected catalogue within about two re-check
+ * intervals (~2 minutes at the defaults). Must run inside a Next.js route handler or server action.
+ * Exposed as POST /api/admin/catalogue-cache/bust.
+ */
+export async function bustSharedCatalogueCache(): Promise<void> {
+  await sharedCatalogueCache.bust();
+  readModelCache.clear();
+}
+
+/**
  * Test/ops hook: drop this instance's cached read model (both layers) so the next access goes back
  * to the shared store or the DB. Does not touch the shared store itself.
  */

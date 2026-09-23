@@ -28,6 +28,8 @@ export interface FakeSharedStore extends SharedCatalogueStore {
   settle(): Promise<void>;
   /** Rewrite the stored JSON value of every entry whose key contains `fragment`. */
   tamper(fragment: string, edit: (value: Record<string, unknown>) => unknown): number;
+  /** How many times invalidate() (revalidateTag) was called. */
+  invalidations: number;
 }
 
 export function createFakeSharedStore(): FakeSharedStore {
@@ -67,6 +69,19 @@ export function createFakeSharedStore(): FakeSharedStore {
       // Like unstable_cache's miss path: the caller gets the in-memory result, not a round trip.
       return value;
     },
+    // Like revalidateTag on the catalogue tag. With stale-while-revalidate (Vercel's behaviour, as far
+    // as the client can see) every entry is served once more while it recomputes; without it (the
+    // file-system cache) the next read is a miss.
+    async invalidate() {
+      if (store.failWith) throw store.failWith;
+      store.invalidations += 1;
+      if (store.staleWhileRevalidate) {
+        for (const entry of entries.values()) entry.storedAt = Number.NEGATIVE_INFINITY;
+      } else {
+        entries.clear();
+      }
+    },
+    invalidations: 0,
     async settle() {
       while (pending.length) await pending.shift();
     },

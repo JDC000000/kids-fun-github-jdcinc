@@ -19,20 +19,27 @@
 //   2. SNAPSHOT. The catalogue, brotli-compressed (./catalogue-snapshot.ts), stored under
 //      (version, epoch). Whichever instance first misses it loads Postgres once and publishes it;
 //      every other instance, cold start or not, reads it from the store instead of the database.
-// Each instance also keeps the decoded snapshot in memory and re-checks the shared version at most
-// once per probe interval, so a warm instance's steady state costs nothing at all.
+// Each instance also keeps the decoded snapshot in memory and re-reads the shared VERSION ENTRY (a
+// ~100-byte store read, no database) at most once per re-check interval, so a warm instance's steady
+// state costs nothing at the database. The database probe itself runs only when that shared entry
+// expires (once per probe interval, globally) or is busted.
+//
+// ═══ PARAMETERS (Jon, 2026-09-23): PROBE EVERY 6 HOURS, FLOOR 24 HOURS ═══
+// The listings rarely change, and Jon does not want DB load spent on frequent checks. Both remain
+// env-tunable. An urgent correction does not wait for the cycle: see `bust` / the manual-bust
+// endpoint (app/api/admin/catalogue-cache/bust/route.ts), which reaches every instance within about
+// two re-check intervals (~2 minutes).
 //
 // ═══ STALENESS — WHAT THIS TRADES, STATED SO IT CAN BE JUDGED ═══
 //   · CONTENT (a new, edited, hidden, cancelled or archived listing): reaches every surface within
-//     about TWO probe intervals — the shared probe is recomputed once per interval, and an instance
-//     re-reads it once per interval. At the 5-minute default that is ~10 minutes: the same budget
-//     Option A's 10-minute TTL already spent, and Jon approved.
+//     one probe interval plus about two re-check intervals — ~6 hours at the defaults, Jon's call —
+//     or within ~2 minutes of a manual bust.
 //   · ENDED OCCURRENCES: none. The snapshot is pruned against each call's own clock (see
 //     `visibleAt` below), so an occurrence leaves the list the moment it ends — tighter than the
 //     plain TTL cache, which kept ended rows for up to one TTL.
 //   · `last_checked_at` ("checked X ago") and the `official_recent` confidence label computed from
-//     it: up to one freshness floor (60 minutes by default) plus at most one probe interval of
-//     per-instance jitter (below). Every snapshot is keyed to a floor EPOCH, so no snapshot outlives
+//     it: up to one freshness floor (24 hours by default) plus at most five minutes of per-instance
+//     jitter (below). Every snapshot is keyed to a floor EPOCH, so no snapshot outlives
 //     its epoch; this is the backstop that keeps day-scale recency honest when content never changes.
 //
 // ═══ WHY EACH INSTANCE CROSSES AN EPOCH BOUNDARY AT A DIFFERENT MOMENT ═══
@@ -40,8 +47,8 @@
 // time each load Postgres. If every instance changed epoch at the top of the hour, every instance
 // active at that moment would miss together — one full load PER INSTANCE per hour, the per-instance
 // pattern this module exists to remove. So each instance shifts its epoch boundaries by a fixed
-// random offset in [0, probe interval): the earliest instance loads and publishes, and the rest
-// arrive seconds-to-minutes later and find the snapshot already there. (Version changes need no
+// random offset of up to five minutes (never more than the probe interval): the earliest instance
+// loads and publishes, and the rest arrive seconds-to-minutes later and find the snapshot there. (Version changes need no
 // such help: instances re-read the shared probe on their own request-driven schedules, which are
 // already spread out.)
 //
@@ -59,7 +66,7 @@
 // Any failure on the shared path — store unavailable (e.g. outside a Next.js request), store error,
 // probe error, a snapshot that is missing, corrupt, of the wrong version, too old, or too large —
 // falls back to the LEGACY path, i.e. exactly the behaviour before this module (per-instance TTL
-// cache over the direct load), and stays there for one probe interval before retrying. The kill
+// cache over the direct load), and stays there for up to five minutes before retrying. The kill
 // switch `KIDS_FUN_CATALOGUE_SHARED_CACHE=off` forces the legacy path permanently. The returned
 // array has the same shape, the same records and the same frozen-array contract either way.
 import type { Pool } from 'pg';
@@ -80,13 +87,30 @@ import { resolveIntervalMs } from './ttl-cache';
 export const SHARED_CACHE_ENV = 'KIDS_FUN_CATALOGUE_SHARED_CACHE';
 export const PROBE_INTERVAL_ENV = 'KIDS_FUN_CATALOGUE_PROBE_MS';
 export const FRESHNESS_FLOOR_ENV = 'KIDS_FUN_CATALOGUE_FRESHNESS_FLOOR_MS';
+export const RECHECK_INTERVAL_ENV = 'KIDS_FUN_CATALOGUE_RECHECK_MS';
+/** Bearer secret for the manual-bust endpoint (app/api/admin/catalogue-cache/bust/route.ts). */
+export const BUST_SECRET_ENV = 'CATALOGUE_CACHE_BUST_SECRET';
 
-/** 5 minutes: content staleness of ~2 intervals ≈ the 10 minutes already approved for Option A. */
-export const CATALOGUE_PROBE_DEFAULT_MS = 5 * 60_000;
+const HOUR_MS = 60 * 60_000;
+/** 6 hours (Jon, 2026-09-23): the listings rarely change; urgent fixes use the manual bust. */
+export const CATALOGUE_PROBE_DEFAULT_MS = 6 * HOUR_MS;
 /** Every probe is a catalogue-sized query of database CPU; below 30s that stops being a probe. */
 export const CATALOGUE_PROBE_MIN_MS = 30_000;
-export const CATALOGUE_FLOOR_DEFAULT_MS = 60 * 60_000;
+/** 24 hours (Jon, 2026-09-23): the backstop full reload, even when nothing was detected. */
+export const CATALOGUE_FLOOR_DEFAULT_MS = 24 * HOUR_MS;
 export const CATALOGUE_FLOOR_MIN_MS = 60_000;
+/**
+ * How often a warm instance re-reads the SHARED version entry: one ~100-byte store read, no
+ * database. This is what lets a manual bust reach every instance within minutes even though the
+ * database probe runs only every few hours.
+ */
+export const CATALOGUE_RECHECK_DEFAULT_MS = 60_000;
+export const CATALOGUE_RECHECK_MIN_MS = 5_000;
+
+/** Largest per-instance epoch offset. Minutes are enough to de-synchronise a fleet (see header). */
+const MAX_JITTER_MS = 5 * 60_000;
+/** Longest an instance stays on the fallback path after a shared-path failure before retrying. */
+const MAX_FALLBACK_RETRY_MS = 5 * 60_000;
 
 /**
  * How far instance clocks may disagree before a snapshot's age is treated as impossible. The epoch
@@ -128,6 +152,18 @@ export function catalogueFreshnessFloorMs(): number {
   return resolveIntervalMs(FRESHNESS_FLOOR_ENV, CATALOGUE_FLOOR_DEFAULT_MS, CATALOGUE_FLOOR_MIN_MS);
 }
 
+/** Never longer than the probe interval: re-reading the version less often than it can change is pointless. */
+export function catalogueRecheckIntervalMs(): number {
+  const recheck = resolveIntervalMs(RECHECK_INTERVAL_ENV, CATALOGUE_RECHECK_DEFAULT_MS, CATALOGUE_RECHECK_MIN_MS);
+  return Math.min(recheck, catalogueProbeIntervalMs());
+}
+
+/** The manual-bust endpoint's bearer secret, or null when it is not configured. */
+export function catalogueCacheBustSecret(): string | null {
+  const raw = process.env[BUST_SECRET_ENV];
+  return raw && raw.trim() !== '' ? raw.trim() : null;
+}
+
 /**
  * Namespaces every shared key to one deployment. Vercel's Data Cache outlives deployments, and a
  * snapshot is a serialised `ListingRecord[]` — a deploy that changes that shape (a new field, a
@@ -154,6 +190,11 @@ function deploymentNamespace(): string {
  */
 export interface SharedCatalogueStore {
   memo<T>(key: readonly string[], ttlMs: number, compute: () => Promise<T>): Promise<T>;
+  /**
+   * Invalidate EVERY entry `memo` has stored, for every instance. Readers may be served the old
+   * value once more while it refreshes (Next's stale-while-revalidate), never after that.
+   */
+  invalidate(): Promise<void>;
 }
 
 /** The pre-existing per-instance TTL cache over the direct load. The fallback, and the kill-switch path. */
@@ -219,12 +260,13 @@ export class SharedCatalogueCache {
 
     const probeMs = catalogueProbeIntervalMs();
     const floorMs = catalogueFreshnessFloorMs();
-    const jitterMs = Math.floor(this.jitterFraction * Math.min(probeMs, floorMs));
+    const recheckMs = catalogueRecheckIntervalMs();
+    const jitterMs = Math.floor(this.jitterFraction * maxJitterMs(probeMs, floorMs));
     const epoch = Math.floor((now - jitterMs) / floorMs);
 
     const cur = this.current;
     const age = cur ? now - cur.confirmedAt : -1;
-    if (cur && cur.epoch === epoch && age >= 0 && age < probeMs) return visibleAt(cur, now);
+    if (cur && cur.epoch === epoch && age >= 0 && age < recheckMs) return visibleAt(cur, now);
 
     try {
       const next = await this.refresh(pool, now, epoch, probeMs, floorMs);
@@ -232,17 +274,30 @@ export class SharedCatalogueCache {
       this.deps.legacy.clear();
       return visibleAt(next, now);
     } catch (err) {
+      const retryMs = Math.min(probeMs, MAX_FALLBACK_RETRY_MS);
       this.current = null;
       this.fallbackSince = now;
-      this.fallbackUntil = now + probeMs;
+      this.fallbackUntil = now + retryMs;
       const reason = describe(err);
       warnOnce(
         `fallback:${reason}`,
         `[catalogue-cache] shared catalogue cache unavailable (${reason}); serving the direct Postgres load ` +
-          `for the next ${probeMs}ms. Further failures with this reason are not logged again by this instance.`
+          `for the next ${retryMs}ms. Further failures with this reason are not logged again by this instance.`
       );
       return this.deps.legacy.get(pool, now);
     }
+  }
+
+  /**
+   * Manual bust: invalidate the shared version and snapshot entries for every instance, and drop
+   * this instance's copy. Each instance re-reads the shared version within one re-check interval;
+   * the first to find it invalidated re-runs the database probe, and a changed catalogue is reloaded
+   * and republished once. Worst case (a stale-while-revalidate store serving the old version once
+   * more): two re-check intervals.
+   */
+  async bust(): Promise<void> {
+    await this.deps.store.invalidate();
+    this.current = null;
   }
 
   /** Test/ops hook: forget the snapshot and any fallback window. */
@@ -297,11 +352,11 @@ export class SharedCatalogueCache {
     }
 
     // A key is in use for its epoch as seen by EVERY instance: one floor, plus the spread of
-    // instance jitters (< one probe interval), plus clock skew. The store entry must live that long.
+    // instance jitters (at most five minutes), plus clock skew. The store entry must live that long.
     // With only `floorMs`, a late-jittered instance cold-starting near the end of its epoch would
     // find the entry "stale", and Next's stale-while-revalidate would spend a full catalogue load
     // regenerating a key nobody will read again.
-    const keyLifetimeMs = floorMs + Math.min(probeMs, floorMs) + PUBLISH_CLOCK_SKEW_MS;
+    const keyLifetimeMs = floorMs + maxJitterMs(probeMs, floorMs) + PUBLISH_CLOCK_SKEW_MS;
     const encoded = await store.memo<EncodedCatalogueSnapshot>(
       [...namespace, 'snapshot', version],
       keyLifetimeMs,
@@ -333,6 +388,11 @@ export class SharedCatalogueCache {
     );
     return encoded;
   }
+}
+
+/** The spread of instance epoch offsets: at most five minutes, never more than either interval. */
+function maxJitterMs(probeMs: number, floorMs: number): number {
+  return Math.min(probeMs, floorMs, MAX_JITTER_MS);
 }
 
 /**
