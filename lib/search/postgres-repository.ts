@@ -77,6 +77,46 @@ export async function loadPostgresListings(
 }
 
 /**
+ * The catalogue's CONTENT VERSION: a hash, computed inside Postgres, of exactly the rows and
+ * columns `loadPostgresListings` reads — minus `last_checked_at` — for the rows visible at `cutoff`.
+ * ~100 bytes cross the wire instead of the ~8.4MB catalogue. For the shared catalogue cache
+ * (egress Thread 3, Options B + C) to decide whether a reload is needed at all.
+ *
+ * WHY IT REUSES THE LOAD'S OWN SELECT, JOINS AND GROUP BY RATHER THAN HASHING BASE TABLES
+ * So it cannot drift from what the load returns. Every column the read model gains is hashed the
+ * day it is added, with no second list to remember to update; a hash over hand-picked base-table
+ * columns would silently stop seeing changes to anything it forgot. The cost is that one probe is
+ * one catalogue-sized query of database CPU (~0.7s on the current instance) — which is why probes
+ * are rationed to one per interval, globally.
+ *
+ * WHY `last_checked_at` IS EXCLUDED: every crawl bumps it on every row it touches, so a hash that
+ * includes it changes on every crawl and gates nothing (measured, 2026-09-23). Its staleness is
+ * bounded by the cache's freshness floor instead.
+ *
+ * WHY A FIXED `cutoff` AND NOT `now()`: with `now()`, the visible set — and so the hash — changes
+ * every time any occurrence ends, i.e. constantly. With a fixed cut-off at or before every request
+ * the snapshot will serve, the hashed set is a SUPERSET of what any of those requests can see, so
+ * any change to a row they could see changes the hash. Rows that end are dropped per request by
+ * the cache itself, not detected here.
+ */
+export async function probePostgresCatalogueVersion(pool: Pool, cutoff: Date): Promise<string> {
+  const { rows } = await pool.query<{ version: string | null; row_count: number }>(
+    `SELECT count(*)::int AS row_count,
+            md5(string_agg(md5((to_jsonb(catalogue) - 'last_checked_at')::text), '' ORDER BY catalogue.id)) AS version
+       FROM (
+         ${listingSelectSql()}
+         WHERE ${visibleOccurrenceWhereSql('$2::timestamptz')}
+           AND o.status_state::text <> ALL($1::text[])
+         ${listingGroupBySql()}
+       ) AS catalogue`,
+    [HIDDEN_STATUSES, cutoff.toISOString()]
+  );
+  const row = rows[0];
+  // An empty catalogue hashes to NULL; it still needs a version, and one no non-empty hash can equal.
+  return `${row?.row_count ?? 0}:${row?.version ?? 'empty'}`;
+}
+
+/**
  * Load one visible occurrence for the detail page without scanning the whole read model.
  *
  * Deliberately does NOT apply the hidden-status predicate the list query above does. The list path
@@ -169,11 +209,11 @@ function normalizeLimit(value: number | undefined): number | null {
  * is correct and unchanged; a row that has a date is judged on that date no matter what else it
  * carries.
  */
-function visibleOccurrenceWhereSql(): string {
+function visibleOccurrenceWhereSql(cutoffSql = 'now()'): string {
   return `o.archived_at IS NULL
        AND (
          (o.start_datetime_utc IS NULL AND o.open_hours_state IS NOT NULL)
-         OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now()
+         OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= ${cutoffSql}
        )`;
 }
 
