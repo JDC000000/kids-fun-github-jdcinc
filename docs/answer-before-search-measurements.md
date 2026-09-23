@@ -56,8 +56,9 @@ pays, so the true in-process cost sits somewhere well below it. It is quoted bec
 measurement rather than a guess, not because it is the answer.
 
 **What is not measured, and cannot be from this environment:** a cold instance. The catalogue load
-is cached per warm instance (`getCachedPostgresListings`, 60 s TTL) and was measured at 428 ms in
-`postgres-repository.ts`. A static page never paid that on any request; a dynamic one pays it
+is cached per warm instance (`getCachedPostgresListings`; 60 s TTL when this was measured, 10 min
+since 2026-09-23) and was measured at 428 ms in `postgres-repository.ts`. A static page never paid
+that on any request; a dynamic one pays it
 whenever it lands on a cold instance or an expired cache. Somebody should watch this after deploy.
 
 ## 4. The change that is bigger than the latency

@@ -22,6 +22,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 import {
+  LISTING_CACHE_DEFAULT_MS,
   clearPostgresListingsCache,
   getCachedPostgresListings,
 } from '../../lib/search/postgres-repository';
@@ -113,7 +114,7 @@ describe('read-model TTL cache', () => {
     // latency regression that widens as the catalogue grows.
     const { pool, calls } = stubPool(CACHE_TEST_ROWS);
     const a = await getCachedPostgresListings(pool, 1_000);
-    const b = await getCachedPostgresListings(pool, 1_000 + 59_000);
+    const b = await getCachedPostgresListings(pool, 1_000 + LISTING_CACHE_DEFAULT_MS - 1);
 
     expect(calls).toHaveLength(1);
     expect(b).toBe(a); // same objects — which is also what keeps the matcher's WeakMap warm
@@ -122,8 +123,35 @@ describe('read-model TTL cache', () => {
   it('reloads once the TTL has expired', async () => {
     const { pool, calls } = stubPool(CACHE_TEST_ROWS);
     await getCachedPostgresListings(pool, 1_000);
-    await getCachedPostgresListings(pool, 1_000 + 60_001);
+    await getCachedPostgresListings(pool, 1_000 + LISTING_CACHE_DEFAULT_MS);
 
+    expect(calls).toHaveLength(2);
+  });
+
+  // Egress Thread 3, Option A (2026-09-23). The default is 10 minutes, not the 60s its alias and
+  // region neighbours use: this load is the whole catalogue (~8.4MB per reload), re-fetched by
+  // every warm Vercel instance on every expiry. Pinned so a "harmonise the three caches" tidy-up
+  // cannot quietly put the egress back; the staleness it costs was an explicit product decision.
+  it('defaults to a 10-minute TTL', async () => {
+    expect(LISTING_CACHE_DEFAULT_MS).toBe(600_000);
+
+    // Behaviourally, not just the constant: a request past the OLD 60s window is still a hit.
+    const { pool, calls } = stubPool(CACHE_TEST_ROWS);
+    await getCachedPostgresListings(pool, 1_000);
+    await getCachedPostgresListings(pool, 1_000 + 60_001);
+    await getCachedPostgresListings(pool, 1_000 + 9 * 60_000);
+
+    expect(calls).toHaveLength(1);
+  });
+
+  it('KIDS_FUN_LISTING_CACHE_MS still shortens the TTL (the incident lever)', async () => {
+    process.env.KIDS_FUN_LISTING_CACHE_MS = '60000';
+    const { pool, calls } = stubPool(CACHE_TEST_ROWS);
+    await getCachedPostgresListings(pool, 1_000);
+    await getCachedPostgresListings(pool, 1_000 + 59_999);
+    expect(calls).toHaveLength(1);
+
+    await getCachedPostgresListings(pool, 1_000 + 60_000);
     expect(calls).toHaveLength(2);
   });
 
@@ -162,7 +190,9 @@ describe('read-model TTL cache', () => {
 
     const { pool, calls } = stubPool(10);
     await getCachedPostgresListings(pool, 1_000);
-    await getCachedPostgresListings(pool, 1_000 + 59_000); // inside the DEFAULT 60s window
+    // Past a 60s window but inside the listing DEFAULT: proves the fallback is to this cache's own
+    // default, not to some other TTL.
+    await getCachedPostgresListings(pool, 1_000 + LISTING_CACHE_DEFAULT_MS - 1);
 
     expect(calls).toHaveLength(1); // cache still on
     expect(warn).toHaveBeenCalledTimes(1); // and the misconfiguration is diagnosable
