@@ -336,25 +336,44 @@ function isAgeBandKey(value: string): value is ListingRecord['ageBandMatches'][n
 // WHY A TTL CACHE IS THE RIGHT SHAPE HERE
 // It is the pattern this module's two immediate neighbours already use, for the same reason, on
 // the same route: postgres-alias-resolver.ts (KIDS_FUN_ALIAS_CACHE_MS) and
-// postgres-region-hierarchy.ts. Same serverless warm-instance rationale, same env-var shape, same
-// 60s default. Listings do change more often than aliases, which is why the staleness budget is
-// stated explicitly below rather than inherited by analogy.
+// postgres-region-hierarchy.ts. Same serverless warm-instance rationale, same env-var shape.
+// Listings do change more often than aliases, which is why the staleness budget is stated
+// explicitly below rather than inherited by analogy.
+//
+// WHY THIS TTL IS 10 MINUTES WHEN ITS NEIGHBOURS ARE 60s (2026-09-23, egress Thread 3, Option A)
+// The TTL was 60s, like the alias and region caches. But this load is the whole visible catalogue
+// with no LIMIT (~11.5k rows, ~8.4MB on the wire), and every warm Vercel instance reloads it
+// independently on each expiry — so this one cache was the architectural baseline of the Postgres
+// egress bill (~3.5GB/day after the 2026-09-22 search rate limit removed the bot-driven peak). A
+// 10-minute TTL cuts the reloads per warm instance up to 10x (fewer in practice: cold starts
+// still load once, whatever the TTL). The alias and region loads are small and stay at 60s.
+// The cost is the staleness budget below at 10 minutes instead of one. Jon approved that
+// trade explicitly; `KIDS_FUN_LISTING_CACHE_MS` can still shorten (or with `0` disable) it
+// per environment without a code change.
 //
 // WHAT ONE TTL OF STALENESS ACTUALLY COSTS — stated so it can be judged, not assumed:
 //   · A newly ingested activity takes up to one TTL to become searchable. Ingest runs on a
-//     scheduler measured in minutes-to-hours, so a 60s window is far inside the noise.
+//     scheduler measured in minutes-to-hours, so a 10-minute window is inside that cadence.
 //   · `visibleOccurrenceWhereSql` evaluates `now()` in SQL, so a cached model can briefly retain
 //     an occurrence that has just ended. Bounded by the TTL, and activities are hour-scale. The
 //     engine's own date/time filters still run per request against that request's `now`, so this
-//     touches only the "finished within the last minute" edge.
-//   · An operator hiding or cancelling a listing takes up to one TTL to reach search.
+//     touches only the "finished within the last TTL" edge.
+//   · An operator hiding or cancelling a listing takes up to one TTL to reach search — and every
+//     other surface that reads this cache through lib/search/server-engine.ts (the homepage's
+//     three picks, the SMS instant-picks route, the signup and account pages).
 // DELIBERATELY NOT CACHED: `loadPostgresListingById`. A shared or deep link must always render
 // current truth, and a detail lookup has no scan cost to amortise — so the staleness budget stays
 // confined to the list surface that actually benefits from it.
 // See ./ttl-cache for the env-var parsing and the stampede protection this shares with the alias
 // resolver and the region hierarchy. Stampede protection matters most HERE: this is the expensive
 // 8-join catalogue scan, and all three caches go cold together on every deploy and scale-out.
-const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>('KIDS_FUN_LISTING_CACHE_MS', 60_000);
+/** Default TTL of the catalogue read-model cache, when `KIDS_FUN_LISTING_CACHE_MS` is unset. */
+export const LISTING_CACHE_DEFAULT_MS = 10 * 60_000;
+
+const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>(
+  'KIDS_FUN_LISTING_CACHE_MS',
+  LISTING_CACHE_DEFAULT_MS
+);
 
 /**
  * Cached accessor for the search route: the complete visible catalogue, reloaded from Postgres at

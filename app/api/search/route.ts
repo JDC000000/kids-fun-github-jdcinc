@@ -141,7 +141,8 @@ async function searchDatabase(
     // All three load in parallel; a genuine failure of any of them throws to the catch
     // below (→ honest 5xx), which is categorically different from a successful search that
     // simply matched nothing.
-    // All three loads are now cached per warm instance on the same short TTL. The listing read
+    // All three loads are now cached per warm instance on a short TTL (alias/region 60s, listing
+    // read model 10 min — see postgres-repository.ts for why it is longer). The listing read
     // model is the COMPLETE visible catalogue (no pre-search row cap), so reloading it on every
     // invocation made the load the dominant per-request cost — 428ms of a 560ms request against
     // live staging. See lib/search/postgres-repository.ts for the measurements and the staleness
