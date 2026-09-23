@@ -64,6 +64,7 @@ import {
   buildPicksRequest,
   collapseSameOfferingAtVenue,
   dedupeCandidates,
+  destinationSlotSummary,
   matchesInterests,
   preferDropIn,
   sameOfferingAtVenue,
@@ -1066,13 +1067,16 @@ describe('T9 — diversity telemetry on the result payload', () => {
 
   it('is all zeroes when nothing had to be done, including on an EMPTY week', () => {
     const quiet = selectWeeklyPicks(input(thinCatalogue(56, 2), { subscriber: { origin: { geo: HOME, label: 'R' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } }));
-    expect(quiet.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, dropInReordered: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [] });
+    // The destination slot (2026-09-23) is part of the summary too. This catalogue holds no
+    // destination content, so the slot looked inside the radius, made its ONE widened search, and
+    // honestly went unfilled — which changed nothing about the picks.
+    expect(quiet.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, dropInReordered: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [], destinationSlot: destinationSlotSummary({ outcome: 'unfilled', reason: 'no_candidate', widenedSearch: true }) });
 
     // An empty week still carries the summary, describing the attempt that produced the emptiness
     // — a caller reading `diversity` must never have to branch on `outcome` first.
     const empty = selectWeeklyPicks(input([]));
     expect(empty.outcome).toBe('empty');
-    expect(empty.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, dropInReordered: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [] });
+    expect(empty.diversity).toEqual({ sameOfferingCollapsed: 0, venueCapDeferred: 0, categoryCapDeferred: 0, dropInReordered: 0, ageFitBlocked: 0, namedSlotsPermuted: 0, promoted: [], destinationSlot: destinationSlotSummary({ reason: 'empty_week' }) });
   });
 
   it('reports a null distance delta rather than a zero when a card is un-geocoded', () => {

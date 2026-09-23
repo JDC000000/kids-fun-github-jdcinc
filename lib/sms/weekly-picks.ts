@@ -200,6 +200,28 @@ export const DROP_IN_RANK_BOOST = 0.1;
  */
 export const MAX_FORCED_PICKS = 2;
 /**
+ * The activity types that count as a "destination" for the guaranteed destination slot — Jon's
+ * D2 ruling of 2026-09-23 (documents/kids-fun/weekly-picks-destination-slot-PROPOSAL-2026-09-23.md).
+ * A museum, an attraction, a festival or a park: somewhere OUTSIDE a community centre.
+ *
+ * `storytime` IS DELIBERATELY ABSENT (D2). It is library timetable content — the same municipal,
+ * dated provenance this slot exists to counterweight — and there is roughly one row per weekend.
+ * Adding it later is a one-line change, which is why it is a named list rather than a predicate.
+ *
+ * Matched against `primaryCategoryKey` ONLY, the same key every other category rule in this file
+ * uses. `tobogganing` and `miniature_train` are seeded `is_primary_eligible = false`
+ * (lib/sms/interests.ts), so today they can never be a primary key and are listed only so the
+ * set is the one Jon approved verbatim, not a silently trimmed copy of it.
+ */
+export const DESTINATION_CATEGORY_KEYS: readonly string[] = [
+  'museum_venue',
+  'attraction',
+  'festival_event',
+  'outdoor_park',
+  'tobogganing',
+  'miniature_train',
+];
+/**
  * Fallback radius step when the subscriber is already at or beyond the widest standard option.
  * The retry widens by one step of `RADIUS_OPTIONS_KM` (5 → 10 → 20); past 20km there is no next
  * option, so it widens by this instead of silently not widening at all.
@@ -360,6 +382,84 @@ export interface DiversitySummary {
   namedSlotsPermuted: number;
   /** Every promotion, with what it cost in rank and distance. Empty on a normal send. */
   promoted: PromotedPick[];
+  /** What the guaranteed destination slot did on this send. See `applyDestinationSlot`. */
+  destinationSlot: DestinationSlotSummary;
+}
+
+/**
+ * How the destination slot was satisfied, or why it was not.
+ *   'already_linked' — a destination pick was already one of the linked picks. Nothing changed.
+ *   'promoted'       — one was in the ten but unlinked; it was moved into a linked slot (a pure
+ *                      reorder — the ten are the same ten).
+ *   'forced'         — none was in the ten; the best destination candidate inside the
+ *                      subscriber's radius was brought in.
+ *   'forced_widened' — as 'forced', but the candidate came from ONE `widenRadiusKm` step out.
+ *   'unfilled'       — nothing qualified, even one step out. The week sends without one, honestly.
+ *   'not_applicable' — the slot does not apply: an empty week, or stated interests that name no
+ *                      destination type (D3).
+ */
+export type DestinationSlotOutcome =
+  | 'already_linked'
+  | 'promoted'
+  | 'forced'
+  | 'forced_widened'
+  | 'unfilled'
+  | 'not_applicable';
+
+/** Why the slot was `not_applicable` or `unfilled`. Null for every filled outcome. */
+export type DestinationSlotReason =
+  /** The week produced no picks, so there is no text to put a destination in. */
+  | 'empty_week'
+  /** D3: the subscriber stated interests and none of them is a destination type. Their filter wins. */
+  | 'interests_exclude_destinations'
+  /** No destination candidate passed every gate, inside the radius or one step out. */
+  | 'no_candidate'
+  /**
+   * Candidates existed, but none could be seated without breaking a harder rule: every possible
+   * displacement would have orphaned a requested age band (B4) or put a third pick at one venue
+   * (`MAX_PICKS_PER_VENUE`), or every pick in the ten is age-forced.
+   */
+  | 'no_displaceable_pick';
+
+/**
+ * The destination slot's telemetry — this file's standing rule applied to its newest guard: "a
+ * guard nobody can see is a guard nobody can tune". Derived from the run that produced the picks,
+ * never recomputed, like every other field of `DiversitySummary`.
+ */
+export interface DestinationSlotSummary {
+  outcome: DestinationSlotOutcome;
+  reason: DestinationSlotReason | null;
+  /** The destination pick that satisfies the slot. Null when unfilled / not applicable. */
+  occurrenceId: string | null;
+  /** The pick a forced destination pushed out. Null unless 'forced'/'forced_widened' on a FULL week. */
+  displacedOccurrenceId: string | null;
+  /** The destination pick's distance from the subscriber. Null when un-geocoded or unfilled. */
+  distanceKm: number | null;
+  /**
+   * 1-based position of the destination pick in the ranked candidate list it was taken from — the
+   * pipeline's `ordered` list, or the widened search's own `ordered` list for 'forced_widened'.
+   * Measured because this slot deliberately has NO rank cap (proposal §4a); this is the number
+   * that shows how deep it actually had to reach.
+   */
+  rankDepth: number | null;
+  /** The radius of the search the destination pick came from. Null when unfilled / not applicable. */
+  radiusKm: number | null;
+  /** True when the one-step-wider second search actually ran (whether or not it found anything). */
+  widenedSearch: boolean;
+  /** How many requested bands the destination pick covers. Null when unfilled / not applicable. */
+  bandsCovered: number | null;
+  /**
+   * How many requested bands the DISPLACED pick covered. Where this exceeds `bandsCovered`, the
+   * one licensed age-fit cost (B3) was spent. Null when nothing was displaced.
+   */
+  displacedBandsCovered: number | null;
+  /**
+   * B5 — the requested bands the NAMED (linked) block stopped covering because of this slot,
+   * compared with the same send without it. The same meaning, and the same licence, as
+   * `PromotedPick.bandsLost` for Jon's 2026-09-15 phase-0 ruling: the band is still represented
+   * in the ten (B4 guarantees it), what it lost is a direct link.
+   */
+  bandsLost: AgeBandKey[];
 }
 
 /** How far the selection had to degrade. See `WeeklyPicks.degradation`. */
@@ -554,6 +654,33 @@ export function buildPicksRequest(input: WeeklyPicksInput, attempt: Attempt): Se
     radiusKm: widenRadiusKm(baseRadius),
     minResults: 0,
   };
+}
+
+/**
+ * The destination slot's ONE extra search: the request the week's picks came from, one
+ * `widenRadiusKm` step further out, and nothing else changed (proposal §4a point 2).
+ *
+ * BUILT FROM `buildPicksRequest`, SO EVERY RULE THAT FUNCTION ENFORCES CARRIES OVER: the same
+ * origin, the same age bands, `includeRegistration`, the same window, and `minResults: 0` spread
+ * LAST so this request cannot opt out of it either.
+ *
+ * ═══ ONE STEP OUT FROM `radiusKmUsed`, NOT FROM THE SUBSCRIBER'S BASE RADIUS ═══
+ * Pinned implementation choice (proposal §3, "degraded weeks"). On a normal week the attempt's
+ * radius IS the base radius, so this is 10 → 20 km at the default. On a DEGRADED week the picks
+ * already came from the retry (one step out, Sat–Tue window), and this goes one step further
+ * (10 → 20 → 30 km) with the retry's Sat–Tue window. Starting from the base radius instead would
+ * make the step a no-op on exactly the weeks with the least nearby content — and this slot is a
+ * safety net, so the choice that can still find something on a thin week is the right one. It is
+ * still exactly ONE step beyond what the other picks used, never a compounding ladder: the other
+ * nine picks keep the attempt's own radius, and there is no loop here.
+ */
+export function buildDestinationWidenRequest(
+  input: WeeklyPicksInput,
+  attempt: Attempt
+): SearchRequest {
+  const attemptRequest = buildPicksRequest(input, attempt);
+  const radiusKmUsed = attemptRequest.radiusKm ?? DEFAULT_RADIUS_KM;
+  return { ...attemptRequest, radiusKm: widenRadiusKm(radiusKmUsed), minResults: 0 };
 }
 
 // ── Gates ────────────────────────────────────────────────────────────────────
@@ -1417,14 +1544,369 @@ export function spreadNamedSlots(
   return { selection: picks, promoted };
 }
 
+// ── (g) The guaranteed destination slot ──────────────────────────────────────
+
+/** Is this pick a "destination" (D2)? `primaryCategoryKey`, folded exactly as the category caps fold it. */
+export function isDestinationPick(item: SearchResultItem): boolean {
+  const key = item.listing.primaryCategoryKey?.trim().toLowerCase();
+  return !!key && DESTINATION_CATEGORY_KEYS.includes(key);
+}
+
+/**
+ * Does the destination slot apply to a subscriber with these stated interests? (D3)
+ *
+ * No interests = no filter = yes, the same honest reading `matchesInterests` gives an empty
+ * optional field. Interests that name at least one destination type = yes. Interests that name
+ * NONE — a "swim only" parent — = no: their stated filter wins over this product's opinion that
+ * every family should hear about a museum, and the slot is `not_applicable` for them every week.
+ *
+ * Normalised exactly as `matchesInterests` normalises, so the two can never disagree about what a
+ * stored interest says.
+ */
+export function destinationSlotApplies(interests: readonly string[] | null | undefined): boolean {
+  if (!Array.isArray(interests) || interests.length === 0) return true;
+  const wanted = interests.map((i) => i.trim().toLowerCase()).filter(Boolean);
+  if (wanted.length === 0) return true;
+  return wanted.some((key) => DESTINATION_CATEGORY_KEYS.includes(key));
+}
+
+/** A `DestinationSlotSummary` with every fact empty, overridden by `over`. */
+export function destinationSlotSummary(over: Partial<DestinationSlotSummary>): DestinationSlotSummary {
+  return {
+    outcome: 'not_applicable',
+    reason: null,
+    occurrenceId: null,
+    displacedOccurrenceId: null,
+    distanceKm: null,
+    rankDepth: null,
+    radiusKm: null,
+    widenedSearch: false,
+    bandsCovered: null,
+    displacedBandsCovered: null,
+    bandsLost: [],
+    ...over,
+  };
+}
+
+/** The one extra search the slot may make, run lazily — see `DestinationSlotInput.widen`. */
+export interface DestinationWidening {
+  /** The widened search's own `ordered` list: every gate, dedup, novelty and cap applied. */
+  ranked: readonly SearchResultItem[];
+  /** The radius that search used. */
+  radiusKm: number;
+}
+
+export interface DestinationSlotInput {
+  /**
+   * The week's picks AFTER `applyCoverageSwap` and BEFORE `spreadNamedSlots`: age-forced picks at
+   * the front, then the organic picks in rank order. That rank order is what "lowest-ranked" and
+   * "highest-ranked" mean below.
+   */
+  selection: readonly SearchResultItem[];
+  /** The coverage swap's picks. Never displaced, never moved. */
+  ageForcedIds: ReadonlySet<string>;
+  /** The pipeline's own `ordered` list — the same list `applyCoverageSwap` reaches into. */
+  ranked: readonly SearchResultItem[];
+  /** The radius `ranked` was searched at (`radiusKmUsed`). */
+  radiusKm: number;
+  /**
+   * Runs the ONE extra search (`buildDestinationWidenRequest`) and ranks it through the same
+   * pipeline. Called at most once, and only when nothing inside the radius can fill the slot —
+   * so on the normal path the slot costs no extra search at all.
+   */
+  widen: () => DestinationWidening;
+  requestedBands: readonly AgeBandKey[];
+  /** The subscriber's STATED interests — D3, and the forced pick must match them. */
+  interests: readonly string[] | null | undefined;
+  maxPicks: number;
+  sameParentOrg: (a: ListingRecord, b: ListingRecord) => boolean;
+}
+
+export interface DestinationSlotResult {
+  /** The final send order — `spreadNamedSlots` has already run over it. */
+  selection: SearchResultItem[];
+  /** `spreadNamedSlots`' promotions for that final order. */
+  promoted: PromotedPick[];
+  summary: DestinationSlotSummary;
+}
+
+/**
+ * Guarantee that the Friday text carries at least one DESTINATION pick — a museum, attraction,
+ * festival or park — and that it is one of the LINKED picks. Jon's approval of 2026-09-23 (D1–D5),
+ * spec: documents/kids-fun/weekly-picks-destination-slot-PROPOSAL-2026-09-23.md §3 and §4.
+ *
+ * ═══ WHY IT EXISTS ═══
+ * The ranking has a documented provenance bias (see `MAX_PICKS_PER_CATEGORY`): `dateProximity`,
+ * `recency` and `statusConfidenceBoost` all favour automated, dated municipal timetables over
+ * curated destination content. Destination content is ~3.5% of the catalogue and its best
+ * candidate typically sits at rank #20–#36, so on a real Friday a family could get ten community-
+ * centre picks and no museum even with 40 museums within 10 km. Nothing in the pipeline positively
+ * asked for one. This does, once per text.
+ *
+ * ═══ MODELLED CLAUSE BY CLAUSE ON `applyCoverageSwap`, AND WHERE IT DELIBERATELY DIFFERS ═══
+ *   TRIGGER   — no linked pick is a destination (none in the ten, or one is but unlinked).
+ *   CAP       — at most ONE forced/promoted destination per text. It is its own cap and is NOT
+ *               counted against `MAX_FORCED_PICKS`; structurally there is one slot, so there is
+ *               no loop that could spend it twice.
+ *   RANK      — the WHOLE `ranked` list inside the radius, NOT the top `COVERAGE_SWAP_REACH`.
+ *               For destination content a low rank is the provenance bias above, not evidence of
+ *               low relevance, so a rank cap would bake that bias straight back in (§4a). The
+ *               radius is the distance bound.
+ *   GEOGRAPHY — the attempt's radius first; if nothing can fill the slot there, ONE
+ *               `widenRadiusKm` step for this pick only (`buildDestinationWidenRequest`).
+ *   FAILURE   — if nothing qualifies even then, the slot goes unfilled and the week still sends.
+ *               The same honest failure `applyCoverageSwap` accepts.
+ *   DISPLACES — the lowest-ranked NON-age-forced pick whose removal keeps every represented
+ *               requested band represented (B4) and keeps every venue at or under
+ *               `MAX_PICKS_PER_VENUE`. None → unfilled.
+ *   PLACEMENT — directly BEHIND the age-forced picks, not in front of them.
+ *   SPREAD    — the destination pick joins the locked set `spreadNamedSlots` never moves.
+ *
+ * ═══ PLACEMENT: WHY "BEHIND THE AGE-FORCED PICKS" IS ALWAYS LINKED, AND WHAT THAT DEPENDS ON ═══
+ * At most `MAX_FORCED_PICKS` (2) age-forced picks sit in front, so the destination pick lands at
+ * index ≤ 2, which is inside `DIRECT_LINK_PICKS` (3). UNLIKE `applyCoverageSwap`'s front placement,
+ * THAT IS NOT TUNING-INDEPENDENT: it holds only while `MAX_FORCED_PICKS < DIRECT_LINK_PICKS`. The
+ * guard test "GUARD: MAX_FORCED_PICKS < DIRECT_LINK_PICKS" in tests/sms/weekly_picks_destination_slot.test.ts
+ * fails loudly if either constant moves across that line. If it fails, do not just edit the
+ * test: either restore the inequality or move this placement to the front of the selection.
+ *
+ * ═══ THE AGE-FIT RULES (§4b) ═══
+ *   B1 — the destination pick covers ≥1 requested band. The engine's age filter already
+ *        guarantees this for everything in `results`; it is re-checked here so the rule is a
+ *        property of this function rather than of its caller.
+ *   B2 — among qualifying candidates, the one covering the MOST requested bands; ties broken by
+ *        rank in `ranked`. PINNED CHOICE: `ranked` is the pipeline's post-cap `ordered` list — the
+ *        same list `applyCoverageSwap` reaches into — rather than the engine's raw gated order the
+ *        proposal's simulation used. The two pick different destinations for some subscribers
+ *        (short_ref 13, 25 Sep: BC Sports Hall of Fame at 0.9 km vs Harvest Days at 5.0 km);
+ *        independent QA (c8b5) confirmed BOTH satisfy every invariant (destination in a linked
+ *        slot, no band orphaned), so this is chosen for consistency with the mechanism it is
+ *        modelled on: one ranked list per week, meaning one thing.
+ *   B3 — it MAY cover fewer bands than the pick it displaces. The one licensed cost, spent at most
+ *        once per text. Reported as `bandsCovered` vs `displacedBandsCovered`.
+ *   B4 — it may NEVER leave a requested band with zero picks in the ten, and never displaces an
+ *        age-forced pick. "Represented" is judged against what the ten represented BEFORE this
+ *        stage: a band the coverage swap could not fill was not orphaned by this slot, and
+ *        counting it would make every week with one unfillable band an unfilled slot.
+ *   B5 — pushing the only linked pick for a band down to "Also:" is allowed (Jon's 15 Sep phase-0
+ *        licence for named slots) and is reported as `bandsLost`.
+ *
+ * ═══ CANDIDATE ORDER VS DISPLACEMENT ═══
+ * B2 decides the ORDER candidates are tried in; the first one that can be SEATED (a displacement
+ * target exists under B4 and the venue cap) wins. A candidate that cannot be seated without
+ * orphaning a band is skipped rather than ending the search, because a later candidate that covers
+ * that band can be seated where it could not.
+ *
+ * ═══ NEVER THINS A WEEK ═══
+ * On a full week a forced pick displaces exactly one pick; on a SHORT week (fewer than `maxPicks`)
+ * it is ADDED and displaces nothing, exactly as `applyCoverageSwap` does. Promotion is a reorder.
+ * Every other outcome returns the ten untouched. So the pick count never goes down — and the slot
+ * runs only once the week has already cleared the send floor (see `selectWeeklyPicks`), so it can
+ * never change WHETHER a week sends either.
+ *
+ * ═══ "ALREADY LINKED" MEANS LINKED IN THE TEXT THAT WOULD HAVE BEEN SENT ═══
+ * The check runs on the baseline `spreadNamedSlots` output, not on the pre-spread order, because
+ * that pass can move an unlocked pick into or out of the named block. When the baseline already
+ * links a destination, the baseline IS the result, byte for byte — the proposal's "nothing
+ * changes" promise, kept literally rather than approximately.
+ */
+export function applyDestinationSlot(input: DestinationSlotInput): DestinationSlotResult {
+  const { selection, ageForcedIds, ranked, requestedBands, interests, maxPicks, sameParentOrg } =
+    input;
+  const baseline = spreadNamedSlots(selection, ageForcedIds, DIRECT_LINK_PICKS, requestedBands);
+
+  const unchanged = (summary: DestinationSlotSummary): DestinationSlotResult => ({
+    selection: baseline.selection,
+    promoted: baseline.promoted,
+    summary,
+  });
+
+  if (!destinationSlotApplies(interests)) {
+    return unchanged(destinationSlotSummary({ reason: 'interests_exclude_destinations' }));
+  }
+
+  // One predicate for every route in: a destination type, inside the subscriber's stated
+  // interests, and (B1) serving at least one of their children.
+  const qualifies = (item: SearchResultItem): boolean =>
+    isDestinationPick(item) &&
+    matchesInterests(item.listing, interests) &&
+    (requestedBands.length === 0 || bandsCovered(item, requestedBands) > 0);
+
+  const rankIn = (list: readonly SearchResultItem[], item: SearchResultItem): number | null => {
+    const index = list.findIndex((other) => other.listing.id === item.listing.id);
+    return index === -1 ? null : index + 1;
+  };
+  const filledFacts = (item: SearchResultItem, list: readonly SearchResultItem[], radiusKm: number) => ({
+    occurrenceId: item.listing.id,
+    distanceKm: item.distanceKm ?? null,
+    rankDepth: rankIn(list, item),
+    radiusKm,
+    bandsCovered: bandsCovered(item, requestedBands),
+  });
+
+  // ── (1) ALREADY LINKED — nothing changes. ──
+  const linked = baseline.selection.slice(0, DIRECT_LINK_PICKS).find(qualifies);
+  if (linked) {
+    return unchanged(destinationSlotSummary({ outcome: 'already_linked', ...filledFacts(linked, ranked, input.radiusKm) }));
+  }
+
+  const ageForcedCount = selection.filter((item) => ageForcedIds.has(item.listing.id)).length;
+
+  /** Seat `destination` at `ageForcedCount`, lock it, and re-run the named-slot spread around it. */
+  const seat = (
+    picks: SearchResultItem[],
+    destination: SearchResultItem,
+    over: Partial<DestinationSlotSummary>
+  ): DestinationSlotResult => {
+    picks.splice(ageForcedCount, 0, destination);
+    const locked = new Set([...ageForcedIds, destination.listing.id]);
+    const final = spreadNamedSlots(picks, locked, DIRECT_LINK_PICKS, requestedBands);
+    const namedBands = (items: readonly SearchResultItem[]) =>
+      new Set(items.slice(0, DIRECT_LINK_PICKS).flatMap((item) => item.listing.ageBandMatches));
+    const before = namedBands(baseline.selection);
+    const after = namedBands(final.selection);
+    return {
+      selection: final.selection,
+      promoted: final.promoted,
+      summary: destinationSlotSummary({
+        ...over,
+        bandsLost: requestedBands.filter((band) => before.has(band) && !after.has(band)),
+      }),
+    };
+  };
+
+  // ── (2) PROMOTED — in the ten but unlinked. A pure reorder: the ten stay the same ten. ──
+  // `selection` is in rank order behind the age-forced picks, so the FIRST qualifying entry is the
+  // highest-ranked one — the pinned rule when more than one unlinked destination is in the ten.
+  const unlinked = selection.find(qualifies);
+  if (unlinked) {
+    return seat(
+      selection.filter((item) => item !== unlinked),
+      unlinked,
+      { outcome: 'promoted', ...filledFacts(unlinked, ranked, input.radiusKm) }
+    );
+  }
+
+  // ── (3) FORCED — none in the ten. ──
+  const representedBefore = new Set(
+    requestedBands.filter((band) => bandsRepresented(selection).has(band))
+  );
+  const venueRoomFor = (others: readonly SearchResultItem[], candidate: SearchResultItem) => {
+    const venue = venueIdentity(candidate.listing.venueName);
+    if (venue == null) return true; // an unnamed venue is the absence of a fact, not a venue
+    return others.filter((o) => venueIdentity(o.listing.venueName) === venue).length < MAX_PICKS_PER_VENUE;
+  };
+
+  /**
+   * Where `candidate` can go: `null` victim = add without displacing (short week); a number = the
+   * index it displaces; `undefined` = it cannot be seated at all.
+   */
+  const placementFor = (candidate: SearchResultItem): { victimIndex: number | null } | undefined => {
+    if (selection.length < maxPicks) {
+      return venueRoomFor(selection, candidate) ? { victimIndex: null } : undefined;
+    }
+    // Lowest-ranked first: scan from the end, skipping the age-forced picks at the front.
+    for (let i = selection.length - 1; i >= 0; i -= 1) {
+      if (ageForcedIds.has(selection[i].listing.id)) continue; // B4: never an age-forced pick
+      const rest = selection.filter((_, k) => k !== i);
+      const after = bandsRepresented([...rest, candidate]);
+      if ([...representedBefore].some((band) => !after.has(band))) continue; // B4: no orphaned band
+      if (!venueRoomFor(rest, candidate)) continue; // never a third pick at one venue
+      return { victimIndex: i };
+    }
+    return undefined;
+  };
+
+  const selectedIds = new Set(selection.map((item) => item.listing.id));
+  let sawCandidate = false;
+  const tryForce = (list: readonly SearchResultItem[]) => {
+    const candidates = list
+      .map((item, index) => ({ item, index }))
+      .filter(
+        ({ item }) =>
+          !selectedIds.has(item.listing.id) &&
+          qualifies(item) &&
+          // A widened list was deduped against ITSELF, not against this week's ten; re-apply both
+          // collapse rules so the slot can never seat a second sitting of something already here.
+          !selection.some(
+            (pick) =>
+              isDuplicatePair(pick, item, sameParentOrg) || sameOfferingAtVenue(pick, item, sameParentOrg)
+          )
+      )
+      // B2: most requested bands first; ties by rank in this list. `sort` is stable, but the
+      // index tiebreak is explicit so the rule does not rest on that.
+      .sort(
+        (a, b) =>
+          bandsCovered(b.item, requestedBands) - bandsCovered(a.item, requestedBands) || a.index - b.index
+      );
+    if (candidates.length > 0) sawCandidate = true;
+    for (const { item } of candidates) {
+      const placement = placementFor(item);
+      if (placement) return { candidate: item, victimIndex: placement.victimIndex };
+    }
+    return null;
+  };
+
+  const force = (
+    outcome: 'forced' | 'forced_widened',
+    found: { candidate: SearchResultItem; victimIndex: number | null },
+    list: readonly SearchResultItem[],
+    radiusKm: number,
+    widenedSearch: boolean
+  ): DestinationSlotResult => {
+    const picks = [...selection];
+    const displaced = found.victimIndex == null ? null : picks[found.victimIndex];
+    if (found.victimIndex != null) picks.splice(found.victimIndex, 1);
+    return seat(picks, found.candidate, {
+      outcome,
+      ...filledFacts(found.candidate, list, radiusKm),
+      widenedSearch,
+      displacedOccurrenceId: displaced?.listing.id ?? null,
+      displacedBandsCovered: displaced ? bandsCovered(displaced, requestedBands) : null,
+    });
+  };
+
+  const inside = tryForce(ranked);
+  if (inside) return force('forced', inside, ranked, input.radiusKm, false);
+
+  const widened = input.widen();
+  const outside = tryForce(widened.ranked);
+  if (outside) return force('forced_widened', outside, widened.ranked, widened.radiusKm, true);
+
+  return unchanged(
+    destinationSlotSummary({
+      outcome: 'unfilled',
+      reason: sawCandidate ? 'no_displaceable_pick' : 'no_candidate',
+      widenedSearch: true,
+    })
+  );
+}
+
 // ── The pipeline ─────────────────────────────────────────────────────────────
 
-interface AttemptResult {
-  selection: SearchResultItem[];
-  forced: ForcedPick[];
+/** The diversity counters the RANKING stages produce — everything but the named-slot and destination telemetry. */
+type RankingCounters = Omit<DiversitySummary, 'namedSlotsPermuted' | 'promoted' | 'destinationSlot'>;
+
+interface RankedCandidates {
+  /** The single ranked list the selection is cut from and every reach-past-the-cut stage reaches into. */
+  ordered: SearchResultItem[];
   collapsed: number;
   novelExcluded: number;
-  diversity: DiversitySummary;
+  counters: RankingCounters;
+}
+
+interface AttemptResult {
+  /**
+   * AFTER the coverage swap and BEFORE `spreadNamedSlots` — the order `applyDestinationSlot` needs.
+   * The named-slot spread runs once the degradation ladder has settled which attempt is sent (see
+   * `selectWeeklyPicks`); it is a permutation, so the floor check reads the same length either way.
+   */
+  selection: SearchResultItem[];
+  forced: ForcedPick[];
+  ordered: SearchResultItem[];
+  collapsed: number;
+  novelExcluded: number;
+  counters: RankingCounters;
 }
 
 /**
@@ -1440,6 +1922,36 @@ function selectFrom(
   bands: AgeBandKey[],
   applyInterests: boolean
 ): AttemptResult {
+  const maxPicks = input.maxPicks ?? MAX_PICKS;
+  const { ordered, collapsed, novelExcluded, counters } = rankCandidates(
+    response,
+    input,
+    bands,
+    applyInterests
+  );
+
+  // `ordered` is the single ranked list from here on — it is what the selection is taken from AND
+  // what the coverage swap reaches into, so "the top 20" means one thing rather than two. The
+  // destination slot reaches into the same list, for the same reason.
+  const { selection, forced } = applyCoverageSwap(ordered.slice(0, maxPicks), ordered, bands, maxPicks);
+
+  return { selection, forced, ordered, collapsed, novelExcluded, counters };
+}
+
+/**
+ * Gates → dedup → same-offering collapse → novelty → drop-in preference → venue cap → category
+ * cap: one search response in, the single ranked candidate list out.
+ *
+ * Its own function (it used to be the first half of `selectFrom`) so the destination slot's ONE
+ * widened search is ranked by exactly the same code as the week's own search — every gate, the
+ * novelty exclusion and both caps included — rather than by a second copy that could drift.
+ */
+function rankCandidates(
+  response: ReturnType<SearchEngine['search']>,
+  input: WeeklyPicksInput,
+  bands: AgeBandKey[],
+  applyInterests: boolean
+): RankedCandidates {
   const sameParentOrg = input.sameParentOrg ?? (() => false);
   const maxPicks = input.maxPicks ?? MAX_PICKS;
 
@@ -1513,37 +2025,20 @@ function selectFrom(
     ageFitBlocked += 1;
   });
   const beforeCategoryCap = new Set(venueOrdered.slice(0, maxPicks).map((item) => item.listing.id));
-  const afterCap = ordered.slice(0, maxPicks);
-  const categoryCapDeferred = afterCap.filter((item) => !beforeCategoryCap.has(item.listing.id)).length;
-
-  // `ordered` is the single ranked list from here on — it is what the selection is taken from AND
-  // what the coverage swap reaches into, so "the top 20" means one thing rather than two.
-  const { selection, forced } = applyCoverageSwap(afterCap, ordered, bands, maxPicks);
-
-  // ── NAMED-SLOT SPREAD — AGE BANDS FIRST, THEN VENUES (2026-09-10 / 2026-09-11) ──────
-  // AFTER the coverage swap, and moving none of what the swap forced — see `spreadNamedSlots`.
-  // A pure permutation of what is already chosen.
-  const forcedIds = new Set(forced.map((f) => f.occurrenceId));
-  const { selection: spread, promoted } = spreadNamedSlots(
-    selection,
-    forcedIds,
-    DIRECT_LINK_PICKS,
-    bands
-  );
+  const categoryCapDeferred = ordered
+    .slice(0, maxPicks)
+    .filter((item) => !beforeCategoryCap.has(item.listing.id)).length;
 
   return {
-    selection: spread,
-    forced,
+    ordered,
     collapsed,
     novelExcluded,
-    diversity: {
+    counters: {
       sameOfferingCollapsed,
       venueCapDeferred,
       categoryCapDeferred,
       dropInReordered,
       ageFitBlocked,
-      namedSlotsPermuted: promoted.length,
-      promoted,
     },
   };
 }
@@ -1583,6 +2078,10 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
   const primaryRequest = buildPicksRequest(input, 'primary');
   const primaryResponse = input.engine.search(primaryRequest);
   let attempt = selectFrom(primaryResponse, input, bands, true);
+  // Which attempt the week's picks come from, and whether it applied interests — the destination
+  // slot's one widened search asks THAT question again, one step further out.
+  let attemptKind: Attempt = 'primary';
+  let attemptAppliedInterests = true;
 
   let degradation: Degradation = 'none';
   let radiusKmUsed = primaryRequest.radiusKm ?? DEFAULT_RADIUS_KM;
@@ -1600,6 +2099,7 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
     // construction (wider radius, wider window, same filters), so merging could only ever
     // reintroduce candidates the retry's own dedup pass had already collapsed.
     attempt = selectFrom(retryResponse, input, bands, true);
+    attemptKind = 'retry';
 
     // NOTE: the novelty exclusion is NOT relaxed by either step. `selectFrom` reads it from the
     // input unconditionally, so there is no branch a retry could take that skips it — PRD v2.8
@@ -1615,14 +2115,21 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
     if (attempt.selection.length < floor && hasInterests) {
       degradation = 'widened_and_interests_dropped';
       attempt = selectFrom(retryResponse, input, bands, false);
+      attemptKind = 'retry_without_interests';
+      attemptAppliedInterests = false;
     }
   }
 
   const reached = { primary: primaryReached, retry: retryReached };
   const retried = degradation !== 'none';
   const interestsDropped = degradation === 'widened_and_interests_dropped';
+  const forcedIds = new Set(attempt.forced.map((f) => f.occurrenceId));
 
   if (attempt.selection.length < floor) {
+    // The named-slot spread still runs on an empty week so its telemetry describes the attempt
+    // that produced the emptiness, exactly as it did before the destination slot existed. The
+    // slot itself does not run: there is no text to put a destination in.
+    const { promoted } = spreadNamedSlots(attempt.selection, forcedIds, DIRECT_LINK_PICKS, bands);
     const lastReached = retryReached ?? primaryReached;
     return {
       outcome: 'empty',
@@ -1638,13 +2145,46 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
       forcedPicks: attempt.forced,
       deduped: attempt.collapsed,
       novelExcluded: attempt.novelExcluded,
-      diversity: attempt.diversity,
+      diversity: {
+        ...attempt.counters,
+        namedSlotsPermuted: promoted.length,
+        promoted,
+        destinationSlot: destinationSlotSummary({ reason: 'empty_week' }),
+      },
       shouldPause: input.subscriber.consecutiveEmptyWeeks + 1 >= 3,
     };
   }
 
+  // ── THE DESTINATION SLOT, THEN THE NAMED-SLOT SPREAD (2026-09-23) ──────────────────
+  // AFTER the degradation ladder, not inside `selectFrom`, and that placement is a rule: the slot
+  // must never decide WHETHER a week sends. Run inside an attempt, a short-week ADD could lift a
+  // two-pick week over the floor and skip the retry the PRD requires. Run here, the floor and the
+  // ladder see exactly the picks they saw before this slot existed.
+  //
+  // `applyDestinationSlot` runs `spreadNamedSlots` itself (AFTER the coverage swap and moving none
+  // of what the swap forced, exactly as before), because it has to see the spread's result to know
+  // whether a destination is already linked — see its header.
+  const destination = applyDestinationSlot({
+    selection: attempt.selection,
+    ageForcedIds: forcedIds,
+    ranked: attempt.ordered,
+    radiusKm: radiusKmUsed,
+    widen: () => {
+      const widenRequest = buildDestinationWidenRequest(input, attemptKind);
+      const widenResponse = input.engine.search(widenRequest);
+      return {
+        ranked: rankCandidates(widenResponse, input, bands, attemptAppliedInterests).ordered,
+        radiusKm: widenRequest.radiusKm ?? radiusKmUsed,
+      };
+    },
+    requestedBands: bands,
+    interests: input.subscriber.categoryInterests,
+    maxPicks: input.maxPicks ?? MAX_PICKS,
+    sameParentOrg: input.sameParentOrg ?? (() => false),
+  });
+
   const forcedByListing = new Map(attempt.forced.map((f) => [f.occurrenceId, f.band]));
-  const picks: WeeklyPick[] = attempt.selection.map((item, index) => {
+  const picks: WeeklyPick[] = destination.selection.map((item, index) => {
     const forcedForBand = forcedByListing.get(item.listing.id);
     return {
       item,
@@ -1669,7 +2209,12 @@ export function selectWeeklyPicks(input: WeeklyPicksInput): WeeklyPicks {
     forcedPicks: attempt.forced,
     deduped: attempt.collapsed,
     novelExcluded: attempt.novelExcluded,
-    diversity: attempt.diversity,
+    diversity: {
+      ...attempt.counters,
+      namedSlotsPermuted: destination.promoted.length,
+      promoted: destination.promoted,
+      destinationSlot: destination.summary,
+    },
     shouldPause: false,
   };
 }

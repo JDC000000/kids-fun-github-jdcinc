@@ -142,6 +142,19 @@ async function main(): Promise<void> {
         `categoryCapDeferred=${d.categoryCapDeferred} dropInReordered=${d.dropInReordered} ` +
         `ageFitBlocked=${d.ageFitBlocked} namedSlotsPermuted=${d.namedSlotsPermuted}`
     );
+    // The guaranteed destination slot (2026-09-23): which of its six outcomes fired, and what the
+    // pick it seated cost. Printed on every send for the same reason as everything above it.
+    const ds = d.destinationSlot;
+    console.log(
+      `destinationSlot: ${ds.outcome}${ds.reason ? ` (${ds.reason})` : ''}` +
+        (ds.occurrenceId
+          ? ` ${ds.occurrenceId} distance ${ds.distanceKm == null ? 'n/a' : `${ds.distanceKm.toFixed(1)}km`} ` +
+            `rankDepth #${ds.rankDepth ?? '?'} radius ${ds.radiusKm}km bands ${ds.bandsCovered}` +
+            (ds.displacedOccurrenceId ? ` displaced ${ds.displacedOccurrenceId} (bands ${ds.displacedBandsCovered})` : '') +
+            ` bandsLost [${ds.bandsLost.join(',')}]`
+          : '') +
+        (ds.widenedSearch ? ' [widened search ran]' : '')
+    );
     for (const p of d.promoted) {
       console.log(
         `  promoted[${p.reason}] ${p.occurrenceId} → slot ${p.toIndex} (from ${p.fromIndex}, rankDelta ${p.rankDelta}), ` +
