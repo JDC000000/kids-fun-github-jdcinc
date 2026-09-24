@@ -57,6 +57,30 @@ export function resolveCacheTtlMs(envVar: string, defaultMs: number): number {
   return parsed;
 }
 
+/**
+ * Parse an INTERVAL from the environment: like `resolveCacheTtlMs`, except that there is no
+ * "disabled" value. Anything below `minMs` — `0` included — is raised to `minMs`, with the same
+ * one-time warning.
+ *
+ * For a tunable whose small values are not a switch but a hazard. The shared catalogue cache's
+ * probe interval is the case in point (lib/search/shared-catalogue-cache.ts): each probe costs
+ * one catalogue-sized query of database CPU, so `0` read as "probe on every request" would turn an
+ * egress fix into a per-request full scan. Its kill switch is a separate, explicit variable.
+ */
+export function resolveIntervalMs(envVar: string, defaultMs: number, minMs: number): number {
+  const ms = resolveCacheTtlMs(envVar, defaultMs);
+  if (ms >= minMs) return ms;
+  const key = `${envVar}=${process.env[envVar]}<min`;
+  if (!warnedFor.has(key)) {
+    warnedFor.add(key);
+    console.warn(
+      `[search-cache] ${envVar} is set to ${JSON.stringify(process.env[envVar])}, below its ${minMs}ms minimum. ` +
+        `Using ${minMs}ms.`
+    );
+  }
+  return minMs;
+}
+
 /** Test-only hook: forget which bad env values have already been warned about. */
 export function resetCacheTtlWarnings(): void {
   warnedFor.clear();

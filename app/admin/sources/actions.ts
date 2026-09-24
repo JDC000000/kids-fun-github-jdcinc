@@ -11,6 +11,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { resolveSessionAdmin } from '../_lib/gate';
+import { bustCatalogueAfterAdminWrite } from '@/lib/search/catalogue-write-bust';
 import { parseSourceInput, type SourceFieldErrors } from './_lib/vocab';
 import { createSource, updateSource, getSourceById, SourceConflictError } from './_lib/data';
 
@@ -78,6 +79,9 @@ export async function saveSourceAction(formData: FormData): Promise<SourceAction
     return { ok: false, message: 'Something went wrong saving the source. Nothing was changed.' };
   }
 
+  // Only an UPDATE can change what listings show (source.name, authority_tier); a new source has
+  // no listings yet. See lib/search/catalogue-write-bust.ts.
+  if (id) await bustCatalogueAfterAdminWrite('source.update');
   revalidatePath('/admin/sources');
   redirect(`/admin/sources?flash=${id ? 'source-updated' : 'source-created'}`);
 }

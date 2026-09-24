@@ -7,6 +7,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { resolveSessionAdmin } from '../_lib/gate';
+import { bustCatalogueAfterAdminWrite } from '@/lib/search/catalogue-write-bust';
 import { parseResolveInput, type ResolveFieldErrors } from './_lib/vocab';
 import { resolveCorrection } from './_lib/data';
 
@@ -61,6 +62,7 @@ export async function resolveCorrectionAction(formData: FormData): Promise<Resol
     };
   }
 
+  await bustCatalogueAfterAdminWrite('correction.resolve');
   revalidatePath('/admin/corrections');
   redirect('/admin/corrections?flash=correction-resolved');
 }

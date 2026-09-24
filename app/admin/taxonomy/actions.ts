@@ -12,6 +12,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { resolveSessionAdmin } from '../_lib/gate';
+import { bustCatalogueAfterAdminWrite } from '@/lib/search/catalogue-write-bust';
 import {
   parseRegionInput,
   parseCategoryInput,
@@ -118,6 +119,9 @@ export async function saveCategoryAction(formData: FormData): Promise<CategoryAc
     return { ok: false, message: 'Something went wrong saving the category. Nothing was changed.' };
   }
 
+  // Only an UPDATE can change what listings show (category.key); regions and aliases have their own
+  // short caches and never reach the catalogue snapshot. See lib/search/catalogue-write-bust.ts.
+  if (id) await bustCatalogueAfterAdminWrite('category.update');
   revalidatePath('/admin/taxonomy');
   redirect(`/admin/taxonomy?flash=${id ? 'category-updated' : 'category-created'}`);
 }

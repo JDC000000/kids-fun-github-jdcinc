@@ -8,6 +8,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { resolveSessionAdmin } from '../_lib/gate';
+import { bustCatalogueAfterAdminWrite } from '@/lib/search/catalogue-write-bust';
 import { isReviewIntent, isDedupIntent, parseReviewNote, parseQueuePageParam } from './_lib/vocab';
 import { reviewOccurrence, confirmDedupMerge, rejectDedupPair } from './_lib/data';
 
@@ -70,6 +71,7 @@ export async function reviewAction(formData: FormData): Promise<ReviewActionStat
     };
   }
 
+  await bustCatalogueAfterAdminWrite(`qa.${intent}`);
   revalidatePath('/admin/qa-queue');
   redirect(queueRedirect(formData, intent === 'confirm' ? 'confirmed' : 'rejected'));
 }
@@ -116,6 +118,7 @@ export async function dedupReviewAction(formData: FormData): Promise<ReviewActio
               : 'That record was already handled by someone else — reload the queue.',
       };
     }
+    await bustCatalogueAfterAdminWrite('qa.dedup_merge');
     revalidatePath('/admin/qa-queue');
     redirect(queueRedirect(formData, 'merged'));
   }
@@ -145,6 +148,7 @@ export async function dedupReviewAction(formData: FormData): Promise<ReviewActio
           : 'That record was already handled by someone else — reload the queue.',
     };
   }
+  await bustCatalogueAfterAdminWrite('qa.dedup_keep_separate');
   revalidatePath('/admin/qa-queue');
   redirect(queueRedirect(formData, 'kept_separate'));
 }

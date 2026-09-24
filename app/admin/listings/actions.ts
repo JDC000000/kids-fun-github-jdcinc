@@ -6,6 +6,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { resolveSessionAdmin } from '../_lib/gate';
+import { bustCatalogueAfterAdminWrite } from '@/lib/search/catalogue-write-bust';
 import { parseManualListingInput, type ManualListingFieldErrors } from './_lib/vocab';
 import { createManualListing, ManualListingError } from './_lib/data';
 
@@ -59,6 +60,7 @@ export async function createManualListingAction(formData: FormData): Promise<Man
     return { ok: false, message: 'Something went wrong saving the listing. Nothing was created.' };
   }
 
+  await bustCatalogueAfterAdminWrite('listing.create');
   revalidatePath('/admin/listings/new');
   redirect(`/admin/listings/new?flash=listing-created&id=${result.occurrenceId}`);
 }

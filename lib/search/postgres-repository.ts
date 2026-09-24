@@ -7,6 +7,8 @@ import { HIDDEN_STATUSES } from './filters/status';
 import { INDOOR_CATEGORY_KEYS, indoorTextVerdict } from './indoor';
 import type { ConfidenceLabel, CostStatus, ListingRecord, StatusState } from './types';
 import { TtlPromiseCache } from './ttl-cache';
+import { SharedCatalogueCache } from './shared-catalogue-cache';
+import { nextDataCacheStore } from './next-data-cache-store';
 
 interface ListingRow {
   id: string;
@@ -74,6 +76,46 @@ export async function loadPostgresListings(
   );
 
   return rows.map(rowToListing);
+}
+
+/**
+ * The catalogue's CONTENT VERSION: a hash, computed inside Postgres, of exactly the rows and
+ * columns `loadPostgresListings` reads — minus `last_checked_at` — for the rows visible at `cutoff`.
+ * ~100 bytes cross the wire instead of the ~8.4MB catalogue. Consumed by the shared catalogue
+ * cache (./shared-catalogue-cache.ts) to decide whether a reload is needed at all.
+ *
+ * WHY IT REUSES THE LOAD'S OWN SELECT, JOINS AND GROUP BY RATHER THAN HASHING BASE TABLES
+ * So it cannot drift from what the load returns. Every column the read model gains is hashed the
+ * day it is added, with no second list to remember to update; a hash over hand-picked base-table
+ * columns would silently stop seeing changes to anything it forgot. The cost is that one probe is
+ * one catalogue-sized query of database CPU (~0.7s on the current instance) — which is why probes
+ * are rationed to one per interval, globally.
+ *
+ * WHY `last_checked_at` IS EXCLUDED: every crawl bumps it on every row it touches, so a hash that
+ * includes it changes on every crawl and gates nothing (measured, 2026-09-23). Its staleness is
+ * bounded by the cache's freshness floor instead.
+ *
+ * WHY A FIXED `cutoff` AND NOT `now()`: with `now()`, the visible set — and so the hash — changes
+ * every time any occurrence ends, i.e. constantly. With a fixed cut-off at or before every request
+ * the snapshot will serve, the hashed set is a SUPERSET of what any of those requests can see, so
+ * any change to a row they could see changes the hash. Rows that end are dropped per request by
+ * the cache itself, not detected here.
+ */
+export async function probePostgresCatalogueVersion(pool: Pool, cutoff: Date): Promise<string> {
+  const { rows } = await pool.query<{ version: string | null; row_count: number }>(
+    `SELECT count(*)::int AS row_count,
+            md5(string_agg(md5((to_jsonb(catalogue) - 'last_checked_at')::text), '' ORDER BY catalogue.id)) AS version
+       FROM (
+         ${listingSelectSql()}
+         WHERE ${visibleOccurrenceAtCutoffSql()}
+           AND o.status_state::text <> ALL($1::text[])
+         ${listingGroupBySql()}
+       ) AS catalogue`,
+    [HIDDEN_STATUSES, cutoff.toISOString()]
+  );
+  const row = rows[0];
+  // An empty catalogue hashes to NULL; it still needs a version, and one no non-empty hash can equal.
+  return `${row?.row_count ?? 0}:${row?.version ?? 'empty'}`;
 }
 
 /**
@@ -175,6 +217,29 @@ function visibleOccurrenceWhereSql(): string {
          (o.start_datetime_utc IS NULL AND o.open_hours_state IS NOT NULL)
          OR COALESCE(o.end_datetime_utc, o.start_datetime_utc) >= now()
        )`;
+}
+
+/**
+ * `visibleOccurrenceWhereSql` with its `now()` instant replaced by the bound cut-off `$2` — the
+ * version probe's visibility rule (see probePostgresCatalogueVersion).
+ *
+ * DERIVED, NOT COPIED, so the probe can never hash a different set of rows than the load returns:
+ * any change to the predicate reaches both. And `visibleOccurrenceWhereSql` itself stays exactly as
+ * it was, because tests/search/today-window-exhaustion.test.ts pins its body to the `now()`
+ * instant (the JS mirror in occurrence-visibility.ts depends on it). If the predicate is ever
+ * rewritten so that it no longer contains exactly one `>= now()`, this throws — the shared cache
+ * then falls back to the direct load, and tests/search/catalogue-snapshot.test.ts goes red.
+ */
+function visibleOccurrenceAtCutoffSql(): string {
+  const instant = '>= now()';
+  const sql = visibleOccurrenceWhereSql();
+  if (sql.split(instant).length !== 2) {
+    throw new Error(
+      'visibleOccurrenceWhereSql no longer contains exactly one `>= now()`; the catalogue version probe ' +
+        'cannot derive its cut-off predicate from it. Update visibleOccurrenceAtCutoffSql.'
+    );
+  }
+  return sql.replace(instant, '>= $2::timestamptz');
 }
 
 function listingGroupBySql(): string {
@@ -318,7 +383,14 @@ function isAgeBandKey(value: string): value is ListingRecord['ageBandMatches'][n
   return ['under2', '2-4', '5-9', '10-14', '15+'].includes(value);
 }
 
-// ── Short in-process TTL cache for the serverless search route ────────────────────────────────
+// ── Catalogue caching for the serverless read path ────────────────────────────────────────────
+//
+// TWO LAYERS SINCE 2026-09-23 (egress Thread 3, Options B + C). `getCachedPostgresListings` serves
+// from the SHARED, version-gated catalogue cache (./shared-catalogue-cache.ts — read its header for
+// the design, the staleness it trades and why), and falls back to the per-instance TTL cache
+// described below whenever the shared path is switched off (`KIDS_FUN_CATALOGUE_SHARED_CACHE=off`)
+// or misbehaves. Everything below describes that TTL layer, which is unchanged: it is the fallback,
+// the kill-switch path, and exactly the behaviour before the shared cache.
 //
 // WHY THIS EXISTS (it is the completion of the catalogue-cap fix, not a separate optimisation)
 // Removing the 500-row pre-search cap was correct — a parent searching `soccer` got nothing while
@@ -354,10 +426,11 @@ function isAgeBandKey(value: string): value is ListingRecord['ageBandMatches'][n
 // WHAT ONE TTL OF STALENESS ACTUALLY COSTS — stated so it can be judged, not assumed:
 //   · A newly ingested activity takes up to one TTL to become searchable. Ingest runs on a
 //     scheduler measured in minutes-to-hours, so a 10-minute window is inside that cadence.
-//   · `visibleOccurrenceWhereSql` evaluates `now()` in SQL, so a cached model can briefly retain
-//     an occurrence that has just ended. Bounded by the TTL, and activities are hour-scale. The
-//     engine's own date/time filters still run per request against that request's `now`, so this
-//     touches only the "finished within the last TTL" edge.
+//   · `visibleOccurrenceWhereSql` evaluates `now()` in SQL, so a cached model can retain an
+//     occurrence that has ended since it loaded, for up to one TTL. (Corrected 2026-09-23: this
+//     used to say the engine's date/time filters remove such rows per request. They do not — see
+//     "WHY THE ENGINE CANNOT BE LEFT TO DROP ENDED EVENTS" in ./shared-catalogue-cache.ts. The
+//     shared path prunes them itself; this fallback path keeps the old, TTL-bounded edge.)
 //   · An operator hiding or cancelling a listing takes up to one TTL to reach search — and every
 //     other surface that reads this cache through lib/search/server-engine.ts (the homepage's
 //     three picks, the SMS instant-picks route, the signup and account pages, and the sparse-area
@@ -376,9 +449,27 @@ const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>(
   LISTING_CACHE_DEFAULT_MS
 );
 
+/** The fallback / kill-switch layer, exactly as `getCachedPostgresListings` was before the shared cache. */
+const legacyCatalogueCache = {
+  get: (pool: Pool, now: number) =>
+    readModelCache.get(async () => Object.freeze(await loadPostgresListings(pool)), now),
+  clear: () => readModelCache.clear(),
+};
+
+const sharedCatalogueCache = new SharedCatalogueCache({
+  store: nextDataCacheStore,
+  legacy: legacyCatalogueCache,
+  loadListings: loadPostgresListings,
+  probeVersion: probePostgresCatalogueVersion,
+});
+
 /**
- * Cached accessor for the search route: the complete visible catalogue, reloaded from Postgres at
- * most once per TTL window.
+ * Cached accessor for every catalogue-wide surface: the complete visible catalogue, served from the
+ * shared version-gated cache (see ./shared-catalogue-cache.ts), or — with the kill switch set, or
+ * whenever the shared path fails — reloaded from Postgres at most once per TTL window.
+ *
+ * Both paths return the same thing: the records `loadPostgresListings` produces, in its order, in
+ * a frozen array. Callers cannot tell them apart, and must not need to.
  *
  * Deliberately takes NO limit. A cache keyed on nothing but time must only ever hold one
  * population, and for this route that population is "everything a parent could be shown" — the
@@ -387,7 +478,7 @@ const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>(
  *
  * SHARED-ARRAY INVARIANT — read before you write code against the return value.
  * The SAME array, holding the SAME `ListingRecord` objects, is handed to every concurrent request
- * for up to one TTL. It is therefore READ-ONLY: mutating it, or any record in it, corrupts other
+ * for as long as it is cached. It is therefore READ-ONLY: mutating it, or any record in it, corrupts other
  * in-flight requests and every request for the rest of the window. Two levels of enforcement:
  *   · The array itself is frozen, so `push`/`splice`/an in-place `sort` throws immediately (ESM is
  *     strict mode). In-place sorting a "list of listings" is the realistic mistake here, and it is
@@ -396,16 +487,34 @@ const readModelCache = new TtlPromiseCache<readonly ListingRecord[]>(
  *     every reload, a real cost paid on every request path, to defend against a mutation that
  *     exists nowhere in the repo today. Treat records as immutable; copy before you edit.
  *
- * Set `KIDS_FUN_LISTING_CACHE_MS=0` to disable caching entirely (every call reloads).
+ * INCIDENT LEVERS. `KIDS_FUN_CATALOGUE_SHARED_CACHE=off` returns to the per-instance TTL layer.
+ * `KIDS_FUN_LISTING_CACHE_MS` tunes ONLY that layer — so disabling caching entirely (every call
+ * reloads) now takes both: the kill switch off AND `KIDS_FUN_LISTING_CACHE_MS=0`.
  */
 export async function getCachedPostgresListings(
   pool: Pool,
   now: number = Date.now()
 ): Promise<readonly ListingRecord[]> {
-  return readModelCache.get(async () => Object.freeze(await loadPostgresListings(pool)), now);
+  return sharedCatalogueCache.get(pool, now);
 }
 
-/** Test/ops hook: drop the cached read model so the next access reloads from the DB. */
+/**
+ * MANUAL BUST, for the rare correction that cannot wait for the probe cycle (a listing that must
+ * come down or change NOW). Invalidates the shared catalogue entries for every instance and drops
+ * this instance's copies; every instance serves the corrected catalogue within about two re-check
+ * intervals (~2 minutes at the defaults). Must run inside a Next.js route handler or server action.
+ * Exposed as POST /api/admin/catalogue-cache/bust.
+ */
+export async function bustSharedCatalogueCache(): Promise<void> {
+  await sharedCatalogueCache.bust();
+  readModelCache.clear();
+}
+
+/**
+ * Test/ops hook: drop this instance's cached read model (both layers) so the next access goes back
+ * to the shared store or the DB. Does not touch the shared store itself.
+ */
 export function clearPostgresListingsCache(): void {
+  sharedCatalogueCache.clear();
   readModelCache.clear();
 }
