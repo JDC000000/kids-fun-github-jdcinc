@@ -836,4 +836,49 @@ describe('selectWeeklyPicks — wiring', () => {
     expect(result.picks.some((p) => p.item.listing.id === 'museum')).toBe(false);
     expect(result.diversity.destinationSlot.outcome).toBe('unfilled');
   });
+
+  // ── D5 series arm (2026-09-24) — the widened search must not bypass it ─────────────────
+  // The slot's ONE widened search is ranked by `rankCandidates` directly, not through
+  // `selectFrom`. So these two tests are what fails if the series filter is ever moved into
+  // `selectFrom` (or applied only to the week's own attempt): the week would still look right,
+  // and last week's museum would come straight back as a forced destination.
+
+  it("D5: the WIDENED search cannot force a destination whose series was in last week's text", () => {
+    // 13 km away: reachable ONLY through the widened search. Last week's text held its previous
+    // sitting, a different occurrence id in the same series.
+    const farMuseum = museumAt('far-museum', 13_000, { seriesId: 'maritime-museum' });
+    const lastWeek = { excludeOccurrenceIds: new Set(['far-museum-last-week']), excludeSeriesIds: new Set(['maritime-museum']) };
+
+    // Control: without the exclusion this exact fixture IS forced in through the widen path.
+    const control = spiedEngine(neighbourhood(14).concat(farMuseum));
+    expect(selectWeeklyPicks(engineInput([], { engine: control.engine })).diversity.destinationSlot).toMatchObject({
+      outcome: 'forced_widened',
+      occurrenceId: 'far-museum',
+    });
+
+    const { engine, calls } = spiedEngine(neighbourhood(14).concat(farMuseum));
+    const result = selectWeeklyPicks(engineInput([], { engine, ...lastWeek }));
+    expect(calls).toHaveLength(2); // the widened search DID run, and found only the repeat
+    expect(result.picks.some((p) => p.item.listing.id === 'far-museum')).toBe(false);
+    expect(result.diversity.destinationSlot.outcome).toBe('unfilled');
+  });
+
+  it('D5: …but a DIFFERENT destination the widened search finds is still forced', () => {
+    // The filter removes the repeat, not the slot: a second museum (its own series) further out
+    // is what the widened search now brings in.
+    const repeat = museumAt('far-museum', 13_000, { seriesId: 'maritime-museum' });
+    const fresh = museumAt('science-world', 15_000, { activityName: 'Science World', venueName: 'Science World', seriesId: 'science-world' });
+    const result = selectWeeklyPicks(
+      engineInput(neighbourhood(14).concat(repeat, fresh), { excludeSeriesIds: new Set(['maritime-museum']) })
+    );
+    expect(result.diversity.destinationSlot).toMatchObject({ outcome: 'forced_widened', occurrenceId: 'science-world' });
+    expect(result.picks.some((p) => p.item.listing.id === 'far-museum')).toBe(false);
+  });
+
+  it("D5: the week's own attempt applies the series arm too (a museum inside the radius)", () => {
+    const listings = neighbourhood(14).concat(museumAt('museum', 7_000, { seriesId: 'maritime-museum' }));
+    const result = selectWeeklyPicks(engineInput(listings, { excludeSeriesIds: new Set(['maritime-museum']) }));
+    expect(result.picks.some((p) => p.item.listing.id === 'museum')).toBe(false);
+    expect(result.novelExcluded).toBe(1);
+  });
 });

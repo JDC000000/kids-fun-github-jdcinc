@@ -13,7 +13,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { query } from '@/lib/db/client';
 import { recordSmsSend } from '@/lib/sms/send-log';
 import { applyDeliveryStatus } from '@/lib/sms/delivery-status';
-import { loadRecentlySentPickIds } from '@/lib/sms/weekly-send-io';
+import {
+  loadRecentlySent,
+  loadRecentlySentPickIds,
+  loadSeriesIdsForOccurrences,
+} from '@/lib/sms/weekly-send-io';
+import { deleteSourceRows } from '@/lib/testing/delete-source-rows';
 import { createPendingSubscriber } from '@/lib/sms/signup-store';
 import { phoneHash, PHONE_HASH_VERSION, MissingPhoneHashSaltError } from '@/lib/sms/phone-hash';
 import type { SmsSignup } from '@/lib/sms/signup-validate';
@@ -564,5 +569,135 @@ describe('loadRecentlySentPickIds — the novelty window', () => {
   it('returns an empty set for a subscriber with no history', async () => {
     const { id } = await subscriber();
     expect(await loadRecentlySentPickIds(id)).toEqual(new Set());
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D5 — resolving last week's picks to their activity series, against the real table
+//
+// FIXTURE HYGIENE (00c8aa0's conventions): every activity row hangs off ONE source this block
+// creates and removes with `deleteSourceRows` (source-scoped, never a name pattern), and every
+// date is relative to the run and IN THE PAST, with the default `needs_review` status, so no
+// read model another db-lane suite builds can ever see these rows, whenever this runs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('loadRecentlySent — series resolution (D5)', () => {
+  const DAY_MS = 86_400_000;
+  let sourceId: string;
+
+  beforeAll(async () => {
+    const [src] = await query<{ id: string }>(
+      `INSERT INTO source (family, name) VALUES ('manual', $1) RETURNING id`,
+      [`send-log-db d5-series ${Date.now()}`]
+    );
+    sourceId = src.id;
+  });
+  afterAll(async () => {
+    if (sourceId) await deleteSourceRows(sourceId);
+  });
+
+  async function series(title: string): Promise<string> {
+    const [row] = await query<{ id: string }>(
+      `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
+      [title, sourceId]
+    );
+    return row.id;
+  }
+
+  /** One sitting of `seriesId`, `daysAgo` days before this run. */
+  async function sitting(seriesId: string, daysAgo: number, archived = false): Promise<string> {
+    const start = new Date(Date.now() - daysAgo * DAY_MS);
+    const [row] = await query<{ id: string }>(
+      `INSERT INTO activity_occurrence (series_id, activity_name, start_datetime_utc, end_datetime_utc, archived_at)
+       VALUES ($1, 'D5 fixture sitting', $2, $3, $4) RETURNING id`,
+      [seriesId, start, new Date(start.getTime() + 3_600_000), archived ? new Date() : null]
+    );
+    return row.id;
+  }
+
+  async function sentWeekly(sub: { id: string; phone: string }, snapshot: unknown[]): Promise<void> {
+    await recordSmsSend({
+      subscriberId: sub.id,
+      phoneNumber: sub.phone,
+      sendType: 'weekly',
+      outcome: 'sent',
+      // Deliberately untyped: this column is jsonb written by older code, and these tests put the
+      // shapes an older writer could have left in it.
+      picksSnapshot: snapshot as Array<{ occurrence_id: string; rank: number }>,
+      twilioSid: `SM_d5_${seq}`,
+      consentTextVersion: TEST_CONSENT_VERSION,
+    });
+  }
+
+  it("resolves last week's picks to their series — the key that matches this week's new sitting", async () => {
+    const skate = await series('D5 Public Skate');
+    const swim = await series('D5 Public Swim');
+    const skateLastWeek = await sitting(skate, 8);
+    await sitting(skate, 1); // this week's sitting: a NEW occurrence id, same series
+    const swimLastWeek = await sitting(swim, 8);
+    const sub = await subscriber();
+    await sentWeekly(sub, [
+      { occurrence_id: skateLastWeek, rank: 1 },
+      { occurrence_id: swimLastWeek, rank: 2 },
+    ]);
+
+    expect(await loadRecentlySent(sub.id)).toEqual({
+      occurrenceIds: new Set([skateLastWeek, swimLastWeek]),
+      seriesIds: new Set([skate, swim]),
+      seriesResolved: true,
+    });
+  });
+
+  it('an ARCHIVED occurrence still names its series — archiving a past sitting must not un-send it', async () => {
+    const gym = await series('D5 Open Gym');
+    const archived = await sitting(gym, 8, true);
+    expect(await loadSeriesIdsForOccurrences([archived])).toEqual(new Set([gym]));
+  });
+
+  it('malformed and non-uuid snapshot entries neither throw nor empty the set', async () => {
+    // One bad entry reaching `::uuid[]` would throw for the whole array and lose the series arm
+    // for the whole week. The guard skips it instead; the good entry still resolves.
+    const play = await series('D5 Indoor Play');
+    const good = await sitting(play, 8);
+    const sub = await subscriber();
+    await sentWeekly(sub, [
+      { occurrence_id: good, rank: 1 },
+      { occurrence_id: 'not-a-uuid', rank: 2 },
+      { occurrence_id: 42, rank: 3 },
+      { rank: 4 },
+      null,
+    ]);
+
+    const recent = await loadRecentlySent(sub.id);
+    expect(recent.seriesResolved).toBe(true);
+    expect(recent.seriesIds).toEqual(new Set([play]));
+    expect(recent.occurrenceIds).toEqual(new Set([good, 'not-a-uuid']));
+  });
+
+  it('an id that no longer exists resolves to nothing, without error', async () => {
+    expect(await loadSeriesIdsForOccurrences(['99999999-9999-4999-8999-999999999999'])).toEqual(new Set());
+  });
+
+  it('a subscriber with no weekly send has nothing to resolve', async () => {
+    const sub = await subscriber();
+    expect(await loadRecentlySent(sub.id)).toEqual({
+      occurrenceIds: new Set(),
+      seriesIds: new Set(),
+      seriesResolved: true,
+    });
+  });
+
+  it("a failing series read keeps the REAL snapshot's occurrence ids (occurrence-only, not no novelty)", async () => {
+    // The series read is replaced by a failing seam; the snapshot read is the real one, so this
+    // proves the fallback keeps what was actually read from sms_send_log.
+    const sub = await subscriber();
+    const id = '88888888-8888-4888-8888-888888888888';
+    await sentWeekly(sub, [{ occurrence_id: id, rank: 1 }]);
+    const recent = await loadRecentlySent(sub.id, {
+      resolveSeries: async () => {
+        throw new Error('canceling statement due to statement timeout');
+      },
+    });
+    expect(recent).toEqual({ occurrenceIds: new Set([id]), seriesIds: new Set(), seriesResolved: false });
   });
 });

@@ -289,10 +289,42 @@ export interface WeeklyPicksInput {
    * exclusion lives on the input and `selectFrom` applies it unconditionally, so there is no
    * branch a retry could take that skips it.
    *
-   * The CALLER decides the window (see `loadRecentlySentPickIds` in lib/sms/weekly-send-io.ts);
+   * ON ITS OWN THIS ONLY CATCHES DATELESS LISTINGS. The engine collapses a series to one card per
+   * search, represented by one of that week's occurrences, so a weekly swim or skate reaches this
+   * module under a NEW occurrence id every week and never matches. `excludeSeriesIds` below is
+   * the arm that catches those; this one still catches a dateless destination (one occurrence,
+   * forever) and any snapshot entry whose series could not be resolved.
+   *
+   * The CALLER decides the window (see `loadRecentlySent` in lib/sms/weekly-send-io.ts);
    * this module only honours the set it is handed.
    */
   excludeOccurrenceIds?: ReadonlySet<string>;
+  /**
+   * Activity series (`activity_occurrence.series_id`: one activity at one venue) this subscriber
+   * has already been sent (D5, Jon 2026-09-24). A candidate is "already sent" when its occurrence
+   * id is in `excludeOccurrenceIds` OR its `seriesId` is in this set.
+   *
+   * WHY THE SERIES IS THE KEY. It is exactly what the engine collapses on (lib/search/collapse.ts),
+   * so it is the identity of a CARD rather than of one sitting: last Saturday's "Public Skate @
+   * Britannia Rink" and this Saturday's are two occurrence ids and one series id. Keying novelty
+   * on the occurrence alone let every recurring programme repeat week after week — the "same
+   * venues every week" complaint — while excluding only dateless destinations.
+   *
+   * Same placement and same guarantees as `excludeOccurrenceIds`: applied in `rankCandidates`,
+   * which every path that ranks candidates goes through — the primary attempt, both retry steps
+   * (via `selectFrom`) and the destination slot's widened search (which calls `rankCandidates`
+   * directly). NOT relaxed by either degradation step. Empty or absent means no series filtering.
+   *
+   * ⚠ KNOWN, ACCEPTED LIMITATION — MONTH-SUFFIXED TITLES. A series is unique on (source, title),
+   * and some sources put the month in the title ("… (Sept)" → "… (Oct)"). Those get a new series
+   * id when the month changes, so a repeat can get through in the first send after that. Measured
+   * on the live read model, 2026-09-24: 72 of 2,111 series have a month in the title, but almost
+   * all are registration programmes, which the weekly text already leaves out. Only 1 of the 530
+   * series that can actually be picked has one, and no offering currently exists under two
+   * month-named series. Not mitigated here: a title-normalising arm would be a different key from
+   * the one QA validated. Revisit if it shows up in real sends.
+   */
+  excludeSeriesIds?: ReadonlySet<string>;
   /** Override the pick ceiling (tests, and a future per-subscriber preference). */
   maxPicks?: number;
   /** Override the send floor. */
@@ -1986,10 +2018,19 @@ function rankCandidates(
   // exclusion removes one thing rather than two. Before the swap, because `fresh` is what the
   // swap both selects from AND reaches into: passing the pre-filter list would let a forced pick
   // reintroduce an already-sent occurrence through the back door.
-  const alreadySent = input.excludeOccurrenceIds;
+  //
+  // TWO ARMS, ONE RULE: already sent = same occurrence OR same series (see `excludeSeriesIds`).
+  // It lives HERE rather than in `selectFrom` because the destination slot's widened search calls
+  // this function directly — a filter in `selectFrom` would let that path force last week's
+  // destination straight back in.
+  const sentOccurrences = input.excludeOccurrenceIds;
+  const sentSeries = input.excludeSeriesIds;
+  const isAlreadySent = (item: SearchResultItem): boolean =>
+    (sentOccurrences?.has(item.listing.id) ?? false) ||
+    (sentSeries?.has(item.listing.seriesId) ?? false);
   const fresh =
-    alreadySent && alreadySent.size > 0
-      ? distinctOfferings.filter((item) => !alreadySent.has(item.listing.id))
+    (sentOccurrences?.size ?? 0) > 0 || (sentSeries?.size ?? 0) > 0
+      ? distinctOfferings.filter((item) => !isAlreadySent(item))
       : distinctOfferings;
   const novelExcluded = distinctOfferings.length - fresh.length;
 

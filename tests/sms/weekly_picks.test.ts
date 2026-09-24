@@ -884,6 +884,173 @@ describe('the novelty filter (PRD v2.8 §2.2 step 4)', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// D5 (Jon, 2026-09-24) — the series arm of the novelty filter.
+//
+// The engine collapses a series to ONE card per search, represented by one of that week's
+// occurrences, so a weekly programme reaches the selector under a NEW occurrence id every Friday.
+// Keyed on the occurrence alone, novelty never recognised it, and "the same venues every week"
+// got through. These fixtures model that exactly: last week's text holds `<id>-last-week`, an
+// occurrence that is no longer in the catalogue, and this week's sitting is `<id>`, a different
+// occurrence in the SAME series (`<id>-series`, the factory default).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Last week's snapshot for `ids`: their previous sittings' occurrence ids, and their series. */
+function sentLastWeek(ids: string[]): Pick<WeeklyPicksInput, 'excludeOccurrenceIds' | 'excludeSeriesIds'> {
+  return {
+    excludeOccurrenceIds: new Set(ids.map((id) => `${id}-last-week`)),
+    excludeSeriesIds: new Set(ids.map((id) => `${id}-series`)),
+  };
+}
+
+const pickIds = (result: ReturnType<typeof selectWeeklyPicks>) => result.picks.map((p) => p.item.listing.id);
+
+describe('the novelty filter — series arm (D5)', () => {
+  it("excludes this week's sitting of a series sent last week, although its occurrence id is new", () => {
+    const listings = distinctActivities(6);
+    const sent = sentLastWeek(['act-0', 'act-1']);
+
+    // THE BUG, PINNED: the occurrence arm alone sees two ids it has never met and removes nothing.
+    const occurrenceOnly = selectWeeklyPicks(input(listings, { excludeOccurrenceIds: sent.excludeOccurrenceIds }));
+    expect(occurrenceOnly.novelExcluded).toBe(0);
+    expect(pickIds(occurrenceOnly)).toEqual(expect.arrayContaining(['act-0', 'act-1']));
+
+    const result = selectWeeklyPicks(input(listings, sent));
+    expect(result.novelExcluded).toBe(2);
+    expect(result.picks).toHaveLength(4);
+    expect(pickIds(result)).not.toContain('act-0');
+    expect(pickIds(result)).not.toContain('act-1');
+  });
+
+  it('does NOT exclude a different series at the same venue', () => {
+    // Last week: "Public Swim" at Britannia Pool. This week "Lengths" at the same pool is a
+    // different activity, and so a different series. It stays. Excluding whole venues was D5-b,
+    // which was considered and not approved.
+    const pool = { venueName: 'Britannia Pool', geo: ACROSS_TOWN };
+    const listings = [
+      kidActivity({ id: 'swim', activityName: 'Public Swim', ...pool }),
+      kidActivity({ id: 'lengths', activityName: 'Lengths', ...pool, startDatetimeUtc: at(SUN, 14), endDatetimeUtc: at(SUN, 15) }),
+      ...distinctActivities(4),
+    ];
+    const result = selectWeeklyPicks(input(listings, sentLastWeek(['swim'])));
+    expect(result.novelExcluded).toBe(1);
+    expect(pickIds(result)).not.toContain('swim');
+    expect(pickIds(result)).toContain('lengths');
+  });
+
+  it('the occurrence arm still works on its own — the two arms are OR, not AND', () => {
+    // A dateless destination keeps one occurrence id forever. Its id is in last week's snapshot;
+    // the series set names other things. Either arm matching is enough.
+    const listings = distinctActivities(6);
+    const result = selectWeeklyPicks(
+      input(listings, { excludeOccurrenceIds: new Set(['act-3']), excludeSeriesIds: new Set(['act-5-series']) })
+    );
+    expect(result.novelExcluded).toBe(2);
+    expect(pickIds(result)).not.toContain('act-3');
+    expect(pickIds(result)).not.toContain('act-5');
+  });
+
+  it('counts a candidate caught by BOTH arms once', () => {
+    const result = selectWeeklyPicks(
+      input(distinctActivities(6), { excludeOccurrenceIds: new Set(['act-2']), excludeSeriesIds: new Set(['act-2-series']) })
+    );
+    expect(result.novelExcluded).toBe(1);
+    expect(result.picks).toHaveLength(5);
+  });
+
+  it('an absent, empty or non-matching series set gives output byte-identical to the occurrence-only filter', () => {
+    // The rollout guarantee: a subscriber with no history (or whose series lookup failed) gets
+    // exactly today's text. Compared as serialised output, across shapes that reach the retry
+    // ladder, both interest steps and the coverage swap, not only the plain primary attempt.
+    const shapes: Array<{ name: string; listings: ListingRecord[]; over?: Partial<WeeklyPicksInput> }> = [
+      { name: 'plain week', listings: distinctActivities(12) },
+      { name: 'with occurrence exclusions', listings: distinctActivities(12), over: { excludeOccurrenceIds: new Set(['act-1', 'act-4']) } },
+      { name: 'below the floor → retry (a)', listings: [...distinctActivities(2), ...distinctActivities(3, { geo: FAR }, 10)] },
+      {
+        name: 'interests dropped → step (b)',
+        listings: distinctActivities(8, { primaryCategoryKey: 'swimming' }),
+        over: { subscriber: { origin: { geo: HOME, label: 'East Van' }, radiusKm: 10, birthYears: [2020], categoryInterests: ['pottery'], consecutiveEmptyWeeks: 0 } },
+      },
+      {
+        name: 'coverage swap',
+        listings: [
+          ...distinctActivities(10, { ageBandMatches: ['under2'], ageMinMonths: 0, ageMaxMonths: 24 }),
+          kidActivity({ id: 'old-5-9', activityName: ACTIVITY_NAMES[12], venueName: 'Big Kid Hall', geo: FAR, ageBandMatches: ['5-9'], ageMinMonths: 60, ageMaxMonths: 96 }),
+        ],
+        over: { subscriber: { origin: { geo: HOME, label: 'East Van' }, radiusKm: 20, birthYears: [2025, 2019], consecutiveEmptyWeeks: 0 } },
+      },
+    ];
+    const reached = { degradations: new Set<string>(), forced: 0 };
+    for (const shape of shapes) {
+      const baseline = selectWeeklyPicks(input(shape.listings, shape.over));
+      reached.degradations.add(baseline.degradation);
+      reached.forced += baseline.forcedPicks.length;
+      const today = JSON.stringify(baseline);
+      for (const excludeSeriesIds of [undefined, new Set<string>(), new Set(['no-such-series'])]) {
+        const withArm = JSON.stringify(selectWeeklyPicks(input(shape.listings, { ...shape.over, excludeSeriesIds })));
+        expect(withArm, `${shape.name} / ${excludeSeriesIds ? `{${[...excludeSeriesIds]}}` : 'absent'}`).toBe(today);
+      }
+    }
+    // The shapes really do reach every path they are named for.
+    expect(reached.degradations).toEqual(new Set(['none', 'widened', 'widened_and_interests_dropped']));
+    expect(reached.forced).toBeGreaterThan(0);
+  });
+
+  it('is NOT relaxed by retry step (a) — the widened window cannot bring the series back', () => {
+    // Three programmes, all sent last week. The retry widens the radius and relaxes the window to
+    // Sat–Tue, where each has another sitting on Monday. Those sittings are new occurrences of the
+    // same series, so they are the same repeat, and the week stays empty rather than re-serving it.
+    const weekend = distinctActivities(3);
+    const monday = weekend.map((l) => ({ ...l, id: `${l.id}-mon`, seriesId: l.seriesId, startDatetimeUtc: at(MON, 10), endDatetimeUtc: at(MON, 11) }));
+    const result = selectWeeklyPicks(input([...weekend, ...monday], sentLastWeek(weekend.map((l) => l.id))));
+    expect(result.outcome).toBe('empty');
+    expect(result.retried).toBe(true);
+    expect(result.degradation).toBe('widened');
+    // The retry DID reach them, so the week is empty because of novelty, not scarcity.
+    expect(result.reached.retry).toBeGreaterThanOrEqual(3);
+    expect(result.novelExcluded).toBe(3);
+  });
+
+  it('is NOT relaxed by retry step (b) either — dropping interests does not drop the series arm', () => {
+    const listings = distinctActivities(8, { primaryCategoryKey: 'swimming' });
+    const result = selectWeeklyPicks(
+      input(listings, {
+        ...sentLastWeek(listings.map((l) => l.id)),
+        subscriber: {
+          origin: { geo: HOME, label: 'East Van' },
+          radiusKm: 10,
+          birthYears: [2020],
+          categoryInterests: ['pottery'],
+          consecutiveEmptyWeeks: 0,
+        },
+      })
+    );
+    expect(result.outcome).toBe('empty');
+    expect(result.degradation).toBe('widened_and_interests_dropped');
+    expect(result.interestsDropped).toBe(true);
+  });
+
+  it('runs BEFORE the coverage swap, so a forced pick cannot bring a sent series back', () => {
+    const toddler = distinctActivities(10, { ageBandMatches: ['under2'], ageMinMonths: 0, ageMaxMonths: 24 });
+    const older = kidActivity({
+      id: 'old-5-9',
+      activityName: ACTIVITY_NAMES[12],
+      venueName: 'Big Kid Hall',
+      geo: FAR,
+      ageBandMatches: ['5-9'],
+      ageMinMonths: 60,
+      ageMaxMonths: 96,
+    });
+    const subscriber = { origin: { geo: HOME, label: 'East Van' }, radiusKm: 20, birthYears: [2025, 2019], consecutiveEmptyWeeks: 0 };
+
+    expect(selectWeeklyPicks(input([...toddler, older], { subscriber })).forcedPicks.map((f) => f.occurrenceId)).toContain('old-5-9');
+
+    const result = selectWeeklyPicks(input([...toddler, older], { subscriber, ...sentLastWeek(['old-5-9']) }));
+    expect(result.forcedPicks).toEqual([]);
+    expect(pickIds(result)).not.toContain('old-5-9');
+  });
+});
+
 describe('category interests', () => {
   it('filters on primary category or tags, case-insensitively; no interests means no filter', () => {
     const swimming = distinctActivities(3, { primaryCategoryKey: 'swimming' }, 0);

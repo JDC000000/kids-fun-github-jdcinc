@@ -106,6 +106,11 @@ export interface BuildWeeklySmsInput {
    * very first send.
    */
   excludeOccurrenceIds?: ReadonlySet<string>;
+  /**
+   * Activity series this subscriber has already been sent (D5) — see
+   * `WeeklyPicksInput.excludeSeriesIds`. Passed in on the same terms as `excludeOccurrenceIds`.
+   */
+  excludeSeriesIds?: ReadonlySet<string>;
   /** Override the number of picks that get their own link. Defaults to the PRD's top 2-3. */
   directLinkCount?: number;
 }
@@ -252,6 +257,7 @@ export function buildWeeklySms(input: BuildWeeklySmsInput): WeeklySmsPlan {
       consecutiveEmptyWeeks: subscriber.consecutiveEmptyWeeks,
     },
     excludeOccurrenceIds: input.excludeOccurrenceIds,
+    excludeSeriesIds: input.excludeSeriesIds,
   });
 
   if (picks.outcome === 'empty') {

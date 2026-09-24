@@ -73,6 +73,7 @@ function sanitize(r: SubscriberSendResult) {
     ...(r.degradation ? { degradation: r.degradation } : {}),
     ...(r.unlinkableCount ? { unlinkableCount: r.unlinkableCount } : {}),
     ...(r.novelExcluded ? { novelExcluded: r.novelExcluded } : {}),
+    ...(r.noveltyDegraded ? { noveltyDegraded: r.noveltyDegraded } : {}),
     ...(r.error ? { error: r.error } : {}),
   };
 }

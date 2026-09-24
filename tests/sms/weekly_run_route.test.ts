@@ -176,6 +176,8 @@ describe('the response is a PII ALLOWLIST, not a redaction', () => {
           segments: 2,
           degradation: 'widened',
           unlinkableCount: 1,
+          novelExcluded: 4,
+          noveltyDegraded: 'occurrence_only',
           // Fields a future change might add. None may reach the response.
           phoneNumber: '+16045550123',
           message: { body: 'KIDS FUN: 6 picks this weekend...' },
@@ -198,6 +200,9 @@ describe('the response is a PII ALLOWLIST, not a redaction', () => {
       segments: 2,
       degradation: 'widened',
       unlinkableCount: 1,
+      novelExcluded: 4,
+      // A weakened novelty filter is an operator fact, allowlisted so it is visible (D5).
+      noveltyDegraded: 'occurrence_only',
     });
     // The week's cost, reported rather than inferred.
     expect(body.totalSegments).toBe(2);
