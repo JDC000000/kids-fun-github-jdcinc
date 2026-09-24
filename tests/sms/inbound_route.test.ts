@@ -38,8 +38,16 @@ import { renderUnknownKeywordMessage, assertGsm7Safe, estimateSegments } from '@
 // restores exactly the "finds nothing" world these tests were written against, honestly and
 // without a connection. The real seams are covered in tests/sms/signup_persistence-db.test.ts,
 // which runs in the `db` lane. That split is the convention vitest.workspace.ts documents.
+//
+// ONE EXCEPTION (2026-09-24 loop fix): the unknown-keyword reply now passes a per-sender daily
+// counter (lib/sms/inbound-reply-guard.ts) that FAILS CLOSED, so an empty result there would mean
+// "refused" and silence every reply this file asserts on. The counter's upsert is therefore
+// answered with one row (= allowed) here. The counter's own behaviour — refusing the second reply,
+// failing closed, own-number silence — is proven in tests/sms/inbound_loop_guard.test.ts and, on
+// real Postgres, tests/sms/unknown_reply_throttle-db.test.ts.
 vi.mock('@/lib/db/client', () => ({
-  query: async () => [],
+  query: async (text: string) =>
+    /INSERT INTO sms_signup_throttle/.test(text) ? [{ attempts: 1 }] : [],
   getPool: () => {
     throw new Error('the unit lane must not open a pool');
   },
@@ -54,6 +62,8 @@ function configure({ sending = false }: { sending?: boolean } = {}) {
   vi.stubEnv('TWILIO_AUTH_TOKEN', TOKEN);
   vi.stubEnv('SMS_WEBHOOK_PUBLIC_URL', URL);
   vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://kidsfunapp.ca');
+  // The unknown-reply counter hashes the sender under this salt and refuses without it.
+  vi.stubEnv('SMS_PHONE_HASH_SALT', 'inbound-route-test-salt');
   if (sending) vi.stubEnv('SMS_SENDING_ENABLED', 'true');
 }
 

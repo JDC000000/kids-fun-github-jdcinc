@@ -42,7 +42,9 @@ export type ThrottleScope =
   /** Per subscriber, for the SMS an Instant Picks press dispatches. Migration 0048. */
   | 'instant_picks_sms'
   /** Per source IP, same send path. Migration 0048. */
-  | 'instant_picks_sms_ip';
+  | 'instant_picks_sms_ip'
+  /** Per SENDER, the inbound webhook's unknown-keyword auto-reply. Migration 0054. */
+  | 'unknown_reply';
 
 /**
  * Count one attempt against one subject, and say whether it is allowed — ATOMICALLY.

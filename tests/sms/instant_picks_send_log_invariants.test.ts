@@ -130,15 +130,23 @@ describe('3 · the send_type mirror and its constraint agree', () => {
     }
   });
 
-  it('ThrottleScope and migration 0048’s scope enumeration agree too', () => {
+  it('ThrottleScope and the LATEST scope CHECK migration agree too', () => {
+    // Was pinned to 0048 by name; 0054 (the inbound unknown-reply cap, 2026-09-24) redefines the
+    // CHECK again, so this now reads whichever migration defines it LAST — the one that is live.
     const union = /export type ThrottleScope =([\s\S]*?);\n/.exec(read('/lib/sms/throttle.ts'));
     expect(union).not.toBeNull();
     const members = [...union![1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
     expect(members).toContain('instant_picks_sms');
     expect(members).toContain('instant_picks_sms_ip');
 
+    const latest = readdirSync(`${ROOT}/supabase/migrations`)
+      .filter((f) => f.endsWith('.sql'))
+      .sort()
+      .filter((f) => read(`/supabase/migrations/${f}`).includes('ADD CONSTRAINT sms_signup_throttle_scope_check'))
+      .pop();
+    expect(latest).toBeDefined();
     const add = /ADD CONSTRAINT sms_signup_throttle_scope_check[\s\S]*?\);/
-      .exec(read('/supabase/migrations/0048_sms_throttle_instant_picks_sms.sql'));
+      .exec(read(`/supabase/migrations/${latest}`));
     expect(add).not.toBeNull();
     for (const member of members) {
       expect(add![0], `scope '${member}' is in the TS union but not in the CHECK`)
