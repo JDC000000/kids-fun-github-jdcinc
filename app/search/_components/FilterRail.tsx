@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from './SearchLink';
 import type { ReactNode } from 'react';
 import { Button, Chip as UIChip, Input } from '@/components/ui';
 import type { AgeBandKey } from '@/lib/search/types';

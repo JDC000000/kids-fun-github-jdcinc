@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from './_components/SearchLink';
 import { headers } from 'next/headers';
 import { forwardedIdentityHeaders } from '@/lib/http/request-context';
 import { ANON_SESSION_COOKIE } from '@/lib/db/session';

@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import Link from './SearchLink';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui';
 

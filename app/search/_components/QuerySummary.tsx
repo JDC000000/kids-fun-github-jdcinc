@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from './SearchLink';
 import { hrefFor, type SearchState } from '../_lib/params';
 import type { AppliedFilterToken } from '../_lib/filter-summary';
 

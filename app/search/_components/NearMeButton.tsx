@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import Link from './SearchLink';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Chip } from '@/components/ui';
