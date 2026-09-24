@@ -64,6 +64,16 @@ interface MemoryBucket {
  */
 export class MemoryRateLimitStore {
   private readonly buckets = new Map<string, MemoryBucket>();
+  /** Lower bound on the earliest `expiresAtMs` in the map (may be stale-low after an eviction). */
+  private nextExpiryMs = Number.POSITIVE_INFINITY;
+  private scans = 0;
+  /**
+   * A LIVE iterator over the map, kept across evictions. `keys().next()` from a fresh iterator
+   * restarts at the head and re-skips every deleted slot V8 has not compacted yet — measured at
+   * ~18µs per eviction at the 10k cap, vs ~1.4µs with this cursor. Correct as LRU because every key
+   * it has passed was evicted, and a touched key is re-inserted at the END, ahead of the cursor.
+   */
+  private evictionCursor: IterableIterator<string> | null = null;
 
   constructor(private readonly maxEntries: number = MEMORY_FALLBACK_MAX_ENTRIES) {}
 
@@ -81,16 +91,22 @@ export class MemoryRateLimitStore {
 
     if (!existing) {
       this.makeRoom(nowMs);
-      this.buckets.set(key, { attempts: 1, expiresAtMs: windowStartMs + windowMs });
+      const expiresAtMs = windowStartMs + windowMs;
+      this.buckets.set(key, { attempts: 1, expiresAtMs });
+      if (expiresAtMs < this.nextExpiryMs) this.nextExpiryMs = expiresAtMs;
       return { allowed: true, attempts: 1 };
     }
+    // Re-insert so Map order tracks recency: the oldest key is always the least recently used.
+    // A REFUSED attempt refreshes recency too (2026-09-24 QA F3): otherwise the bucket of a caller
+    // that is actively being refused is the stalest entry once the map is full, and is evicted
+    // FIRST — QA re-admitted a blocked bot after 5,000 distinct cookieless requests. It still does
+    // not increment (see this class's header).
+    this.buckets.delete(key);
+    this.buckets.set(key, existing);
     if (existing.attempts >= maxAttempts) {
       return { allowed: false, attempts: existing.attempts };
     }
     existing.attempts += 1;
-    // Re-insert so Map order tracks recency: the oldest key is always the least recently used.
-    this.buckets.delete(key);
-    this.buckets.set(key, existing);
     return { allowed: true, attempts: existing.attempts };
   }
 
@@ -98,20 +114,46 @@ export class MemoryRateLimitStore {
     return this.buckets.size;
   }
 
-  clear(): void {
-    this.buckets.clear();
+  /** How many full expiry sweeps have run — diagnostic, and what the F4 test asserts on. */
+  get fullScans(): number {
+    return this.scans;
   }
 
-  /** At capacity: drop expired buckets first; if that frees nothing, evict least recently used. */
+  clear(): void {
+    this.buckets.clear();
+    this.nextExpiryMs = Number.POSITIVE_INFINITY;
+    this.evictionCursor = null;
+  }
+
+  /**
+   * At capacity: drop expired buckets first; if that frees nothing, evict least recently used.
+   *
+   * The expiry sweep is O(n), so it only runs when something CAN have expired (nowMs has reached
+   * the earliest known expiry) — 2026-09-24 QA F4 measured the unconditional version at ~114µs per
+   * insert (a full 10k-entry scan every time) under a flood of live buckets. After a sweep
+   * `nextExpiryMs` is the true minimum of what remains, so the next sweep waits for the next real
+   * window boundary: at most about one per minute-bucket boundary, however hard the flood.
+   */
   private makeRoom(nowMs: number): void {
     if (this.buckets.size < this.maxEntries) return;
-    for (const [key, bucket] of this.buckets) {
-      if (bucket.expiresAtMs <= nowMs) this.buckets.delete(key);
+    if (nowMs >= this.nextExpiryMs) {
+      this.scans += 1;
+      let earliest = Number.POSITIVE_INFINITY;
+      for (const [key, bucket] of this.buckets) {
+        if (bucket.expiresAtMs <= nowMs) this.buckets.delete(key);
+        else if (bucket.expiresAtMs < earliest) earliest = bucket.expiresAtMs;
+      }
+      this.nextExpiryMs = earliest;
     }
     while (this.buckets.size >= this.maxEntries) {
-      const oldest = this.buckets.keys().next().value;
-      if (oldest === undefined) break;
-      this.buckets.delete(oldest);
+      this.evictionCursor ??= this.buckets.keys();
+      let next = this.evictionCursor.next();
+      if (next.done) {
+        this.evictionCursor = this.buckets.keys();
+        next = this.evictionCursor.next();
+      }
+      if (next.done) break;
+      this.buckets.delete(next.value);
     }
   }
 }

@@ -528,3 +528,63 @@ describe('F2 — an open breaker still says why', () => {
     expect(degradedState.breaker.lastFailureCause()).toBeNull();
   });
 });
+
+// ═══ 2026-09-24 independent QA, findings F3 + F4 (memory store under a cardinality flood) ═══
+describe('memory store F3/F4 — a flood of new subjects neither frees a refused bot nor burns CPU per insert', () => {
+  it('🔴 [QA L6] a REFUSED session stays refused while an attacker floods 20,000 distinct cookieless IPs', async () => {
+    const degradedState = createSearchRateLimitDegradedState();
+    // Breaker open: every decision below comes from the memory store (no query is ever needed).
+    for (let i = 0; i < BREAKER_FAILURE_THRESHOLD; i++) {
+      degradedState.breaker.recordFailure(degradedState.breaker.tryAcquire(degradedState.now())!, degradedState.now());
+    }
+    expect(degradedState.breaker.currentState()).toBe('open');
+    const bot = { ip: '10.6.6.6', sessionId: 'bot' };
+    const first: string[] = [];
+    for (let i = 0; i < 14; i++) first.push((await checkSearchRateLimit(bot, { degradedState })).allowed ? 'A' : 'R');
+    expect(first.slice(12)).toEqual(['R', 'R']);
+
+    // One new IP per request → 2 new buckets each (ip_minute + ip_hour); the bot retries every 250.
+    let readmittedAfter: number | null = null;
+    for (let n = 1; n <= 20_000; n++) {
+      await checkSearchRateLimit({ ip: `172.${(n >> 16) & 255}.${(n >> 8) & 255}.${n & 255}`, sessionId: null }, { degradedState });
+      if (n % 250 === 0 && (await checkSearchRateLimit(bot, { degradedState })).allowed) {
+        readmittedAfter = n;
+        break;
+      }
+    }
+    expect(readmittedAfter).toBeNull(); // before the fix: re-admitted after exactly 5,000
+    expect(degradedState.store.size).toBeLessThanOrEqual(10_000);
+  }, 60_000);
+
+  it('🔴 [QA L7] 200,000 live-window inserts at capacity: bounded at 10,000 with NO full sweep (nothing can have expired)', () => {
+    const store = new MemoryRateLimitStore();
+    const now = Date.UTC(2026, 8, 24, 12, 0, 5);
+    for (let i = 0; i < 200_000; i++) store.countAttempt('ip_minute', `h${i}`, 60, 40, now);
+    expect(store.size).toBe(10_000);
+    expect(store.fullScans).toBe(0); // before the fix: one full 10k scan per insert past the cap
+  }, 60_000);
+
+  it('LRU order holds with the persistent eviction cursor, including keys touched after the cursor has moved', () => {
+    const store = new MemoryRateLimitStore(3);
+    const hit = (k: string) => store.countAttempt('session_minute', k, 60, 12, START);
+    hit('a'); hit('b'); hit('c');
+    hit('a'); // order: b, c, a
+    hit('d'); // evicts b → c, a, d
+    hit('c'); // order: a, d, c
+    hit('e'); // evicts a → d, c, e
+    hit('f'); // evicts d → c, e, f
+    expect(hit('c').attempts).toBe(3); // c survived (touched twice before)
+    expect(hit('a').attempts).toBe(1); // a was evicted, starts fresh (this evicts e)
+    expect(hit('f').attempts).toBe(2);
+    expect(store.size).toBe(3);
+  });
+
+  it('still sweeps once a window boundary has actually passed — once, not per insert', () => {
+    const store = new MemoryRateLimitStore(1_000);
+    const t0 = Date.UTC(2026, 8, 24, 12, 0, 5);
+    for (let i = 0; i < 1_000; i++) store.countAttempt('ip_minute', `old${i}`, 60, 40, t0);
+    for (let i = 0; i < 5_000; i++) store.countAttempt('ip_minute', `new${i}`, 60, 40, t0 + 60_000);
+    expect(store.fullScans).toBe(1);
+    expect(store.size).toBe(1_000);
+  });
+});
