@@ -12,6 +12,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   INSTANT_PICKS_MIN_CONSENT_SERIAL,
+  hasConfirmedActiveConsent,
   sendInstantPicksText,
   type InstantPicksSendSubscriber,
 } from '@/lib/sms/instant-picks-send';
@@ -27,6 +28,9 @@ const V8: InstantPicksSendSubscriber = {
   phoneNumber: PHONE,
   preferencesToken: 'a'.repeat(43),
   consentTextVersion: '2026-10-01.v8',
+  // A CONFIRMED, ACTIVE subscriber — the only kind this path may text (CASL gate, 2026-09-24).
+  status: 'active',
+  confirmedTimestamp: new Date('2026-09-20T12:00:00Z'),
 };
 
 /** Everything wired to succeed, with sending on and the feature switched on. */
@@ -116,6 +120,88 @@ describe('instant picks send · 🔴 STILL HELD — BY THE FLAG NOW, NOT BY THE 
     expect((await sendInstantPicksText(SUBSCRIBER_ID, d)).status).toBe('not_eligible');
     expect(d.dispatch).not.toHaveBeenCalled();
     vi.unstubAllEnvs();
+  });
+});
+
+describe('⛔ instant picks send · CASL: only CONFIRMED, ACTIVE subscribers are texted (2026-09-24)', () => {
+  // THE GAP THIS BLOCK PINS. Until 2026-09-24 this path had no status check of its own: it relied
+  // on `findInstantPicksSubscriber`, whose rule is for the on-page LIST and deliberately serves
+  // pending and paused rows. With consent v8 live and the flag on in production, a PENDING
+  // subscriber stamped v8 (a new signup, or a stopped/paused one who resubmitted the form and kept
+  // their old link) cleared every gate and was texted without ever replying JOIN. Reproduced in
+  // prod: sms_send_log send_type 'instant_picks', 2026-09-24T15:41:26Z, on a never-confirmed row.
+  //
+  // Every fixture here is on CURRENT wording (v8+) with the flag ON and sending ON, so the ONLY
+  // thing standing between it and a real dispatch is the consent gate under test.
+
+  it.each([
+    ['pending, never confirmed', { status: 'pending' as const, confirmedTimestamp: null }],
+    [
+      // The resubmit path: the upsert clears confirmed_timestamp, but a stale value must not
+      // rescue a row whose STATUS says the double opt-in is incomplete.
+      'pending, with a stale confirmation from an earlier lifecycle',
+      { status: 'pending' as const, confirmedTimestamp: new Date('2026-09-01T00:00:00Z') },
+    ],
+    ['paused (auto-paused after empty weeks)', { status: 'paused' as const, confirmedTimestamp: new Date('2026-09-01T00:00:00Z') }],
+    ['stopped', { status: 'stopped' as const, confirmedTimestamp: new Date('2026-09-01T00:00:00Z') }],
+    // `active` without the JOIN proof: no transition writes this today, which is exactly when a
+    // compliance gate should still refuse it (hand edit, restore, a future transition).
+    ['active but with NO recorded confirmation', { status: 'active' as const, confirmedTimestamp: null }],
+  ])('%s → NOT texted: no dispatch, no audit row, no throttle spend, silent', async (_label, state) => {
+    const d = deps({
+      loadSubscriber: vi.fn(async () => ({ ...V8, consentTextVersion: CONSENT_TEXT_VERSION, ...state })),
+    });
+    const result = await sendInstantPicksText(SUBSCRIBER_ID, d);
+    expect(result).toEqual({ status: 'not_eligible', segments: 0, degraded: false });
+    expect(d.dispatch).not.toHaveBeenCalled();
+    expect(d.record).not.toHaveBeenCalled();
+    expect(d.markStopped).not.toHaveBeenCalled();
+    // A refused send must not spend the budget a pending parent will want once they reply JOIN.
+    expect(d.checkThrottle).not.toHaveBeenCalled();
+  });
+
+  it('a confirmed, active subscriber on the live wording IS still texted — the fix is not a blanket off-switch', async () => {
+    const d = deps({
+      loadSubscriber: vi.fn(async () => ({ ...V8, consentTextVersion: CONSENT_TEXT_VERSION })),
+    });
+    const result = await sendInstantPicksText(SUBSCRIBER_ID, d);
+    expect(result.status).toBe('sent');
+    expect(d.dispatch).toHaveBeenCalledTimes(1);
+    expect(d.dispatch).toHaveBeenCalledWith(PHONE, expect.anything(), { dryRun: false });
+    expect(d.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pending subscriber in a DRY RUN is not_eligible, not "disabled" — the gate runs before the dry-run exit', async () => {
+    // So a staging verification of this path reports what production would do for this row.
+    const d = deps({
+      dryRun: true,
+      loadSubscriber: vi.fn(async () => ({ ...V8, status: 'pending' as const, confirmedTimestamp: null })),
+    });
+    expect((await sendInstantPicksText(SUBSCRIBER_ID, d)).status).toBe('not_eligible');
+  });
+
+  it('the consent gate does not depend on the wording gate — a pending row on a FUTURE wording is still refused', async () => {
+    // Guards against someone "simplifying" the two consent gates into one version check.
+    const d = deps({
+      loadSubscriber: vi.fn(async () => ({
+        ...V8, consentTextVersion: '2027-06-01.v10', status: 'pending' as const, confirmedTimestamp: null,
+      })),
+    });
+    expect((await sendInstantPicksText(SUBSCRIBER_ID, d)).status).toBe('not_eligible');
+    expect(d.dispatch).not.toHaveBeenCalled();
+  });
+
+  describe('hasConfirmedActiveConsent — the shipped predicate, executed directly', () => {
+    it.each([
+      ['active', new Date(), true],
+      ['active', null, false],
+      ['pending', null, false],
+      ['pending', new Date(), false],
+      ['paused', new Date(), false],
+      ['stopped', new Date(), false],
+    ] as const)('status=%s confirmed=%s → %s', (status, confirmedTimestamp, expected) => {
+      expect(hasConfirmedActiveConsent({ status, confirmedTimestamp })).toBe(expected);
+    });
   });
 });
 

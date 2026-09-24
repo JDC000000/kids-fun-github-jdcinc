@@ -1,38 +1,58 @@
 // lib/sms/instant-picks-send.ts — the text an Instant Picks press sends (plan v2.0 task 5).
 //
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-// 🔴 READ THIS BEFORE CHANGING ANYTHING IN THIS FILE: IT IS DELIBERATELY INERT TODAY
+// 🔴 READ THIS BEFORE CHANGING ANYTHING IN THIS FILE: IT IS LIVE, AND IT IS A CASL SEND PATH
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 //
-// This module is complete, tested, and CANNOT SEND ANYTHING in any environment as this commit
-// stands. That is the intended state, not an unfinished one, and it is Jon's ruling (PRD v3.22,
-// plan v2.0 §6 option B: "build now, hold the switch"). Three independent gates below must ALL
-// pass, and gate 2 is currently impossible to satisfy anywhere:
+// This header used to say the module "CANNOT SEND ANYTHING in any environment". That stopped
+// being true on 2026-09-14: task 1 bumped CONSENT_TEXT_VERSION to v8 (83c33c3) and the Operator
+// set INSTANT_PICKS_SMS_SEND_ENABLED=true in production the same day. From then on this path
+// texted every subscriber who pressed the button — INCLUDING ones who had never confirmed.
+//
+// Four independent gates must ALL pass before anything is dispatched:
 //
 //   1. `instantPicksSmsSendEnabled()`  — INSTANT_PICKS_SMS_SEND_ENABLED, default false. The
-//      Operator's held switch. ⚠ NOT `SMS_SENDING_ENABLED`, which is ALREADY TRUE IN PRODUCTION
-//      because it gates the Friday weekly send — reusing it would have made this live on merge.
-//   2. `consent_text_version >= v8`    — the STRUCTURAL consent gate (plan §7). CONSENT_TEXT_VERSION
-//      is still '2026-09-03.v7' and the frequency disclosure still reads "1 message per week, plus
-//      a one-time confirmation message", so NO SUBSCRIBER ROW IN ANY ENVIRONMENT IS ON v8 AND THIS
-//      GATE REFUSES EVERY SEND. Bumping it is task 1, which is HELD pending the Toll-Free
-//      Verification decision — it is not this module's to do, and doing it here would ship the
-//      compliance change through the back door.
-//   3. the send throttle              — fail-closed, both halves (lib/sms/instant-picks-send-throttle.ts).
+//      Operator's switch. ⚠ NOT `SMS_SENDING_ENABLED`, which gates the Friday weekly send.
+//   2. CONFIRMED, ACTIVE CONSENT        — `hasConfirmedActiveConsent`: status = 'active' AND
+//      confirmed_timestamp set. ⛔ THE CASL GATE. See "WHY GATE 2 EXISTS" below.
+//   3. `consent_text_version >= v8`    — the wording gate (plan §7): the subscriber agreed to the
+//      disclosure that mentions on-demand texts. Says nothing about whether they CONFIRMED it.
+//   4. the send throttle              — fail-closed, both halves (lib/sms/instant-picks-send-throttle.ts).
 //
-// ⚠ SO: THIS IS NOT DEAD CODE TO TIDY UP. Gate 2 refusing everything is the safety mechanism, and
-// "this branch never executes, delete it" is exactly the wrong conclusion. When task 1 lands —
-// new disclosure copy, CONSENT_TEXT_VERSION → v8, v7 added to the history list — new and
-// resubmitting subscribers become v8 and this path starts working for them, with no edit here.
+// ═══ WHY GATE 2 EXISTS — THE 2026-09-24 CASL FIX ═══
+// Until this gate, the only status rule on this path was the one `findInstantPicksSubscriber`
+// applies to the ON-PAGE LIST: refuse `stopped` and purged rows, SERVE `pending` and `paused`.
+// That rule is right for the list — nothing leaves the page — and this module then inherited it
+// as its SEND rule ("already refused one step earlier… re-asserting it would be a second copy").
+// While gate 3 refused everybody that borrowed rule never mattered; once v8 shipped, a `pending`
+// row stamped v8 cleared every remaining gate. Concretely, a pending row holds a working
+// `/u/{token}` link whenever: a STOPPED subscriber resubmits the web form (the upsert resets them
+// to `pending`, clears `confirmed_timestamp`, and deliberately KEEPS their old token, which is in
+// every text they ever got); a PAUSED one resubmits likewise; or anyone else obtains the link. A
+// press then texted a number whose double opt-in was incomplete — a commercial electronic message
+// without confirmed express consent, which is exactly what CASL prohibits. Reproduced in prod on
+// 2026-09-24 (sms_send_log send_type 'instant_picks' at 15:41:26Z against a never-confirmed row).
 //
-// ═══ WHY THE CONSENT GATE IS STRUCTURAL RATHER THAN REASONED ═══
+// SEND ELIGIBILITY IS NOT LIST ELIGIBILITY. The two rules answer different questions and must not
+// be merged again: the list may show to anyone with a live link; the TEXT goes only to a
+// subscriber whose double opt-in is complete and not paused or withdrawn — the same population
+// the Friday send selects (`loadActiveSubscribers`: WHERE status = 'active').
+//
+// `paused` IS REFUSED TOO, deliberately. Their consent was confirmed and never withdrawn, so a
+// requested text is arguably permissible — but the page they are pressing on tells them "Your SMS
+// updates are paused", and "we text only the people the weekly job would text" is one rule with no
+// legal read attached. Widening to paused later is one condition in `hasConfirmedActiveConsent`;
+// flagged to Jon rather than decided here.
+//
+// ═══ WHY THE WORDING GATE (3) IS STRUCTURAL RATHER THAN REASONED ═══
 // CASL treats a message sent IN RESPONSE TO A REQUEST from the recipient differently from an
 // unsolicited one, and a subscriber pressing their own button on their own preferences page is
 // about as clean a request as exists — which would mean v7 subscribers could receive this. That is
-// a legal read, and this feature does not ship on one. Gating on the version costs nothing today
-// (KIDS FUN has no live subscribers) and answers the question with a mechanism instead of an
-// opinion. If Jon later obtains a legal read that says v7 is fine, THAT is when this changes, and
-// it changes here, once.
+// a legal read, and this feature does not ship on one. Gating on the version answers the question
+// with a mechanism instead of an opinion. If Jon later obtains a legal read that says v7 is fine,
+// THAT is when this changes, and it changes here, once. (The same "request" argument does NOT
+// rescue a pending subscriber: pressing a button is not the JOIN reply that completes the double
+// opt-in, and this product's consent record treats only that reply as confirmation.)
 //
 // ═══ WHAT THIS WRITES ═══
 // One `sms_send_log` row per dispatched text, `send_type = 'instant_picks'`, `picks_snapshot`
@@ -60,6 +80,7 @@ import {
   smsSendingEnabled,
 } from './config';
 import { consentVersionSerial } from './consent-copy';
+import type { ConsentStatus } from './consent-transitions';
 import { checkAndRecordInstantPicksSend } from './instant-picks-send-throttle';
 import { renderInstantPicksMessage, type RenderedMessage } from './message';
 import { recordSmsSend } from './send-log';
@@ -97,10 +118,10 @@ async function defaultMarkStoppedViaCarrier(subscriberId: string): Promise<void>
  * prefix is re-stamped on resubmit so it says when a parent last touched the form rather than when
  * the wording was issued. `consentVersionSerial` exists for exactly this; see its doc.
  *
- * ⚠ 8 IS THE VERSION THAT DOES NOT EXIST YET. The live constant is v7. This number is written
- * ahead of the copy change on purpose — it is what makes this module inert without needing a
- * second flag, and it means task 1 enables the feature by doing its own job (bumping the version)
- * rather than by remembering to come back here.
+ * 8 IS THE WORDING THAT FIRST DISCLOSED THIS TEXT (task 1, 2026-09-14). It was written ahead of
+ * that copy change so the module stayed inert until then. ⚠ It is a WORDING check only: a pending
+ * subscriber who submitted the v8 form clears it without ever confirming — which is why gate 2
+ * (`hasConfirmedActiveConsent`) exists and runs first.
  */
 export const INSTANT_PICKS_MIN_CONSENT_SERIAL = 8;
 
@@ -147,12 +168,13 @@ export type InstantPicksSendStatus =
   /**
    * NO SEND WAS ATTEMPTED, and nothing about it should be said to the subscriber.
    *
-   * ═══ THIS IS THE STATE EVERY DEPLOYMENT IS IN TODAY, AND IT MUST STAY SILENT ═══
-   * The flag is off, or this subscriber's consent predates v8, or they have no phone number left
-   * after the 30-day purge. None of those is a failure a parent can act on, and — this is the part
-   * that matters — the page they are looking at still says "1 message per week, plus a one-time
-   * confirmation message". Rendering "we couldn't text you" would tell them about a text that was
-   * never offered, on a page whose own legal block says no such text exists.
+   * ═══ IT MUST STAY SILENT ═══
+   * The flag is off, or this subscriber has not confirmed (or is paused), or their consent
+   * predates v8, or they have no phone number left after the 30-day purge. None of those is a
+   * failure a parent can act on here: a pending subscriber's page already tells them to reply JOIN
+   * and a paused one's already explains the pause, and a pre-v8 page says "1 message per week,
+   * plus a one-time confirmation message" — so "we couldn't text you" would describe a text that
+   * was never offered to them.
    *
    * So the UI renders NOTHING for this status and the page behaves exactly as it did before this
    * feature was built. That equivalence is asserted in tests/sms/instant_picks_route.test.ts.
@@ -182,8 +204,12 @@ export interface InstantPicksSendSubscriber {
   /** E.164. The only field here that is a phone number; never returned or logged. */
   phoneNumber: string;
   preferencesToken: string;
-  /** Copied verbatim onto the audit row, and the thing the consent gate reads. */
+  /** Copied verbatim onto the audit row, and the thing the wording gate reads. */
   consentTextVersion: string;
+  /** The CASL lifecycle state. Read by the consent gate; never returned or logged. */
+  status: ConsentStatus;
+  /** When they replied JOIN. NULL while pending, and cleared again by a form resubmission. */
+  confirmedTimestamp: Date | null;
 }
 
 export type InstantPicksSendSubscriberLookup = (
@@ -191,11 +217,34 @@ export type InstantPicksSendSubscriberLookup = (
 ) => Promise<InstantPicksSendSubscriber | null>;
 
 /**
+ * May this subscriber be sent a content text at all? (Gate 2 — the CASL gate.)
+ *
+ * BOTH HALVES, because each covers a state the other cannot see:
+ *   • `status === 'active'` refuses `pending` (never confirmed, or re-consenting after a
+ *     resubmit), `paused` and `stopped`.
+ *   • `confirmedTimestamp !== null` is the recorded proof of the JOIN reply. No transition today
+ *     writes `active` without it, so this half should be redundant — which is exactly when a
+ *     compliance gate should still check it: a hand-edited row, a future transition or a restore
+ *     that sets `active` without the proof must fail closed, not open.
+ *
+ * Pure and exported so the SHIPPED predicate is what the tests execute, not a copy of it.
+ */
+export function hasConfirmedActiveConsent(
+  subscriber: Pick<InstantPicksSendSubscriber, 'status' | 'confirmedTimestamp'>
+): boolean {
+  return subscriber.status === 'active' && subscriber.confirmedTimestamp != null;
+}
+
+/**
  * Load what the text needs, keyed on the id the route already resolved from the token.
  *
- * NO `status` CLAUSE, and that is not an oversight: `findInstantPicksSubscriber` has already
- * refused `stopped` and purged rows one step earlier in the same request, and re-asserting it here
- * would be a second, drifting copy of a rule that is enforced where it belongs.
+ * IT READS `status` AND `confirmed_timestamp`, AND DOES NOT TRUST THE ROUTE'S LOOKUP FOR THEM.
+ * `findInstantPicksSubscriber` answers a different question — may this link see the LIST — and
+ * deliberately serves `pending` and `paused` rows. This file once relied on that lookup as its
+ * status check, which is how never-confirmed subscribers came to be texted (see the header). The
+ * send rule is applied in `sendInstantPicksText`, as gate 2, on the values read HERE — in the same
+ * read that supplies the phone number, so the number and the consent state it is judged by come
+ * from one snapshot of the row.
  *
  * NO PHONE NUMBER MEANS NO SEND. Migration 0034's 30-day purge NULLs the personal columns in place
  * rather than deleting the row, so a purged subscriber still HAS a row and `dispatchSms` would be
@@ -215,8 +264,11 @@ export const loadInstantPicksSendSubscriber: InstantPicksSendSubscriberLookup = 
     phone_number: string | null;
     preferences_token: string | null;
     consent_text_version: string;
+    status: ConsentStatus;
+    confirmed_timestamp: Date | null;
   }>(
-    `SELECT id, phone_number, preferences_token, consent_text_version
+    `SELECT id, phone_number, preferences_token, consent_text_version,
+            status, confirmed_timestamp
        FROM sms_consent
       WHERE id = $1`,
     [subscriberId]
@@ -231,6 +283,8 @@ export const loadInstantPicksSendSubscriber: InstantPicksSendSubscriberLookup = 
     phoneNumber: row.phone_number,
     preferencesToken: row.preferences_token,
     consentTextVersion: row.consent_text_version,
+    status: row.status,
+    confirmedTimestamp: row.confirmed_timestamp,
   };
 };
 
@@ -262,10 +316,15 @@ export interface InstantPicksSendOptions {
  *
  * ═══ THE ORDER OF THE CHECKS IS THE DESIGN, NOT AN ACCIDENT ═══
  * Cheapest and most absolute first, so a held deployment does no work at all:
- *   flag (no I/O) → subscriber read → consent gate → dry run → throttle → render → dispatch → log.
+ *   flag (no I/O) → subscriber read → CONFIRMED-CONSENT gate → wording gate → dry run → throttle
+ *   → render → dispatch → log.
  * In particular the THROTTLE RUNS LAST OF THE GATES. It is the only one that WRITES, and spending
- * a subscriber's daily budget on a send that a flag or a consent version was going to refuse
- * anyway would let a held feature quietly lock out the parents it is later enabled for.
+ * a subscriber's daily budget on a send that a flag or a consent gate was going to refuse
+ * anyway would let a held feature quietly lock out the parents it is later enabled for — or, for a
+ * pending subscriber, burn the budget they will want the moment they reply JOIN.
+ * The consent gate also runs BEFORE the dry run, so a staging dry run reports `not_eligible` for a
+ * pending subscriber exactly as production would, rather than `disabled` for a send that could
+ * never have happened.
  */
 export async function sendInstantPicksText(
   subscriberId: string,
@@ -294,7 +353,13 @@ export async function sendInstantPicksText(
   // them is something to explain to the person looking at the page.
   if (!subscriber) return held;
 
-  // ── GATE 2: the structural consent gate. See this file's header — refuses everything today. ──
+  // ── GATE 2: CONFIRMED, ACTIVE CONSENT. The CASL gate — see this file's header. ─────────────
+  // Before everything that could write or dispatch. A pending subscriber has not completed the
+  // double opt-in; a paused or stopped one is not being texted. SILENT (`not_eligible`), because
+  // the page already tells each of them what their state is.
+  if (!hasConfirmedActiveConsent(subscriber)) return held;
+
+  // ── GATE 3: the consent WORDING. They agreed to the disclosure that mentions this text. ─────
   const serial = consentVersionSerial(subscriber.consentTextVersion);
   if (serial === null || serial < INSTANT_PICKS_MIN_CONSENT_SERIAL) return held;
 
@@ -314,7 +379,7 @@ export async function sendInstantPicksText(
   });
   if (dryRun) return { status: 'disabled', segments: message.segments, degraded: false };
 
-  // ── GATE 3: the send throttle. FAILS CLOSED. ───────────────────────────────────────────
+  // ── GATE 4: the send throttle. FAILS CLOSED. ───────────────────────────────────────────
   const throttle = await (options.checkThrottle ?? checkAndRecordInstantPicksSend)({
     subscriberId: subscriber.id,
     ipAddress: options.ipAddress ?? null,

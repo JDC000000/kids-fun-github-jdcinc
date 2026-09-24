@@ -59,6 +59,11 @@ export type InstantPicksLookup = (
  *     left to search with, and the honest answer is that this link has nothing behind it.
  * `pending` and `paused` rows ARE served: they are real rows with real stored preferences, the
  * subscriber asked for this themselves on their own page, and nothing leaves the page.
+ *
+ * ⛔ THIS IS THE LIST RULE, NOT THE SEND RULE. A `found` here says nothing about whether the press
+ * may also TEXT them — `sendInstantPicksText` re-reads `status` and `confirmed_timestamp` itself
+ * and texts only confirmed, active subscribers (the 2026-09-24 CASL fix; see that file's header).
+ * Do not "simplify" either side by making one reuse the other.
  */
 export const findInstantPicksSubscriber: InstantPicksLookup = async (token, options = {}) => {
   const run = options.query ?? query;
