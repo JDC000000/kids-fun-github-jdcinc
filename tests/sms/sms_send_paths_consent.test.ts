@@ -239,6 +239,37 @@ function bindingNames(name: ts.BindingName, out: Set<string>): void {
  * cannot send and are ignored.
  */
 function launderedSeamExports(sf: ts.SourceFile): string[] {
+  const tainted = seamBindings(sf);
+  const laundered: string[] = [];
+  const isExported = (n: ts.Node) =>
+    ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+  for (const stmt of sf.statements) {
+    if (ts.isExportDeclaration(stmt) && !stmt.moduleSpecifier && !stmt.isTypeOnly &&
+        stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
+      for (const el of stmt.exportClause.elements) {
+        const local = (el.propertyName ?? el.name).text;
+        if (!el.isTypeOnly && tainted.has(local)) laundered.push(el.name.text);
+      }
+    } else if (ts.isVariableStatement(stmt) && isExported(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        const names = new Set<string>();
+        bindingNames(d.name, names);
+        for (const x of names) if (tainted.has(x)) laundered.push(x);
+      }
+    } else if (ts.isExportAssignment(stmt)) {
+      if ([...valueNamesOutsideFunctions(stmt.expression)].some((x) => tainted.has(x))) laundered.push('default');
+    }
+  }
+  return laundered.sort();
+}
+
+/**
+ * Every MODULE-SCOPE name bound to a seam value: the value imports of the seam (named — under any
+ * local name —, default, namespace, `import =`, or destructured from `require()` / `await
+ * import()`), closed over plain aliases (`const d = dispatchSms`) to a fixpoint. Shared by the
+ * laundering ban (F2) and the completeness check (N2), so both see the seam under every name.
+ */
+function seamBindings(sf: ts.SourceFile): Set<string> {
   const tainted = new Set<string>();
   const isSeamCall = (e: ts.Expression) => {
     const c = unwrap(e);
@@ -288,27 +319,7 @@ function launderedSeamExports(sf: ts.SourceFile): string[] {
       }
     }
   }
-  const laundered: string[] = [];
-  const isExported = (n: ts.Node) =>
-    ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-  for (const stmt of sf.statements) {
-    if (ts.isExportDeclaration(stmt) && !stmt.moduleSpecifier && !stmt.isTypeOnly &&
-        stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
-      for (const el of stmt.exportClause.elements) {
-        const local = (el.propertyName ?? el.name).text;
-        if (!el.isTypeOnly && tainted.has(local)) laundered.push(el.name.text);
-      }
-    } else if (ts.isVariableStatement(stmt) && isExported(stmt)) {
-      for (const d of stmt.declarationList.declarations) {
-        const names = new Set<string>();
-        bindingNames(d.name, names);
-        for (const x of names) if (tainted.has(x)) laundered.push(x);
-      }
-    } else if (ts.isExportAssignment(stmt)) {
-      if ([...valueNamesOutsideFunctions(stmt.expression)].some((x) => tainted.has(x))) laundered.push('default');
-    }
-  }
-  return laundered.sort();
+  return tainted;
 }
 
 /**
@@ -408,32 +419,49 @@ function identifiersIn(rel: string, src: string): Set<string> {
 
 /**
  * The EXPORTED NAMES of a module's senders: top-level functions (declared, or `const` arrow /
- * function expressions) whose body names the seam's sender, another entry point, or — to a
- * fixpoint — another local sender, so a sender behind a private helper still counts. Exported
- * directly OR through an export clause (`export { qaNudge }`, `export { f as g }` — QA F3).
+ * function expressions, or an anonymous default export) whose body names the seam, another entry
+ * point, or — to a fixpoint — another local sender, so a sender behind a private helper still
+ * counts. Exported directly, through an export clause (`export { qaNudge }`, `export { f as g }` —
+ * QA F3), or as `default`.
+ *
+ * "NAMES THE SEAM" MEANS UNDER ANY NAME (QA N2). The seed is not just the literal names
+ * `dispatchSms` / `twilioClient`: it is every module-scope binding `seamBindings` resolves to the
+ * seam — a renamed import (`dispatchSms as qaRenamed`), a module alias (`const d = dispatchSms`),
+ * a namespace (`ns`, including `ns['dispatchSms']`). String literals count as names too, as for the
+ * caller allow-list (F4).
  */
 function exportedSenders(rel: string, src: string): string[] {
   const sf = parse(rel, src);
-  const seed = new Set(['dispatchSms', 'twilioClient', ...Object.keys(SEND_ENTRY_POINTS)]);
+  const seed = new Set([
+    'dispatchSms',
+    'twilioClient',
+    ...Object.keys(SEND_ENTRY_POINTS),
+    ...seamBindings(sf),
+  ]);
   const bodyNames = (node: ts.Node) => {
     const names = new Set<string>();
     const visit = (n: ts.Node) => {
-      if (ts.isIdentifier(n)) names.add(n.text);
+      if (ts.isIdentifier(n) || ts.isStringLiteralLike(n)) names.add(n.text);
       ts.forEachChild(n, visit);
     };
     visit(node);
     return names;
   };
-  const isExported = (n: ts.Node) =>
-    ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+  const hasModifier = (n: ts.Node, kind: ts.SyntaxKind) =>
+    ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === kind);
+  const isExported = (n: ts.Node) => hasModifier(n, ts.SyntaxKind.ExportKeyword);
+  /** Key for an anonymous default export's body; cannot collide with an identifier. */
+  const ANON_DEFAULT = '<anonymous default>';
   const bodies = new Map<string, Set<string>>();
   const exportedAs = new Map<string, string[]>();
   const exportAs = (local: string, exported: string) =>
     exportedAs.set(local, [...(exportedAs.get(local) ?? []), exported]);
   for (const stmt of sf.statements) {
-    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
-      bodies.set(stmt.name.text, bodyNames(stmt.body));
-      if (isExported(stmt)) exportAs(stmt.name.text, stmt.name.text);
+    if (ts.isFunctionDeclaration(stmt) && stmt.body) {
+      // `export default async function (p) {…}` has no name (QA N2, R08).
+      const local = stmt.name?.text ?? ANON_DEFAULT;
+      bodies.set(local, bodyNames(stmt.body));
+      if (isExported(stmt)) exportAs(local, hasModifier(stmt, ts.SyntaxKind.DefaultKeyword) ? 'default' : local);
     } else if (ts.isVariableStatement(stmt)) {
       for (const decl of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
@@ -441,6 +469,15 @@ function exportedSenders(rel: string, src: string): string[] {
         if (!ts.isArrowFunction(init) && !ts.isFunctionExpression(init)) continue;
         bodies.set(decl.name.text, bodyNames(init.body));
         if (isExported(stmt)) exportAs(decl.name.text, decl.name.text);
+      }
+    } else if (ts.isExportAssignment(stmt)) {
+      // `export default async (p) => …` (QA N2, R09) and `export default someLocalSender`.
+      const e = unwrap(stmt.expression);
+      if (ts.isArrowFunction(e) || ts.isFunctionExpression(e)) {
+        bodies.set(ANON_DEFAULT, bodyNames(e.body));
+        exportAs(ANON_DEFAULT, 'default');
+      } else if (ts.isIdentifier(e)) {
+        exportAs(e.text, 'default');
       }
     } else if (ts.isExportDeclaration(stmt) && !stmt.moduleSpecifier && stmt.exportClause &&
                ts.isNamedExports(stmt.exportClause)) {
@@ -640,6 +677,41 @@ describe('QA 2d67293 findings — the exact exploits are caught', () => {
       `const inner = (p: string) => helper(p);\nexport { inner as renamed };\n` +
       `export function unrelated() { return 1; }\n`;
     expect(exportedSenders('lib/sms/x.ts', src)).toEqual(['renamed', 'viaHelper']);
+  });
+
+  // ── QA round 2, N2: a sender that reaches the seam under another name. Each `…-app` string is
+  // QA's plant (.scratch/kf-qa-p6/r2/c/R0N-app), verbatim, appended to welcome.ts as QA did.
+  const N2_PLANTS: Array<[string, string, string]> = [
+    ['R12 renamed seam import', 'qaViaRenamed',
+      "\nimport { dispatchSms as qaRenamed } from './twilio-client';\nexport async function qaViaRenamed(p: string) {\n  return qaRenamed(p, {} as never, { dryRun: false });\n}\n"],
+    ['R10 module-scope alias', 'qaViaAlias',
+      '\nconst qaD = dispatchSms;\nexport async function qaViaAlias(p: string) {\n  return qaD(p, {} as never, { dryRun: false });\n}\n'],
+    ['R11 namespace element access', 'qaViaNs',
+      "\nimport * as qaSeamNs from './twilio-client';\nexport async function qaViaNs(p: string) {\n  return qaSeamNs['dispatchSms'](p, {} as never, { dryRun: false });\n}\n"],
+    ['R08 anonymous default function', 'default',
+      '\nexport default async function (p: string) {\n  return dispatchSms(p, {} as never, { dryRun: false });\n}\n'],
+    ['R09 anonymous default arrow', 'default',
+      '\nexport default async (p: string) => dispatchSms(p, {} as never, { dryRun: false });\n'],
+  ];
+  for (const [label, exported, plant] of N2_PLANTS) {
+    it(`N2 (${label}): the sender is on the completeness radar as \`${exported}\``, () => {
+      const src = read('lib/sms/welcome.ts') + plant;
+      expect(exportedSenders('lib/sms/welcome.ts', src)).toContain(exported);
+      expect(SEND_ENTRY_POINTS[exported]).toBeUndefined();
+    });
+  }
+
+  it('N2: a default export naming a local sender is `default`; a non-sending default is not a sender', () => {
+    const viaName =
+      `import { dispatchSms } from './twilio-client';\n` +
+      `async function nudge(p: string) { return dispatchSms(p, {} as never, { dryRun: true }); }\n` +
+      `export default nudge;\n`;
+    expect(exportedSenders('lib/sms/x.ts', viaName)).toEqual(['default']);
+    const innocent =
+      `import { dispatchSms } from './twilio-client';\n` +
+      `export type Sender = typeof dispatchSms;\n` +
+      `export default function label() { return 'weekly'; }\n`;
+    expect(exportedSenders('lib/sms/x.ts', innocent)).toEqual([]);
   });
 
   it('F4 (C09): `io[\'sendWeeklySmsForSubscriber\']` counts as naming the entry point', () => {
