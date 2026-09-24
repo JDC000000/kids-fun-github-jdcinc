@@ -20,6 +20,7 @@ import {
   isInternalAgeMarker,
   formatVenueAddress,
   addressRepeatsVenueName,
+  sourceLinkWording,
 } from '../_data/format';
 
 // Activity detail / source page body (Screen 3) — everything to decide and to trust,
@@ -63,7 +64,10 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   // and the bar's copy was deleted (see `barAction`). The derivation stays here, above its one
   // remaining consumer, because heroSourceHref/heroSourceLabel below are computed FROM it.
   const sourceHref = activity.bookingUrl ?? activity.sourceUrl;
-  const sourceLabel = activity.bookingUrl ? bookLabel : 'View official source';
+  // "Official" only when the tier earns it: a curated row's link may be a tourism board or a
+  // listings site. See sourceLinkWording() for the 2026-09-24 QA record.
+  const sourceWording = sourceLinkWording(activity.confidence);
+  const sourceLabel = activity.bookingUrl ? bookLabel : sourceWording.action;
   // ═══ A BLOCKED SESSION NEVER WEARS A BOOKING LABEL IN THE HERO (2026-09-10) ═══
   // The hero affordance makes the SOURCE claim ("here is who says so"), which is the
   // whole reason it survives a cancelled/postponed status while the bar below refuses
@@ -77,7 +81,7 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
   // for something that is not happening. (Until 2026-09-11 the bar rendered the unblocked
   // source*/sourceLabel pair; it now renders no link at all, so hero* is the only consumer.)
   const heroSourceHref = isBlocked ? activity.sourceUrl : sourceHref;
-  const heroSourceLabel = isBlocked ? 'View official source' : sourceLabel;
+  const heroSourceLabel = isBlocked ? sourceWording.action : sourceLabel;
   const ages = ageGuide(activity.ageMin, activity.ageMax);
   const facts = practicalFacts(activity);
   // Null for the majority of listings (no source family but ActiveNet publishes a facility
@@ -431,9 +435,12 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
               source" and called it "a known, separately-tracked copy defect". That is no longer
               true: c367a3e closed it, and the absence now states itself in Jon's words below
               rather than being named by a stand-in. */}
+          {/* The lead is tier-driven (sourceLinkWording): "Official source" for official-tier
+              listings, plain "Source" otherwise, so it can never sit next to "not directly
+              confirmed by the venue or organiser" in the confidence sentence below. */}
           {activity.sourceUrl ? (
             <>
-              Official source:{' '}
+              {sourceWording.lead}:{' '}
               <a
                 className="kf-srclink"
                 href={activity.sourceUrl}
