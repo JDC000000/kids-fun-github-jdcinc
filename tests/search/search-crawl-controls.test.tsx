@@ -8,6 +8,8 @@
 //      non-search link do not.
 //   4. (Jon, same day) AI crawlers get their own `Disallow: /` group SITE-WIDE, while normal
 //      search engines keep the `*` group, and so stay allowed everywhere except /search.
+//   5. (Operator P1, same day) sitemap.xml no longer lists /search, and lists nothing robots.txt
+//      disallows.
 // See app/robots.ts, app/_lib/ai-crawlers.ts, app/search/layout.tsx and
 // app/_lib/search-link-rel.ts for the reasoning.
 //
@@ -55,6 +57,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 import robots from '@/app/robots';
+import sitemap from '@/app/sitemap';
 import { AI_CRAWLER_USER_AGENTS } from '@/app/_lib/ai-crawlers';
 import { metadata as searchLayoutMetadata } from '@/app/search/layout';
 import { metadata as rootLayoutMetadata } from '@/app/layout';
@@ -448,5 +451,27 @@ describe('4 — AI crawlers are blocked site-wide; search engines are not', () =
     expect(mayFetch('Googlebot', '/')).toBe(true);
     expect(mayFetch('Applebot-Extended', '/')).toBe(false);
     expect(mayFetch('Applebot', '/')).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('5 — sitemap.xml lists no /search URL and nothing robots.txt disallows', () => {
+  const urls = sitemap().map((entry) => entry.url);
+
+  it('lists exactly the static public pages, /search no longer among them (Operator P1)', () => {
+    expect(urls).toEqual([`${ORIGIN}/`, `${ORIGIN}/coverage-status`, `${ORIGIN}/privacy`, `${ORIGIN}/terms`]);
+  });
+
+  it('no entry is /search or a /search permutation', () => {
+    for (const url of urls) {
+      const { pathname } = new URL(url);
+      expect(pathname === '/search' || pathname.startsWith('/search/') || pathname.startsWith('/search?'), url).toBe(false);
+    }
+  });
+
+  it.each(['Googlebot', 'Bingbot'])('every sitemap URL is one robots.txt lets %s fetch (the sitemap never contradicts robots.txt)', (token) => {
+    for (const url of urls) {
+      expect(parsedRobots.isAllowed(url, token), `${token} ${url}`).toBe(true);
+    }
   });
 });
