@@ -40,8 +40,11 @@ export interface WhenLine {
 export const NO_FIXED_DATE_DAY = 'Available any day';
 /** Fallback when a dateless listing's source did not publish its hours either. */
 const NO_FIXED_DATE_TIME = 'Check opening hours';
-/** A multi-day span whose edges are not whole days: the per-day times are not ours to invent. */
-const MULTI_DAY_TIME = 'See listing for times';
+/**
+ * The per-day times are not ours to invent: a multi-day span whose edges are not whole days, or a
+ * single-day occurrence with no end instant (or one that ends when it starts).
+ */
+const SEE_LISTING_FOR_TIMES = 'See listing for times';
 /** A multi-day span that covers its days end to end. */
 const ALL_DAY_TIME = 'All day';
 /** Local minute at/after which an end instant is treated as closing out its whole day. */
@@ -91,7 +94,7 @@ export function formatWhen(
   if (endDay > startDay) {
     return {
       day: formatRangeLabel(startDay, endDay),
-      time: coversWholeDays(start, usableEnd) ? ALL_DAY_TIME : MULTI_DAY_TIME,
+      time: coversWholeDays(start, usableEnd) ? ALL_DAY_TIME : SEE_LISTING_FOR_TIMES,
     };
   }
 
@@ -101,6 +104,12 @@ export function formatWhen(
     month: 'short',
     day: 'numeric',
   }).format(start);
+  // No end, or an end equal to (or before) the start, is not a range. It printed "10 AM–10 AM" on
+  // the curated annual events (QA, 2026-09-24): their importer writes end = NULL for a single-day
+  // event and, when the source gave no time, a default start clock — so neither end of that
+  // "range" was stated by anyone. The mapper sends a missing end as the start, so equality covers
+  // both cases.
+  if (usableEnd.getTime() === start.getTime()) return { day, time: SEE_LISTING_FOR_TIMES };
   return { day, time: `${formatClock(start)}–${formatClock(usableEnd)}` }; // en-dash range
 }
 
@@ -652,6 +661,18 @@ export function formatVenueAddress(raw: string | null | undefined): string | nul
     .replace(/^[,\s]+|[,\s]+$/g, '');
 
   return out.length > 0 ? out : null;
+}
+
+/** What a listing with no known venue says in the venue's place. Same "— check source" idiom as COST_UNKNOWN. */
+export const VENUE_NOT_STATED = 'Location — check source';
+
+/**
+ * The venue line as a parent reads it. An empty venue name is the read model's "no venue known"
+ * (lib/search/postgres-repository.ts#rowToListing) — typically a citywide or multi-site event —
+ * and must render as a stated absence, never as a blank heading or an internal label.
+ */
+export function formatVenue(venue: string | null | undefined): string {
+  return venue?.trim() || VENUE_NOT_STATED;
 }
 
 /**

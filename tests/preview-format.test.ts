@@ -220,7 +220,8 @@ describe('formatWhen (America/Vancouver)', () => {
   it('never lets a backwards or unparseable end widen the span', () => {
     const backwards = formatWhen('2026-08-16T21:00:00.000Z', '2026-06-01T00:00:00.000Z');
     expect(backwards.day.startsWith('Sun')).toBe(true);
-    expect(backwards.time).toBe('2 PM–2 PM');
+    // Not a range — it printed '2 PM–2 PM' until 2026-09-24 (see tests/search/curated-content-leaks).
+    expect(backwards.time).toBe('See listing for times');
     const unparseable = formatWhen('2026-08-16T21:00:00.000Z', 'not-a-date');
     expect(unparseable.day.startsWith('Sun')).toBe(true);
   });

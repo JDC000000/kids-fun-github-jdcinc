@@ -20,6 +20,7 @@ import {
   formatCost,
   formatDistance,
   formatSlotSummary,
+  formatVenue,
   formatWhen,
   statusMeta,
 } from '../_data/format';
@@ -85,7 +86,7 @@ export function ActivityCard({ activity }: { activity: Activity }) {
   // parent can still read. If anything the parity improved: the string used to be visible
   // twice and announced once, and is now visible once and announced once.
   const label = [
-    `${activity.activityName} at ${activity.venue}`,
+    activity.venue ? `${activity.activityName} at ${activity.venue}` : `${activity.activityName}, ${formatVenue(activity.venue)}`,
     `${when.day} ${whenTime}`,
     formatCardAges(activity),
     meta.label,
@@ -119,7 +120,7 @@ export function ActivityCard({ activity }: { activity: Activity }) {
     <>
       <div className="kf-card__body">
         <p className="kf-card__type">{activity.activityName}</p>
-        <h3 className="kf-card__title">{activity.venue}</h3>
+        <h3 className="kf-card__title">{formatVenue(activity.venue)}</h3>
         <div className="kf-card__meta">
           <span>
             <b>{when.day}</b> · {whenTime}

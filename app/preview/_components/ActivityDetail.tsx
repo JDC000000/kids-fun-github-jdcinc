@@ -11,6 +11,7 @@ import {
   formatCost,
   formatDistance,
   formatDistanceValue,
+  formatVenue,
   formatWhen,
   practicalFacts,
   statusMeta,
@@ -128,7 +129,7 @@ export function ActivityDetail({ activity, occurrenceId, backHref, backLabel }: 
             it is an attribute of the h1. Visual order is unchanged — activity name first, venue
             directly under it — so only the tag and the weight moved, not the reading order. */}
         <h1 className="kf-detail__title">{activity.activityName}</h1>
-        <p className="kf-detail__place">{activity.venue}</p>
+        <p className="kf-detail__place">{formatVenue(activity.venue)}</p>
         {/* Was a hand-rolled copy of formatDistance's string, which meant the card and the
             detail page could drift — and did, both stating a distance that had been invented
             when none was measurable. One formatter, one reading, both surfaces. */}
