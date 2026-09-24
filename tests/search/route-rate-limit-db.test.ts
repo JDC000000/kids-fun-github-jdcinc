@@ -26,6 +26,23 @@
 // (matching the established convention) makes this suite self-sufficient in every environment —
 // local, CI, anywhere — with no environment configuration required at all.
 //
+// ═══ THE CLOCK IS FROZEN MID-MINUTE — 2026-09-24 FLAKE FIX ═══
+// lib/security/search-rate-limit.ts buckets with `floor(Date.now() / 60s)`. Against the REAL clock,
+// any test whose request loop straddled a minute boundary split its requests across two
+// `window_start` rows: the 13th request of the session-limit test landed in a fresh bucket (200, not
+// 429), the RAW-count test saw its count reset to 1, and the 41-request IP-only test got a 200 where
+// it expected the 429. Reproduced deterministically on 4abe49a by launching this file ~2.4s before a
+// minute boundary — each of those three failures, one per attempt.
+// Fix: fake ONLY `Date` (`toFake: ['Date']`) and pin it to the middle of the current real minute, so
+// every request in this file names the same minute bucket no matter how long the file takes.
+// ONLY `Date`: faking setTimeout/setImmediate/nextTick would freeze node-postgres's socket, pool
+// acquire and idle timers and hang this suite against a real database — the same reason
+// tests/search/catalogue-cache-bust-route.test.ts fakes only `Date`. Pinned near REAL now (not a
+// fixed historic date) so rows look ordinary to anything that reasons about window_start age, and
+// `last_attempt_at = now()` (the DB's clock) stays close to window_start. Isolation between tests
+// still comes from unique subjects (`freshSubject`), not from time, so one frozen minute for the
+// whole file is safe.
+//
 // ═══ THE LOCAL-DB GUARD ═══
 // vitest.config.ts's `setupFiles: ['./lib/testing/local-db-guard.ts']` already runs for EVERY
 // test file in EVERY workspace project (including this file's `db` project — the projects all
@@ -56,12 +73,21 @@ function request(ip: string, sessionId: string | null): Request {
   return new Request('http://localhost/api/search?q=soft+play&minResults=0', { headers });
 }
 
+const MINUTE_MS = 60_000;
+
+/** The middle (:30.000) of the minute containing `realNowMs` — see the frozen-clock note above. */
+function midMinuteNear(realNowMs: number): Date {
+  return new Date(Math.floor(realNowMs / MINUTE_MS) * MINUTE_MS + MINUTE_MS / 2);
+}
+
 describe.skipIf(!hasDb)('GET /api/search rate limit (real Postgres)', () => {
   const testIps: string[] = [];
   const testSessionIds: string[] = [];
 
   beforeAll(() => {
     vi.stubEnv('SMS_PHONE_HASH_SALT', TEST_SALT);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(midMinuteNear(Date.now()));
   });
 
   afterAll(async () => {
@@ -83,6 +109,7 @@ describe.skipIf(!hasDb)('GET /api/search rate limit (real Postgres)', () => {
     // hooks racing on Vitest's same-scope ordering) so TEST_SALT is still the active salt when
     // these hashes are computed above.
     vi.unstubAllEnvs();
+    vi.useRealTimers();
     await closePool();
   });
 
@@ -110,6 +137,25 @@ describe.skipIf(!hasDb)('GET /api/search rate limit (real Postgres)', () => {
     expect(refused.headers.get('x-data-source')).toBe('rate-limited');
     const body = await refused.json();
     expect(body).toEqual({ error: 'too many requests' });
+  });
+
+  it('is deterministic even when pinned 1ms before a minute boundary (frozen clock cannot straddle)', async () => {
+    // Pins the WORST case the real clock used to hit by chance: the whole limit-then-refuse loop
+    // starting at :59.999. With `Date` frozen the loop cannot cross into the next bucket, so the
+    // 13th request is still refused. Restores the file's mid-minute pin afterwards.
+    const pinned = midMinuteNear(Date.now());
+    vi.setSystemTime(new Date(pinned.getTime() + MINUTE_MS / 2 - 1));
+    try {
+      const { ip, sessionId } = freshSubject('10.84');
+      for (let i = 0; i < SEARCH_RATE_LIMITS.session.perMinute; i++) {
+        const res = await GET(request(ip, sessionId));
+        expect(res.status, `request ${i + 1}`).toBe(200);
+      }
+      const refused = await GET(request(ip, sessionId));
+      expect(refused.status).toBe(429);
+    } finally {
+      vi.setSystemTime(pinned);
+    }
   });
 
   it('leaves a completely different ip/session pair unaffected', async () => {
