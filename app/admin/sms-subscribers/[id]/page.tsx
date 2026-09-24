@@ -10,14 +10,11 @@
 // in lib/admin/sms-subscribers.ts and never leaves it: no field rendered here contains it, there
 // is no search box, and there is no route that takes a number. An admin arrives here from a row
 // they already had.
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../../_lib/gate';
 import { ADMIN_CONSOLE_CSS } from '../../sources/_lib/console-css';
 import { formatTimestampUtc } from '@/lib/admin/format';
-import { adminHref } from '../_lib/href';
 import {
   getSmsSubscriberDetail,
   displayChildAges,
@@ -49,11 +46,7 @@ export default async function AdminSmsSubscriberDetailPage({
   params: { id: string };
   searchParams: Record<string, string | string[] | undefined>;
 }) {
-  const grant = await resolveAdminAccess({
-    surface: 'admin_sms_subscriber_detail',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_sms_subscriber_detail' });
   if (!grant.ok) {
     notFound();
   }
@@ -97,7 +90,7 @@ export default async function AdminSmsSubscriberDetailPage({
       </div>
 
       <div className="adm-nav">
-        <Link href={adminHref('/admin/sms-subscribers', searchParams)}>← All subscribers</Link>
+        <Link href="/admin/sms-subscribers">← All subscribers</Link>
       </div>
 
       {purged && (
@@ -150,9 +143,7 @@ export default async function AdminSmsSubscriberDetailPage({
         {!previewRequested && (
           <p>
             <Link
-              href={adminHref(`/admin/sms-subscribers/${subscriber.id}`, searchParams, {
-                preview: '1',
-              })}
+              href={`/admin/sms-subscribers/${subscriber.id}?preview=1`}
             >
               Preview this week’s SMS →
             </Link>

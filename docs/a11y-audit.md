@@ -146,7 +146,7 @@ shared runner `tests/e2e/a11y/axe-helper.ts`. Playwright projects: `a11y-anon`, 
 
 ## 4. Audit gaps & caveats
 
-- **`/admin/dashboard` — NOT audited (explicit gap).** The admin dashboard is gated by a shared
+- **`/admin/dashboard` — NOT audited (explicit gap).** *(Historical; see §7 and its 2026-09-24 update — the token below no longer exists.)* The admin dashboard is gated by a shared
   secret (`ADMIN_DASHBOARD_TOKEN`, via `?token=` / `x-admin-token`; see `lib/admin/access.ts`).
   It is **not** session/role-gated — but the E2E harness (`scripts/e2e/setup-local-supabase.sh`)
   does **not** provision `ADMIN_DASHBOARD_TOKEN`, so the gate fails closed and the route returns
@@ -272,6 +272,11 @@ port (`E2E_PORT` + matching `E2E_BASE_URL`) to test your actual build.
 > spec/helper as §1–§3 — no new testing approach was invented.
 
 ### 7.1 What made the gap closable
+
+> **Update 2026-09-24:** the interim token described below was removed from the app. The admin
+> sweep now lives in `tests/e2e/a11y/routes.authed.a11y.spec.ts` and signs in for real (the local
+> e2e test user is made an admin in the local database only). The setup script still provisions
+> `ADMIN_DASHBOARD_TOKEN` as a **decoy**, and the anon spec asserts every admin route 404s it.
 
 The blocker was never the audit code — it was that `scripts/e2e/setup-local-supabase.sh`
 never provisioned `ADMIN_DASHBOARD_TOKEN`, so the interim gate (`lib/admin/access.ts`)

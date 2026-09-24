@@ -8,13 +8,11 @@
 // underlying row in one transaction with an admin_audit_log entry — not a UI-only label.
 //
 // ACCESS (reuses app/admin/_lib/gate.ts, same posture as /admin/sources):
-//   • VIEW  — real admin session OR interim token; un-gated → 404.
-//   • WRITE — session admins only (grant.via === 'session'); token viewers are read-only.
+//   • VIEW  — a signed-in admin session (the only way in); un-gated → 404.
+//   • WRITE — the same session, re-checked in the server action.
 import { Fragment } from 'react';
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { listReviewQueue, type ReviewItem, type DedupPairing } from './_lib/data';
@@ -138,11 +136,7 @@ export default async function AdminQaQueuePage({
 }: {
   searchParams: Record<string, string | string[] | undefined>;
 }) {
-  const grant = await resolveAdminAccess({
-    surface: 'admin_qa_queue',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_qa_queue' });
   if (!grant.ok) notFound();
 
   const canMutate = grant.via === 'session';
@@ -183,7 +177,7 @@ export default async function AdminQaQueuePage({
             <span className="mono">admin_audit_log</span>.
           </p>
         ) : (
-          <p className="adm-note">🔒 Read-only (interim token). Sign in as a seeded admin to review records.</p>
+          <p className="adm-note">🔒 Read-only access. Your admin account cannot review records — that needs an admin with write access.</p>
         )}
       </header>
 

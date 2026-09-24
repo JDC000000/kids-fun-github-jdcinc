@@ -13,8 +13,8 @@ import {
 // permanently by Jon's 2026-09-12 ruling (lib/auth/google-signin-gate.ts); it stays gated and
 // is not touched by this change. This one exists for a different problem: an operator/admin
 // currently has no way to obtain a session at all, so app/admin/_lib/gate.ts's session path can
-// never match and the only way into /admin/* is ADMIN_DASHBOARD_TOKEN pasted into the URL —
-// which is both the thing Jon is blocked on and a secret that leaks through browser history,
+// never match and the only way into /admin/* was ADMIN_DASHBOARD_TOKEN pasted into the URL —
+// a secret that leaks through browser history,
 // referrers and screenshots.
 //
 // WHY THIS IS NOT A REVERSAL OF THE PUBLIC DECISION. Neither this file nor anything it imports

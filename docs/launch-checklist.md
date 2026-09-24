@@ -146,8 +146,10 @@ there is no production deploy. Sentry *wiring* is proven; production *coverage* 
 
 Routes exist and read live DB data (not fixtures): `/admin/dashboard` (KPI tiles via
 `lib/admin/dashboard` + `lib/analytics/kpi`) and `/admin/data-health` (region × family
-CoverageMatrix, SLA, corrections queue via `lib/admin/data-health`). Gated by
-`ADMIN_DASHBOARD_TOKEN` (`x-admin-token` header / `?token=`).
+CoverageMatrix, SLA, corrections queue via `lib/admin/data-health`). Gated by a signed-in admin
+session (`/admin/auth/signin`, an active `admin_user` row) — the ONLY way in. The interim
+`ADMIN_DASHBOARD_TOKEN` (`x-admin-token` header / `?token=`) that originally gated them was removed
+from the code on 2026-09-24 (a secret in a URL exposed subscriber PII); do not re-introduce it.
 
 - **✅ Staging:** both render live (HTTP 200; real coverage/source/occurrence content) — the
   monitoring mechanism genuinely works and is populated on the live env.
@@ -199,3 +201,5 @@ a config catch-up — so it stays with Jon.
 - Sentry DSN confirmed by fetching the live `/_next/static/chunks/main-app-*.js` and matching the
   ingest host. `/api/health` on the live deploy → `{env:"staging", commit:"f7ec772..."}`.
 - Live admin dashboards fetched with `ADMIN_DASHBOARD_TOKEN` → HTTP 200 with real data content.
+  **(Historical — that token path no longer exists as of 2026-09-24. To re-verify, sign in at
+  `/admin/auth/signin` as a seeded admin; never put a credential in a URL.)**

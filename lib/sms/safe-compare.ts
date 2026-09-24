@@ -16,10 +16,9 @@
 // attacking the content. That narrows the search space for free.
 //
 // THIS CODEBASE ALREADY HAD THE BETTER ANSWER and the SMS branch simply did not use it.
-// lib/admin/access.ts's `safeEqual` burns one same-length `timingSafeEqual` call on a mismatch so
+// The (since-deleted, 2026-09-24) lib/admin/access.ts `safeEqual` burned one same-length `timingSafeEqual` call on a mismatch so
 // the two paths cost about the same. This is that function, applied to this lane's two callers.
-// (lib/admin/access.ts itself is outside this branch's footprint and is not modified; this is a
-// deliberate copy of its approach, not a move of its code.)
+// (This was a deliberate copy of its approach, not a move of its code.)
 //
 // ── HOW MUCH DOES IT ACTUALLY MATTER? Honestly: not much, and it is still worth fixing. ──
 // The Twilio signature is a 28-character base64 HMAC-SHA1 digest of fixed length, so its length

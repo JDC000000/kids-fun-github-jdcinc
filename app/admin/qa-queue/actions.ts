@@ -1,8 +1,7 @@
 // app/admin/qa-queue/actions.ts — G-T34-5 server action: apply one QA review decision
 // (confirm | reject) to a queued occurrence. 'use server'. Gated by resolveSessionAdmin()
-// (Round-19 gate, reused) — a write must be attributable in admin_audit_log, so the
-// interim token has read-only access; re-checked here so a direct POST can't bypass the
-// read gate.
+// (Round-19 gate, reused) — a write must be attributable in admin_audit_log, re-checked
+// here so a direct POST cannot bypass the page gate.
 'use server';
 
 import { revalidatePath } from 'next/cache';
@@ -33,7 +32,7 @@ function queueRedirect(formData: FormData, flash: string): string {
 const NEEDS_SESSION_ADMIN: ReviewActionState = {
   ok: false,
   message:
-    'Reviewing a record requires a signed-in admin account. The interim access token is read-only; ask an admin to be seeded, then sign in.',
+    'Reviewing a record requires a signed-in admin account. Read-only access cannot make changes.',
 };
 
 /**

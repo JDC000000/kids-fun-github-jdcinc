@@ -27,6 +27,7 @@ export const EMAIL_MASK = '[redacted-email]';
 export const IP_MASK = '[redacted-ip]';
 export const PHONE_MASK = '[redacted-phone]';
 export const POSTAL_MASK = '[redacted-postal]';
+export const CREDENTIAL_MASK = '[redacted-credential]';
 
 // --- Patterns ----------------------------------------------------------------
 // Email: local@domain.tld, case-insensitive, global. The `@` alternation also
@@ -81,6 +82,17 @@ const PHONE_GROUPED_RE =
 // Letters make it disjoint from the email/IP/phone shapes, so ordering with
 // those is irrelevant; per the module's over-redaction bias, an occasional
 // look-alike token (e.g. a hex-ish `A1B2C3`) getting masked is acceptable.
+// A credential carried as a URL query VALUE: `?token=…`, `&code=…`, `secret=…` (a Sentry
+// `query_string` arrives without its leading `?`, so start-of-string counts as a boundary too).
+// The key is kept and only the value masked, so an event still says WHICH parameter was present.
+// Why this exists: until 2026-09-24 the admin console accepted a shared secret as `?token=`, and
+// none of the shape patterns in this file (email / IP / phone / postal) match an opaque secret, so
+// any error captured on such a request would have shipped the secret to Sentry verbatim. The admin
+// token path is gone; this keeps the next URL credential — an OAuth `code`, a signed link — from
+// repeating the leak.
+const CREDENTIAL_QUERY_RE =
+  /(^|[?&;#\s])((?:token|access_token|refresh_token|id_token|secret|password|passwd|api_key|apikey|key|code|auth|sig|signature)=)[^&#\s"'<>]+/gi;
+
 const POSTAL_RE =
   /\b[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z][ -]?\d[ABCEGHJ-NPRSTV-Z]\d\b/gi;
 
@@ -92,6 +104,7 @@ const POSTAL_RE =
  */
 export function redactString(input: string): string {
   return input
+    .replace(CREDENTIAL_QUERY_RE, `$1$2${CREDENTIAL_MASK}`)
     .replace(EMAIL_RE, EMAIL_MASK)
     .replace(IPV6_RE, IP_MASK)
     .replace(IPV4_RE, IP_MASK)
@@ -159,6 +172,9 @@ const DENY_HEADERS = new Set<string>([
   'x-auth-token',
   'x-csrf-token',
   'x-supabase-auth',
+  // The retired admin shared-secret header (removed from the app 2026-09-24). Listed so that a
+  // client still sending it out of habit can never get its value into an error event.
+  'x-admin-token',
 ]);
 
 const MAX_DEPTH = 8;
@@ -193,6 +209,22 @@ function sanitizeUser(user: NonNullable<Event['user']>): NonNullable<Event['user
   return cleaned as NonNullable<Event['user']>;
 }
 
+/**
+ * Sentry may carry `query_string` as `[key, value]` pairs. A pair whose KEY names a credential gets
+ * its value masked — the per-string patterns cannot recognise an opaque secret on its own.
+ */
+function redactCredentialPairs(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((pair) => {
+    if (Array.isArray(pair) && pair.length === 2 && typeof pair[0] === 'string') {
+      const probe = `${pair[0]}=x`;
+      CREDENTIAL_QUERY_RE.lastIndex = 0;
+      if (CREDENTIAL_QUERY_RE.test(probe)) return [pair[0], CREDENTIAL_MASK];
+    }
+    return pair;
+  });
+}
+
 /** Strip credential / IP headers and redact the remaining request surface. */
 function sanitizeRequest(request: NonNullable<Event['request']>): void {
   const { headers } = request;
@@ -218,7 +250,7 @@ function sanitizeRequest(request: NonNullable<Event['request']>): void {
     request.query_string =
       typeof request.query_string === 'string'
         ? redactString(request.query_string)
-        : (deepRedact(request.query_string) as typeof request.query_string);
+        : (deepRedact(redactCredentialPairs(request.query_string)) as typeof request.query_string);
   }
   if (request.data !== undefined) request.data = deepRedact(request.data);
 }

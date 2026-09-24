@@ -9,6 +9,7 @@ import {
   IP_MASK,
   PHONE_MASK,
   POSTAL_MASK,
+  CREDENTIAL_MASK,
 } from '@/sentry.scrub';
 
 // Fake, obviously-synthetic PII test values (never real). RFC-5737 / RFC-3849
@@ -299,5 +300,52 @@ describe('scrubEvent', () => {
     };
     expect(scrubbed.spans[0].description).toBe(`GET /account?email=${EMAIL_MASK}`);
     expect(scrubbed.spans[0].data.peer_ip).toBe(IP_MASK);
+  });
+});
+
+// 2026-09-24 — credentials in URLs. The admin console used to accept a shared secret as `?token=`
+// (and an `x-admin-token` header); none of the PII shape patterns above match an opaque secret, so
+// a captured error on such a request would have shipped it verbatim. The admin path is gone; these
+// pin that the scrubber masks the NEXT one wherever a URL can appear on an event.
+describe('credential query values and the retired admin header', () => {
+  const SECRET = 'q9Zx7-legacy_secret.value';
+
+  it('masks credential-named query values in a URL, keeping the key and the rest of the URL', () => {
+    expect(redactString(`https://kidsfunapp.ca/admin/dashboard?token=${SECRET}&view=day`)).toBe(
+      `https://kidsfunapp.ca/admin/dashboard?token=${CREDENTIAL_MASK}&view=day`
+    );
+    expect(redactString(`/admin/auth/callback?code=${SECRET}&next=%2Fadmin%2Fdashboard`)).toBe(
+      `/admin/auth/callback?code=${CREDENTIAL_MASK}&next=%2Fadmin%2Fdashboard`
+    );
+    for (const key of ['secret', 'access_token', 'refresh_token', 'password', 'api_key', 'sig']) {
+      expect(redactString(`/x?a=1&${key}=${SECRET}`), key).not.toContain(SECRET);
+    }
+  });
+
+  it('masks a bare query_string (no leading "?"), as Sentry stores it', () => {
+    expect(redactString(`token=${SECRET}&view=month`)).toBe(`token=${CREDENTIAL_MASK}&view=month`);
+  });
+
+  it('leaves non-credential params alone (no false positives on ordinary filters)', () => {
+    const url = '/search?region=vancouver&age=5&view=day&tokenized=1&monkey=2';
+    expect(redactString(url)).toBe(url);
+  });
+
+  it('scrubEvent masks the credential in request.url, query_string (string and pairs) and breadcrumbs, and strips x-admin-token', () => {
+    const event = scrubEvent({
+      request: {
+        url: `https://kidsfunapp.ca/admin/sms-subscribers?token=${SECRET}`,
+        query_string: [['token', SECRET], ['view', 'day']],
+        headers: { 'x-admin-token': SECRET, 'user-agent': 'test' },
+      },
+      breadcrumbs: [{ category: 'navigation', data: { from: '/', to: `/admin/dashboard?token=${SECRET}` } }],
+    } as unknown as Event);
+    const json = JSON.stringify(event);
+    expect(json).not.toContain(SECRET);
+    expect((event.request?.headers as Record<string, string>)['x-admin-token']).toBeUndefined();
+    expect(event.request?.query_string).toEqual([['token', CREDENTIAL_MASK], ['view', 'day']]);
+
+    const asString = scrubEvent({ request: { query_string: `token=${SECRET}&view=day` } } as unknown as Event);
+    expect(asString.request?.query_string).toBe(`token=${CREDENTIAL_MASK}&view=day`);
   });
 });

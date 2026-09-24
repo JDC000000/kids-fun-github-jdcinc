@@ -16,10 +16,8 @@
 //
 // FK CONSEQUENCE (important): admin_user_id is NOT NULL and references admin_user.
 // An audit row can therefore only be written for a caller who is a real, seeded
-// admin (an active admin_user row). The interim shared-secret token path
-// (lib/admin/access.ts) has NO admin identity, so token access CANNOT be audited
-// here — a further reason that token gate is interim and should be retired once
-// real admins are seeded. Callers on the token path must not attempt an audit write.
+// admin (an active admin_user row). (The interim shared-secret token path, which had no
+// admin identity and so could never be audited here, was removed on 2026-09-24.)
 import type { PoolClient } from 'pg';
 import { getPool, query } from '../db/client';
 

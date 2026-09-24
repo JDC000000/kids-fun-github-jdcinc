@@ -85,6 +85,7 @@ This is the one material finding of the review and it ties Area 2 and Area 3 tog
 
 **Findings — the app-layer gate is airtight. Confirmed independently, not just trusted from prior QA.**
 
+- **Update 2026-09-24:** the interim `ADMIN_DASHBOARD_TOKEN` read path described in the next bullet has been **removed** (`lib/admin/access.ts` deleted; the gate is session-only; `tests/compliance/admin-no-url-credentials.test.ts` keeps it out). The bullets below are the review as written at the time.
 - **Reads:** `resolveAdminAccess()` grants on a signed-in active admin **OR** the interim `ADMIN_DASHBOARD_TOKEN`, fail-closed to `notFound()` (404, route existence unadvertised). The token compare is **constant-time with a length-flattening burn** (`lib/admin/access.ts`) and **fails closed when the env var is unset**.
 - **Writes:** `resolveSessionAdmin()` is **session-admin-only, never the token** — because `admin_audit_log.admin_user_id` is a `NOT NULL` FK to `admin_user`, so a token caller has no identity to audit and therefore cannot write. Every one of the three server actions (`saveSourceAction`, `createManualListingAction`, `resolveCorrectionAction`) **re-checks `resolveSessionAdmin()` at the top and returns `NEEDS_SESSION_ADMIN` on null** — so a direct `POST` to the server-action endpoint cannot bypass the read gate.
 - **Caller graph is clean:** `createSource` / `updateSource` / `createManualListing` / `resolveCorrection` are called **only** from their gated actions; client forms call the *actions*, never the data functions. No ungated path exists.
