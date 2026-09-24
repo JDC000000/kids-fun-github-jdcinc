@@ -26,15 +26,15 @@
 // to allow one would silently break the weekly novelty filter. Both are asserted in
 // tests/sms/instant_picks_send_log_invariants.test.ts.
 //
-// ═══ 🔴 THE SEND IS BUILT AND HELD — DO NOT READ THE SEND CALL BELOW AS "THIS TEXTS PEOPLE" ═══
-// It cannot, in any environment, as this commit stands. `sendInstantPicksText` refuses unless
-// INSTANT_PICKS_SMS_SEND_ENABLED is true AND the subscriber's `consent_text_version` is v8 or
-// later — and the live constant is still v7, because the frequency disclosure ("1 message per
-// week, plus a one-time confirmation message") has not been rewritten yet. That copy change, its
-// consent-version bump and the switch are task 1, held pending the Toll-Free Verification decision
-// (plan v2.0 §6, option B). While they are held, THIS ROUTE BEHAVES EXACTLY AS IT DID BEFORE: the
-// response carries `sendStatus: 'not_eligible'`, the page renders nothing for it, and no text and
-// no audit row exist. See lib/sms/instant-picks-send.ts before touching any of it.
+// ═══ 🔴 THE SEND IS LIVE IN PRODUCTION, AND IT IS GATED ON CONFIRMED CONSENT ═══
+// This block used to say the send "cannot, in any environment" happen. That stopped being true on
+// 2026-09-14 (consent v8 + INSTANT_PICKS_SMS_SEND_ENABLED=true). `sendInstantPicksText` refuses
+// unless the flag is on, the subscriber is `active` WITH a recorded JOIN confirmation, their
+// consent wording is v8+, and the throttle allows it — see lib/sms/instant-picks-send.ts.
+// ⚠ `findInstantPicksSubscriber` below is the LIST rule and deliberately serves `pending` and
+// `paused` rows; it is NOT a send gate. Treating it as one is how never-confirmed subscribers were
+// texted until the 2026-09-24 CASL fix. Every refusal reports `sendStatus: 'not_eligible'`, which
+// the page renders as nothing.
 import { NextResponse } from 'next/server';
 import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
 import { getServerSearchEngine } from '@/lib/search/server-engine';
