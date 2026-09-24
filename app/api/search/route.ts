@@ -74,7 +74,7 @@ async function searchGet(request: Request): Promise<NextResponse> {
   if (
     rateLimit.degraded &&
     (degradedReason === 'db_error' || degradedReason === 'no_salt') &&
-    defaultSearchRateLimitDegradedState.reportThrottle.shouldReport(degradedReason, Date.now())
+    defaultSearchRateLimitDegradedState.reportThrottle.shouldReport(degradedReason, defaultSearchRateLimitDegradedState.now())
   ) {
     // db_error: the counter table errored, hit its deadline, or this instance's breaker is open —
     // the decision above came from the in-memory fallback (lib/security/search-rate-limit-degraded.ts),

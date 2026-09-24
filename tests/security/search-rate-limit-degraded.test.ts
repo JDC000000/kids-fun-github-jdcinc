@@ -59,7 +59,12 @@ function upTable() {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  // `performance` is NOT in vitest's default fake set, and the breaker + report throttle run on the
+  // monotonic clock (QA F5) — so it is listed explicitly. `advanceTimersByTime` moves both clocks;
+  // `setSystemTime` moves only the wall clock (which is exactly what the F5 test relies on).
+  vi.useFakeTimers({
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'Date', 'performance'],
+  });
   vi.setSystemTime(new Date(START));
   vi.stubEnv('SMS_PHONE_HASH_SALT', 'degraded-test-salt');
 });
@@ -224,7 +229,7 @@ describe('breaker — stop hammering a failing table', () => {
     for (let i = 0; i < BREAKER_FAILURE_THRESHOLD; i++) {
       await checkSearchRateLimit({ ip: IP, sessionId: SESSION }, { query: down.query, degradedState });
     }
-    vi.setSystemTime(new Date(START + BREAKER_OPEN_MS));
+    vi.advanceTimersByTime(BREAKER_OPEN_MS); // moves the monotonic clock the breaker reads (F5)
     const probe = await checkSearchRateLimit({ ip: IP, sessionId: SESSION }, { query: up.query, degradedState });
     expect(probe.degraded).toBe(false);
     expect(up.calls.count).toBe(4);
@@ -237,12 +242,12 @@ describe('breaker — stop hammering a failing table', () => {
     for (let i = 0; i < BREAKER_FAILURE_THRESHOLD; i++) {
       await checkSearchRateLimit({ ip: IP, sessionId: SESSION }, { query: db.query, degradedState });
     }
-    vi.setSystemTime(new Date(START + BREAKER_OPEN_MS));
+    vi.advanceTimersByTime(BREAKER_OPEN_MS); // moves the monotonic clock the breaker reads (F5)
     await checkSearchRateLimit({ ip: IP, sessionId: SESSION }, { query: db.query, degradedState });
     expect(db.calls.count).toBe(BREAKER_FAILURE_THRESHOLD + 1);
     expect(degradedState.breaker.currentState()).toBe('open');
 
-    vi.setSystemTime(new Date(START + BREAKER_OPEN_MS + BREAKER_OPEN_MS - 1));
+    vi.advanceTimersByTime(BREAKER_OPEN_MS - 1);
     await checkSearchRateLimit({ ip: IP, sessionId: SESSION }, { query: db.query, degradedState });
     expect(db.calls.count).toBe(BREAKER_FAILURE_THRESHOLD + 1);
   });
@@ -442,5 +447,50 @@ describe('reporting helpers', () => {
     expect(described).not.toContain('hunter2');
     expect(describeLimiterFailure(new Error('x'.repeat(500))).length).toBeLessThanOrEqual('Error: '.length + 160);
     expect(describeLimiterFailure('a string')).toBe('non_error:string');
+  });
+});
+
+// ═══ 2026-09-24 independent QA, finding F5 ═══
+describe('breaker F5 — timing runs on a monotonic clock, not the wall clock', () => {
+  it('🔴 [QA L4] the wall clock stepping BACK 1h while open does not keep the breaker open: the probe still comes 15s later', async () => {
+    const degradedState = createSearchRateLimitDegradedState(); // the DEFAULT clock, as production uses
+    const down = downTable();
+    for (let i = 0; i < BREAKER_FAILURE_THRESHOLD; i++) {
+      await checkSearchRateLimit({ ip: `10.4.0.${i}`, sessionId: null }, { query: down.query, degradedState });
+    }
+    expect(degradedState.breaker.currentState()).toBe('open');
+
+    vi.setSystemTime(new Date(Date.now() - 3_600_000)); // NTP steps the wall clock back 1h
+    const up = upTable();
+    vi.advanceTimersByTime(BREAKER_OPEN_MS - 1);
+    await checkSearchRateLimit({ ip: '10.4.9.9', sessionId: null }, { query: up.query, degradedState });
+    expect(up.calls.count).toBe(0); // still inside the 15s open window
+    vi.advanceTimersByTime(1);
+    const probe = await checkSearchRateLimit({ ip: '10.4.9.9', sessionId: null }, { query: up.query, degradedState });
+    expect(up.calls.count).toBeGreaterThan(0);
+    expect(probe.degraded).toBe(false);
+    expect(degradedState.breaker.currentState()).toBe('closed');
+  });
+
+  it('a wall clock stepping FORWARD does not open or shorten anything by itself', async () => {
+    const degradedState = createSearchRateLimitDegradedState();
+    const down = downTable();
+    for (let i = 0; i < BREAKER_FAILURE_THRESHOLD; i++) {
+      await checkSearchRateLimit({ ip: `10.4.1.${i}`, sessionId: null }, { query: down.query, degradedState });
+    }
+    vi.setSystemTime(new Date(Date.now() + 3_600_000)); // jump forward 1h: no monotonic time passed
+    const up = upTable();
+    await checkSearchRateLimit({ ip: '10.4.9.8', sessionId: null }, { query: up.query, degradedState });
+    expect(up.calls.count).toBe(0);
+    expect(degradedState.breaker.currentState()).toBe('open');
+  });
+
+  it('the report throttle interval is monotonic too', () => {
+    const state = createSearchRateLimitDegradedState();
+    expect(state.reportThrottle.shouldReport('db_error', state.now())).toBe(true);
+    vi.setSystemTime(new Date(Date.now() + 3_600_000));
+    expect(state.reportThrottle.shouldReport('db_error', state.now())).toBe(false);
+    vi.advanceTimersByTime(DEGRADED_REPORT_INTERVAL_MS);
+    expect(state.reportThrottle.shouldReport('db_error', state.now())).toBe(true);
   });
 });

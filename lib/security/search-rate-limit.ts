@@ -305,7 +305,7 @@ export async function checkSearchRateLimit(
   const state = options.degradedState ?? defaultSearchRateLimitDegradedState;
   const deadlineMs = options.dbDeadlineMs ?? DB_LIMITER_DEADLINE_MS;
 
-  const ticket = state.breaker.tryAcquire(Date.now());
+  const ticket = state.breaker.tryAcquire(state.now());
   if (!ticket) {
     return memoryFallback(state, ipHash, sessionHash, limits, 'breaker_open');
   }
@@ -332,7 +332,7 @@ export async function checkSearchRateLimit(
     // The counter table errored, or did not answer within the deadline (a real DB outage, pooler
     // exhaustion, or migration 0051 not applied yet). Count it against the breaker and decide
     // from the in-memory fallback instead — see lib/security/search-rate-limit-degraded.ts.
-    state.breaker.recordFailure(ticket, Date.now());
+    state.breaker.recordFailure(ticket, state.now());
     return memoryFallback(state, ipHash, sessionHash, limits, describeLimiterFailure(err));
   }
 }

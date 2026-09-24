@@ -53,7 +53,8 @@ beforeEach(() => {
   resetDefaultSearchRateLimitDegradedState();
   vi.stubEnv('SMS_PHONE_HASH_SALT', 'route-degraded-test-salt');
   vi.stubEnv('KIDS_FUN_SEARCH_BACKEND', '');
-  vi.useFakeTimers({ toFake: ['Date'] });
+  // 'performance' too: the report throttle runs on the monotonic clock (QA F5).
+  vi.useFakeTimers({ toFake: ['Date', 'performance'] });
   vi.setSystemTime(new Date(Date.UTC(2026, 8, 24, 12, 0, 30)));
 });
 afterEach(() => {
@@ -99,7 +100,7 @@ describe('GET /api/search while the limiter table is down', () => {
     expect(call.scope?.fingerprint).toEqual(['search_rate_limit_degraded', 'db_error']);
     expect(String(call.scope?.extra?.cause)).toContain('ENOTFOUND');
 
-    vi.setSystemTime(new Date(Date.UTC(2026, 8, 24, 12, 1, 31)));
+    vi.advanceTimersByTime(61_000);
     await GET(request('198.51.100.23', 'sess-degraded-4-late'));
     expect(captured.calls).toHaveLength(2);
   });

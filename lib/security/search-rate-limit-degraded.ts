@@ -311,15 +311,29 @@ export interface SearchRateLimitDegradedState {
   store: MemoryRateLimitStore;
   breaker: SearchRateLimitBreaker;
   reportThrottle: DegradedReportThrottle;
+  /**
+   * The MONOTONIC clock (ms) for every DURATION here — breaker failure window, open time, and the
+   * report interval. Never Date.now(): 2026-09-24 QA F5 stepped the wall clock back 1h while the
+   * breaker was open and it stayed open ~1h (DB limiter bypassed, analytics counts null all that
+   * time). Wall-clock time is still what names the rate-limit WINDOWS (minute/hour buckets must
+   * line up with the DB limiter's `window_start`), so the memory store keeps using Date.now().
+   */
+  now: () => number;
+}
+
+/** Monotonic milliseconds. Looked up per call (not captured) so fake timers can substitute it. */
+export function monotonicNowMs(): number {
+  return performance.now();
 }
 
 export function createSearchRateLimitDegradedState(
-  options: { maxEntries?: number; breaker?: BreakerOptions; reportIntervalMs?: number } = {}
+  options: { maxEntries?: number; breaker?: BreakerOptions; reportIntervalMs?: number; now?: () => number } = {}
 ): SearchRateLimitDegradedState {
   return {
     store: new MemoryRateLimitStore(options.maxEntries),
     breaker: new SearchRateLimitBreaker(options.breaker),
     reportThrottle: new DegradedReportThrottle(options.reportIntervalMs),
+    now: options.now ?? monotonicNowMs,
   };
 }
 
