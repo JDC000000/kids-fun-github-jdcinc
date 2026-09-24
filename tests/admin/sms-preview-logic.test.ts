@@ -13,8 +13,10 @@ import { RESEND_SUPPRESSION_WINDOW_DAYS } from '@/lib/sms/weekly-send-io';
 
 const NOW = new Date('2026-09-18T12:00:00-07:00');
 
-function sub(over: Partial<{ status: string; isTest: boolean; purged: boolean }> = {}) {
-  return { status: 'active', isTest: false, purged: false, ...over };
+function sub(
+  over: Partial<{ status: string; isTest: boolean; purged: boolean; confirmedTimestamp: string | null }> = {}
+) {
+  return { status: 'active', isTest: false, purged: false, confirmedTimestamp: '2026-09-01T00:00:00Z', ...over };
 }
 function send(daysAgo: number, sendType = 'weekly') {
   return { sendType, createdAt: new Date(NOW.getTime() - daysAgo * 86_400_000).toISOString() };
@@ -23,6 +25,14 @@ function send(daysAgo: number, sendType = 'weekly') {
 describe('why a subscriber is not in this week’s send set', () => {
   it('reports a non-active status', () => {
     expect(ineligibilityReason(sub({ status: 'paused' }), [], NOW)).toContain('paused');
+  });
+
+  it('reports an active subscriber who never confirmed (P6: pending → STOP → START), not the generic line', () => {
+    // QA of 2d67293, F7: this used to fall through to "did not include them in this run's active
+    // set", which is true and useless — it names no reason.
+    const reason = ineligibilityReason(sub({ confirmedTimestamp: null }), [], NOW);
+    expect(reason).toContain('never confirmed');
+    expect(reason).not.toContain('active set');
   });
 
   it('reports a test handset', () => {
