@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import Link from './SearchLink';
 import { Button, Chip, Input } from '@/components/ui';
 import { SORT_OPTIONS, hiddenStateFields, hrefFor, type SearchState } from '../_lib/params';
 

@@ -184,6 +184,11 @@ export function SiteNav({ smsSignupHref = null }: SiteNavProps = {}) {
           .filter(Boolean)
           .join(' ')}
         href={link.href}
+        // All but one nav destination (the weekly-text link) is a /search URL, and the
+        // production Vercel Firewall rule counts prefetches against its 40/min-per-IP /search
+        // budget — see app/search/_components/SearchLink.tsx. Prefetch bought nothing here:
+        // none of these routes has a loading.js, so it fetched only a router-state stub.
+        prefetch={false}
         aria-current={current(link)}
       >
         {link.label}

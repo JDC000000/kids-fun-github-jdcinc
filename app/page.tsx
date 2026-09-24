@@ -397,10 +397,12 @@ export default async function Home() {
                 </div>
               </form>
 
+              {/* Tiles don't prefetch: /search prefetches count against the production
+                  firewall's per-IP /search budget — see app/search/_components/SearchLink.tsx. */}
               <ul className="kf-home__tiles">
                 {CATEGORIES.map((c) => (
                   <li key={c.key}>
-                    <Link className="kf-home__tile" href={destinationHref(c)}>
+                    <Link className="kf-home__tile" href={destinationHref(c)} prefetch={false}>
                       {c.label}
                     </Link>
                   </li>

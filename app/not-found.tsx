@@ -132,24 +132,26 @@ export default function NotFound() {
               <h2 className="kf-nf__section-title" id="kf-nf-browse-h">
                 Or start from one of these
               </h2>
+              {/* No prefetch on these /search links: prefetches count against the production
+                  firewall's per-IP /search budget — see app/search/_components/SearchLink.tsx. */}
               <ul className="kf-nf__links">
                 {/* "What's on now" first: it is the one destination that is a PLACE rather
                     than a query, and it is the closest thing the product has to "show me
                     everything" — the right default for somebody who has lost their bearings. */}
                 <li>
-                  <Link className="kf-nf__link" href={SEARCH_SHORTCUTS.onNow.href}>
+                  <Link className="kf-nf__link" href={SEARCH_SHORTCUTS.onNow.href} prefetch={false}>
                     {SEARCH_SHORTCUTS.onNow.label}
                   </Link>
                 </li>
                 {CATEGORIES.map((c) => (
                   <li key={c.key}>
-                    <Link className="kf-nf__link" href={destinationHref(c)}>
+                    <Link className="kf-nf__link" href={destinationHref(c)} prefetch={false}>
                       {c.label}
                     </Link>
                   </li>
                 ))}
                 <li>
-                  <Link className="kf-nf__link" href={SEARCH_SHORTCUTS.free.href}>
+                  <Link className="kf-nf__link" href={SEARCH_SHORTCUTS.free.href} prefetch={false}>
                     {SEARCH_SHORTCUTS.free.label}
                   </Link>
                 </li>
