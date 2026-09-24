@@ -6,8 +6,9 @@
 // shape the driver returns differently (a timestamptz as a string, say), would sail through every
 // unit test. So this file drives real rows through the real lifecycle with the real
 // `loadWeeklySendConsent` and the real transitions, and asserts what `sendWeeklySmsForSubscriber`
-// would have dispatched at each step. Only the Twilio seam and the three writes are injected, so
-// nothing leaves the process and nothing but this suite's own rows is touched.
+// would have dispatched at each step. ONLY THE TWILIO SEAM is injected (a spy): the audit write,
+// the empty-week write and the carrier-stop write are the REAL ones, so "a refusal writes nothing"
+// is read back from Postgres rather than inferred from a stub (QA of 2d67293, F9).
 //
 // It also reproduces the latent path found while scoping P6: pending → STOP → START leaves a row
 // `active` with no `confirmed_timestamp`. Before P6 the Friday loader selected it.
@@ -95,6 +96,8 @@ async function cleanup(): Promise<void> {
 beforeAll(async () => {
   vi.stubEnv('SMS_PREFERENCES_SECRET', 'weekly-consent-gate-secret');
   vi.stubEnv('SMS_SHORT_LINK_SECRET', 'weekly-consent-gate-link-secret');
+  // The real audit writer hashes the number; an allowed send in this file really writes its row.
+  vi.stubEnv('SMS_PHONE_HASH_SALT', 'weekly-consent-gate-salt');
   await cleanup();
 });
 afterAll(async () => {
@@ -102,14 +105,26 @@ afterAll(async () => {
   vi.unstubAllEnvs();
 });
 
-/** The send with every outbound/write seam stubbed and the consent loader left REAL. */
+/** What a send could change about a subscriber, read straight from Postgres. */
+async function snapshot(id: string) {
+  const [row] = await query<{ status: string | null; confirmed: Date | null; weeks: number | null }>(
+    `SELECT status, confirmed_timestamp AS confirmed, consecutive_empty_weeks AS weeks
+       FROM sms_consent WHERE id = $1`,
+    [id]
+  );
+  const [log] = await query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM sms_send_log WHERE subscriber_id = $1`,
+    [id]
+  );
+  return { row: row ?? null, sendLogRows: Number(log.n) };
+}
+
+/** The send with ONLY the Twilio seam stubbed; the consent loader and all three writes are REAL. */
 async function weeklySend(id: string, phone: string) {
   const seams = {
     dispatch: vi.fn(async () => ({ outcome: 'sent' as const, twilioSid: 'SMtest', errorCode: null })),
-    record: vi.fn(async () => {}),
-    markStopped: vi.fn(async () => {}),
-    applyState: vi.fn(async () => {}),
   };
+  const before = await snapshot(id);
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   const result = await sendWeeklySmsForSubscriber(subscriberFor(id), phone, {
@@ -122,7 +137,8 @@ async function weeklySend(id: string, phone: string) {
   const logged = [...warn.mock.calls, ...error.mock.calls].map((c) => String(c[0]));
   warn.mockRestore();
   error.mockRestore();
-  return { result, seams, logged };
+  const after = await snapshot(id);
+  return { result, seams, logged, before, after };
 }
 
 async function created(phone: string): Promise<string> {
@@ -153,11 +169,12 @@ describe('⛔ P6 · the weekly send checks consent against the real row', () => 
   it('PENDING (never replied JOIN), handed over by a caller with its own lookup: refused, nothing sent', async () => {
     const phone = nextPhone();
     const id = await created(phone);
-    const { result, seams, logged } = await weeklySend(id, phone);
+    const { result, seams, logged, before, after } = await weeklySend(id, phone);
     expect(result.status).toBe('refused_consent');
     expect(seams.dispatch).not.toHaveBeenCalled();
-    expect(seams.record).not.toHaveBeenCalled();
-    expect(seams.applyState).not.toHaveBeenCalled();
+    // Read back from Postgres: no audit row, no counter move, no status change.
+    expect(after).toEqual(before);
+    expect(after.sendLogRows).toBe(0);
     expect(logged).toEqual([expect.stringContaining('reason=status_pending')]);
   });
 
@@ -165,10 +182,13 @@ describe('⛔ P6 · the weekly send checks consent against the real row', () => 
     const phone = nextPhone();
     const id = await created(phone);
     expect((await confirmSubscriber(phone, { dryRun: false })).outcome).toBe('applied');
-    const { result, seams } = await weeklySend(id, phone);
+    const { result, seams, before, after } = await weeklySend(id, phone);
     expect(result.status).not.toBe('refused_consent');
     expect(seams.dispatch).toHaveBeenCalledTimes(1);
     expect(seams.dispatch).toHaveBeenCalledWith(phone, expect.anything(), { dryRun: false });
+    // The control for every "nothing written" assertion in this file: an ALLOWED send really
+    // writes its audit row through the same real writer.
+    expect(after.sendLogRows).toBe(before.sendLogRows + 1);
     expect((await activeIds()).has(id)).toBe(true);
   });
 
@@ -177,9 +197,10 @@ describe('⛔ P6 · the weekly send checks consent against the real row', () => 
     const id = await created(phone);
     await confirmSubscriber(phone, { dryRun: false });
     await query(`UPDATE sms_consent SET status = 'paused' WHERE id = $1`, [id]);
-    const { result, seams, logged } = await weeklySend(id, phone);
+    const { result, seams, logged, before, after } = await weeklySend(id, phone);
     expect(result.status).toBe('refused_consent');
     expect(seams.dispatch).not.toHaveBeenCalled();
+    expect(after).toEqual(before);
     expect(logged).toEqual([expect.stringContaining('reason=status_paused')]);
     expect((await activeIds()).has(id)).toBe(false);
   });
@@ -189,9 +210,10 @@ describe('⛔ P6 · the weekly send checks consent against the real row', () => 
     const id = await created(phone);
     await confirmSubscriber(phone, { dryRun: false });
     expect((await mirrorCarrierStop(phone, { dryRun: false })).outcome).toBe('applied');
-    const { result, seams } = await weeklySend(id, phone);
+    const { result, seams, before, after } = await weeklySend(id, phone);
     expect(result.status).toBe('refused_consent');
     expect(seams.dispatch).not.toHaveBeenCalled();
+    expect(after).toEqual(before);
   });
 
   it('PURGED (number NULLed in place): refused', async () => {
@@ -214,9 +236,10 @@ describe('⛔ P6 · the weekly send checks consent against the real row', () => 
     const other = nextPhone();
     const id = await created(phone);
     await confirmSubscriber(phone, { dryRun: false });
-    const { result, seams, logged } = await weeklySend(id, other);
+    const { result, seams, logged, before, after } = await weeklySend(id, other);
     expect(result.status).toBe('refused_consent');
     expect(seams.dispatch).not.toHaveBeenCalled();
+    expect(after).toEqual(before);
     expect(logged).toEqual([expect.stringContaining('reason=number_mismatch')]);
     expect(logged.join('\n')).not.toMatch(/\+[1-9]\d{7,14}/);
   });
@@ -240,9 +263,11 @@ describe('⛔ P6 · pending → STOP → START is active but never confirmed (th
     expect((await activeIds()).has(id)).toBe(false);
 
     // Layer 2: handed over directly anyway, the send refuses it — loudly.
-    const { result, seams, logged } = await weeklySend(id, phone);
+    const { result, seams, logged, before, after } = await weeklySend(id, phone);
     expect(result.status).toBe('refused_consent');
     expect(seams.dispatch).not.toHaveBeenCalled();
+    expect(after).toEqual(before);
+    expect(after.sendLogRows).toBe(0);
     expect(logged).toEqual([expect.stringContaining('reason=active_unconfirmed')]);
   });
 });
