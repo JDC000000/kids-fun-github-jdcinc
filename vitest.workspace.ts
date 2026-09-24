@@ -147,6 +147,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/sms/signup_persistence-db.test.ts',
   'tests/sms/send_log-db.test.ts',
   'tests/sms/instant_picks_consent_gate-db.test.ts',
+  'tests/sms/weekly_send_consent-db.test.ts',
   'tests/sms/instant_picks_send_log-db.test.ts',
   'tests/sms/unknown_reply_throttle-db.test.ts',
   'tests/sms/weekly_recency_suppression-db.test.ts',

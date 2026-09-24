@@ -99,6 +99,14 @@ function harness(subscribers: ActiveSubscriber[], over: Parameters<typeof sendWe
     applyState: async (id: string) => {
       states.push(id);
     },
+    // P6: the per-subscriber consent assertion re-reads each row. Here every loaded subscriber is
+    // active and confirmed at the number the loader handed over, so the loop is what is tested.
+    loadConsent: async (id: string) => {
+      const row = subscribers.find((s) => s.subscriber.id === id);
+      return row
+        ? { status: 'active' as const, confirmedTimestamp: NOW, phoneNumber: row.phoneNumber }
+        : null;
+    },
     ...over,
   };
   return { loads, logged, stopped, states, dispatched, options };
@@ -152,7 +160,7 @@ describe('the read model is loaded ONCE per batch', () => {
     // Still the same summary shape as any other run: an empty batch is a normal Friday.
     expect(summary.counts).toEqual({
       sent: 0, dry_run: 0, empty: 0, paused: 0,
-      stopped_via_carrier: 0, skipped_geocode_failed: 0, error: 0,
+      stopped_via_carrier: 0, skipped_geocode_failed: 0, refused_consent: 0, error: 0,
     });
     expect(summary.totalSegments).toBe(0);
   });
@@ -236,6 +244,7 @@ describe('per-subscriber results are independent', () => {
       paused: 1, // s3
       stopped_via_carrier: 1, // s2
       skipped_geocode_failed: 1, // s5
+      refused_consent: 0,
       error: 1, // s4
     });
     // Every status counted exactly once, and the counts sum to the candidate list.
@@ -543,5 +552,55 @@ describe('bestEffortAudit — a lost sms_send_log row must not be silent', () =>
     expect(summary.results[0].status).not.toBe('error');
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P6 — one subscriber refused by the consent assertion does not sink the batch
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('P6: a consent refusal mid-batch', () => {
+  it('skips only that subscriber: counted as refused_consent, never dispatched, nothing written', async () => {
+    // The loader handed over five rows; between the load and s3's turn, s3 went back to pending
+    // (a resubmit, say). The send's own re-read sees that and refuses; the other four proceed.
+    withSecret();
+    const subscribers = ['s1', 's2', 's3', 's4', 's5'].map((id) => subscriber(id));
+    const { options, dispatched, logged, states } = harness(subscribers, {
+      loadConsent: async (id: string) => {
+        const row = subscribers.find((s) => s.subscriber.id === id)!;
+        return {
+          status: id === 's3' ? ('pending' as const) : ('active' as const),
+          confirmedTimestamp: id === 's3' ? null : NOW,
+          phoneNumber: row.phoneNumber,
+        };
+      },
+    });
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const summary = await sendWeeklySmsBulk(options);
+
+    expect(summary.candidates).toBe(5);
+    expect(summary.counts.refused_consent).toBe(1);
+    expect(summary.results.map((r) => r.subscriberId)).toEqual(['s1', 's2', 's3', 's4', 's5']);
+    const refused = summary.results[2];
+    expect(refused).toEqual({
+      subscriberId: 's3',
+      status: 'refused_consent',
+      pickCount: 0,
+      segments: 0,
+      error: 'consent not active',
+    });
+    const s3Phone = subscribers[2].phoneNumber;
+    expect(dispatched).toHaveLength(4);
+    expect(dispatched).not.toContain(s3Phone);
+    expect(logged.map((l) => l.subscriberId)).not.toContain('s3');
+    expect(states).not.toContain('s3');
+    // The log line names the subscriber and the reason — never the number.
+    expect(warns).toHaveBeenCalledTimes(1);
+    const line = String(warns.mock.calls[0][0]);
+    expect(line).toContain('subscriber=s3');
+    expect(line).toContain('reason=status_pending');
+    expect(line).not.toMatch(/\+[1-9]\d{7,14}/);
+    warns.mockRestore();
   });
 });

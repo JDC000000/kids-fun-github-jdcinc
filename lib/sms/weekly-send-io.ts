@@ -54,23 +54,21 @@ import {
 } from './weekly-send';
 import { dispatchSms, type DispatchResult } from './twilio-client';
 import { recordSmsSend, type SendLogType } from './send-log';
+import type { ConsentStatus } from './consent-transitions';
 // Re-exported: this module's own header documents the PII rule `redactPhone` serves, and callers
 // have imported it from here since round 4. The rule itself now has one home in lib/sms/redact.ts.
 import { redactPhone } from './redact';
 export { redactPhone } from './redact';
 
 // ── Re-exported so every existing importer of this module keeps working ─────────────────
-// `dispatchSms` and `recordSmsSend` moved to lib/sms/twilio-client.ts and lib/sms/send-log.ts in
-// round 16 — see those files' headers for why. They are re-exported rather than left as a
-// breaking change because this module is the documented I/O boundary for the weekly send, and
-// there is no reason for its own callers to care that two functions changed file.
-export {
-  dispatchSms,
-  twilioClient,
-  TWILIO_ERROR_OPTED_OUT,
-  type DispatchOutcome,
-  type DispatchResult,
-} from './twilio-client';
+// `recordSmsSend` moved to lib/sms/send-log.ts in round 16 — see that file's header for why.
+//
+// THE TWILIO SEAM IS DELIBERATELY *NOT* RE-EXPORTED (P6, 2026-09-24). This module used to
+// re-export `dispatchSms` and `twilioClient` from lib/sms/twilio-client.ts, which let any file
+// reach Twilio by importing from HERE — invisible to tests/sms/sms_send_paths_consent.test.ts,
+// which classifies senders by who imports the seam. Nothing imported them from here, so they
+// were removed, and that test now fails if any module re-exports the seam. Import it from
+// lib/sms/twilio-client.ts directly, and get classified.
 export {
   recordSmsSend,
   type SendLogOutcome,
@@ -166,6 +164,7 @@ export const RESEND_SUPPRESSION_WINDOW_DAYS = 4;
  *          c.consecutive_empty_weeks, c.preferences_token, c.consent_text_version
  *     FROM sms_consent c
  *    WHERE c.status = 'active'
+ *      AND c.confirmed_timestamp IS NOT NULL -- no recorded JOIN, no content (P6, below)
  *      AND c.is_test = false
  *      AND c.phone_number IS NOT NULL    -- a purged row is not a subscriber (migration 0034)
  *      AND NOT EXISTS (                  -- ...and nobody gets texted twice in four days
@@ -217,6 +216,17 @@ export const RESEND_SUPPRESSION_WINDOW_DAYS = 4;
  * nobody has just surprised you, this is the answer, and adding a `--no-suppression` escape hatch
  * is a decision to REOPEN with the Operator rather than an obvious missing feature to supply.
  *
+ * ═══ `confirmed_timestamp IS NOT NULL` (P6, 2026-09-24) ═══
+ * `active` is not proof of a double opt-in on its own. A PENDING row that texts STOP becomes
+ * `stopped` (decideStop accepts any non-stopped row), and a later START revives a stopped row to
+ * `active` WITHOUT stamping `confirmed_timestamp` (decideStart: `confirm: false`, correctly — START
+ * is not a JOIN). So "never confirmed, now active" is a reachable state, and before this clause the
+ * Friday job would have texted it. Instant Picks already refuses it (`hasConfirmedActiveConsent`);
+ * this makes the weekly SELECTION agree, so the admin preview and the Friday preview script — which
+ * reuse this loader — show exactly who would really be texted. `sendWeeklySmsForSubscriber`
+ * re-checks the same rule against its own read of the row; this clause is the first layer, not the
+ * only one. Fixing the transition itself is a separate, proposed change (P6c).
+ *
  * `phone_number IS NOT NULL` is the non-obvious clause. Migration 0034's 30-day post-stop purge
  * NULLs the personal columns in place rather than deleting the row, so a purged subscriber still
  * has an `sms_consent` row — and if their status were ever left at 'active' by a missed
@@ -244,6 +254,7 @@ export async function loadActiveSubscribers(limit?: number): Promise<ActiveSubsc
             c.consecutive_empty_weeks, c.preferences_token, c.consent_text_version
        FROM sms_consent c
       WHERE c.status = 'active'
+        AND c.confirmed_timestamp IS NOT NULL
         AND c.is_test = false
         AND c.phone_number IS NOT NULL
         AND NOT EXISTS (
@@ -496,6 +507,124 @@ export async function markStoppedViaCarrier(subscriberId: string): Promise<void>
   );
 }
 
+// ── The consent assertion (P6, 2026-09-24) ──────────────────────────────────────────────
+
+/** The three columns the weekly consent assertion judges, read fresh by the send itself. */
+export interface WeeklySendConsentRow {
+  status: ConsentStatus;
+  confirmedTimestamp: Date | null;
+  /** E.164, or NULL once purged. Compared, never logged or returned. */
+  phoneNumber: string | null;
+}
+
+export type WeeklySendConsentLoader = (subscriberId: string) => Promise<WeeklySendConsentRow | null>;
+
+/**
+ * Read one subscriber's consent state straight from `sms_consent`, by id.
+ *
+ * THE QUERY:
+ *   SELECT status, confirmed_timestamp, phone_number FROM sms_consent WHERE id = $1
+ *
+ * WHY THE SEND READS IT ITSELF. `sendWeeklySmsForSubscriber` is exported and takes a ready-made
+ * subscriber plus a phone number. Every caller today picks that pair out of
+ * `loadActiveSubscribers`, but nothing forced the next one to: a route with its own row lookup
+ * could hand it a PENDING row and it would have texted them (QA of a5a863a, probe P6). The same
+ * lesson as Instant Picks' CASL fix — a send must not borrow its consent check from whoever looked
+ * the row up — so the send now asks the database, not its caller.
+ */
+export const loadWeeklySendConsent: WeeklySendConsentLoader = async (subscriberId) => {
+  const rows = await query<{
+    status: ConsentStatus;
+    confirmed_timestamp: Date | null;
+    phone_number: string | null;
+  }>(`SELECT status, confirmed_timestamp, phone_number FROM sms_consent WHERE id = $1`, [
+    subscriberId,
+  ]);
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    status: row.status,
+    confirmedTimestamp: row.confirmed_timestamp,
+    phoneNumber: row.phone_number,
+  };
+};
+
+/**
+ * Why a weekly send was refused. Server-log vocabulary only — see `REFUSED_CONSENT_ERROR`.
+ * `null` means the send may proceed.
+ */
+export type WeeklySendConsentRefusal =
+  | 'not_found'
+  | 'purged'
+  | 'number_mismatch'
+  | 'status_pending'
+  | 'status_paused'
+  | 'status_stopped'
+  | 'active_unconfirmed'
+  | 'consent_read_failed';
+
+/**
+ * The weekly CONTENT rule: may this row receive the Friday text at this number?
+ *
+ * ACTIVE, CONFIRMED, AND THE NUMBER WE ARE ABOUT TO TEXT IS THIS ROW'S NUMBER. Each clause:
+ *   • `status === 'active'` — pending has not finished the double opt-in; paused subscribers were
+ *     told in writing their texts are paused; stopped withdrew consent.
+ *   • `confirmedTimestamp != null` — the recorded JOIN. Not redundant: pending → STOP → START
+ *     produces `active` with no confirmation (see `loadActiveSubscribers`), and a restore or a
+ *     hand-edited row can too. Fails closed, exactly like Instant Picks' `hasConfirmedActiveConsent`.
+ *   • the number matches — otherwise the consent we checked belongs to someone other than the
+ *     person we would text. Also catches a purged row (NULL number).
+ *
+ * DELIBERATELY NOT SHARED WITH `hasConfirmedActiveConsent`, though today they agree (a test pins
+ * that). Whether PAUSED subscribers may ask for Instant Picks is an open call for Jon; whichever
+ * way it goes, the weekly rule keeps excluding paused, because those subscribers were told their
+ * weekly texts are paused. One shared predicate would couple the two decisions.
+ *
+ * Pure and exported so the shipped rule is what the tests execute.
+ */
+export function weeklySendConsentRefusal(
+  row: WeeklySendConsentRow | null,
+  phoneNumber: string
+): WeeklySendConsentRefusal | null {
+  if (!row) return 'not_found';
+  if (row.phoneNumber == null) return 'purged';
+  if (row.status === 'pending') return 'status_pending';
+  if (row.status === 'paused') return 'status_paused';
+  if (row.status === 'stopped') return 'status_stopped';
+  if (row.status !== 'active') return 'not_found'; // unreachable under 0034's CHECK; fail closed
+  if (row.confirmedTimestamp == null) return 'active_unconfirmed';
+  if (row.phoneNumber !== phoneNumber) return 'number_mismatch';
+  return null;
+}
+
+/**
+ * The `error` a refused result carries — and therefore what the run route returns over HTTP.
+ * GENERIC ON PURPOSE: the route's own 404 already declines to say whether an id is missing or
+ * merely not active ("a fact about a phone number"), so the specific reason goes to the server
+ * log only.
+ */
+export const REFUSED_CONSENT_ERROR = 'consent not active';
+
+/** Refusals that are a normal race (a STOP or a resubmit mid-run) versus ones that mean bad data. */
+const ANOMALOUS_REFUSALS: ReadonlySet<WeeklySendConsentRefusal> = new Set([
+  'active_unconfirmed',
+  'number_mismatch',
+  'consent_read_failed',
+]);
+
+function logConsentRefusal(subscriberId: string, reason: WeeklySendConsentRefusal): void {
+  // Id and reason only — never the number, never a body (see the file header).
+  const line = `[sms] weekly send REFUSED — consent check. subscriber=${subscriberId} reason=${reason}`;
+  if (ANOMALOUS_REFUSALS.has(reason)) {
+    // eslint-disable-next-line no-console -- deliberate: a content send refused for bad consent data
+    // must not be silent, and lib/sms has no logger of its own (same as `bestEffortAudit`).
+    console.error(line);
+  } else {
+    // eslint-disable-next-line no-console -- as above; an expected race, logged at a lower level.
+    console.warn(line);
+  }
+}
+
 // ── The per-subscriber unit ─────────────────────────────────────────────────────────────
 
 export type SubscriberSendStatus =
@@ -505,6 +634,8 @@ export type SubscriberSendStatus =
   | 'paused'
   | 'stopped_via_carrier'
   | 'skipped_geocode_failed'
+  /** The consent assertion refused this subscriber: nothing built, sent, logged or changed. */
+  | 'refused_consent'
   | 'error';
 
 /**
@@ -568,6 +699,8 @@ export interface SendSubscriberOptions {
   record?: typeof recordSmsSend;
   markStopped?: typeof markStoppedViaCarrier;
   applyState?: typeof applyEmptyWeekState;
+  /** Injected for tests; defaults to `loadWeeklySendConsent`. See the consent assertion above. */
+  loadConsent?: WeeklySendConsentLoader;
 }
 
 /**
@@ -721,6 +854,18 @@ export function assertSendPreconditions(dryRun: boolean): void {
  * excluded by activity SERIES as well as by occurrence. The occurrence id alone changes every
  * week for a recurring programme, which is how "same venues every week" got through the
  * original filter. See `loadRecentlySent` and `WeeklyPicksInput.excludeSeriesIds`.
+ *
+ * ── ⛔ CONSENT IS CHECKED HERE, NOT TRUSTED FROM THE CALLER (P6, 2026-09-24) ─────────────
+ * Step −1 re-reads this subscriber's row and refuses unless it is active, confirmed, and holds the
+ * number we were handed (`weeklySendConsentRefusal`). It runs BEFORE the read model, the build,
+ * the dispatch and every write, and it runs on dry runs too — a dry run that reported `dry_run` for
+ * a pending row would misstate what a real run does.
+ *
+ * A REFUSAL IS A RESULT, NOT A THROW. This function is contractually never-throws and the bulk loop
+ * has no try/catch, so a throw would abort the batch at the first refused row. A refused subscriber
+ * gets `status: 'refused_consent'`: no message, no `sms_send_log` row (nobody was texted), no
+ * empty-week increment (three of those auto-pause someone), no state change. A failed consent read
+ * refuses too — if consent cannot be shown, nothing is sent.
  */
 export async function sendWeeklySmsForSubscriber(
   subscriber: SmsSubscriber,
@@ -733,8 +878,28 @@ export async function sendWeeklySmsForSubscriber(
   const log = options.record ?? recordSmsSend;
   const markStopped = options.markStopped ?? markStoppedViaCarrier;
   const applyState = options.applyState ?? applyEmptyWeekState;
+  const loadConsent = options.loadConsent ?? loadWeeklySendConsent;
   // Copied from the subscriber's own row, never defaulted — see SmsSubscriber.consentTextVersion.
   const consentTextVersion = subscriber.consentTextVersion;
+
+  // −1. ⛔ THE CONSENT ASSERTION. Before anything else — see the header above.
+  let refusal: WeeklySendConsentRefusal | null;
+  try {
+    refusal = weeklySendConsentRefusal(await loadConsent(subscriber.id), phoneNumber);
+  } catch {
+    // The driver's message is not kept: it could quote the parameters it failed on.
+    refusal = 'consent_read_failed';
+  }
+  if (refusal) {
+    logConsentRefusal(subscriber.id, refusal);
+    return {
+      subscriberId: subscriber.id,
+      status: 'refused_consent',
+      pickCount: 0,
+      segments: 0,
+      error: REFUSED_CONSENT_ERROR,
+    };
+  }
 
   try {
     const deps = options.deps ?? (await loadWeeklySmsDeps());
@@ -944,6 +1109,7 @@ export interface BulkOptions {
   record?: typeof recordSmsSend;
   markStopped?: typeof markStoppedViaCarrier;
   applyState?: typeof applyEmptyWeekState;
+  loadConsent?: WeeklySendConsentLoader;
 }
 
 export interface BulkSummary {
@@ -963,6 +1129,7 @@ function emptyCounts(): Record<SubscriberSendStatus, number> {
     paused: 0,
     stopped_via_carrier: 0,
     skipped_geocode_failed: 0,
+    refused_consent: 0,
     error: 0,
   };
 }
@@ -1026,6 +1193,9 @@ export async function sendWeeklySmsBulk(options: BulkOptions = {}): Promise<Bulk
       record: options.record,
       markStopped: options.markStopped,
       applyState: options.applyState,
+      // A refused subscriber comes back as `refused_consent` and the loop simply moves on — the
+      // same one-bad-row-cannot-sink-the-batch contract as every other outcome.
+      loadConsent: options.loadConsent,
     });
     counts[result.status] += 1;
     totalSegments += result.segments;

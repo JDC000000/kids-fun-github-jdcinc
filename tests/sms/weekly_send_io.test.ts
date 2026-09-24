@@ -74,6 +74,9 @@ function wired(over: Parameters<typeof sendWeeklySmsForSubscriber>[2] = {}) {
     applyState: async (id: string) => {
       states.push(id);
     },
+    // P6: active, confirmed, at the number under test — so these tests exercise what follows the
+    // consent assertion. The assertion's own cases are in weekly_send_consent.test.ts.
+    loadConsent: async () => ({ status: 'active' as const, confirmedTimestamp: NOW, phoneNumber: PHONE }),
     ...over,
   };
   return { logged, stopped, states, options };
