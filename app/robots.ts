@@ -25,6 +25,25 @@
 // <link rel=canonical> AT /activity/[id] so it never competes for that content). Disallowing it
 // here is pure crawl-budget/duplicate-content hygiene, the same reasoning as /admin and /api
 // above — it changes nothing about who can reach the page, only whether search engines bother to.
+//
+// ═══ /search IS DISALLOWED FOR COST, NOT PRIVACY (2026-09-24, Jon-approved) ═══
+// About 96% of the Aug 27 – Sep 27 Vercel bill was GPTBot walking /search filter permutations.
+// Every chip on /search is a real link to another /search?… URL, so a crawler that follows links
+// never runs out of pages, and every page is a function invocation plus a search. robots.txt
+// allowed it. The app-level rate limiter (Sep 22) is what stopped the bleeding, but it only
+// makes each request cheap; this makes compliant crawlers stop asking.
+//
+// This is one of three layers, each for a crawler the others miss:
+//   - this file, for crawlers that read robots.txt;
+//   - the noindex,nofollow in app/search/layout.tsx, for crawlers that fetch the page anyway;
+//   - rel="nofollow" on every link into a /search permutation (app/_lib/search-link-rel.ts).
+//
+// `Disallow: /search` is a PREFIX rule, so it covers every /search?… permutation as well as the
+// bare page. It would also cover any future route starting with "/search"; none exists today.
+// It out-ranks `Allow: /` because the longest matching rule wins (RFC 9309 §2.2.2).
+//
+// Accepted trade-off: /search stops being crawled, so it drops out of search-engine results over
+// time. Parents still reach it from every page through the nav, the home page and the 404.
 import type { MetadataRoute } from 'next';
 
 /** The production origin. Deliberately a literal: a sitemap pointing at the wrong host is worse
@@ -37,7 +56,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/admin', '/api', '/u/', '/s/', '/preview'],
+        disallow: ['/admin', '/api', '/u/', '/s/', '/preview', '/search'],
       },
     ],
     sitemap: `${ORIGIN}/sitemap.xml`,
