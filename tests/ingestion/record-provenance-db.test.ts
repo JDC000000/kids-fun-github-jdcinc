@@ -11,10 +11,12 @@ import { NoopAdapter } from '../../worker/core/adapter';
 import { recordProvenance, type ProvenanceFact } from '../../worker/core/provenance';
 import { upsertOccurrence } from '../../worker/core/upsert';
 import { getPool, query, closePool } from '../../lib/db/client';
+import { deleteSourceRows } from '../../lib/testing/delete-source-rows';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
 describe.skipIf(!hasDb)('recordProvenance — record changes, not re-confirmations (2026-09-23)', () => {
+  let sourceId: string | undefined;
   let seriesId: string;
   let n = 0;
   const run = crypto.randomUUID();
@@ -22,6 +24,7 @@ describe.skipIf(!hasDb)('recordProvenance — record changes, not re-confirmatio
   beforeAll(async () => {
     const [source] = await query<{ id: string }>(
       `INSERT INTO source (family, name) VALUES ('noop', $1) RETURNING id`, [`Provenance Dedup Test ${run}`]);
+    sourceId = source.id;
     const [venue] = await query<{ id: string }>(`INSERT INTO venue (name) VALUES ('Provenance Dedup Venue') RETURNING id`);
     const [series] = await query<{ id: string }>(
       `INSERT INTO activity_series (canonical_title, source_id, venue_id) VALUES ('Provenance Dedup Series', $1, $2) RETURNING id`,
@@ -30,6 +33,9 @@ describe.skipIf(!hasDb)('recordProvenance — record changes, not re-confirmatio
   });
 
   afterAll(async () => {
+    // Leave nothing behind in the shared db-lane database (see lib/testing/delete-source-rows.ts):
+    // this source's occurrences, their provenance, the series and its venue.
+    if (sourceId) await deleteSourceRows(sourceId);
     await closePool();
   });
 
