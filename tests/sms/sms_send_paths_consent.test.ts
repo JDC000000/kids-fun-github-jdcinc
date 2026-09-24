@@ -46,12 +46,35 @@ import { describe, expect, it } from 'vitest';
 const ROOT = join(__dirname, '..', '..');
 const SEAM = 'lib/sms/twilio-client.ts';
 
-/** Directories that are not shipped source. `tests` and `node_modules` are the Operator's
- *  exclusions; the rest are build / VCS output, all git-ignored. Matched at ANY depth. */
-const SKIP_DIRS = new Set([
-  'node_modules', 'tests', '.git', '.next', 'dist', 'out', 'coverage', '.vercel', '.supabase',
+/** Directories skipped WHEREVER they appear: dependencies and build / VCS output. Every one is
+ *  git-ignored at any depth, so nothing under them can be committed without `-f`. */
+const SKIP_ANY_DEPTH = new Set([
+  'node_modules', '.git', '.next', 'dist', 'out', 'coverage', '.vercel', '.supabase',
   'playwright-report', 'test-results',
 ]);
+/**
+ * Skipped ONLY at the repo root. A NESTED `tests/` is not test code: `app/api/sms/tests/route.ts`
+ * ships as the route `/api/sms/tests` (QA of 2d67293, F1 — it was skipped at any depth and the
+ * scan passed while `next build` emitted it). Test files elsewhere are excluded by `TEST_FILE`.
+ */
+const SKIP_AT_ROOT = new Set(['tests']);
+
+/** Whether the walk skips this directory (repo-relative, '/'-separated). */
+function isSkippedDir(relDir: string): boolean {
+  const parts = relDir.split('/');
+  const name = parts[parts.length - 1];
+  return SKIP_ANY_DEPTH.has(name) || (parts.length === 1 && SKIP_AT_ROOT.has(name));
+}
+
+/** Whether a repo-relative file path is inside the scan (no skipped ancestor, a code file, not a test). */
+function wouldScan(relFile: string): boolean {
+  const parts = relFile.split('/');
+  const name = parts[parts.length - 1];
+  for (let i = 1; i < parts.length; i++) {
+    if (isSkippedDir(parts.slice(0, i).join('/'))) return false;
+  }
+  return CODE_FILE.test(name) && !TEST_FILE.test(name) && !name.endsWith('.d.ts');
+}
 const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/;
 /** Colocated test files (app/**\/x.test.tsx exist) — excluded like tests/, per the Operator. */
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
@@ -61,13 +84,15 @@ const TEST_SPECIFIER = /(^|\/)(tests|__tests__)(\/|$)|\.(test|spec)(\.[cm]?[jt]s
 const SEAM_SPECIFIER = /(^|\/)twilio-client(\.[cm]?[jt]sx?)?$/;
 const SDK_SPECIFIER = /^twilio(\/|$)/;
 
+const toRel = (full: string) => relative(ROOT, full).split(sep).join('/');
+
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);
     if (statSync(full).isDirectory()) {
-      if (!SKIP_DIRS.has(name)) out.push(...sourceFiles(full));
-    } else if (CODE_FILE.test(name) && !TEST_FILE.test(name) && !name.endsWith('.d.ts')) {
+      if (!isSkippedDir(toRel(full))) out.push(...sourceFiles(full));
+    } else if (wouldScan(toRel(full))) {
       out.push(full);
     }
   }
@@ -131,6 +156,162 @@ function stringsIn(sf: ts.SourceFile): string[] {
 }
 
 /**
+ * Whether the file loads a module by a COMPUTED specifier — `import(x)` / `require(x)` whose
+ * argument is not a string literal. Such a file can reach anything its strings name, so it gets
+ * the string backstops below for the SDK (QA F5, `const sdk = 'twilio'; import(sdk)`) and for test
+ * files (QA F6). Kept conditional on purpose: a bare `'twilio'` or `'tests'` is ordinary data
+ * elsewhere (`{ provider: 'twilio' }` must not force a classification).
+ */
+function hasComputedImport(sf: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (n: ts.Node) => {
+    if (found) return;
+    if (ts.isCallExpression(n)) {
+      const isImport = n.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire = ts.isIdentifier(n.expression) && n.expression.text === 'require';
+      if ((isImport || isRequire) && n.arguments[0] && !ts.isStringLiteralLike(n.arguments[0])) found = true;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+/**
+ * Twilio REST API hosts, regional edges included (`api.dublin.ie1.twilio.com`, QA F5) — any
+ * `<label>.twilio.com` except the `www` marketing/docs site, which a docs link may name.
+ */
+function namesTwilioApiHost(text: string): boolean {
+  for (const m of text.matchAll(/(?:[a-z0-9-]+\.)+twilio\.com\b/gi)) {
+    if (m[0].toLowerCase() !== 'www.twilio.com') return true;
+  }
+  return false;
+}
+
+function isFunctionLike(n: ts.Node): boolean {
+  return ts.isFunctionLike(n) || ts.isClassLike(n);
+}
+
+/**
+ * Names referenced by an expression OUTSIDE any function body and outside type positions — i.e.
+ * the values the expression hands over as-is. `export const x = dispatchSms` hands over the seam;
+ * `export const x = () => dispatchSms(…)` is a new sender, which the completeness check owns.
+ */
+function valueNamesOutsideFunctions(node: ts.Node): Set<string> {
+  const out = new Set<string>();
+  const visit = (n: ts.Node) => {
+    if (ts.isTypeNode(n) || isFunctionLike(n)) return;
+    if (ts.isIdentifier(n)) {
+      const parent = n.parent;
+      const isMemberName =
+        (ts.isPropertyAccessExpression(parent) && parent.name === n) ||
+        (ts.isPropertyAssignment(parent) && parent.name === n);
+      if (!isMemberName) out.add(n.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return out;
+}
+
+/** Unwrap `await`, parentheses and `as`/`satisfies`/`!` to reach the call a binding came from. */
+function unwrap(e: ts.Expression): ts.Expression {
+  let cur = e;
+  for (;;) {
+    if (ts.isAwaitExpression(cur) || ts.isParenthesizedExpression(cur) || ts.isAsExpression(cur) ||
+        ts.isSatisfiesExpression(cur) || ts.isNonNullExpression(cur)) cur = cur.expression;
+    else return cur;
+  }
+}
+
+function bindingNames(name: ts.BindingName, out: Set<string>): void {
+  if (ts.isIdentifier(name)) out.add(name.text);
+  else for (const el of name.elements) if (!ts.isOmittedExpression(el)) bindingNames(el.name, out);
+}
+
+/**
+ * QA F2 — LAUNDERING WITHOUT `from`. Does this module hand a seam VALUE to its importers?
+ *   `import { dispatchSms } from './twilio-client'; export { dispatchSms as x };`   (export clause)
+ *   `export const x = dispatchSms;` / `const d = dispatchSms; export { d };`         (alias)
+ *   `export default dispatchSms;`
+ * Seam bindings are the value imports of the seam (static, `import =`, or destructured from
+ * `require()` / `await import()`), closed over plain aliases to a fixpoint. Type-only imports
+ * cannot send and are ignored.
+ */
+function launderedSeamExports(sf: ts.SourceFile): string[] {
+  const tainted = new Set<string>();
+  const isSeamCall = (e: ts.Expression) => {
+    const c = unwrap(e);
+    if (!ts.isCallExpression(c)) return false;
+    const isImport = c.expression.kind === ts.SyntaxKind.ImportKeyword;
+    const isRequire = ts.isIdentifier(c.expression) && c.expression.text === 'require';
+    const spec = isImport || isRequire ? literalText(c.arguments[0]) : null;
+    return spec !== null && SEAM_SPECIFIER.test(spec);
+  };
+  const declarations: ts.VariableDeclaration[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isImportDeclaration(n) && n.importClause && !n.importClause.isTypeOnly) {
+      const spec = literalText(n.moduleSpecifier);
+      if (spec !== null && SEAM_SPECIFIER.test(spec)) {
+        const clause = n.importClause;
+        if (clause.name) tainted.add(clause.name.text);
+        const nb = clause.namedBindings;
+        if (nb && ts.isNamespaceImport(nb)) tainted.add(nb.name.text);
+        if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if (!el.isTypeOnly) tainted.add(el.name.text);
+      }
+    } else if (ts.isImportEqualsDeclaration(n) && !n.isTypeOnly && ts.isExternalModuleReference(n.moduleReference)) {
+      const spec = literalText(n.moduleReference.expression);
+      if (spec !== null && SEAM_SPECIFIER.test(spec)) tainted.add(n.name.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  // MODULE-SCOPE declarations only: an export clause can only name those, and a local inside a
+  // function (`const send = options.dispatch ?? dispatchSms`) must not taint a same-named export.
+  for (const stmt of sf.statements) {
+    if (ts.isVariableStatement(stmt)) declarations.push(...stmt.declarationList.declarations);
+  }
+  for (const d of declarations) {
+    if (d.initializer && isSeamCall(d.initializer)) bindingNames(d.name, tainted);
+  }
+  // Aliases: `const d = dispatchSms`, `const o = { send: dispatchSms }` … to a fixpoint.
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const d of declarations) {
+      if (!d.initializer) continue;
+      const names = new Set<string>();
+      bindingNames(d.name, names);
+      if ([...names].every((x) => tainted.has(x))) continue;
+      if ([...valueNamesOutsideFunctions(d.initializer)].some((x) => tainted.has(x))) {
+        for (const x of names) tainted.add(x);
+        changed = true;
+      }
+    }
+  }
+  const laundered: string[] = [];
+  const isExported = (n: ts.Node) =>
+    ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+  for (const stmt of sf.statements) {
+    if (ts.isExportDeclaration(stmt) && !stmt.moduleSpecifier && !stmt.isTypeOnly &&
+        stmt.exportClause && ts.isNamedExports(stmt.exportClause)) {
+      for (const el of stmt.exportClause.elements) {
+        const local = (el.propertyName ?? el.name).text;
+        if (!el.isTypeOnly && tainted.has(local)) laundered.push(el.name.text);
+      }
+    } else if (ts.isVariableStatement(stmt) && isExported(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        const names = new Set<string>();
+        bindingNames(d.name, names);
+        for (const x of names) if (tainted.has(x)) laundered.push(x);
+      }
+    } else if (ts.isExportAssignment(stmt)) {
+      if ([...valueNamesOutsideFunctions(stmt.expression)].some((x) => tainted.has(x))) laundered.push('default');
+    }
+  }
+  return laundered.sort();
+}
+
+/**
  * Why this file can reach Twilio — empty when it cannot. A pure function of (path, source), so
  * the self-tests below can feed it planted probes as ordinary strings.
  */
@@ -142,11 +323,16 @@ function twilioReach(rel: string, src: string): string[] {
     if (SEAM_SPECIFIER.test(spec)) reasons.add(`seam:${kind}`);
     if (SDK_SPECIFIER.test(spec)) reasons.add(`twilio-sdk:${kind}`);
   }
+  const computed = hasComputedImport(sf);
   for (const text of stringsIn(sf)) {
     // The backstop: `const p = './twilio-client'; await import(p)` has no specifier to see.
     if (SEAM_SPECIFIER.test(text)) reasons.add('seam:string');
-    if (/api\.twilio\.com/.test(text)) reasons.add('twilio-rest-host');
+    // Same backstop for the SDK, but only where something is loaded by a computed name (F5).
+    if (computed && SDK_SPECIFIER.test(text)) reasons.add('twilio-sdk:string');
+    if (namesTwilioApiHost(text)) reasons.add('twilio-rest-host');
   }
+  // F2: an export clause or alias that hands the seam on counts as a re-export, too.
+  if (launderedSeamExports(sf).length > 0) reasons.add('seam:re-export');
   return [...reasons].sort();
 }
 
@@ -158,6 +344,22 @@ function scanned(): Array<{ rel: string; src: string }> {
     src: readFileSync(file, 'utf8'),
   }));
   return scanCache;
+}
+
+/**
+ * Test code a shipped file loads: literal specifiers, plus — in a file that loads anything by a
+ * computed name — any path-shaped string naming test code (QA F6, `const p = '../tests/…';
+ * import(p)`).
+ */
+function testImports(rel: string, src: string): string[] {
+  const sf = parse(rel, src);
+  const out = moduleSpecifiers(sf).filter(({ spec }) => TEST_SPECIFIER.test(spec)).map(({ spec }) => `${rel} → ${spec}`);
+  if (hasComputedImport(sf)) {
+    for (const text of stringsIn(sf)) {
+      if (/[/.]/.test(text) && TEST_SPECIFIER.test(text)) out.push(`${rel} → ${text} (string, computed import)`);
+    }
+  }
+  return out;
 }
 
 /** Every module that can reach Twilio. */
@@ -189,21 +391,30 @@ const SEND_ENTRY_POINTS: Record<string, readonly string[]> = {
   sendWeeklySmsBulk: ['lib/sms/weekly-send-io.ts', 'app/api/sms/weekly/run/route.ts'],
 };
 
-/** Identifiers a file actually uses (comments excluded — they are not nodes). */
+/**
+ * Names a file references: identifiers, AND string literals (QA F4 — `io['sendWeeklySmsBulk']`
+ * reaches an entry point with no identifier). Comments are excluded — they are not nodes.
+ */
 function identifiersIn(rel: string, src: string): Set<string> {
   const out = new Set<string>();
   const visit = (n: ts.Node) => {
     if (ts.isIdentifier(n)) out.add(n.text);
+    else if (ts.isStringLiteralLike(n)) out.add(n.text);
     ts.forEachChild(n, visit);
   };
   visit(parse(rel, src));
   return out;
 }
 
-/** Exported functions of a module whose body names the seam's sender or another entry point. */
+/**
+ * The EXPORTED NAMES of a module's senders: top-level functions (declared, or `const` arrow /
+ * function expressions) whose body names the seam's sender, another entry point, or — to a
+ * fixpoint — another local sender, so a sender behind a private helper still counts. Exported
+ * directly OR through an export clause (`export { qaNudge }`, `export { f as g }` — QA F3).
+ */
 function exportedSenders(rel: string, src: string): string[] {
-  const senders = new Set(['dispatchSms', 'twilioClient', ...Object.keys(SEND_ENTRY_POINTS)]);
-  const out: string[] = [];
+  const sf = parse(rel, src);
+  const seed = new Set(['dispatchSms', 'twilioClient', ...Object.keys(SEND_ENTRY_POINTS)]);
   const bodyNames = (node: ts.Node) => {
     const names = new Set<string>();
     const visit = (n: ts.Node) => {
@@ -215,22 +426,39 @@ function exportedSenders(rel: string, src: string): string[] {
   };
   const isExported = (n: ts.Node) =>
     ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-  for (const stmt of parse(rel, src).statements) {
-    if (!isExported(stmt)) continue;
+  const bodies = new Map<string, Set<string>>();
+  const exportedAs = new Map<string, string[]>();
+  const exportAs = (local: string, exported: string) =>
+    exportedAs.set(local, [...(exportedAs.get(local) ?? []), exported]);
+  for (const stmt of sf.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
-      const own = stmt.name.text;
-      if ([...bodyNames(stmt.body)].some((x) => x !== own && senders.has(x))) out.push(own);
+      bodies.set(stmt.name.text, bodyNames(stmt.body));
+      if (isExported(stmt)) exportAs(stmt.name.text, stmt.name.text);
     } else if (ts.isVariableStatement(stmt)) {
       for (const decl of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
         const init = decl.initializer;
         if (!ts.isArrowFunction(init) && !ts.isFunctionExpression(init)) continue;
-        const own = decl.name.text;
-        if ([...bodyNames(init.body)].some((x) => x !== own && senders.has(x))) out.push(own);
+        bodies.set(decl.name.text, bodyNames(init.body));
+        if (isExported(stmt)) exportAs(decl.name.text, decl.name.text);
+      }
+    } else if (ts.isExportDeclaration(stmt) && !stmt.moduleSpecifier && stmt.exportClause &&
+               ts.isNamedExports(stmt.exportClause)) {
+      for (const el of stmt.exportClause.elements) exportAs((el.propertyName ?? el.name).text, el.name.text);
+    }
+  }
+  const senders = new Set<string>();
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, names] of bodies) {
+      if (senders.has(name)) continue;
+      if ([...names].some((x) => x !== name && (seed.has(x) || senders.has(x)))) {
+        senders.add(name);
+        changed = true;
       }
     }
   }
-  return out.sort();
+  return [...senders].flatMap((local) => exportedAs.get(local) ?? []).sort();
 }
 
 describe('⛔ every outbound SMS path is classified under a consent rule', () => {
@@ -259,11 +487,7 @@ describe('⛔ every outbound SMS path is classified under a consent rule', () =>
 
   it('no non-test file imports a test file — the excluded files cannot become a back door', () => {
     const offenders: string[] = [];
-    for (const { rel, src } of scanned()) {
-      for (const { spec } of moduleSpecifiers(parse(rel, src))) {
-        if (TEST_SPECIFIER.test(spec)) offenders.push(`${rel} → ${spec}`);
-      }
-    }
+    for (const { rel, src } of scanned()) offenders.push(...testImports(rel, src));
     expect(offenders).toEqual([]);
   });
 });
@@ -342,6 +566,140 @@ describe('the detector catches every planted probe, and nothing innocent (in mem
   });
 });
 
+// ═══ QA OF 2d67293 — EACH EXPLOIT, VERBATIM, AS A COMMITTED CONTROL ═══
+// Every source string below is copied character for character from the QA harness's planted file
+// (.scratch/kf-qa-p6/nc/out/<ID>.log). Against 2d67293 each one passed the scan green; each test
+// here fails if its fix is reverted.
+describe('QA 2d67293 findings — the exact exploits are caught', () => {
+  it('F1 (C21): a route under a NESTED tests/ dir is scanned, and flagged', () => {
+    const rel = 'app/api/sms/tests/route.ts';
+    const src =
+      "import { NextResponse } from 'next/server';\n" +
+      "import { dispatchSms } from '@/lib/sms/twilio-client';\n" +
+      "export async function POST(): Promise<NextResponse> { await dispatchSms('+1', {} as never, { dryRun: false }); return NextResponse.json({ ok: true }); }\n";
+    expect(wouldScan(rel)).toBe(true);
+    expect(twilioReach(rel, src)).not.toEqual([]);
+    expect(CLASSIFIED[rel]).toBeUndefined();
+    // …while the ROOT tests/ dir, colocated test files and dependencies stay out.
+    expect(isSkippedDir('tests')).toBe(true);
+    expect(isSkippedDir('app/api/sms/tests')).toBe(false);
+    expect(isSkippedDir('lib/sms/tests')).toBe(false);
+    expect(isSkippedDir('worker/node_modules')).toBe(true);
+    expect(wouldScan('tests/sms/helpers.ts')).toBe(false);
+    expect(wouldScan('app/api/sms/tests/route.test.ts')).toBe(false);
+  });
+
+  it('F2 (C12): `export { dispatchSms as qaLaundered }` appended to a classified module is laundering', () => {
+    const src = read('lib/sms/welcome.ts') + '\n' + 'export { dispatchSms as qaLaundered };' + '\n';
+    expect(launderedSeamExports(parse('lib/sms/welcome.ts', src))).toEqual(['qaLaundered']);
+    expect(twilioReach('lib/sms/welcome.ts', src)).toContain('seam:re-export');
+  });
+
+  it('F2 (C13): `export const qaSendAlias = dispatchSms` appended to a classified module is laundering', () => {
+    const src = read('lib/sms/weekly-send-io.ts') + '\n' + 'export const qaSendAlias = dispatchSms;' + '\n';
+    expect(launderedSeamExports(parse('lib/sms/weekly-send-io.ts', src))).toEqual(['qaSendAlias']);
+    expect(twilioReach('lib/sms/weekly-send-io.ts', src)).toContain('seam:re-export');
+  });
+
+  it('F2: the other hand-over shapes are laundering too; a wrapper or a type is not', () => {
+    const launders: Array<[string, string]> = [
+      ['alias then clause', `import { dispatchSms } from './twilio-client';\nconst d = dispatchSms;\nexport { d };`],
+      ['object holding it', `import { twilioClient } from './twilio-client';\nexport const api = { client: twilioClient };`],
+      ['default export', `import { dispatchSms } from './twilio-client';\nexport default dispatchSms;`],
+      ['namespace import', `import * as seam from './twilio-client';\nexport const s = seam;`],
+      ['destructured require', `const { dispatchSms } = require('./twilio-client');\nexport { dispatchSms as x };`],
+      ['destructured await import', `const { twilioClient } = await import('./twilio-client');\nexport const c = twilioClient;`],
+    ];
+    for (const [label, src] of launders) {
+      expect(launderedSeamExports(parse('lib/sms/x.ts', src)), label).not.toEqual([]);
+    }
+    const clean: Array<[string, string]> = [
+      ['a wrapper function is a SENDER (completeness owns it), not a hand-over', `import { dispatchSms } from './twilio-client';\nexport const send = (to: string) => dispatchSms(to, {} as never, { dryRun: true });`],
+      ['a type re-export cannot send', `import type { DispatchResult } from './twilio-client';\nexport type { DispatchResult };`],
+      ['a type-only specifier cannot send', `import { type DispatchResult } from './twilio-client';\nexport type R = DispatchResult;`],
+      ['a local inside a function does not taint a same-named export', `import { dispatchSms } from './twilio-client';\nexport function f(o: { d?: typeof dispatchSms }) { const send = o.d ?? dispatchSms; return send; }\nconst send = 1;\nexport { send };`],
+    ];
+    for (const [label, src] of clean) {
+      expect(launderedSeamExports(parse('lib/sms/x.ts', src)), label).toEqual([]);
+    }
+  });
+
+  it('F3 (C26): a sender exported through `export { qaNudge }` is on the completeness radar', () => {
+    const src =
+      read('lib/sms/welcome.ts') + '\n' +
+      'async function qaNudge(p: string) {\n  return dispatchSms(p, {} as never, { dryRun: false });\n}\nexport { qaNudge };\n';
+    expect(exportedSenders('lib/sms/welcome.ts', src)).toContain('qaNudge');
+    expect(SEND_ENTRY_POINTS.qaNudge).toBeUndefined();
+  });
+
+  it('F3: a sender behind a PRIVATE helper, and one exported under an alias, are found too', () => {
+    const src =
+      `import { dispatchSms } from './twilio-client';\n` +
+      `function helper(p: string) { return dispatchSms(p, {} as never, { dryRun: true }); }\n` +
+      `export async function viaHelper(p: string) { return helper(p); }\n` +
+      `const inner = (p: string) => helper(p);\nexport { inner as renamed };\n` +
+      `export function unrelated() { return 1; }\n`;
+    expect(exportedSenders('lib/sms/x.ts', src)).toEqual(['renamed', 'viaHelper']);
+  });
+
+  it('F4 (C09): `io[\'sendWeeklySmsForSubscriber\']` counts as naming the entry point', () => {
+    const rel = 'app/api/qa-elem/route.ts';
+    const src =
+      "import { NextResponse } from 'next/server';\n" +
+      "import * as io from '@/lib/sms/weekly-send-io';\n" +
+      'export async function POST(): Promise<NextResponse> {\n' +
+      "  const go = io['sendWeeklySmsForSubscriber'];\n" +
+      "  await go({ id: 'x' } as never, '+1');\n" +
+      '  return NextResponse.json({ ok: true });\n' +
+      '}\n';
+    expect(identifiersIn(rel, src).has('sendWeeklySmsForSubscriber')).toBe(true);
+    expect(SEND_ENTRY_POINTS.sendWeeklySmsForSubscriber).not.toContain(rel);
+  });
+
+  it('F4 (C10b): `m[\'sendWeeklySmsBulk\']` through a barrel counts as naming the entry point', () => {
+    const rel = 'app/api/qa-barrel/route.ts';
+    const src =
+      "import { NextResponse } from 'next/server';\n" +
+      "import * as m from '@/lib/sms/qa-barrel';\n" +
+      "export async function POST(): Promise<NextResponse> { await m['sendWeeklySmsBulk']({}); return NextResponse.json({ ok: true }); }\n";
+    expect(identifiersIn(rel, src).has('sendWeeklySmsBulk')).toBe(true);
+    expect(SEND_ENTRY_POINTS.sendWeeklySmsBulk).not.toContain(rel);
+  });
+
+  it('F5 (C18): the SDK held in a variable and loaded by a computed import is caught', () => {
+    const src =
+      "const sdk = 'twilio';\n" +
+      'export async function qaWorkerVar() {\n' +
+      '  const m = await import(sdk);\n' +
+      "  return m.default('AC' + 'x', 'y');\n" +
+      '}\n';
+    expect(twilioReach('worker/src/qa-worker-var.ts', src)).toContain('twilio-sdk:string');
+  });
+
+  it('F5 (C20): a regional Twilio REST edge host is caught', () => {
+    const src =
+      "export const qaEdge = () => fetch('https://api.dublin.ie1.twilio.com/2010-04-01/Accounts/AC/Messages.json', { method: 'POST' });\n";
+    expect(twilioReach('scripts/qa-edge.ts', src)).toContain('twilio-rest-host');
+  });
+
+  it('F5: stays quiet on a provider label and a docs link (QA false-positive control F4, verbatim)', () => {
+    const qaF4 =
+      "import { NextResponse } from 'next/server';\n" +
+      '// This route deliberately does NOT call sendWeeklySmsForSubscriber or sendConfirmationRequest.\n' +
+      "export async function GET(): Promise<NextResponse> { return NextResponse.json({ provider: 'twilio' }); }\n";
+    expect(twilioReach('app/api/qa-fp4/route.ts', qaF4)).toEqual([]);
+    expect(identifiersIn('app/api/qa-fp4/route.ts', qaF4).has('sendWeeklySmsForSubscriber')).toBe(false);
+    expect(twilioReach('lib/x.ts', `export const docs = 'https://www.twilio.com/docs/sms';`)).toEqual([]);
+  });
+
+  it('F6 (C25): a test-file specifier held in a variable and loaded by a computed import is caught', () => {
+    const src = "const p = '../tests/sms/helpers';\nexport const qaDynTest = () => import(p);\n";
+    expect(testImports('lib/qa-dyn-test.ts', src)).not.toEqual([]);
+    // …but a plain word in a file that merely HAS a computed import is not a path.
+    expect(testImports('lib/y.ts', `const kinds = ['tests', 'specs'];\nexport const load = (m: string) => import(m);`)).toEqual([]);
+  });
+});
+
 describe('⛔ CONTENT paths gate on confirmed, active consent', () => {
   it('Instant Picks: the consent gate runs before the throttle, the render and the dispatch', () => {
     const src = read('lib/sms/instant-picks-send.ts');
@@ -364,8 +722,11 @@ describe('⛔ CONTENT paths gate on confirmed, active consent', () => {
     expect(src).toMatch(
       /return subscriber\.status === 'active' && subscriber\.confirmedTimestamp != null;/
     );
-    // …and the loader actually reads the two columns it is judged on.
-    expect(src).toMatch(/SELECT id, phone_number, preferences_token, consent_text_version,\s+status, confirmed_timestamp/);
+    // …and the loader's CODE (not a docstring) actually reads the two columns it is judged on.
+    const loader = src.slice(src.indexOf('export const loadInstantPicksSendSubscriber'));
+    expect(loader.slice(0, loader.indexOf('\n};\n'))).toMatch(
+      /SELECT id, phone_number, preferences_token, consent_text_version,\s+status, confirmed_timestamp/
+    );
   });
 
   it('Weekly: the subscriber load selects only active rows', () => {
@@ -403,7 +764,11 @@ describe('⛔ CONTENT paths gate on confirmed, active consent', () => {
     const fn = src.slice(src.indexOf('export function weeklySendConsentRefusal'));
     expect(fn).toMatch(/if \(row\.confirmedTimestamp == null\) return 'active_unconfirmed';/);
     expect(fn).toMatch(/if \(row\.phoneNumber !== phoneNumber\) return 'number_mismatch';/);
-    expect(src).toMatch(/SELECT status, confirmed_timestamp, phone_number FROM sms_consent WHERE id = \$1/);
+    // The loader's CODE, not its docstring — the docstring quotes the same SQL, and matching the
+    // whole file let a wrong-column mutation pass this lane (QA F8).
+    const loader = src.slice(src.indexOf('export const loadWeeklySendConsent'));
+    const loaderCode = loader.slice(0, loader.indexOf('\n};\n'));
+    expect(loaderCode).toMatch(/SELECT status, confirmed_timestamp, phone_number FROM sms_consent WHERE id = \$1/);
   });
 
   it('Weekly: the single-subscriber run route resolves its target from the ACTIVE set only', () => {
