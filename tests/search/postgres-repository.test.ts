@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it, onTestFinished } from 'vitest';
 import { getPool, query, closePool } from '../../lib/db/client';
+import { deleteSourceRows } from '../../lib/testing/delete-source-rows';
 import { resolveSeries } from '../../worker/core/series';
 import { upsertOccurrence } from '../../worker/core/upsert';
 import { isRegistrationShaped } from '../../lib/search/filters/registration';
@@ -23,18 +24,8 @@ FIXTURE_START.setUTCHours(17, 30, 0, 0);
 const FIXTURE_START_ISO = FIXTURE_START.toISOString();
 const FIXTURE_END_ISO = new Date(FIXTURE_START.getTime() + 30 * 60_000).toISOString();
 
-// Future-dated + confirmed rows enter the shared db lane's read model, so leaving them behind
-// interferes with every suite that reads a global aggregate (see the registration round-trip
-// test's cleanup note below). Scoped to one test's own source id — never a blanket DELETE.
-async function removeSourceRows(sourceId: string, venueIds: string[] = []): Promise<void> {
-  await query(
-    `DELETE FROM activity_occurrence WHERE series_id IN (SELECT id FROM activity_series WHERE source_id = $1)`,
-    [sourceId]
-  );
-  await query(`DELETE FROM activity_series WHERE source_id = $1`, [sourceId]);
-  for (const venueId of venueIds) await query(`DELETE FROM venue WHERE id = $1`, [venueId]);
-  await query(`DELETE FROM source WHERE id = $1`, [sourceId]);
-}
+// Future-dated + confirmed rows enter the shared db lane's read model, so every test that
+// inserts them removes them again (see the registration round-trip test's cleanup note below).
 
 describe.skipIf(!hasDb)('Postgres search repository', () => {
   afterAll(async () => {
@@ -50,7 +41,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Repository Test Source ${suffix}`]
     );
-    onTestFinished(() => removeSourceRows(source.id));
+    onTestFinished(() => deleteSourceRows(source.id));
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
     const [series] = await query<{ id: string }>(
       `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
@@ -93,7 +84,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Engine Test Source ${suffix}`]
     );
-    onTestFinished(() => removeSourceRows(source.id));
+    onTestFinished(() => deleteSourceRows(source.id));
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
     const [series] = await query<{ id: string }>(
       `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
@@ -134,6 +125,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Expired Repository Source ${crypto.randomUUID()}`]
     );
+    onTestFinished(() => deleteSourceRows(source.id));
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
     const [series] = await query<{ id: string }>(
       `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
@@ -174,7 +166,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
     const [noPhone] = await query<{ id: string }>(`INSERT INTO venue (name) VALUES ($1) RETURNING id`, [
       `Phoneless Test Branch ${suffix}`,
     ]);
-    onTestFinished(() => removeSourceRows(source.id, [withPhone.id, noPhone.id]));
+    onTestFinished(() => deleteSourceRows(source.id));
 
     const occurrenceAt = async (venueId: string, label: string): Promise<string> => {
       const [series] = await query<{ id: string }>(
@@ -218,6 +210,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Hidden Status Source ${suffix}`]
     );
+    onTestFinished(() => deleteSourceRows(source.id));
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
     const [series] = await query<{ id: string }>(
       `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
