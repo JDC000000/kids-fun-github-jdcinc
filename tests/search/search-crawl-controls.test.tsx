@@ -6,7 +6,14 @@
 //   2. /search (every query-string variant) carries noindex,nofollow, and NO other route does.
 //   3. every link into a /search PERMUTATION carries rel="nofollow"; bare /search and every
 //      non-search link do not.
-// See app/robots.ts, app/search/layout.tsx and app/_lib/search-link-rel.ts for the reasoning.
+//   4. (Jon, same day) AI crawlers get their own `Disallow: /` group SITE-WIDE, while normal
+//      search engines keep the `*` group, and so stay allowed everywhere except /search.
+// See app/robots.ts, app/_lib/ai-crawlers.ts, app/search/layout.tsx and
+// app/_lib/search-link-rel.ts for the reasoning.
+//
+// robots.txt group selection (RFC 9309) is checked with a REAL parser, robots-parser, not a
+// hand-rolled matcher: "which group does Googlebot land in" is exactly the question a home-made
+// matcher would get wrong in the same way as the code under test.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { forwardRef, type ReactElement, type ReactNode } from 'react';
@@ -18,6 +25,7 @@ import type { Metadata } from 'next';
 // (next 14.2): if an upgrade moves them this file fails to import, loudly, which is the point.
 import { resolveRobots as serializeRobotsTxt } from 'next/dist/build/webpack/loaders/metadata/resolve-route-data';
 import { resolveRobots as resolveRobotsMeta } from 'next/dist/lib/metadata/resolvers/resolve-basics';
+import robotsParser from 'robots-parser';
 
 // next/link → a plain <a> that forwards href AND rel, so the rendered HTML shows exactly the rel
 // each call site hands to Link (the real Link spreads rel onto its <a> the same way).
@@ -47,6 +55,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 import robots from '@/app/robots';
+import { AI_CRAWLER_USER_AGENTS } from '@/app/_lib/ai-crawlers';
 import { metadata as searchLayoutMetadata } from '@/app/search/layout';
 import { metadata as rootLayoutMetadata } from '@/app/layout';
 import { metadata as notFoundMetadata } from '@/app/not-found';
@@ -87,30 +96,40 @@ function anchors(html: string): Array<{ href: string; rel: string | null }> {
 
 const relTokens = (rel: string | null) => (rel ?? '').split(/\s+/).filter(Boolean);
 
+const ORIGIN = 'https://kidsfunapp.ca';
+/** The robots.txt a crawler actually receives: Next's own serializer over app/robots.ts. */
+const ROBOTS_TXT = serializeRobotsTxt(robots());
+const parsedRobots = robotsParser(`${ORIGIN}/robots.txt`, ROBOTS_TXT);
+
 /**
- * RFC 9309 matching for the `*` group of a robots.txt body: the longest matching Allow/Disallow
- * path wins, and Allow wins a tie. Enough to answer "may a crawler fetch this URL?" for the
- * prefix-only rules app/robots.ts emits (no `*`/`$` wildcards are used there).
+ * May a crawler with this PRODUCT TOKEN fetch this path? A robots group is selected by product
+ * token (RFC 9309 §2.2.1): pass `Googlebot`, not a full `Mozilla/5.0 (compatible; Googlebot/2.1…)`
+ * string. robots-parser cuts at the first `/`, so a full UA string would collapse to "mozilla"
+ * and silently fall through to the `*` group. `undefined` (URL outside this robots.txt's origin)
+ * is a test bug, so it fails loudly instead of reading as "allowed".
  */
-function crawlerMayFetch(robotsTxt: string, pathAndQuery: string): boolean {
-  let best: { length: number; allow: boolean } | null = null;
-  for (const line of robotsTxt.split('\n')) {
-    const m = line.match(/^(Allow|Disallow):\s*(\S*)$/);
-    if (!m || m[2] === '' || !pathAndQuery.startsWith(m[2])) continue;
-    const candidate = { length: m[2].length, allow: m[1] === 'Allow' };
-    if (!best || candidate.length > best.length || (candidate.length === best.length && candidate.allow)) {
-      best = candidate;
-    }
-  }
-  return best?.allow ?? true;
+function mayFetch(productToken: string, pathAndQuery: string): boolean {
+  const allowed = parsedRobots.isAllowed(`${ORIGIN}${pathAndQuery}`, productToken);
+  if (allowed === undefined) throw new Error(`robots-parser could not evaluate ${pathAndQuery}`);
+  return allowed;
 }
+
+/** The public, indexable routes, one per kind. The event page is a real fixture activity. */
+const PUBLIC_PATHS = ['/', '/activity/trout-lake-public-skate', '/coverage-status', '/privacy', '/terms', '/sitemap.xml'];
+const SEARCH_PATHS = [
+  '/search',
+  '/search?when=weekend',
+  '/search?q=swimming',
+  '/search?free=1&when=today&age=3-5&region=nvan&sort=distance',
+  '/search/',
+];
+/** Pre-existing private/housekeeping disallows (unchanged by this work). */
+const PRIVATE_PATHS = ['/admin', '/api/search', '/u/some-token', '/s/some-token', '/preview/abc'];
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 describe('1 — robots.txt disallows /search and keeps every existing rule', () => {
-  const txt = serializeRobotsTxt(robots());
-
-  it('serializes to exactly the previous file plus one `Disallow: /search` line', () => {
-    expect(txt).toBe(
+  it('serializes to exactly the previous file plus `Disallow: /search` and the AI group', () => {
+    expect(ROBOTS_TXT).toBe(
       [
         'User-Agent: *',
         'Allow: /',
@@ -120,6 +139,9 @@ describe('1 — robots.txt disallows /search and keeps every existing rule', () 
         'Disallow: /s/',
         'Disallow: /preview',
         'Disallow: /search',
+        '',
+        ...AI_CRAWLER_USER_AGENTS.map((ua) => `User-Agent: ${ua}`),
+        'Disallow: /',
         '',
         'Host: https://kidsfunapp.ca',
         'Sitemap: https://kidsfunapp.ca/sitemap.xml',
@@ -133,28 +155,23 @@ describe('1 — robots.txt disallows /search and keeps every existing rule', () 
     expect(r.sitemap).toBe('https://kidsfunapp.ca/sitemap.xml');
     expect(r.host).toBe('https://kidsfunapp.ca');
     const rules = Array.isArray(r.rules) ? r.rules : [r.rules];
-    expect(rules).toHaveLength(1);
+    expect(rules).toHaveLength(2);
     expect(rules[0].userAgent).toBe('*');
     expect(rules[0].allow).toBe('/');
     expect(rules[0].disallow).toEqual(expect.arrayContaining(['/admin', '/api', '/u/', '/s/', '/preview', '/search']));
   });
 
-  it('blocks the bare page and every permutation, including the ones GPTBot walked', () => {
-    for (const url of [
-      '/search',
-      '/search?when=weekend',
-      '/search?q=swimming',
-      '/search?free=1&when=today&age=3-5&region=nvan&sort=distance',
-      '/search/',
-    ]) {
-      expect(crawlerMayFetch(txt, url), url).toBe(false);
-    }
+  it('the `*` group blocks the bare page and every permutation (an unlisted bot)', () => {
+    for (const url of SEARCH_PATHS) expect(mayFetch('SomeUnlistedBot', url), url).toBe(false);
   });
 
-  it('still allows the pages that are meant to be indexed', () => {
-    for (const url of ['/', '/activity/trout-lake-public-skate', '/coverage-status', '/privacy', '/terms', '/sitemap.xml']) {
-      expect(crawlerMayFetch(txt, url), url).toBe(true);
-    }
+  it('the `*` group still allows the pages that are meant to be indexed, and still blocks the private ones', () => {
+    for (const url of PUBLIC_PATHS) expect(mayFetch('SomeUnlistedBot', url), url).toBe(true);
+    for (const url of PRIVATE_PATHS) expect(mayFetch('SomeUnlistedBot', url), url).toBe(false);
+  });
+
+  it('the parser sees the sitemap reference', () => {
+    expect(parsedRobots.getSitemaps()).toEqual([`${ORIGIN}/sitemap.xml`]);
   });
 });
 
@@ -361,5 +378,75 @@ describe('3b — rel="nofollow" on every link into a /search permutation, and no
       const onNow = lines.filter((line) => line.includes('<Link') && line.includes('SEARCH_SHORTCUTS.onNow'));
       expect(onNow.filter((line) => line.includes('rel=')), file).toEqual([]);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('4 — AI crawlers are blocked site-wide; search engines are not', () => {
+  // The tokens the DO's brief named as the minimum (2026-09-24). The list may grow; it may not
+  // lose any of these.
+  const REQUIRED_AI_TOKENS = [
+    'GPTBot', 'ChatGPT-User', 'OAI-SearchBot', 'ClaudeBot', 'Claude-Web', 'anthropic-ai', 'CCBot',
+    'PerplexityBot', 'Perplexity-User', 'Google-Extended', 'Bytespider', 'Amazonbot',
+    'Applebot-Extended', 'meta-externalagent', 'FacebookBot', 'cohere-ai', 'Diffbot', 'Omgilibot',
+  ];
+
+  // Normal search engines and link-preview fetchers. None may be caught by the AI group.
+  // facebookexternalhit / Twitterbot / LinkedInBot / Slackbot render the preview card when a KIDS
+  // FUN link is shared, so blocking them would break sharing.
+  const SEARCH_ENGINES = ['Googlebot', 'Bingbot', 'Applebot', 'DuckDuckBot', 'YandexBot'];
+  const LINK_PREVIEW_FETCHERS = ['facebookexternalhit', 'Twitterbot', 'LinkedInBot', 'Slackbot'];
+
+  it('the list contains every required token', () => {
+    const listed = new Set(AI_CRAWLER_USER_AGENTS.map((t) => t.toLowerCase()));
+    expect(REQUIRED_AI_TOKENS.filter((t) => !listed.has(t.toLowerCase()))).toEqual([]);
+  });
+
+  it('the list has no duplicates and names no search engine or link-preview fetcher', () => {
+    const lower = AI_CRAWLER_USER_AGENTS.map((t) => t.toLowerCase());
+    expect(new Set(lower).size).toBe(lower.length);
+    for (const token of [...SEARCH_ENGINES, ...LINK_PREVIEW_FETCHERS]) {
+      expect(lower, token).not.toContain(token.toLowerCase());
+    }
+  });
+
+  it.each([...AI_CRAWLER_USER_AGENTS])('%s is disallowed on / and on every public, search and private path', (token) => {
+    for (const url of [...PUBLIC_PATHS, ...SEARCH_PATHS, ...PRIVATE_PATHS]) {
+      expect(mayFetch(token, url), `${token} ${url}`).toBe(false);
+    }
+  });
+
+  it('matching is case-insensitive and ignores a version suffix, as RFC 9309 requires', () => {
+    for (const token of ['gptbot', 'GPTBOT', 'GPTBot/1.2', 'claudebot/1.0', 'ccbot/2.0']) {
+      expect(mayFetch(token, '/'), token).toBe(false);
+    }
+  });
+
+  it.each(['Googlebot', 'Bingbot'])(
+    '%s is allowed on / and on an event page, and of the public routes is disallowed ONLY on /search',
+    (token) => {
+      expect(mayFetch(token, '/')).toBe(true);
+      expect(mayFetch(token, '/activity/trout-lake-public-skate')).toBe(true);
+      for (const url of PUBLIC_PATHS) expect(mayFetch(token, url), url).toBe(true);
+      for (const url of SEARCH_PATHS) expect(mayFetch(token, url), url).toBe(false);
+      // The pre-existing private disallows are unchanged, and the same for every search engine.
+      for (const url of PRIVATE_PATHS) expect(mayFetch(token, url), url).toBe(false);
+    },
+  );
+
+  it('every other search engine and link-preview fetcher gets exactly the `*` group', () => {
+    for (const token of [...SEARCH_ENGINES, ...LINK_PREVIEW_FETCHERS]) {
+      for (const url of PUBLIC_PATHS) expect(mayFetch(token, url), `${token} ${url}`).toBe(true);
+      for (const url of SEARCH_PATHS) expect(mayFetch(token, url), `${token} ${url}`).toBe(false);
+    }
+  });
+
+  it('the -Extended control tokens do not capture the crawlers they are named after', () => {
+    // Google-Extended vs Googlebot and Applebot-Extended vs Applebot. Both vendors document
+    // that disallowing the -Extended token leaves search inclusion alone.
+    expect(mayFetch('Google-Extended', '/')).toBe(false);
+    expect(mayFetch('Googlebot', '/')).toBe(true);
+    expect(mayFetch('Applebot-Extended', '/')).toBe(false);
+    expect(mayFetch('Applebot', '/')).toBe(true);
   });
 });
