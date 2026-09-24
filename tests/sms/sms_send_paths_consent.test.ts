@@ -465,7 +465,9 @@ function exportedSenders(rel: string, src: string): string[] {
     } else if (ts.isVariableStatement(stmt)) {
       for (const decl of stmt.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
-        const init = decl.initializer;
+        // Unwrapped like the default branch: `(async (p) => …) satisfies T` / `as T` / parentheses
+        // must not hide an ordinary exported sender (QA N2 re-QA, N4).
+        const init = unwrap(decl.initializer);
         if (!ts.isArrowFunction(init) && !ts.isFunctionExpression(init)) continue;
         bodies.set(decl.name.text, bodyNames(init.body));
         if (isExported(stmt)) exportAs(decl.name.text, decl.name.text);
@@ -692,6 +694,9 @@ describe('QA 2d67293 findings — the exact exploits are caught', () => {
       '\nexport default async function (p: string) {\n  return dispatchSms(p, {} as never, { dryRun: false });\n}\n'],
     ['R09 anonymous default arrow', 'default',
       '\nexport default async (p: string) => dispatchSms(p, {} as never, { dryRun: false });\n'],
+    // N4 (re-QA of 5d1c165): QA's X1 plant (.scratch/kf-qa-p6-n2/c/X1-app), verbatim.
+    ['X1 const arrow wrapped in parentheses + satisfies (N4)', 'qaX1',
+      '\nexport const qaX1 = (async (p: string) => dispatchSms(p, {} as never, { dryRun: false })) satisfies (p: string) => Promise<unknown>;\n'],
   ];
   for (const [label, exported, plant] of N2_PLANTS) {
     it(`N2 (${label}): the sender is on the completeness radar as \`${exported}\``, () => {
