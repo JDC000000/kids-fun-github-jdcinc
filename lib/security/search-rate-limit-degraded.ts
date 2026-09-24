@@ -127,16 +127,42 @@ export interface BreakerOptions {
 }
 
 /**
- * closed → open after `failureThreshold` failures within `failureWindowMs`.
+ * What `tryAcquire` hands a caller that may use the DB limiter. The caller passes it back to
+ * `recordSuccess` / `recordFailure`, so the breaker can tell WHICH breaker episode an outcome
+ * belongs to (see `generation`).
+ */
+export interface BreakerTicket {
+  readonly generation: number;
+  /** True for the single half-open probe; only its success may close an open breaker. */
+  readonly probe: boolean;
+}
+
+/**
+ * closed → open after `failureThreshold` failures within a SLIDING `failureWindowMs`.
  * open → half_open once `openMs` has elapsed; exactly ONE caller is let through as the probe,
  * every concurrent caller keeps using the fallback until the probe settles.
  * half_open → closed on probe success, → open (fresh `openMs`) on probe failure.
+ *
+ * ═══ 2026-09-24 QA F1: SUCCESSES DO NOT ERASE FAILURES, AND STRAGGLERS DO NOT COUNT ═══
+ * The first version reset everything on ANY success, which made it "3 failures IN A ROW", not
+ * "3 in 10s". Measured by independent QA against a real DB whose latency flapped around the
+ * deadline (1.34s successes alternating with 1.50s timeouts): 5 failures inside 10s and the
+ * breaker NEVER opened, so every request kept paying ~1.5s and adding pool pressure — the brownout
+ * case this breaker exists for. And a slow success from a request that had acquired while CLOSED,
+ * but finished after the breaker OPENED, closed it again ~1.2s later instead of 15s.
+ * Now: a success while closed leaves the failure window alone (old failures age out of it on their
+ * own), and only the half-open PROBE's success can close the breaker (a non-probe success never
+ * does — that alone fixes the straggler). Every ticket also carries the breaker `generation` it was
+ * issued in; `generation` advances on every open/close, so ANY outcome from an earlier episode is
+ * ignored — e.g. a failure from a request that started before the breaker opened cannot count
+ * against the next closed episode after recovery.
  */
 export class SearchRateLimitBreaker {
   private state: BreakerState = 'closed';
   private failureTimes: number[] = [];
   private openedAtMs = 0;
   private probeInFlight = false;
+  private generation = 0;
   private readonly failureThreshold: number;
   private readonly failureWindowMs: number;
   private readonly openMs: number;
@@ -151,45 +177,50 @@ export class SearchRateLimitBreaker {
     return this.state;
   }
 
-  /** Whether this caller may use the DB limiter now. Claims the probe slot when half-opening. */
-  tryAcquire(nowMs: number): boolean {
-    if (this.state === 'closed') return true;
+  /**
+   * A ticket if this caller may use the DB limiter now, else null (use the fallback). Claims the
+   * probe slot when half-opening.
+   */
+  tryAcquire(nowMs: number): BreakerTicket | null {
+    if (this.state === 'closed') return { generation: this.generation, probe: false };
     if (this.state === 'open') {
-      if (nowMs - this.openedAtMs < this.openMs) return false;
+      if (nowMs - this.openedAtMs < this.openMs) return null;
       this.state = 'half_open';
       this.probeInFlight = false;
     }
-    if (this.probeInFlight) return false;
+    if (this.probeInFlight) return null;
     this.probeInFlight = true;
-    return true;
+    return { generation: this.generation, probe: true };
   }
 
-  recordSuccess(): void {
-    this.reset();
+  recordSuccess(ticket: BreakerTicket): void {
+    if (ticket.generation !== this.generation) return; // from an earlier episode: ignore
+    if (this.state === 'half_open' && ticket.probe) this.transition('closed', 0);
+    // A success while closed deliberately does NOT clear `failureTimes` (F1).
+  }
+
+  recordFailure(ticket: BreakerTicket, nowMs: number): void {
+    if (ticket.generation !== this.generation) return; // from an earlier episode: ignore
+    if (this.state === 'half_open') {
+      if (ticket.probe) this.transition('open', nowMs);
+      return;
+    }
+    if (this.state !== 'closed') return;
+    this.failureTimes = this.failureTimes.filter((t) => nowMs - t < this.failureWindowMs);
+    this.failureTimes.push(nowMs);
+    if (this.failureTimes.length >= this.failureThreshold) this.transition('open', nowMs);
   }
 
   reset(): void {
-    this.state = 'closed';
-    this.failureTimes = [];
-    this.probeInFlight = false;
+    this.transition('closed', 0);
   }
 
-  recordFailure(nowMs: number): void {
-    if (this.state === 'half_open') {
-      this.open(nowMs);
-      return;
-    }
-    if (this.state === 'open') return; // a straggler that started before the breaker opened
-    this.failureTimes = this.failureTimes.filter((t) => nowMs - t < this.failureWindowMs);
-    this.failureTimes.push(nowMs);
-    if (this.failureTimes.length >= this.failureThreshold) this.open(nowMs);
-  }
-
-  private open(nowMs: number): void {
-    this.state = 'open';
-    this.openedAtMs = nowMs;
+  private transition(to: 'open' | 'closed', nowMs: number): void {
+    this.state = to;
+    this.generation += 1;
     this.failureTimes = [];
     this.probeInFlight = false;
+    if (to === 'open') this.openedAtMs = nowMs;
   }
 }
 

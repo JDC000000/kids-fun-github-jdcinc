@@ -249,23 +249,139 @@ describe('breaker — stop hammering a failing table', () => {
 
   it('while half-open, only ONE concurrent caller probes; the rest use the fallback', () => {
     const breaker = new SearchRateLimitBreaker({ failureThreshold: 1, openMs: 1_000 });
-    breaker.recordFailure(0);
+    breaker.recordFailure(breaker.tryAcquire(0)!, 0);
     expect(breaker.currentState()).toBe('open');
-    expect(breaker.tryAcquire(999)).toBe(false);
-    expect(breaker.tryAcquire(1_000)).toBe(true); // the probe
+    expect(breaker.tryAcquire(999)).toBeNull();
+    expect(breaker.tryAcquire(1_000)).toMatchObject({ probe: true }); // the probe
     expect(breaker.currentState()).toBe('half_open');
-    expect(breaker.tryAcquire(1_001)).toBe(false);
-    expect(breaker.tryAcquire(1_002)).toBe(false);
+    expect(breaker.tryAcquire(1_001)).toBeNull();
+    expect(breaker.tryAcquire(1_002)).toBeNull();
   });
 
   it('failures spread wider than the window do not open it (a single stale connection now and then is tolerated)', () => {
     const breaker = new SearchRateLimitBreaker();
-    breaker.recordFailure(0);
-    breaker.recordFailure(6_000);
-    breaker.recordFailure(12_000); // the first has aged out of the 10s window
+    const fail = (t: number) => breaker.recordFailure(breaker.tryAcquire(t)!, t);
+    fail(0);
+    fail(6_000);
+    fail(12_000); // the first has aged out of the 10s window
     expect(breaker.currentState()).toBe('closed');
-    breaker.recordFailure(13_000);
+    fail(13_000);
     expect(breaker.currentState()).toBe('open');
+  });
+});
+
+// ═══ 2026-09-24 independent QA, finding F1 ═══
+// The breaker was "3 failures IN A ROW" (any success reset it) instead of "3 failures in 10s", and
+// a straggler success from a request that started before the breaker opened re-closed it. Each
+// test below is one of QA's reproductions (their probe ids in brackets).
+describe('breaker F1 — a true sliding window; only the current probe can close it', () => {
+  it('🔴 [QA L2] alternating success/failure: the 3rd failure inside 10s opens it, successes in between do not reset it', async () => {
+    const degradedState = createSearchRateLimitDegradedState();
+    const ok = (async () => [{ attempts: 1 }]) as unknown as Query;
+    const down = downTable();
+    let openedAtRequest: number | null = null;
+    for (let i = 0; i < 20; i++) {
+      await checkSearchRateLimit({ ip: `10.2.0.${i}`, sessionId: `s${i}` }, { query: i % 2 ? down.query : ok, degradedState });
+      if (openedAtRequest === null && degradedState.breaker.currentState() === 'open') openedAtRequest = i;
+    }
+    expect(openedAtRequest).toBe(5); // failures at i = 1, 3, 5
+    expect(down.calls.count).toBe(3); // nothing after it opened reached the DB
+  });
+
+  it('🔴 [QA S5b] a DB flapping around the deadline (1.32s successes / 1.5s timeouts) opens it, and later requests stop paying the latency', async () => {
+    // Per-statement latency alternates 0.33s (4 stmts = 1.32s, under the 1.5s deadline) and 0.42s
+    // (1.68s, over it) — QA's real-DB jitter sequence, reproduced with timers.
+    const degradedState = createSearchRateLimitDegradedState();
+    let perStatementMs = 0;
+    let dbStatements = 0;
+    const jittery = (() => {
+      dbStatements += 1;
+      return new Promise((resolve) => setTimeout(() => resolve([{ attempts: 1 }]), perStatementMs));
+    }) as unknown as Query;
+    const seq = [330, 420, 330, 420, 330, 420, 330, 420, 330, 420];
+    const latencies: number[] = [];
+    for (let i = 0; i < seq.length; i++) {
+      perStatementMs = seq[i];
+      const t0 = Date.now();
+      let doneAt = 0;
+      const p = checkSearchRateLimit({ ip: `10.5.0.${i}`, sessionId: `j${i}` }, { query: jittery, degradedState }).then((r) => {
+        doneAt = Date.now();
+        return r;
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await p;
+      latencies.push(doneAt - t0);
+    }
+    // Requests 2, 4, 6 time out (3 failures within ~8.5s) → open. Requests 7-10 skip the DB.
+    expect(degradedState.breaker.currentState()).toBe('open');
+    expect(latencies.slice(0, 6).every((ms) => ms >= 1_300)).toBe(true);
+    expect(latencies.slice(6)).toEqual([0, 0, 0, 0]);
+    const statementsAfterOpen = dbStatements;
+    await checkSearchRateLimit({ ip: '10.5.1.1', sessionId: 'after' }, { query: jittery, degradedState });
+    expect(dbStatements).toBe(statementsAfterOpen);
+  });
+
+  it('🔴 [QA L1] a straggler success from a request that started while CLOSED does not re-close an OPEN breaker', async () => {
+    const degradedState = createSearchRateLimitDegradedState();
+    let mode: 'slow_ok' | 'fail' | 'ok' = 'slow_ok';
+    let dbCalls = 0;
+    const query = (() => {
+      dbCalls += 1;
+      if (mode === 'fail') return Promise.reject(Object.assign(new Error('getaddrinfo ENOTFOUND db.x'), { code: 'ENOTFOUND' }));
+      if (mode === 'ok') return Promise.resolve([{ attempts: 1 }]);
+      return new Promise((resolve) => setTimeout(() => resolve([{ attempts: 1 }]), 300)); // 4 × 300ms = 1.2s
+    }) as unknown as Query;
+
+    // A acquires while CLOSED and is slow but successful.
+    const straggler = checkSearchRateLimit({ ip: '10.1.1.1', sessionId: 'A' }, { query, degradedState });
+    await vi.advanceTimersByTimeAsync(950); // A has issued its 4th (last) statement
+    mode = 'fail';
+    for (const s of ['B', 'C', 'D']) await checkSearchRateLimit({ ip: `10.1.2.${s.charCodeAt(0)}`, sessionId: s }, { query, degradedState });
+    expect(degradedState.breaker.currentState()).toBe('open');
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect((await straggler).degraded).toBe(false); // A itself did succeed on the DB…
+    expect(degradedState.breaker.currentState()).toBe('open'); // …but must not close the breaker
+
+    mode = 'ok';
+    const callsBefore = dbCalls;
+    const next = await checkSearchRateLimit({ ip: '10.1.3.1', sessionId: 'E' }, { query, degradedState });
+    expect(dbCalls).toBe(callsBefore);
+    expect(next.fallback).toBe('memory');
+  });
+
+  it('a success while closed leaves recent failures in the window (fail, fail, success, fail → open)', () => {
+    const breaker = new SearchRateLimitBreaker();
+    breaker.recordFailure(breaker.tryAcquire(0)!, 0);
+    breaker.recordFailure(breaker.tryAcquire(1_000)!, 1_000);
+    breaker.recordSuccess(breaker.tryAcquire(2_000)!);
+    expect(breaker.currentState()).toBe('closed');
+    breaker.recordFailure(breaker.tryAcquire(3_000)!, 3_000);
+    expect(breaker.currentState()).toBe('open');
+  });
+
+  it('a stale failure from a request that started BEFORE the breaker opened cannot count against the NEXT closed episode', () => {
+    const breaker = new SearchRateLimitBreaker({ failureThreshold: 1, openMs: 1_000 });
+    const stale = breaker.tryAcquire(0)!; // acquired while closed, finishes very late
+    breaker.recordFailure(breaker.tryAcquire(0)!, 0);
+    breaker.recordSuccess(breaker.tryAcquire(1_000)!); // probe succeeds → closed again
+    expect(breaker.currentState()).toBe('closed');
+    breaker.recordFailure(stale, 1_500);
+    expect(breaker.currentState()).toBe('closed');
+  });
+
+  it('outcomes from an earlier episode are ignored; only the CURRENT probe closes it', () => {
+    const breaker = new SearchRateLimitBreaker({ failureThreshold: 1, openMs: 1_000 });
+    const beforeOpen = breaker.tryAcquire(0)!;
+    breaker.recordFailure(breaker.tryAcquire(0)!, 0);
+    expect(breaker.currentState()).toBe('open');
+    breaker.recordSuccess(beforeOpen);
+    expect(breaker.currentState()).toBe('open');
+    const probe = breaker.tryAcquire(1_000)!;
+    breaker.recordFailure(beforeOpen, 1_000); // a stale failure cannot re-open or extend it either
+    expect(breaker.currentState()).toBe('half_open');
+    breaker.recordSuccess(probe);
+    expect(breaker.currentState()).toBe('closed');
   });
 });
 
