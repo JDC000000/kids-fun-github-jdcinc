@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, onTestFinished } from 'vitest';
 import { getPool, query, closePool } from '../../lib/db/client';
 import { resolveSeries } from '../../worker/core/series';
 import { upsertOccurrence } from '../../worker/core/upsert';
@@ -12,6 +12,29 @@ import { REGIONS } from '../../lib/search/__fixtures__/regions';
 import { RegionHierarchy } from '../../lib/geo/region';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
+
+// FIXTURE DATES ARE RELATIVE TO THE RUN, NOT A CALENDAR DAY. These occurrences used to be
+// hard-coded to a single afternoon (2026-09-17, 17:30-18:00Z); the read model's visibility
+// gate (COALESCE(end, start) >= now()) hides anything that has ended, so once that afternoon
+// passed every test below that reads its own row back failed on every run, CI included. A
+// week out, pinned to 17:30Z, keeps the rows upcoming whenever this runs.
+const FIXTURE_START = new Date(Date.now() + 7 * 86_400_000);
+FIXTURE_START.setUTCHours(17, 30, 0, 0);
+const FIXTURE_START_ISO = FIXTURE_START.toISOString();
+const FIXTURE_END_ISO = new Date(FIXTURE_START.getTime() + 30 * 60_000).toISOString();
+
+// Future-dated + confirmed rows enter the shared db lane's read model, so leaving them behind
+// interferes with every suite that reads a global aggregate (see the registration round-trip
+// test's cleanup note below). Scoped to one test's own source id — never a blanket DELETE.
+async function removeSourceRows(sourceId: string, venueIds: string[] = []): Promise<void> {
+  await query(
+    `DELETE FROM activity_occurrence WHERE series_id IN (SELECT id FROM activity_series WHERE source_id = $1)`,
+    [sourceId]
+  );
+  await query(`DELETE FROM activity_series WHERE source_id = $1`, [sourceId]);
+  for (const venueId of venueIds) await query(`DELETE FROM venue WHERE id = $1`, [venueId]);
+  await query(`DELETE FROM source WHERE id = $1`, [sourceId]);
+}
 
 describe.skipIf(!hasDb)('Postgres search repository', () => {
   afterAll(async () => {
@@ -27,6 +50,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Repository Test Source ${suffix}`]
     );
+    onTestFinished(() => removeSourceRows(source.id));
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
     const [series] = await query<{ id: string }>(
       `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
@@ -37,7 +61,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
          series_id, source_record_id, activity_name, primary_category_id,
          start_datetime_utc, end_datetime_utc, cost_status, source_url,
          status_state, confidence_label, last_checked_at
-       ) VALUES ($1,$2,$3,$4,'2026-09-17T17:30:00Z','2026-09-17T18:00:00Z','free',$5,'confirmed','high',now())
+       ) VALUES ($1,$2,$3,$4,'${FIXTURE_START_ISO}','${FIXTURE_END_ISO}','free',$5,'confirmed','high',now())
        RETURNING id`,
       [series.id, `repo-test-${suffix}`, `Family Storytime ${suffix}`, category.id, 'https://example.org/events/repo-test']
     );
@@ -69,6 +93,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
       `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('library_bibliocommons', $1, 'official', 'allowed') RETURNING id`,
       [`Engine Test Source ${suffix}`]
     );
+    onTestFinished(() => removeSourceRows(source.id));
     const [category] = await query<{ id: string }>(`SELECT id FROM category WHERE key = 'storytime' LIMIT 1`);
     const [series] = await query<{ id: string }>(
       `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
@@ -79,7 +104,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
          series_id, source_record_id, activity_name, primary_category_id,
          start_datetime_utc, end_datetime_utc, cost_status, source_url,
          status_state, confidence_label, last_checked_at
-       ) VALUES ($1,$2,$3,$4,'2026-09-17T17:30:00Z','2026-09-17T18:00:00Z','free',$5,'confirmed','high',now())
+       ) VALUES ($1,$2,$3,$4,'${FIXTURE_START_ISO}','${FIXTURE_END_ISO}','free',$5,'confirmed','high',now())
        RETURNING id`,
       [series.id, `engine-test-${suffix}`, `Family Storytime ${suffix}`, category.id, 'https://example.org/events/engine-test']
     );
@@ -149,6 +174,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
     const [noPhone] = await query<{ id: string }>(`INSERT INTO venue (name) VALUES ($1) RETURNING id`, [
       `Phoneless Test Branch ${suffix}`,
     ]);
+    onTestFinished(() => removeSourceRows(source.id, [withPhone.id, noPhone.id]));
 
     const occurrenceAt = async (venueId: string, label: string): Promise<string> => {
       const [series] = await query<{ id: string }>(
@@ -160,7 +186,7 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
            series_id, source_record_id, activity_name, primary_category_id,
            start_datetime_utc, end_datetime_utc, cost_status, source_url,
            status_state, confidence_label, last_checked_at
-         ) VALUES ($1,$2,$3,$4,'2026-09-17T17:30:00Z','2026-09-17T18:00:00Z','free',$5,'confirmed','high',now())
+         ) VALUES ($1,$2,$3,$4,'${FIXTURE_START_ISO}','${FIXTURE_END_ISO}','free',$5,'confirmed','high',now())
          RETURNING id`,
         [series.id, `${label}-${suffix}`, `${label} ${suffix}`, category.id, 'https://example.org/events/phone-test']
       );
@@ -261,8 +287,8 @@ describe.skipIf(!hasDb)('Postgres search repository', () => {
         {
           sourceRecordId: recordId,
           title,
-          startDatetimeUtc: '2026-09-17T17:30:00.000Z',
-          endDatetimeUtc: '2026-09-17T18:00:00.000Z',
+          startDatetimeUtc: FIXTURE_START_ISO,
+          endDatetimeUtc: FIXTURE_END_ISO,
           costStatus: 'free' as const,
           sourceUrl: 'https://example.org/events/reg-roundtrip',
           ...(registrationRequired === undefined ? {} : { registrationRequired }),
