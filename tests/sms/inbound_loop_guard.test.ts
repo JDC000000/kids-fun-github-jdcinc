@@ -42,6 +42,20 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+// Sentry seam: spy on captureAndFlush only; withObservedRoute stays real. Proves the fail-closed
+// path is not SILENT to us — independent QA showed deleting the capture call left every other test
+// green, so the alert itself is asserted here.
+const sentry = vi.hoisted(() => ({ captures: [] as { err: unknown; tags?: Record<string, string> }[] }));
+vi.mock('@/lib/observability/route-handler', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/observability/route-handler')>();
+  return {
+    ...real,
+    captureAndFlush: async (err: unknown, _timeout?: number, tags?: Record<string, string>) => {
+      sentry.captures.push({ err, tags });
+    },
+  };
+});
+
 import { POST } from '@/app/api/sms/inbound/route';
 import { isOwnNumber, checkAndRecordUnknownReply, UNKNOWN_REPLY_LIMITS } from '@/lib/sms/inbound-reply-guard';
 import { renderUnknownKeywordMessage } from '@/lib/sms/message';
@@ -91,6 +105,7 @@ beforeEach(() => {
   db.rows.clear();
   db.calls.length = 0;
   db.fail = null;
+  sentry.captures.length = 0;
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -180,8 +195,17 @@ describe('a parent whose phone auto-replies to every text', () => {
 describe('🔴 the counter FAILS CLOSED — no counter, no reply', () => {
   it('a database error (incl. migration 0054 not applied → check_violation) means silence', async () => {
     configure();
-    db.fail = Object.assign(new Error('new row violates check constraint'), { code: '23514' });
+    const violation = Object.assign(new Error('new row violates check constraint'), { code: '23514' });
+    db.fail = violation;
     expect(await text(PARENT, TOLL_FREE, 'hi')).toBeNull();
+    // …and it is REPORTED: exactly one Sentry capture, carrying the real DB error and the reason tag.
+    expect(sentry.captures).toHaveLength(1);
+    expect(sentry.captures[0].err).toBe(violation);
+    expect(sentry.captures[0].tags).toMatchObject({
+      route: 'api/sms/inbound',
+      operation: 'unknown_reply_guard',
+      reason: 'db_error',
+    });
   });
 
   it('a missing SMS_PHONE_HASH_SALT means silence, and the database is not touched', async () => {
@@ -189,6 +213,17 @@ describe('🔴 the counter FAILS CLOSED — no counter, no reply', () => {
     vi.stubEnv('SMS_PHONE_HASH_SALT', '');
     expect(await text(PARENT, TOLL_FREE, 'hi')).toBeNull();
     expect(throttleCalls()).toHaveLength(0);
+    // A missing salt silences the reply for EVERY sender — a standing misconfiguration, so it alerts.
+    expect(sentry.captures).toHaveLength(1);
+    expect(String((sentry.captures[0].err as Error).message)).toBe('sms_unknown_reply_guard_degraded:no_salt');
+    expect(sentry.captures[0].tags).toMatchObject({ reason: 'no_salt', operation: 'unknown_reply_guard' });
+  });
+
+  it('the daily cap is normal operation and does NOT page anyone; neither does a normal reply', async () => {
+    configure();
+    expect(await text(PARENT, TOLL_FREE, 'hi')).toBe(REPLY);
+    for (let i = 0; i < 5; i++) expect(await text(PARENT, TOLL_FREE, 'auto-reply')).toBeNull();
+    expect(sentry.captures).toHaveLength(0);
   });
 
   it('checkAndRecordUnknownReply reports WHY it refused, so the route can alert on the non-normal cases', async () => {
