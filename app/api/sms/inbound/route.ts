@@ -63,7 +63,8 @@ import {
 } from '@/lib/sms/message';
 import { sendWelcomeText } from '@/lib/sms/welcome';
 import { markWaitlistUnsubscribed } from '@/lib/sms/waitlist-store';
-import { withObservedRoute } from '@/lib/observability/route-handler';
+import { captureAndFlush, withObservedRoute } from '@/lib/observability/route-handler';
+import { checkAndRecordUnknownReply, isOwnNumber } from '@/lib/sms/inbound-reply-guard';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // node:crypto + pg pool need the Node runtime, not edge.
@@ -162,7 +163,13 @@ async function smsInboundPost(request: Request): Promise<NextResponse> {
   //    route does not send a wrong email, it rewrites someone's consent record.
   const dryRun = !smsSendingEnabled();
 
-  const { reply } = await dispatch(keyword, from, dryRun, markTest);
+  // ═══ NEVER AUTO-REPLY TO OURSELVES (2026-09-24 loop incident) ═══
+  // Our toll-free number and a QA number both webhook here, so each one's reply was the other's
+  // unrecognised inbound: ~60 texts in 39s. Transitions still run for our own numbers (QA relies
+  // on JOIN/STOP from test handsets); only the TwiML reply is withheld. lib/sms/inbound-reply-guard.ts.
+  const ownSender = isOwnNumber(from, to);
+
+  const { reply } = await dispatch(keyword, from, dryRun, markTest, ownSender);
 
   // 6. Always TwiML, always 200 once verified. A transition failure is OUR problem to alert on
   //    (withObservedRoute + the structured result), not something to report to Twilio as a
@@ -236,7 +243,8 @@ async function dispatch(
   keyword: InboundKeyword,
   from: string,
   dryRun: boolean,
-  markTest: boolean
+  markTest: boolean,
+  ownSender = false
 ): Promise<InboundDispatch> {
   switch (keyword) {
     case 'join':
@@ -261,7 +269,7 @@ async function dispatch(
       const result = await mirrorCarrierStart(from, { dryRun });
       // Built on every path so a broken template fails in a dry run, dropped when sending is off.
       const reply = startReplyFor(result.outcome);
-      return { result, reply: replyBodyPermitted(dryRun) ? reply : null };
+      return { result, reply: replyBodyPermitted(dryRun) && !ownSender ? reply : null };
     }
     case 'help':
       return { result: await recordHelpRequest(from, { dryRun }), reply: null };
@@ -278,7 +286,24 @@ async function dispatch(
       // no consumer. `redactPhone` (lib/sms/redact.ts) remains the required shape if one is ever
       // added — see the import.
       const message = renderUnknownKeywordMessage(signupUrl());
-      return { result: null, reply: replyBodyPermitted(dryRun) ? message.body : null };
+      if (!replyBodyPermitted(dryRun) || ownSender) return { result: null, reply: null };
+      // ═══ AT MOST ONE OF THESE PER SENDER PER UTC DAY — THE LOOP BOUND ═══
+      // This is the only reply this route sends to ARBITRARY text, so it is the one an
+      // auto-responder on a parent's phone can ping-pong with indefinitely. Counted only when a
+      // reply would really go out, so a plain dry run still touches no table. FAILS CLOSED:
+      // no counter, no reply. See lib/sms/inbound-reply-guard.ts.
+      const decision = await checkAndRecordUnknownReply(from);
+      if (!decision.allowed) {
+        if (decision.reason !== 'daily_cap') {
+          await captureAndFlush(
+            decision.error ?? new Error(`sms_unknown_reply_guard_degraded:${decision.reason}`),
+            undefined,
+            { route: 'api/sms/inbound', operation: 'unknown_reply_guard', reason: decision.reason }
+          );
+        }
+        return { result: null, reply: null };
+      }
+      return { result: null, reply: message.body };
     }
   }
 }
