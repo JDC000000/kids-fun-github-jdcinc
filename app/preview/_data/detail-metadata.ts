@@ -22,9 +22,14 @@ export function canonicalActivityPath(id: string): string {
   return `/activity/${encodeURIComponent(id)}`;
 }
 
-/** "Public skate — Trout Lake Rink · KIDS FUN" — venue/activity first (matches card voice). */
+/**
+ * "Public skate — Trout Lake Rink · KIDS FUN" — venue/activity first (matches card voice). With no
+ * venue known the title is just the activity: a tab or share preview reading "… — Location — check
+ * source" says nothing, and this line is where an internal source label once leaked (2026-09-24).
+ */
 export function activityTitle(activity: Activity): string {
-  return `${activity.activityName} — ${activity.venue} · ${SITE_NAME}`;
+  const venue = activity.venue?.trim();
+  return venue ? `${activity.activityName} — ${venue} · ${SITE_NAME}` : `${activity.activityName} · ${SITE_NAME}`;
 }
 
 /**

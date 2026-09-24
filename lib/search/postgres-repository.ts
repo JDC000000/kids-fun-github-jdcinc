@@ -255,7 +255,13 @@ function rowToListing(row: ListingRow): ListingRecord {
   const categoryKey = row.primary_category_key ?? categoryKeyFromTitle(row.activity_name);
   const tagKeys = row.tag_keys ?? [];
   const sourceName = row.source_name ?? 'Source';
-  const venueName = row.venue_name ?? venueFromSeriesTitle(row.series_title ?? row.activity_name) ?? sourceName;
+  // NEVER the source's name. `source.name` is an internal ingestion label, not a place: the
+  // venue-less citywide rows of the operator-curated import rendered "Operator manual research —
+  // annual events & evergreen venues (2026-09)" as their venue on the card, the detail page and
+  // the browser tab (QA, 2026-09-24). An empty name is this codebase's existing spelling of "no
+  // venue known" — venueIdentity() reads it as no opinion, ThreeThings/SMS/InstantPicks already
+  // omit it, and the display layer prints VENUE_NOT_STATED in its place.
+  const venueName = row.venue_name ?? venueFromSeriesTitle(row.series_title ?? row.activity_name) ?? '';
 
   return {
     id: row.id,
@@ -286,7 +292,7 @@ function rowToListing(row: ListingRow): ListingRecord {
     ageBandMatches: (row.age_band_keys ?? []).filter(isAgeBandKey),
     ageMinMonths: row.age_min_months,
     ageMaxMonths: row.age_max_months,
-    ageNotes: cleanText(row.age_notes),
+    ageNotes: sourceAgeNotes(row),
     geo: row.lat != null && row.lng != null ? { lat: Number(row.lat), lng: Number(row.lng) } : null,
     municipalityId: row.municipality_id,
     neighbourhood: row.neighbourhood,
@@ -372,6 +378,23 @@ function cleanText(value: string | null): string | null {
   if (value == null) return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * `occurrence_age.age_notes` ONLY when it is the source's own words.
+ *
+ * `ListingRecord.ageNotes` is a quotation — ActivityDetail prints it as "From the source: …" and
+ * /api/search returns it — so a row whose SOURCE IS US has no source text to quote. The operator
+ * import (authority_tier 'manual', the only such tier in production) wrote its internal reviewer
+ * rationale into this column ("babies score low", "completely irrelevant to anyone in double
+ * digits"), which then reached parents attributed to the partner organisation (QA, 2026-09-24).
+ * Keyed on provenance, not on the text, so any future operator-authored batch is covered too.
+ * Measured before the change: dropping these notes flips the adult/senior audience filter on 0 of
+ * the 446 curated rows, so nothing about which listings are shown moves.
+ */
+function sourceAgeNotes(row: ListingRow): string | null {
+  if (row.source_authority_tier === 'manual') return null;
+  return cleanText(row.age_notes);
 }
 
 function venueFromSeriesTitle(title: string): string | null {

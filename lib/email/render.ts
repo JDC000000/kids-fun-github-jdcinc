@@ -71,7 +71,7 @@ function activityHtml(a: { name: string; venue: string; when: string; cost: stri
       <td style="padding:12px 0;border-bottom:1px solid ${C.rule};">
         <a href="${escapeAttr(a.url)}" style="color:${C.ink};text-decoration:none;font-weight:600;font-size:16px;line-height:1.35;">${escapeHtml(a.name)}</a>
         <div style="color:${C.moss};font-size:14px;line-height:1.5;margin-top:4px;">
-          ${escapeHtml(a.venue)}<br />
+          ${a.venue ? `${escapeHtml(a.venue)}<br />` : ''}
           ${escapeHtml(a.when)} &nbsp;·&nbsp; ${escapeHtml(a.cost)}${
             a.ageNotConfirmed ? ` &nbsp;·&nbsp; ${escapeHtml(AGE_NOT_CONFIRMED_NOTE)}` : ''
           }
@@ -223,7 +223,8 @@ function renderText(
     lines.push('');
     lines.push(`New for ${s.label}:`);
     for (const a of s.activities) {
-      lines.push(`  • ${a.name} — ${a.venue}`);
+      // An empty venue is the read model's "no venue known" (postgres-repository#rowToListing): omit it.
+      lines.push(a.venue ? `  • ${a.name} — ${a.venue}` : `  • ${a.name}`);
       lines.push(`    ${a.when} · ${a.cost}${a.ageNotConfirmed ? ` · ${AGE_NOT_CONFIRMED_NOTE}` : ''}`);
       lines.push(`    ${a.url}`);
     }
