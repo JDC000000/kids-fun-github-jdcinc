@@ -16,6 +16,7 @@ import {
   type OperatingOpsPeriod,
 } from '../../lib/admin/operating';
 import { closePool, query } from '../../lib/db/client';
+import { TODAY_SEED_ANCHOR_SQL } from '../../lib/testing/today-seed-anchor';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 
@@ -59,17 +60,17 @@ describe.skipIf(!hasDb)('operating ops series (DB)', () => {
     // Three runs started today: 2 ok (success + partial) and 1 failed → 67% success.
     await query(
       `INSERT INTO source_check_run (source_id, status, started_at)
-       VALUES ($1, 'success', now() - interval '3 hours')`,
+       VALUES ($1, 'success', ${TODAY_SEED_ANCHOR_SQL} - interval '3 hours')`,
       [ids.srcId]
     );
     await query(
       `INSERT INTO source_check_run (source_id, status, started_at)
-       VALUES ($1, 'partial', now() - interval '2 hours')`,
+       VALUES ($1, 'partial', ${TODAY_SEED_ANCHOR_SQL} - interval '2 hours')`,
       [ids.srcId]
     );
     await query(
       `INSERT INTO source_check_run (source_id, status, started_at)
-       VALUES ($1, 'failed', now() - interval '1 hour')`,
+       VALUES ($1, 'failed', ${TODAY_SEED_ANCHOR_SQL} - interval '1 hour')`,
       [ids.srcId]
     );
 
@@ -93,26 +94,26 @@ describe.skipIf(!hasDb)('operating ops series (DB)', () => {
     // suppressed by the analytics anchor; it must now survive.
     await query(
       `INSERT INTO source_check_run (source_id, status, started_at)
-       VALUES ($1, 'failed', now() - interval '6 days')`,
+       VALUES ($1, 'failed', ${TODAY_SEED_ANCHOR_SQL} - interval '6 days')`,
       [ids.srcId]
     );
 
     // Two reports opened today; one of them also resolved today.
     await query(
       `INSERT INTO correction_report (occurrence_id, issue_type, status, created_at)
-       VALUES ($1, 'wrong_time', 'open', now() - interval '4 hours')`,
+       VALUES ($1, 'wrong_time', 'open', ${TODAY_SEED_ANCHOR_SQL} - interval '4 hours')`,
       [ids.occId]
     );
     await query(
       `INSERT INTO correction_report (occurrence_id, issue_type, status, created_at, resolved_at)
-       VALUES ($1, 'wrong_price', 'resolved', now() - interval '5 hours', now() - interval '1 hour')`,
+       VALUES ($1, 'wrong_price', 'resolved', ${TODAY_SEED_ANCHOR_SQL} - interval '5 hours', ${TODAY_SEED_ANCHOR_SQL} - interval '1 hour')`,
       [ids.occId]
     );
     // An ARCHIVED report opened today — must be excluded on both sides, exactly as
     // getCorrectionsQueueSummary() excludes it.
     await query(
       `INSERT INTO correction_report (occurrence_id, issue_type, status, created_at, archived_at)
-       VALUES ($1, 'other', 'open', now() - interval '3 hours', now())`,
+       VALUES ($1, 'other', 'open', ${TODAY_SEED_ANCHOR_SQL} - interval '3 hours', now())`,
       [ids.occId]
     );
   });

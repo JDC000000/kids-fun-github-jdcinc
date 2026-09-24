@@ -7,9 +7,11 @@
 // that asserted "dau = 5" would pass or fail on whatever else is in the table. So the aggregation
 // is tested by DELTA — insert n known sessions, assert the counts move by exactly n — which holds
 // whatever else exists.
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, onTestFinished } from 'vitest';
 import { getActivityTrend } from '../../lib/analytics/trends';
 import { QueryTimeoutError, closePool, query, queryWithTimeout } from '../../lib/db/client';
+import { deleteSourceRows } from '../../lib/testing/delete-source-rows';
+import { TODAY_SEED_ANCHOR_SQL } from '../../lib/testing/today-seed-anchor';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
 const MARKER = `trendtest-${Date.now()}`;
@@ -354,11 +356,27 @@ describe.skipIf(!hasDb)('getOpsSeries counts each row once', () => {
     // above catches the STRUCTURE, this catches the ARITHMETIC.
     const { getOperatingOpsPeriods } = await import('../../lib/admin/operating');
     const before = (await getOperatingOpsPeriods('day', 1)).at(-1)!;
-    const [occ] = await query<{ id: string }>(`SELECT id FROM activity_occurrence LIMIT 1`);
-    if (!occ) return; // nothing to attach to on an empty catalogue
+    // Its OWN occurrence. This used to borrow `SELECT id FROM activity_occurrence LIMIT 1` and
+    // return early when there was none, which on CI's fresh database meant this test passed
+    // having asserted nothing; it only ran when another suite happened to leave a row behind.
+    const [source] = await query<{ id: string }>(
+      `INSERT INTO source (family, name, terms_status) VALUES ('activenet', $1, 'pending') RETURNING id`,
+      [`${OCC} source ${crypto.randomUUID()}`]
+    );
+    onTestFinished(() => deleteSourceRows(source.id));
+    const [series] = await query<{ id: string }>(
+      `INSERT INTO activity_series (canonical_title, source_id) VALUES ($1, $2) RETURNING id`,
+      [`${OCC} series`, source.id]
+    );
+    const [occ] = await query<{ id: string }>(
+      `INSERT INTO activity_occurrence (series_id, activity_name, start_datetime_utc)
+       VALUES ($1, $2, now() + interval '1 day') RETURNING id`,
+      [series.id, `${OCC} occurrence`]
+    );
+    // Anchored so both stamps land in TODAY's bucket even just after midnight.
     await query(
       `INSERT INTO correction_report (occurrence_id, issue_type, created_at, resolved_at)
-       SELECT $1::uuid, $2, now() - interval '1 hour', now() - interval '30 minutes'
+       SELECT $1::uuid, $2, ${TODAY_SEED_ANCHOR_SQL} - interval '1 hour', ${TODAY_SEED_ANCHOR_SQL} - interval '30 minutes'
          FROM generate_series(1, 3)`,
       [occ.id, OCC]
     );
