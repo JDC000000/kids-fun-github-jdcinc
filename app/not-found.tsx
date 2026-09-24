@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import './not-found.css';
+import { searchLinkRel } from './_lib/search-link-rel';
 import { Button, Input } from '@/components/ui';
 import {
   SEARCH_SHORTCUTS,
@@ -145,13 +146,13 @@ export default function NotFound() {
                 </li>
                 {CATEGORIES.map((c) => (
                   <li key={c.key}>
-                    <Link className="kf-nf__link" href={destinationHref(c)} prefetch={false}>
+                    <Link className="kf-nf__link" href={destinationHref(c)} prefetch={false} rel={searchLinkRel(destinationHref(c))}>
                       {c.label}
                     </Link>
                   </li>
                 ))}
                 <li>
-                  <Link className="kf-nf__link" href={SEARCH_SHORTCUTS.free.href} prefetch={false}>
+                  <Link className="kf-nf__link" href={SEARCH_SHORTCUTS.free.href} prefetch={false} rel={searchLinkRel(SEARCH_SHORTCUTS.free.href)}>
                     {SEARCH_SHORTCUTS.free.label}
                   </Link>
                 </li>

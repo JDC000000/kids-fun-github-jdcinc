@@ -8,6 +8,7 @@ import {
   destinationHref,
   liveCategoryDestinations,
 } from '@/app/_lib/nav-destinations';
+import { searchLinkRel } from '@/app/_lib/search-link-rel';
 import './site-nav.css';
 
 /**
@@ -189,6 +190,10 @@ export function SiteNav({ smsSignupHref = null }: SiteNavProps = {}) {
         // budget — see app/search/_components/SearchLink.tsx. Prefetch bought nothing here:
         // none of these routes has a loading.js, so it fetched only a router-state stub.
         prefetch={false}
+        // rel="nofollow" on the /search?… shortcuts only (the categories and "Free"). NOT on
+        // "What's on now" (a bare /search), the weekly-text entry or the wordmark: those are
+        // single canonical destinations, not permutations. See app/_lib/search-link-rel.ts.
+        rel={searchLinkRel(link.href)}
         aria-current={current(link)}
       >
         {link.label}

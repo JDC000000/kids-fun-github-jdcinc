@@ -2,6 +2,7 @@ import Link from 'next/link';
 import './_components/home.css';
 import { Button, Input } from '@/components/ui';
 import { destinationHref, liveCategoryDestinations } from './_lib/nav-destinations';
+import { searchLinkRel } from './_lib/search-link-rel';
 import { ThreeThings } from './_components/ThreeThings';
 import { SmsSignupCta } from './_components/SmsSignupCta';
 import { smsSignupAvailability } from '@/lib/sms/availability';
@@ -398,11 +399,13 @@ export default async function Home() {
               </form>
 
               {/* Tiles don't prefetch: /search prefetches count against the production
-                  firewall's per-IP /search budget — see app/search/_components/SearchLink.tsx. */}
+                  firewall's per-IP /search budget — see app/search/_components/SearchLink.tsx.
+                  And each is a /search?q=… permutation, so it carries rel="nofollow" (crawler
+                  cost control, 2026-09-24 — see app/_lib/search-link-rel.ts). */}
               <ul className="kf-home__tiles">
                 {CATEGORIES.map((c) => (
                   <li key={c.key}>
-                    <Link className="kf-home__tile" href={destinationHref(c)} prefetch={false}>
+                    <Link className="kf-home__tile" href={destinationHref(c)} prefetch={false} rel={searchLinkRel(destinationHref(c))}>
                       {c.label}
                     </Link>
                   </li>

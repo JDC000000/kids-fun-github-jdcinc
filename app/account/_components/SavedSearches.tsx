@@ -12,6 +12,7 @@
 import { useState, type FormEvent } from 'react';
 import { Button, Input } from '@/components/ui';
 import { hrefForParams, parseSearchState } from '@/app/search/_lib/params';
+import { searchLinkRel } from '@/app/_lib/search-link-rel';
 import { activeFilterCount } from '@/app/search/_lib/filter-summary';
 import { emptyStateSentence, savedSearchRawParams } from '@/lib/search/saved-search-status';
 
@@ -201,6 +202,7 @@ export function SavedSearches({
                 <a
                   className="kf-saved__open"
                   href={hrefForParams(s.params)}
+                  rel={searchLinkRel(hrefForParams(s.params))}
                   aria-label={`Open saved search ${s.name ?? summarize(s.params)} in search`}
                 >
                   Open

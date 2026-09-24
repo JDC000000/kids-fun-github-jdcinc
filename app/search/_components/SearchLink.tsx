@@ -16,12 +16,19 @@
 // dynamic route Next's default prefetch only fetched the (shared) layout, never the results —
 // a click always did a full server render anyway. Navigation stays client-side (soft nav,
 // one RSC request per click); only the speculative background requests are gone.
+//
+// ═══ AND rel="nofollow" ON EVERY /search PERMUTATION (2026-09-24, Vercel cost spike) ═══
+// This is the one component every link on /search goes through, so it is where the crawler hint
+// lives too: any href that is /search plus a query string (every chip, sort, clear and broadening
+// alternative) renders rel="nofollow", merged with any rel the caller passed. Links to anything
+// else (a bare /search, /preview/…) are untouched. See app/_lib/search-link-rel.ts for the why.
 import Link from 'next/link';
 import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from 'react';
+import { searchLinkRel } from '@/app/_lib/search-link-rel';
 
 export const SearchLink = forwardRef<ElementRef<typeof Link>, ComponentPropsWithoutRef<typeof Link>>(
   function SearchLink(props, ref) {
-    return <Link {...props} ref={ref} prefetch={false} />;
+    return <Link {...props} rel={searchLinkRel(props.href, props.rel)} ref={ref} prefetch={false} />;
   },
 );
 
