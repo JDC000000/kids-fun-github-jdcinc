@@ -13,6 +13,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
+import { canWrite } from '@/lib/db/admin-guard';
 import { listSources } from './_lib/data';
 import { SourceForm } from './_components/SourceForm';
 import { ADMIN_CONSOLE_CSS } from './_lib/console-css';
@@ -34,7 +35,7 @@ export default async function AdminSourcesPage({
   const grant = await resolveAdminAccess({ surface: 'admin_sources' });
   if (!grant.ok) notFound();
 
-  const canMutate = grant.via === 'session';
+  const canMutate = canWrite(grant.admin.role);
   const sources = await listSources();
   const flashKey = typeof searchParams.flash === 'string' ? searchParams.flash : '';
   const flash = FLASH[flashKey];

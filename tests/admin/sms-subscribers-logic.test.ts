@@ -15,6 +15,8 @@ function row(over: Partial<SmsSubscriberListRow> = {}): SmsSubscriberListRow {
     shortRef: '1',
     phoneNumber: '+16045550123',
     purged: false,
+    redacted: false,
+    childCount: 2,
     postalCode: 'V5N 1A1',
     birthYears: [2019, 2022],
   isTest: false,

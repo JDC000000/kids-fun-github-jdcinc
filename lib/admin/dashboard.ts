@@ -4,6 +4,7 @@
 // straight from the same tables the ingestion worker and analytics writer populate,
 // so the dashboard reflects the live database, not a fixture.
 import { query, queryWithTimeout } from '@/lib/db/client';
+import { shouldRedact, type PersonalDataOptions } from './personal-data';
 import { adminAnalyticsQueryTimeoutMs } from '@/lib/db/budgets';
 
 export interface IngestionSourceHealth {
@@ -118,6 +119,32 @@ export interface RecentCorrection {
   note: string | null;
   status: string;
   createdAt: string | null;
+}
+
+/** A recent correction as a page may render it: the note NULLed unless the viewer may see it. */
+export interface DisplayedCorrection extends RecentCorrection {
+  redacted: boolean;
+  hasNote: boolean;
+}
+
+/**
+ * The recent-corrections list, ready to render for THIS admin. `note` is free text typed by a member
+ * of the public (lib/snapshot/policy.ts classes it as PII); a read-only 'viewer' gets it NULLed, with
+ * `hasNote` still saying whether one exists. Applied by /admin/dashboard and /admin/data-health
+ * before anything renders — the dashboard's list comes from a role-independent snapshot, so there
+ * is no per-role query to redact in (see lib/admin/personal-data.ts).
+ */
+export function correctionsForDisplay(
+  list: readonly RecentCorrection[],
+  opts: PersonalDataOptions
+): DisplayedCorrection[] {
+  const redact = shouldRedact(opts);
+  return list.map((c) => ({
+    ...c,
+    note: redact ? null : c.note,
+    redacted: redact,
+    hasNote: typeof c.note === 'string' && c.note.length > 0,
+  }));
 }
 
 export interface AdminDashboardData {

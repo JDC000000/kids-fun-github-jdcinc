@@ -19,6 +19,8 @@
 // many real subscribers exist and stops there. When the numbers are real they will fill this in.
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
+import { canSeePersonalData } from '@/lib/db/admin-guard';
+import { REDACTED_TEXT } from '@/lib/admin/personal-data';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { formatTimestampUtc } from '@/lib/admin/format';
 import { getSmsEngagement } from '@/lib/admin/sms-engagement';
@@ -48,7 +50,10 @@ export default async function AdminSmsEngagementPage({
   // The toggle is opt-in and off by default: a metric that silently counts a test handset is a
   // metric nobody can trust. `?includeTest=1` is for QA, and the page says so when it is on.
   const includeTest = searchParams.includeTest === '1';
-  const { rows, summary } = await getSmsEngagement({ includeTest });
+  const { rows, summary } = await getSmsEngagement({
+    includeTest,
+    redactPersonalData: !canSeePersonalData(grant.admin.role),
+  });
 
   return (
     <main className="adm">
@@ -110,7 +115,9 @@ export default async function AdminSmsEngagementPage({
                   {row.shortRef}
                   {row.isTest && <span className="adm-hint"> · test handset</span>}
                 </td>
-                <td>{row.fsa ?? <span className="adm-hint">purged</span>}</td>
+                <td>
+                  {row.fsa ?? <span className="adm-hint">{row.redacted ? REDACTED_TEXT : 'purged'}</span>}
+                </td>
                 <td>{row.status}</td>
                 <td>{row.sends}</td>
                 <td>{row.delivered}</td>

@@ -17,6 +17,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
 import { getDataHealthData } from '@/lib/admin/data-health';
+import { correctionsForDisplay } from '@/lib/admin/dashboard';
+import { canSeePersonalData } from '@/lib/db/admin-guard';
 import { formatTimestampUtc } from '@/lib/admin/format';
 import { SlaTile } from './_components/SlaTile';
 import { CoverageMatrix } from './_components/CoverageMatrix';
@@ -59,7 +61,13 @@ export default async function AdminDataHealthPage() {
         <SlaTile sla={data.sla} nowMs={nowMs} />
         <CoverageMatrix coverage={data.coverage} />
         <HealthAlertsPanel alerts={data.alerts} nowMs={nowMs} />
-        <CorrectionsQueue summary={data.correctionsSummary} corrections={data.corrections} nowMs={nowMs} />
+        <CorrectionsQueue
+          summary={data.correctionsSummary}
+          corrections={correctionsForDisplay(data.corrections, {
+            redactPersonalData: !canSeePersonalData(grant.admin.role),
+          })}
+          nowMs={nowMs}
+        />
       </div>
 
       <footer className={styles.foot}>

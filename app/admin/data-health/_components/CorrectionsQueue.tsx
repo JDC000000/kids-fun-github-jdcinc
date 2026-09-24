@@ -5,7 +5,7 @@
 // lib/admin/dashboard.ts read (getRecentCorrections) — not re-implemented.
 import { Badge, Card } from '@/components/ui';
 import { formatAge, formatCount, formatTimestampUtc } from '@/lib/admin/format';
-import type { RecentCorrection } from '@/lib/admin/dashboard';
+import type { DisplayedCorrection } from '@/lib/admin/dashboard';
 import type { CorrectionsQueueSummary } from '@/lib/admin/data-health';
 import styles from './DataHealth.module.css';
 
@@ -55,7 +55,7 @@ export function CorrectionsQueue({
   nowMs,
 }: {
   summary: CorrectionsQueueSummary;
-  corrections: RecentCorrection[];
+  corrections: DisplayedCorrection[];
   nowMs: number;
 }) {
   return (
@@ -110,7 +110,15 @@ export function CorrectionsQueue({
                 <td>
                   <Badge variant="neutral">{c.issueType}</Badge>
                 </td>
-                <td>{c.note ? <span>{c.note}</span> : <span className={styles.dim}>(no note)</span>}</td>
+                <td>
+                  {c.note ? (
+                    <span>{c.note}</span>
+                  ) : c.redacted && c.hasNote ? (
+                    <span className={styles.dim}>(note hidden — read-only role)</span>
+                  ) : (
+                    <span className={styles.dim}>(no note)</span>
+                  )}
+                </td>
                 <td>
                   <Badge variant={statusVariant(c.status)}>{c.status}</Badge>
                 </td>

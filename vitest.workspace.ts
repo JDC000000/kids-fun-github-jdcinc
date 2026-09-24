@@ -87,6 +87,7 @@ export const DB_INTEGRATION_SUITES = [
   'tests/admin/source-crud-db.test.ts',
   'tests/admin/source-vocab-db.test.ts',
   'tests/admin/taxonomy-crud-db.test.ts',
+  'tests/admin/viewer-role-db.test.ts',
   'tests/admin_guard.test.ts',
   'tests/age_bands.test.ts',
   'tests/analytics/benchmark.test.ts',

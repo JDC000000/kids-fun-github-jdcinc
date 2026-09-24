@@ -70,7 +70,7 @@ describe.skipIf(!hasDb)('correction resolve workflow (G-T34-7)', () => {
   });
 
   it('listOpenCorrections includes the open report with its occurrence context', async () => {
-    const open = await listOpenCorrections();
+    const open = await listOpenCorrections({ redactPersonalData: false });
     const row = open.find((c) => c.id === reportId);
     expect(row).toBeDefined();
     expect(row!.occStatusState).toBe('needs_review');
@@ -122,7 +122,7 @@ describe.skipIf(!hasDb)('correction resolve workflow (G-T34-7)', () => {
   it('a second resolve is a no-op (already_resolved) and the queue no longer shows it', async () => {
     const again = await resolveCorrection(reportId, { statusState: 'stale', confidenceLabel: 'low', resolutionNote: null }, adminId);
     expect(again).toEqual({ ok: false, reason: 'already_resolved' });
-    const open = await listOpenCorrections();
+    const open = await listOpenCorrections({ redactPersonalData: false });
     expect(open.some((c) => c.id === reportId)).toBe(false);
   });
 

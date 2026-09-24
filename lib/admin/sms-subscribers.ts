@@ -20,6 +20,9 @@
 import { query } from '@/lib/db/client';
 import { agesFromBirthYears } from '@/lib/sms/signup-validate';
 import { EM_DASH } from '@/lib/admin/format';
+import { REDACTED_TEXT, shouldRedact, type PersonalDataOptions } from '@/lib/admin/personal-data';
+
+export { REDACTED_TEXT };
 
 /** Hard cap on the list page. Raise deliberately; an unbounded admin table is a slow page. */
 export const SMS_SUBSCRIBER_LIST_LIMIT = 500;
@@ -32,6 +35,18 @@ export interface SmsSubscriberListRow {
   phoneNumber: string | null;
   /** True when the personal data has been erased by the 30-day post-stop purge. */
   purged: boolean;
+  /**
+   * True when the CALLER may not see personal data (a 'viewer' admin — lib/db/admin-guard.ts
+   * canSeePersonalData). The query then returned NULL for phoneNumber, postalCode and birthYears
+   * — the values never left the database — and `purged` / `childCount` were computed in SQL so the
+   * page can still say something true without them.
+   */
+  redacted: boolean;
+  /**
+   * How many birth years are stored (null when purged/never given). Carried for the redacted view,
+   * which may state "2 children" but not their ages; unredacted rows carry it too.
+   */
+  childCount: number | null;
   /**
    * The FULL postal code, or null when the retention purge has erased it. See `purged`.
    *
@@ -117,9 +132,10 @@ export interface PersonalDisplay {
 
 /** What to print in a postal-code cell. Full value — see {@link SmsSubscriberListRow.postalCode}. */
 export function displayPostalCode(
-  row: Pick<SmsSubscriberListRow, 'purged' | 'postalCode'>
+  row: Pick<SmsSubscriberListRow, 'purged' | 'postalCode' | 'redacted'>
 ): PersonalDisplay {
   if (row.purged) return { text: 'purged', muted: true };
+  if (row.redacted) return { text: REDACTED_TEXT, muted: true };
   if (!row.postalCode) return { text: EM_DASH, muted: true };
   return { text: row.postalCode, muted: false };
 }
@@ -161,10 +177,17 @@ export function displayPostalCode(
  * "this text explains an absence". Greying it would de-emphasise the one row worth looking at.
  */
 export function displayChildAges(
-  row: Pick<SmsSubscriberListRow, 'purged' | 'birthYears'>,
+  row: Pick<SmsSubscriberListRow, 'purged' | 'birthYears' | 'redacted' | 'childCount'>,
   now: Date
 ): PersonalDisplay {
   if (row.purged) return { text: 'purged', muted: true };
+  if (row.redacted) {
+    // A count is not an age. It lets a viewer see that the row is populated without learning a
+    // single child's age or birth year.
+    const n = row.childCount ?? 0;
+    if (n === 0) return { text: EM_DASH, muted: true };
+    return { text: `${n} ${n === 1 ? 'child' : 'children'} · ${REDACTED_TEXT}`, muted: true };
+  }
   const stored = row.birthYears ?? [];
   if (stored.length === 0) return { text: EM_DASH, muted: true };
   const ages = agesFromBirthYears(stored, now);
@@ -198,14 +221,32 @@ export function summariseSubscribers(rows: readonly SmsSubscriberListRow[]): Sms
   };
 }
 
+/**
+ * The personal columns, NULLed in SQL when the redact parameter is true — so for a redacted caller
+ * the values never leave the database. `purged` and `child_count` are computed from the real
+ * columns first, so the row can still say "purged" / "2 children" truthfully. Shared by the list
+ * and the detail query so the two cannot disagree about what a viewer gets.
+ */
+function personalColumnsSql(redactParam: string): string {
+  return `
+      CASE WHEN ${redactParam} THEN NULL ELSE c.phone_number END AS phone_number,
+      CASE WHEN ${redactParam} THEN NULL ELSE c.postal_code END AS postal_code,
+      CASE WHEN ${redactParam} THEN NULL ELSE c.birth_years END AS birth_years,
+      (c.phone_number IS NULL) AS purged,
+      cardinality(c.birth_years) AS child_count`;
+}
+
 /** Every subscriber, newest consent first. */
-export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
+export async function getSmsSubscribers(opts: PersonalDataOptions): Promise<SmsSubscriberListRow[]> {
+  const redact = shouldRedact(opts);
   const rows = await query<{
     id: string;
     short_ref: string | number;
     phone_number: string | null;
     postal_code: string | null;
     birth_years: number[] | null;
+    purged: boolean;
+    child_count: number | null;
     status: string;
     consent_method: string;
     is_test: boolean;
@@ -217,10 +258,7 @@ export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
     `
     SELECT
       c.id,
-      c.short_ref,
-      c.phone_number,
-      c.postal_code,
-      c.birth_years,
+      c.short_ref,${personalColumnsSql('$2::boolean')},
       c.is_test,
       c.status,
       c.consent_method,
@@ -232,14 +270,16 @@ export async function getSmsSubscribers(): Promise<SmsSubscriberListRow[]> {
     ORDER BY c.consent_timestamp DESC
     LIMIT $1::int
     `,
-    [SMS_SUBSCRIBER_LIST_LIMIT]
+    [SMS_SUBSCRIBER_LIST_LIMIT, redact]
   );
   return rows.map((r) => ({
     id: r.id,
     // pg returns bigint as a string to avoid precision loss; normalise either shape.
     shortRef: String(r.short_ref),
     phoneNumber: r.phone_number,
-    purged: r.phone_number === null,
+    purged: r.purged,
+    redacted: redact,
+    childCount: r.child_count === null ? null : Number(r.child_count),
     postalCode: r.postal_code,
     birthYears: r.birth_years,
     isTest: r.is_test,
@@ -311,13 +351,19 @@ export interface SmsSubscriberDetail {
   purged: boolean;
 }
 
-export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberDetail | null> {
+export async function getSmsSubscriberDetail(
+  id: string,
+  opts: PersonalDataOptions
+): Promise<SmsSubscriberDetail | null> {
+  const redact = shouldRedact(opts);
   const [row] = await query<{
     id: string;
     short_ref: string | number;
     phone_number: string | null;
     postal_code: string | null;
     birth_years: number[] | null;
+    purged: boolean;
+    child_count: number | null;
     status: string;
     consent_method: string;
     is_test: boolean;
@@ -326,17 +372,21 @@ export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberD
     consecutive_empty_weeks: number;
     stopped_at: Date | null;
   }>(
-    `SELECT id, short_ref, phone_number, is_test, status, consent_method, consent_timestamp,
-            confirmed_timestamp, consecutive_empty_weeks, stopped_at,
-            postal_code, birth_years
-       FROM sms_consent WHERE id = $1::uuid`,
-    [id]
+    `SELECT c.id, c.short_ref, c.is_test, c.status, c.consent_method, c.consent_timestamp,
+            c.confirmed_timestamp, c.consecutive_empty_weeks, c.stopped_at,${personalColumnsSql('$2::boolean')}
+       FROM sms_consent c WHERE c.id = $1::uuid`,
+    [id, redact]
   );
   if (!row) return null;
 
   // Null when the number is purged (nothing to hash) or the salt is unset. Both are handled by
   // the query, which falls back to the hashes carried on this subscriber's own rows.
-  const currentHash = row.phone_number ? phoneHash(row.phone_number) : null;
+  //
+  // For a REDACTED caller the row above does not carry the number, so it is read separately,
+  // hashed immediately and never returned — it reaches no caller, no render and no log. The send
+  // HISTORY a viewer sees is therefore the same one an admin sees.
+  const phoneForHash = redact ? await readPhoneForHashOnly(id) : row.phone_number;
+  const currentHash = phoneForHash ? phoneHash(phoneForHash) : null;
 
   const sends = await query<{
     id: string;
@@ -368,7 +418,9 @@ export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberD
       id: row.id,
       shortRef: String(row.short_ref),
       phoneNumber: row.phone_number,
-      purged: row.phone_number === null,
+      purged: row.purged,
+      redacted: redact,
+      childCount: row.child_count === null ? null : Number(row.child_count),
       postalCode: row.postal_code,
       birthYears: row.birth_years,
       isTest: row.is_test,
@@ -388,6 +440,15 @@ export async function getSmsSubscriberDetail(id: string): Promise<SmsSubscriberD
       createdAt: toIso(s.created_at),
       linkedToThisRow: Boolean(s.linked),
     })),
-    purged: row.phone_number === null,
+    purged: row.purged,
   };
+}
+
+/** See getSmsSubscriberDetail: the number, for hashing only. Never returned from this module. */
+async function readPhoneForHashOnly(id: string): Promise<string | null> {
+  const [r] = await query<{ phone_number: string | null }>(
+    `SELECT phone_number FROM sms_consent WHERE id = $1::uuid`,
+    [id]
+  );
+  return r?.phone_number ?? null;
 }

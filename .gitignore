@@ -37,6 +37,7 @@ test-results/
 .search-cap-probe.bundle.mjs
 .safety-audit.bundle.mjs
 .backfill-scope.bundle.mjs
+.staging-viewer-mint.bundle.mjs
 .backfill-scope-review.bundle.mjs
 .citycalendar-recon.bundle.mjs
 

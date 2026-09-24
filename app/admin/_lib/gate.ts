@@ -3,7 +3,9 @@
 // Every admin page calls resolveAdminAccess(); every admin WRITE calls resolveSessionAdmin().
 // Both resolve the same identity: a signed-in Supabase session (lib/db/session-user.ts
 // `getRequestUser`) whose user is an active admin_user row (lib/db/admin-guard.ts `requireAdmin`).
-// That is the ONLY way in.
+// That is the ONLY way in. What the admin may then DO depends on its role: the write resolver
+// additionally requires canWrite(role), and pages redact personal data unless
+// canSeePersonalData(role) — so a 'viewer' can read the console but not change it or see PII.
 //
 // ── THE INTERIM SHARED-SECRET TOKEN IS GONE, AND MUST NOT COME BACK ────────────────────────
 // Until 2026-09-24 this gate also accepted ADMIN_DASHBOARD_TOKEN, presented as an `x-admin-token`
@@ -31,7 +33,7 @@
 // unreachable — denies. There is no fallback path any more, so an infrastructure error now means
 // "404 until it recovers", which is the correct failure for a console that shows personal data.
 import { getRequestUser } from '@/lib/db/session-user';
-import { requireAdmin, NotAdminError, type AdminUser } from '@/lib/db/admin-guard';
+import { requireAdmin, NotAdminError, canWrite, type AdminUser } from '@/lib/db/admin-guard';
 import { recordAdminAccess } from '@/lib/admin/audit';
 
 export type AdminAccessGrant = { ok: true; via: 'session'; admin: AdminUser } | { ok: false };
@@ -58,13 +60,18 @@ export async function resolveAdminAccess(req: AdminGateRequest): Promise<AdminAc
 }
 
 /**
- * Resolve the acting admin for a MUTATION — the signed-in session + active admin_user row. Returns
- * the AdminUser (whose `userId` satisfies the admin_audit_log FK) or `null` for anyone else. Every
- * admin mutation must be attributable in admin_audit_log, whose admin_user_id is a NOT NULL FK to
- * admin_user. Never throws.
+ * Resolve the acting admin for a MUTATION — the signed-in session + an active admin_user row whose
+ * role may WRITE (lib/db/admin-guard.ts canWrite: operator, admin, superadmin). Returns the
+ * AdminUser (whose `userId` satisfies the admin_audit_log FK) or `null` for anyone else —
+ * including a signed-in 'viewer', who can read the console but must never change it.
+ *
+ * This is the single write choke point: all 9 admin server actions and the session path of
+ * POST /api/admin/catalogue-cache/bust call it first, so a viewer is refused everywhere by this one
+ * check (pinned by tests/admin/viewer-role.test.ts). Never throws.
  */
 export async function resolveSessionAdmin(): Promise<AdminUser | null> {
-  return trySessionAdmin();
+  const admin = await trySessionAdmin();
+  return admin && canWrite(admin.role) ? admin : null;
 }
 
 /**

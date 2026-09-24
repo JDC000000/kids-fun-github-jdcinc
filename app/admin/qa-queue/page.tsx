@@ -14,6 +14,7 @@ import { Fragment } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
+import { canWrite } from '@/lib/db/admin-guard';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { listReviewQueue, type ReviewItem, type DedupPairing } from './_lib/data';
 import { REVIEW_QUEUE_PAGE_SIZE, REVIEW_STATES, parseQueuePageParam } from './_lib/vocab';
@@ -139,7 +140,7 @@ export default async function AdminQaQueuePage({
   const grant = await resolveAdminAccess({ surface: 'admin_qa_queue' });
   if (!grant.ok) notFound();
 
-  const canMutate = grant.via === 'session';
+  const canMutate = canWrite(grant.admin.role);
   const page = parseQueuePageParam(searchParams.page);
   const {
     items: queue,

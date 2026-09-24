@@ -20,6 +20,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
+import { canSeePersonalData } from '@/lib/db/admin-guard';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { formatTimestampUtc } from '@/lib/admin/format';
 import {
@@ -27,6 +28,7 @@ import {
   summariseSubscribers,
   displayChildAges,
   displayPostalCode,
+  REDACTED_TEXT,
   SMS_SUBSCRIBER_LIST_LIMIT,
 } from '@/lib/admin/sms-subscribers';
 
@@ -43,7 +45,8 @@ export default async function AdminSmsSubscribersPage() {
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
 
-  const rows = await getSmsSubscribers();
+  // A read-only 'viewer' gets the same rows with the personal columns NULLed in SQL.
+  const rows = await getSmsSubscribers({ redactPersonalData: !canSeePersonalData(grant.admin.role) });
   const summary = summariseSubscribers(rows);
   // ONE clock for the whole table. Ages are derived from a birth year against "this year", so
   // taking the date per row would let a render that straddles midnight on December 31st print two
@@ -106,7 +109,13 @@ export default async function AdminSmsSubscribersPage() {
                     </Link>
                   </td>
                   <td>
-                    {row.purged ? <span className="adm-hint">purged</span> : row.phoneNumber}
+                    {row.purged ? (
+                      <span className="adm-hint">purged</span>
+                    ) : row.redacted ? (
+                      <span className="adm-hint">{REDACTED_TEXT}</span>
+                    ) : (
+                      row.phoneNumber
+                    )}
                   </td>
                   {/* Postal code and ages resolve their own purged/absent/present tri-state in
                       lib/admin/sms-subscribers.ts, so a blank cell never has to stand for both
