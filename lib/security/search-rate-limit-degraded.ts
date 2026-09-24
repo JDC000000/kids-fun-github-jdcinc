@@ -163,6 +163,7 @@ export class SearchRateLimitBreaker {
   private openedAtMs = 0;
   private probeInFlight = false;
   private generation = 0;
+  private lastCause: string | null = null;
   private readonly failureThreshold: number;
   private readonly failureWindowMs: number;
   private readonly openMs: number;
@@ -175,6 +176,15 @@ export class SearchRateLimitBreaker {
 
   currentState(): BreakerState {
     return this.state;
+  }
+
+  /**
+   * The cause of the most recent counted failure, kept while the breaker is open or half-open so a
+   * `breaker_open` decision can still say WHY (2026-09-24 QA F2: over a 180s outage, the reports at
+   * +60s and +120s carried only `breaker_open`). Cleared when the breaker closes.
+   */
+  lastFailureCause(): string | null {
+    return this.lastCause;
   }
 
   /**
@@ -199,8 +209,9 @@ export class SearchRateLimitBreaker {
     // A success while closed deliberately does NOT clear `failureTimes` (F1).
   }
 
-  recordFailure(ticket: BreakerTicket, nowMs: number): void {
+  recordFailure(ticket: BreakerTicket, nowMs: number, cause: string | null = null): void {
     if (ticket.generation !== this.generation) return; // from an earlier episode: ignore
+    if (cause !== null) this.lastCause = cause;
     if (this.state === 'half_open') {
       if (ticket.probe) this.transition('open', nowMs);
       return;
@@ -221,6 +232,7 @@ export class SearchRateLimitBreaker {
     this.failureTimes = [];
     this.probeInFlight = false;
     if (to === 'open') this.openedAtMs = nowMs;
+    else this.lastCause = null;
   }
 }
 
@@ -303,6 +315,11 @@ export function describeLimiterFailure(err: unknown): string {
   const codePart = typeof code === 'string' && code.length > 0 ? code : err.name;
   const message = err.message.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s@/]+@/gi, '<redacted>@').slice(0, 160);
   return `${codePart}: ${message}`;
+}
+
+/** The `degradedCause` for a request answered from the fallback because the breaker is open. */
+export function breakerOpenCause(lastFailureCause: string | null): string {
+  return lastFailureCause ? `breaker_open (last: ${lastFailureCause})` : 'breaker_open';
 }
 
 // ── Per-instance state ─────────────────────────────────────────────────────────────────────────

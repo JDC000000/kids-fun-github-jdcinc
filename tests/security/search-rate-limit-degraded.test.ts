@@ -219,7 +219,10 @@ describe('breaker — stop hammering a failing table', () => {
 
     const r = await checkSearchRateLimit({ ip: IP, sessionId: SESSION }, { query: db.query, degradedState });
     expect(db.calls.count).toBe(BREAKER_FAILURE_THRESHOLD);
-    expect(r).toMatchObject({ fallback: 'memory', degradedCause: 'breaker_open' });
+    expect(r).toMatchObject({
+      fallback: 'memory',
+      degradedCause: 'breaker_open (last: ENOTFOUND: getaddrinfo ENOTFOUND db.example.supabase.co)',
+    });
   });
 
   it('after the open window, one probe goes through; success closes the breaker', async () => {
@@ -492,5 +495,36 @@ describe('breaker F5 — timing runs on a monotonic clock, not the wall clock', 
     expect(state.reportThrottle.shouldReport('db_error', state.now())).toBe(false);
     vi.advanceTimersByTime(DEGRADED_REPORT_INTERVAL_MS);
     expect(state.reportThrottle.shouldReport('db_error', state.now())).toBe(true);
+  });
+});
+
+// ═══ 2026-09-24 independent QA, finding F2 ═══
+describe('F2 — an open breaker still says why', () => {
+  it('breaker_open decisions carry the last real failure cause, and a failed probe refreshes it', async () => {
+    const degradedState = createSearchRateLimitDegradedState();
+    const first = downTable('ENOTFOUND', 'getaddrinfo ENOTFOUND db.example.supabase.co');
+    for (let i = 0; i < BREAKER_FAILURE_THRESHOLD; i++) {
+      await checkSearchRateLimit({ ip: `10.8.0.${i}`, sessionId: null }, { query: first.query, degradedState });
+    }
+    const whileOpen = await checkSearchRateLimit({ ip: '10.8.1.1', sessionId: null }, { query: first.query, degradedState });
+    expect(whileOpen.degradedCause).toBe('breaker_open (last: ENOTFOUND: getaddrinfo ENOTFOUND db.example.supabase.co)');
+
+    vi.advanceTimersByTime(BREAKER_OPEN_MS);
+    const second = downTable('42P01', 'relation "search_rate_limit" does not exist');
+    await checkSearchRateLimit({ ip: '10.8.1.2', sessionId: null }, { query: second.query, degradedState }); // failed probe
+    const afterProbe = await checkSearchRateLimit({ ip: '10.8.1.3', sessionId: null }, { query: second.query, degradedState });
+    expect(afterProbe.degradedCause).toBe('breaker_open (last: 42P01: relation "search_rate_limit" does not exist)');
+  });
+
+  it('the last cause is dropped once the breaker closes again', async () => {
+    const degradedState = createSearchRateLimitDegradedState();
+    const down = downTable();
+    for (let i = 0; i < BREAKER_FAILURE_THRESHOLD; i++) {
+      await checkSearchRateLimit({ ip: `10.8.2.${i}`, sessionId: null }, { query: down.query, degradedState });
+    }
+    vi.advanceTimersByTime(BREAKER_OPEN_MS);
+    await checkSearchRateLimit({ ip: '10.8.2.9', sessionId: null }, { query: upTable().query, degradedState });
+    expect(degradedState.breaker.currentState()).toBe('closed');
+    expect(degradedState.breaker.lastFailureCause()).toBeNull();
   });
 });

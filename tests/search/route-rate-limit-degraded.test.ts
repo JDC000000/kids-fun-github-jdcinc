@@ -116,4 +116,20 @@ describe('GET /api/search while the limiter table is down', () => {
     expect(captured.calls[0].scope?.fingerprint).toEqual(['search_rate_limit_degraded', 'no_salt']);
     expect(captured.calls[0].tags?.rate_limit_fallback).toBe('none');
   });
+
+  it('🔴 [QA R1] 1 req/s for 180s of outage: 3 reports, and EVERY one carries the real cause (not just breaker_open)', async () => {
+    for (let s = 0; s < 180; s++) {
+      await GET(
+        new Request('http://localhost/api/search?q=x', {
+          headers: { 'x-forwarded-for': `10.77.0.${s % 200}`, cookie: `${ANON_SESSION_COOKIE}=r${s}` },
+        })
+      );
+      vi.advanceTimersByTime(1_000);
+    }
+    expect(captured.calls).toHaveLength(3);
+    for (const call of captured.calls) {
+      expect(call.message).toBe('search_rate_limit_degraded:db_error');
+      expect(String(call.scope?.extra?.cause)).toContain('ENOTFOUND');
+    }
+  });
 });

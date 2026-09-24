@@ -85,6 +85,7 @@ import { phoneHashSalt } from '@/lib/sms/config';
 import {
   DB_LIMITER_DEADLINE_MS,
   SearchRateLimitDeadlineError,
+  breakerOpenCause,
   defaultSearchRateLimitDegradedState,
   describeLimiterFailure,
   withDeadline,
@@ -129,7 +130,7 @@ export interface SearchRateLimitResult {
   fallback: 'memory' | null;
   /**
    * Short, non-secret description of why the DB limiter was unavailable — the pg/Node error code
-   * plus a truncated message, `SEARCH_RATE_LIMIT_DEADLINE: …`, or `breaker_open`. Null unless
+   * plus a truncated message, `SEARCH_RATE_LIMIT_DEADLINE: …`, or `breaker_open (last: <cause>)`. Null unless
    * `degradedReason === 'db_error'`. For reporting only; never put it in a response body.
    */
   degradedCause: string | null;
@@ -307,7 +308,7 @@ export async function checkSearchRateLimit(
 
   const ticket = state.breaker.tryAcquire(state.now());
   if (!ticket) {
-    return memoryFallback(state, ipHash, sessionHash, limits, 'breaker_open');
+    return memoryFallback(state, ipHash, sessionHash, limits, breakerOpenCause(state.breaker.lastFailureCause()));
   }
 
   try {
@@ -332,8 +333,9 @@ export async function checkSearchRateLimit(
     // The counter table errored, or did not answer within the deadline (a real DB outage, pooler
     // exhaustion, or migration 0051 not applied yet). Count it against the breaker and decide
     // from the in-memory fallback instead — see lib/security/search-rate-limit-degraded.ts.
-    state.breaker.recordFailure(ticket, state.now());
-    return memoryFallback(state, ipHash, sessionHash, limits, describeLimiterFailure(err));
+    const cause = describeLimiterFailure(err);
+    state.breaker.recordFailure(ticket, state.now(), cause);
+    return memoryFallback(state, ipHash, sessionHash, limits, cause);
   }
 }
 
