@@ -14,10 +14,10 @@
 // ── EVERYTHING HERE IS REAL ─────────────────────────────────────────────────────────────
 // The deps loading shape, the per-subscriber flow, the dry-run gate, the outcome mapping, the
 // empty-week/pause transition wiring and the PII discipline all run today. So do the database
-// seams — `loadActiveSubscribers`, `loadRecentlySentPickIds`, `applyEmptyWeekState` and
-// `markStoppedViaCarrier` issue their queries against `sms_consent` and `sms_send_log`
-// (migrations 0034/0035, applied by the Operator), and `dispatchSms` (lib/sms/twilio-client.ts)
-// issues an actual Twilio Messages API call. Each stays an injectable seam so the orchestration
+// seams — `loadActiveSubscribers`, `loadRecentlySent`, `applyEmptyWeekState` and
+// `markStoppedViaCarrier` issue their queries against `sms_consent`, `sms_send_log` and
+// `activity_occurrence` (migrations 0034/0035, applied by the Operator), and `dispatchSms`
+// (lib/sms/twilio-client.ts) issues an actual Twilio Messages API call. Each stays an injectable seam so the orchestration
 // is testable without a database; tests/sms/preferences_weekly-db.test.ts covers them for real.
 //
 // WHAT IS STILL OFF IS THE SENDING ITSELF: SMS_SENDING_ENABLED is deliberately unset, so
@@ -39,6 +39,7 @@ import { loadPostgresListings } from '@/lib/search/postgres-repository';
 import { getPostgresAliasResolver } from '@/lib/search/postgres-alias-resolver';
 import { getPostgresRegionHierarchy } from '@/lib/search/postgres-region-hierarchy';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
+import { isUuid } from '@/lib/corrections/types';
 import { phoneHashSalt, preferencesSecret, smsSendingEnabled } from './config';
 import { MissingPhoneHashSaltError } from './phone-hash';
 import { MissingPreferencesSecretError } from './preferences-token';
@@ -310,7 +311,8 @@ export async function loadActiveSubscribers(limit?: number): Promise<ActiveSubsc
 export const NOVELTY_LOOKBACK_SENDS = 1;
 
 /**
- * Occurrence ids this subscriber has already been sent, for the novelty filter.
+ * Occurrence ids this subscriber has already been sent, for the novelty filter. `loadRecentlySent`
+ * below resolves these to their series as well; this is its first step.
  *
  * THE QUERY:
  *   SELECT picks_snapshot
@@ -333,9 +335,7 @@ export const NOVELTY_LOOKBACK_SENDS = 1;
  * Uses `idx_sms_send_log_subscriber (subscriber_id, created_at DESC)` from 0035 — the same index
  * the click-through's send-log recovery uses. No new index needed.
  */
-export type RecentPickIdsLoader = (subscriberId: string) => Promise<Set<string>>;
-
-export const loadRecentlySentPickIds: RecentPickIdsLoader = async (subscriberId) => {
+export const loadRecentlySentPickIds = async (subscriberId: string): Promise<Set<string>> => {
   const rows = await query<{ picks_snapshot: Array<{ occurrence_id: string; rank: number }> }>(
     `SELECT picks_snapshot
        FROM sms_send_log
@@ -360,6 +360,79 @@ export const loadRecentlySentPickIds: RecentPickIdsLoader = async (subscriberId)
   }
   return seen;
 };
+
+/**
+ * The activity series (`activity_occurrence.series_id`) behind a set of sent occurrence ids — the
+ * key that lets the novelty filter recognise NEXT week's sitting of a programme sent this week.
+ * See `WeeklyPicksInput.excludeSeriesIds` for why the series is the right key.
+ *
+ * THE QUERY:
+ *   SELECT DISTINCT series_id FROM activity_occurrence WHERE id = ANY($1::uuid[])
+ *
+ * SQL AGAINST THE TABLE, NOT THE READ MODEL. Last week's picks are in the past, and the live read
+ * model holds only current and upcoming occurrences, so a lookup there would find almost nothing
+ * (measured: 0 of a real subscriber's 10 sent picks were still in it). Primary-key lookup, at most
+ * NOVELTY_LOOKBACK_SENDS × MAX_PICKS ids. ARCHIVED ROWS ARE INCLUDED ON PURPOSE: an occurrence
+ * archived since it was sent still names its series, and that series may still be running.
+ *
+ * ONLY UUID-SHAPED IDS REACH THE CAST. `picks_snapshot` is jsonb written by older code, and one
+ * malformed entry would make `::uuid[]` throw for the whole array, which would lose the series
+ * arm for the subscriber's whole week. It is skipped instead. (It still sits in the occurrence
+ * set, where it matches nothing.)
+ */
+export async function loadSeriesIdsForOccurrences(
+  occurrenceIds: Iterable<string>
+): Promise<Set<string>> {
+  const ids = [...occurrenceIds].filter(isUuid);
+  if (ids.length === 0) return new Set();
+  const rows = await query<{ series_id: string }>(
+    `SELECT DISTINCT series_id FROM activity_occurrence WHERE id = ANY($1::uuid[])`,
+    [ids]
+  );
+  return new Set(rows.map((row) => row.series_id));
+}
+
+/** What a subscriber has already been sent, in the two keys the novelty filter excludes on. */
+export interface RecentlySent {
+  occurrenceIds: Set<string>;
+  seriesIds: Set<string>;
+  /**
+   * False when the series lookup failed. The week then gets the occurrence arm only, the pre-D5
+   * behaviour, rather than no novelty at all. Reported as `noveltyDegraded: 'occurrence_only'`.
+   */
+  seriesResolved: boolean;
+}
+
+export type RecentlySentLoader = (subscriberId: string) => Promise<RecentlySent>;
+
+/**
+ * The novelty window for one subscriber: `loadRecentlySentPickIds`, then
+ * `loadSeriesIdsForOccurrences` over what it returned.
+ *
+ * THE TWO READS FAIL DIFFERENTLY, ON PURPOSE:
+ *   • the SNAPSHOT read throws through. Without it there is nothing to resolve, and the caller
+ *     (`sendWeeklySmsForSubscriber`) already turns that into "no novelty this week" instead of
+ *     "no send". Same as before D5.
+ *   • the SERIES read is caught here and falls back to the occurrence ids alone. The occurrence
+ *     ids are already in hand, so a failure in the new query must not throw them away.
+ *
+ * `seams` exists so the fallback can be tested without breaking a real database.
+ */
+export async function loadRecentlySent(
+  subscriberId: string,
+  seams: {
+    loadPickIds?: typeof loadRecentlySentPickIds;
+    resolveSeries?: typeof loadSeriesIdsForOccurrences;
+  } = {}
+): Promise<RecentlySent> {
+  const occurrenceIds = await (seams.loadPickIds ?? loadRecentlySentPickIds)(subscriberId);
+  try {
+    const seriesIds = await (seams.resolveSeries ?? loadSeriesIdsForOccurrences)(occurrenceIds);
+    return { occurrenceIds, seriesIds, seriesResolved: true };
+  } catch {
+    return { occurrenceIds, seriesIds: new Set(), seriesResolved: false };
+  }
+}
 
 /**
  * Write back `consecutive_empty_weeks` and `status` after a week.
@@ -435,6 +508,15 @@ export type SubscriberSendStatus =
   | 'error';
 
 /**
+ * How the novelty filter was weakened for one subscriber's week, when it was:
+ *   • 'occurrence_only' — the series lookup failed, so only exact occurrences were excluded (the
+ *     pre-D5 filter). Recurring programmes from last week can repeat.
+ *   • 'unavailable'     — last week's snapshot could not be read, so nothing was excluded.
+ * Neither costs the subscriber their week; both are worth knowing about.
+ */
+export type NoveltyDegradation = 'occurrence_only' | 'unavailable';
+
+/**
  * What one subscriber's run produced. SAFE TO LOG AND TO RETURN OVER HTTP — see the file header.
  * No phone number, no message body. `segments` and `pickCount` are the useful numbers.
  */
@@ -456,6 +538,11 @@ export interface SubscriberSendResult {
    * problems that produce the same empty week.
    */
   novelExcluded?: number;
+  /**
+   * Set only when this week's novelty filter was weaker than designed — see `NoveltyDegradation`.
+   * Absent on a normal week. A guard nobody can see failing is a guard nobody can fix.
+   */
+  noveltyDegraded?: NoveltyDegradation;
   /** Never contains a number or a body. */
   error?: string;
 }
@@ -466,7 +553,7 @@ export interface SendSubscriberOptions {
   now?: Date;
   deps?: WeeklySmsDeps;
   /** Injected for tests; defaults to the real loader above. */
-  loadRecentPickIds?: RecentPickIdsLoader;
+  loadRecentlySent?: RecentlySentLoader;
   /**
    * The three write/send seams, injected for tests.
    *
@@ -625,19 +712,15 @@ export function assertSendPreconditions(dryRun: boolean): void {
  * structured `SubscriberSendResult`, exactly as `sendWeeklyDigestForUser` does, so one
  * subscriber's bad row cannot take down a batch of five hundred.
  *
- * ── AN OPEN QUESTION THIS FUNCTION DOES NOT ANSWER: REPEAT PICKS ────────────────────────
+ * ── REPEAT PICKS: THE NOVELTY FILTER ─────────────────────────────────────────────────────
  * The email digest sends only what is NEW since the last send (a watermark over
- * `activity_occurrence.created_at`). PRD §2.2's selection algorithm has no equivalent step: it
- * asks "what is on this weekend", and a weekly public swim is on every weekend. So a subscriber
- * can receive substantially the same picks several Fridays running — while §2.6's own empty-week
- * copy says "Nothing NEW matches your area this week", implying a newness notion the algorithm
- * does not have.
- *
- * NOT SILENTLY FIXED HERE, because inventing a novelty filter would change what the PRD
- * specifies. Flagged instead — and the schema already supports it: `sms_send_log.picks_snapshot`
- * exists precisely so a future run can read last week's occurrence ids and exclude or
- * de-prioritise them. If that becomes the decision, `loadActiveSubscribers` is where the previous
- * snapshot would join in, and `selectWeeklyPicks` would grow one `excludeOccurrenceIds` argument.
+ * `activity_occurrence.created_at`). PRD §2.2 asks "what is on this weekend" instead, and a weekly
+ * public swim is on every weekend, so without a filter a subscriber gets the same picks every
+ * Friday. PRD v2.8 §2.2 step 4 added one: step 0 below reads the previous weekly send's
+ * `picks_snapshot` and `selectWeeklyPicks` excludes what it held. Since D5 (2026-09-24) that is
+ * excluded by activity SERIES as well as by occurrence. The occurrence id alone changes every
+ * week for a recurring programme, which is how "same venues every week" got through the
+ * original filter. See `loadRecentlySent` and `WeeklyPicksInput.excludeSeriesIds`.
  */
 export async function sendWeeklySmsForSubscriber(
   subscriber: SmsSubscriber,
@@ -655,17 +738,22 @@ export async function sendWeeklySmsForSubscriber(
 
   try {
     const deps = options.deps ?? (await loadWeeklySmsDeps());
-    const loadRecent = options.loadRecentPickIds ?? loadRecentlySentPickIds;
+    const loadRecent = options.loadRecentlySent ?? loadRecentlySent;
 
     // 0. What have they already been sent? PER SUBSCRIBER, so unlike the read model this cannot be
-    //    hoisted into `WeeklySmsDeps` — but it IS one indexed read against rows they own, and a
-    //    failure here must not cost them their week: an empty set means no novelty filtering,
-    //    which degrades to the pre-v2.8 behaviour rather than to no send.
-    let excludeOccurrenceIds: Set<string>;
+    //    hoisted into `WeeklySmsDeps` — but it IS two indexed reads against rows they own, and a
+    //    failure here must not cost them their week: empty sets mean no novelty filtering,
+    //    which degrades to the pre-v2.8 behaviour rather than to no send. A failure of the series
+    //    read alone is handled inside the loader (occurrence arm only). Either way it is reported
+    //    as `noveltyDegraded`, so a weaker filter is visible rather than silent.
+    let recent: RecentlySent;
+    let noveltyDegraded: NoveltyDegradation | undefined;
     try {
-      excludeOccurrenceIds = await loadRecent(subscriber.id);
+      recent = await loadRecent(subscriber.id);
+      if (!recent.seriesResolved) noveltyDegraded = 'occurrence_only';
     } catch {
-      excludeOccurrenceIds = new Set();
+      recent = { occurrenceIds: new Set(), seriesIds: new Set(), seriesResolved: false };
+      noveltyDegraded = 'unavailable';
     }
 
     // 1. Build. Pure — geocode, ages, selection, message. May throw only on a missing link secret.
@@ -674,7 +762,8 @@ export async function sendWeeklySmsForSubscriber(
       now,
       subscriber,
       occurrenceShortRefs: deps.occurrenceShortRefs,
-      excludeOccurrenceIds,
+      excludeOccurrenceIds: recent.occurrenceIds,
+      excludeSeriesIds: recent.seriesIds,
     });
 
     // 2. Decide what this week does to the counter and the status.
@@ -711,6 +800,7 @@ export async function sendWeeklySmsForSubscriber(
         ? { unlinkableCount: plan.unlinkableOccurrenceIds.length }
         : {}),
       ...(plan.picks?.novelExcluded ? { novelExcluded: plan.picks.novelExcluded } : {}),
+      ...(noveltyDegraded ? { noveltyDegraded } : {}),
     };
 
     // 5. Dispatch.
@@ -834,7 +924,7 @@ export interface BulkOptions {
   /** Cap the number of candidate subscribers (safety for a first live run). */
   limit?: number;
   /** Injected for tests; defaults to the real loader. */
-  loadRecentPickIds?: RecentPickIdsLoader;
+  loadRecentlySent?: RecentlySentLoader;
   /**
    * The batch's own two loads, and the four per-subscriber write seams, injected for tests.
    *
@@ -931,7 +1021,7 @@ export async function sendWeeklySmsBulk(options: BulkOptions = {}): Promise<Bulk
       now,
       dryRun,
       deps,
-      loadRecentPickIds: options.loadRecentPickIds,
+      loadRecentlySent: options.loadRecentlySent,
       dispatch: options.dispatch,
       record: options.record,
       markStopped: options.markStopped,

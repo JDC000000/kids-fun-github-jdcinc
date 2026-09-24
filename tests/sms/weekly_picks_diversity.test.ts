@@ -828,10 +828,20 @@ function weeklyPickCandidates(listings: ListingRecord[], over: Partial<WeeklyPic
     .filter((item) => matchesInterests(item.listing, i.subscriber.categoryInterests));
   const { kept } = dedupeCandidates(showable, sameParentOrg);
   const { kept: distinct } = collapseSameOfferingAtVenue(kept, sameParentOrg);
-  const alreadySent = i.excludeOccurrenceIds;
-  return alreadySent && alreadySent.size > 0
-    ? distinct.filter((item) => !alreadySent.has(item.listing.id))
-    : distinct;
+  return distinct.filter((item) => !alreadySentPerInput(i, item));
+}
+
+/**
+ * The novelty rule, restated for the two reference pipelines here: an item is already sent when
+ * its occurrence OR its series was in last week's text (D5). Both mirrors must carry BOTH arms —
+ * a mirror missing the series arm would count candidates the real selector has removed, and (c)
+ * could then pass or fail for the wrong reason.
+ */
+function alreadySentPerInput(i: WeeklyPicksInput, item: SearchResultItem): boolean {
+  return (
+    (i.excludeOccurrenceIds?.has(item.listing.id) ?? false) ||
+    (i.excludeSeriesIds?.has(item.listing.seriesId) ?? false)
+  );
 }
 
 /** The selection the pipeline would have produced with NO diversity stage of any kind. */
@@ -846,8 +856,7 @@ function selectionWithoutDiversityStages(listings: ListingRecord[], over: Partia
     .filter((item) => isWeeklyPickEligible(item.listing))
     .filter((item) => matchesInterests(item.listing, i.subscriber.categoryInterests));
   const { kept } = dedupeCandidates(showable, sameParentOrg);
-  const alreadySent = i.excludeOccurrenceIds;
-  const fresh = alreadySent && alreadySent.size > 0 ? kept.filter((item) => !alreadySent.has(item.listing.id)) : kept;
+  const fresh = kept.filter((item) => !alreadySentPerInput(i, item));
   return applyCoverageSwap(fresh.slice(0, maxPicks), fresh, bands, maxPicks).selection;
 }
 
@@ -928,6 +937,8 @@ describe('T8 — the scarcity invariants behind the tradeoff', () => {
       { name: 'nothing at all', listings: [] },
       { name: 'richmond-shaped', listings: thinCatalogue(56, 2), over: { subscriber: { origin: { geo: HOME, label: 'K' }, radiusKm: 20, birthYears: [2021, 2018], consecutiveEmptyWeeks: 0 } } },
       { name: 'novelty removes most of a dense week', listings: profile2(), over: { excludeOccurrenceIds: new Set(['rh-tai', 'rh-dan', 'coal', 'we-am', 'br-tot']) } },
+      // D5: the same removal made by the SERIES arm — last week's sittings had other occurrence ids.
+      { name: 'series novelty removes most of a dense week', listings: profile2(), over: { excludeOccurrenceIds: new Set(['last-week-1', 'last-week-2']), excludeSeriesIds: new Set(['rh-tai-series', 'rh-dan-series', 'coal-series', 'we-am-series', 'br-tot-series']) } },
       // ── the CATEGORY key's shapes, so (c) covers both axes rather than just the first one ──
       { name: 'profile #4 (swim monoculture)', listings: profile4(), over: { subscriber: profile4Subscriber() } },
       { name: 'profile #4 minus its spare category', listings: profile4().filter((r) => r.id !== 'story-0'), over: { subscriber: profile4Subscriber() } },

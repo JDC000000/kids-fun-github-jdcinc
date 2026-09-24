@@ -6,7 +6,13 @@
 // send_type goes with which outcome, what a write failure does to the reported status, what
 // reaches the error string — is what this file covers.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sendWeeklySmsForSubscriber, type WeeklySmsDeps } from '@/lib/sms/weekly-send-io';
+import {
+  loadRecentlySent,
+  loadSeriesIdsForOccurrences,
+  sendWeeklySmsForSubscriber,
+  type RecentlySent,
+  type WeeklySmsDeps,
+} from '@/lib/sms/weekly-send-io';
 import type { SmsSubscriber } from '@/lib/sms/weekly-send';
 import type { RecordSendInput } from '@/lib/sms/send-log';
 import { SearchEngine } from '@/lib/search/engine';
@@ -16,6 +22,8 @@ import { RegionHierarchy } from '@/lib/geo/region';
 import { fsaGeocoder } from '@/lib/geo/postal-fsa';
 import { REGIONS } from '@/lib/search/__fixtures__/regions';
 import { ALIAS_SEED } from '@/lib/search/__fixtures__/aliases';
+import { makeListing } from '@/lib/search/__fixtures__/factory';
+import type { ListingRecord } from '@/lib/search/types';
 
 const NOW = new Date('2026-08-28T23:00:00Z'); // Friday
 const PHONE = '+16045550123';
@@ -230,5 +238,125 @@ describe('branch wiring', () => {
     );
     expect(result.status).toBe('skipped_geocode_failed');
     expect([logged, states]).toEqual([[], []]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D5 — the novelty window: occurrence ids AND their series, and how each read fails
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SENT_A = '11111111-1111-4111-8111-111111111111';
+const SENT_B = '22222222-2222-4222-8222-222222222222';
+
+describe('loadRecentlySent — composing the two reads', () => {
+  it('resolves series for exactly the occurrence ids the snapshot held', async () => {
+    const seen: string[][] = [];
+    const recent = await loadRecentlySent('sub-1', {
+      loadPickIds: async () => new Set([SENT_A, SENT_B]),
+      resolveSeries: async (ids) => {
+        seen.push([...ids]);
+        return new Set(['series-a', 'series-b']);
+      },
+    });
+    expect(seen).toEqual([[SENT_A, SENT_B]]);
+    expect(recent).toEqual({
+      occurrenceIds: new Set([SENT_A, SENT_B]),
+      seriesIds: new Set(['series-a', 'series-b']),
+      seriesResolved: true,
+    });
+  });
+
+  it('a failed SERIES read keeps the occurrence ids — degrades to the pre-D5 filter, never to none', async () => {
+    const recent = await loadRecentlySent('sub-1', {
+      loadPickIds: async () => new Set([SENT_A]),
+      resolveSeries: THROWS('connection terminated unexpectedly'),
+    });
+    expect(recent.occurrenceIds).toEqual(new Set([SENT_A]));
+    expect(recent.seriesIds).toEqual(new Set());
+    expect(recent.seriesResolved).toBe(false);
+  });
+
+  it('a failed SNAPSHOT read throws through — the caller owns "no novelty this week"', async () => {
+    await expect(
+      loadRecentlySent('sub-1', { loadPickIds: THROWS('relation does not exist'), resolveSeries: async () => new Set() })
+    ).rejects.toThrow('relation does not exist');
+  });
+});
+
+describe('loadSeriesIdsForOccurrences — the uuid guard', () => {
+  it('sends NO query when nothing is uuid-shaped (this lane has no database, so a query would throw)', async () => {
+    expect(await loadSeriesIdsForOccurrences([])).toEqual(new Set());
+    expect(await loadSeriesIdsForOccurrences(['not-a-uuid', 'occ-7', ''])).toEqual(new Set());
+  });
+});
+
+describe('sendWeeklySmsForSubscriber — the series arm reaches the text', () => {
+  // A real catalogue this time (the file's DEPS is empty), placed in the subscriber's FSA.
+  const HOME = fsaGeocoder.geocodePostal(SUBSCRIBER.postalCode)!;
+  const at = (hour: number) => `2026-08-29T${String(hour + 7).padStart(2, '0')}:00:00Z`;
+  const NAMES = ['Splash Time', 'Story Circle', 'Lego Build', 'Puppet Show', 'Nature Walk', 'Music Makers'];
+  const listings: ListingRecord[] = NAMES.map((name, i) =>
+    makeListing({
+      id: `occ-${i}`,
+      activityName: name,
+      venueName: `${name} Centre`,
+      statusState: 'confirmed',
+      ageMinMonths: 24,
+      ageMaxMonths: 120,
+      ageBandMatches: ['2-4', '5-9'],
+      geo: { lat: HOME.lat + i * 0.002, lng: HOME.lng },
+      startDatetimeUtc: at(9 + i),
+      endDatetimeUtc: at(10 + i),
+      primaryCategoryKey: 'general',
+    })
+  );
+  const CATALOGUE: WeeklySmsDeps = {
+    engine: new SearchEngine({
+      repository: new InMemoryListingRepository(listings),
+      aliasResolver: new FixtureAliasResolver(ALIAS_SEED),
+      regionHierarchy: new RegionHierarchy(REGIONS),
+      geocoder: fsaGeocoder,
+      fixtureBacked: true,
+    }),
+    occurrenceShortRefs: new Map(listings.map((l, i) => [l.id, 1000 + i])),
+  };
+  const recentWith = (over: Partial<RecentlySent>) => async (): Promise<RecentlySent> => ({
+    occurrenceIds: new Set(['occ-0-last-week']),
+    seriesIds: new Set(['occ-0-series']),
+    seriesResolved: true,
+    ...over,
+  });
+
+  it("excludes this week's sitting of last week's series, and reports no degradation", async () => {
+    withSecret();
+    const { logged, options } = wired({ deps: CATALOGUE, loadRecentlySent: recentWith({}) });
+    const result = await sendWeeklySmsForSubscriber(SUBSCRIBER, PHONE, options);
+    expect(result.status).toBe('sent');
+    expect(result.pickCount).toBe(5);
+    expect(result.novelExcluded).toBe(1);
+    expect(result.noveltyDegraded).toBeUndefined();
+    expect(logged[0].picksSnapshot!.map((p) => p.occurrence_id)).not.toContain('occ-0');
+  });
+
+  it("reports 'occurrence_only' when the series read failed — and still sends the week", async () => {
+    withSecret();
+    const { options } = wired({
+      deps: CATALOGUE,
+      loadRecentlySent: recentWith({ seriesIds: new Set(), seriesResolved: false }),
+    });
+    const result = await sendWeeklySmsForSubscriber(SUBSCRIBER, PHONE, options);
+    expect(result.status).toBe('sent');
+    expect(result.pickCount).toBe(6); // the series arm was unavailable, so occ-0 is back
+    expect(result.noveltyDegraded).toBe('occurrence_only');
+  });
+
+  it("reports 'unavailable' when the history could not be read at all — and still sends the week", async () => {
+    withSecret();
+    const { options } = wired({ deps: CATALOGUE, loadRecentlySent: THROWS('pool exhausted') });
+    const result = await sendWeeklySmsForSubscriber(SUBSCRIBER, PHONE, options);
+    expect(result.status).toBe('sent');
+    expect(result.pickCount).toBe(6);
+    expect(result.noveltyDegraded).toBe('unavailable');
+    expect(result.error).toBeUndefined();
   });
 });

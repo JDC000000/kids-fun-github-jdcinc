@@ -109,7 +109,8 @@ function build(
   listings: ListingRecord[],
   over: Partial<SmsSubscriber> = {},
   omitRefs: string[] = [],
-  excludeOccurrenceIds?: ReadonlySet<string>
+  excludeOccurrenceIds?: ReadonlySet<string>,
+  excludeSeriesIds?: ReadonlySet<string>
 ) {
   return buildWeeklySms({
     engine: engineOver(listings),
@@ -117,6 +118,7 @@ function build(
     subscriber: subscriber(over),
     occurrenceShortRefs: shortRefsFor(listings, omitRefs),
     excludeOccurrenceIds,
+    excludeSeriesIds,
   });
 }
 
@@ -441,5 +443,15 @@ describe('the novelty filter, threaded through the builder', () => {
     const snapshot = picksSnapshot(build(listings, {}, [], new Set(['occ-0'])));
     expect(snapshot!.map((p) => p.occurrence_id)).not.toContain('occ-0');
     expect(snapshot!.map((p) => p.rank)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("D5: drops this week's sitting of a series sent last week — the series set reaches the selector", () => {
+    // Last week's text held `occ-0-last-week`; this week's sitting of the same series is `occ-0`.
+    withConfig();
+    const listings = catalogue(6);
+    const plan = build(listings, {}, [], new Set(['occ-0-last-week']), new Set(['occ-0-series']));
+    expect(plan.picks!.novelExcluded).toBe(1);
+    expect(plan.message!.body).toContain('5 picks this weekend');
+    expect(picksSnapshot(plan)!.map((p) => p.occurrence_id)).not.toContain('occ-0');
   });
 });

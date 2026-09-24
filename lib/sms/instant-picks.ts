@@ -181,10 +181,10 @@ export function selectInstantPicks(input: InstantPicksInput): InstantPicks {
       // ⚠ NOT the subscriber's real counter. See INSTANT_PICKS_EMPTY_WEEKS.
       consecutiveEmptyWeeks: INSTANT_PICKS_EMPTY_WEEKS,
     },
-    // `excludeOccurrenceIds` is deliberately NOT passed. The novelty filter exists so a TEXT does
-    // not repeat itself week to week; a parent who asked for the fuller list of what is on wants
-    // what is on, including the three things they were already told about. Omitting it is the
-    // choice, not an oversight.
+    // `excludeOccurrenceIds` and `excludeSeriesIds` are deliberately NOT passed. The novelty
+    // filter exists so a TEXT does not repeat itself week to week; a parent who asked for the
+    // fuller list of what is on wants what is on, including the three things they were already
+    // told about. Omitting it is the choice, not an oversight.
     //
     // `floorPicks` is likewise left at the default. Below the floor the selector WIDENS before it
     // gives up, and that widening is what produces the longer list this button is for — lowering

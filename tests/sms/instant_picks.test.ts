@@ -285,6 +285,7 @@ describe('instant picks · the floor is not lowered', () => {
     const select = vi.fn<(i: WeeklyPicksInput) => WeeklyPicks>(() => EMPTY_RESULT);
     selectInstantPicks(input(distinctActivities(6), { select }));
     expect(select.mock.calls[0][0].excludeOccurrenceIds).toBeUndefined();
+    expect(select.mock.calls[0][0].excludeSeriesIds).toBeUndefined();
   });
 });
 
