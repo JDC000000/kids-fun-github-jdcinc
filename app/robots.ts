@@ -44,7 +44,19 @@
 //
 // Accepted trade-off: /search stops being crawled, so it drops out of search-engine results over
 // time. Parents still reach it from every page through the nav, the home page and the 404.
+//
+// ═══ AI CRAWLERS: `Disallow: /`, SITE-WIDE (Jon, 2026-09-24) ═══
+// Jon's decision: AI crawlers are blocked from the whole site, and "it's fine that it blocks AI
+// assistant answers". They get their OWN group with `Disallow: /`. The token list, the reason for
+// each token and the vendor sources are in app/_lib/ai-crawlers.ts.
+// Under RFC 9309 a crawler obeys only the most specific group that names it, and groups are never
+// merged. So a listed AI crawler ignores the `*` group completely (its `Disallow: /` already covers
+// /search), and every crawler NOT listed (Googlebot, Bingbot, Applebot, DuckDuckBot, the
+// link-preview fetchers) keeps exactly the `*` group above, including the /search rule.
+// The /search rule is still needed: search engines crawl permutations too, and so does any bot
+// the list does not name.
 import type { MetadataRoute } from 'next';
+import { AI_CRAWLER_USER_AGENTS } from './_lib/ai-crawlers';
 
 /** The production origin. Deliberately a literal: a sitemap pointing at the wrong host is worse
  *  than no sitemap, and this file must not inherit a misconfigured env var. */
@@ -57,6 +69,10 @@ export default function robots(): MetadataRoute.Robots {
         userAgent: '*',
         allow: '/',
         disallow: ['/admin', '/api', '/u/', '/s/', '/preview', '/search'],
+      },
+      {
+        userAgent: [...AI_CRAWLER_USER_AGENTS],
+        disallow: '/',
       },
     ],
     sitemap: `${ORIGIN}/sitemap.xml`,
