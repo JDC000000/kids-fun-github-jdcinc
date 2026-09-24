@@ -26,7 +26,13 @@ vi.mock('next/link', () => ({
 
 import { loadPostgresListingById } from '../../lib/search/postgres-repository';
 import { mapListingRecordToActivity } from '../../app/preview/_data/search-api';
-import { formatWhen, formatVenue, VENUE_NOT_STATED } from '../../app/preview/_data/format';
+import {
+  confidenceSentence,
+  formatWhen,
+  formatVenue,
+  sourceLinkWording,
+  VENUE_NOT_STATED,
+} from '../../app/preview/_data/format';
 import { activityTitle, buildDetailMetadata } from '../../app/preview/_data/detail-metadata';
 import { ActivityCard } from '../../app/preview/_components/ActivityCard';
 import { ActivityDetail } from '../../app/preview/_components/ActivityDetail';
@@ -247,5 +253,131 @@ describe('D — operator research is never "Verified — confirmed directly by t
   it('other non-official tiers keep their existing mapping (out of scope, pinned so a change is deliberate)', async () => {
     expect((await load(curatedRow({ source_authority_tier: 'partner', confidence_label: 'high' }))).confidenceLabel).toBe('official');
     expect((await load(curatedRow({ source_authority_tier: 'editorial', confidence_label: 'medium' }))).confidenceLabel).toBe('editorial');
+  });
+});
+
+describe('E — "Official source" is only said when the tier earns it', () => {
+  // Independent QA, 2026-09-24 (session 1394d8ba): the Source & freshness line printed
+  // "Official source: <host>" and the hero printed "View official source" on all 435 loadable
+  // curated rows, but ~31 of those links are a tourism board, a listings site, a news outlet or a
+  // Facebook page. And after D, every editorial-tier curated row said "Official source: X" AND
+  // "not directly confirmed by the venue or organiser" in the same line.
+  //
+  // Hosts below are the ones QA counted in production (plus the two borderline ones).
+  const AGGREGATOR_URLS = [
+    'https://www.visitrichmondbc.com/events/steveston-salmon-festival/',
+    'https://www.vancouversbestplaces.com/events/bike-the-blossoms/',
+    'https://www.tourismburnaby.com/event/tj-fest/',
+    'https://www.vancouversnorthshore.com/events/deep-cove-winter-market/',
+    'https://dailyhive.com/vancouver/vegan-night-market',
+    'https://www.destinationvancouver.com/events/national-indigenous-peoples-day/',
+    'https://curiocity.com/pleasant-day-festival/',
+    'https://www.madeinthe604.com/',
+    'https://www.facebook.com/cedarcottagelanternfestival',
+    'https://www.lynnvalleylife.com/christmas-in-lynn-valley',
+    'https://www.hyatt.com/hyatt-regency/en-US/yvrrv-hyatt-regency-vancouver',
+  ];
+  const ORGANISER_URL = 'https://www.burnabyartgallery.ca/'; // a real curated row's own-domain link
+  const MANUAL_LABELS = ['high', 'medium', 'low', null];
+  const NOT_CONFIRMED = 'not directly confirmed by the venue or organiser';
+  const count = (h: string, needle: string) => h.split(needle).length - 1;
+
+  it('no aggregator / tourism / media link is ever called the official source, at any curated label', async () => {
+    for (const url of AGGREGATOR_URLS) {
+      for (const label of MANUAL_LABELS) {
+        const activity = mapListingRecordToActivity(await load(curatedRow({ source_url: url, confidence_label: label })));
+        const detail = renderDetail(activity);
+        const host = new URL(url).hostname.replace(/^www\./, '');
+        expect(detail, `${host}/${label}`).not.toContain('Official source');
+        expect(detail, `${host}/${label}`).not.toContain('View official source');
+        // The link itself survives, named by its host, under the neutral lead.
+        expect(detail, `${host}/${label}`).toContain(`Source: <a class="kf-srclink" href="${url.replace(/&/g, '&amp;')}"`);
+        expect(detail, `${host}/${label}`).toContain(`>${host}<span class="kf-sr"> (opens in a new tab)</span></a>`);
+        // The hero control still points at the page, and says so without the adjective.
+        expect(count(detail, 'View source'), `${host}/${label}: one hero control`).toBe(1);
+      }
+    }
+  });
+
+  it('an organiser-domain curated row keeps its link, host and hero control; only "Official" goes', async () => {
+    const activity = mapListingRecordToActivity(await load(curatedRow({ source_url: ORGANISER_URL, confidence_label: 'high' })));
+    const detail = renderDetail(activity);
+    expect(activity.sourceUrl).toBe(ORGANISER_URL);
+    expect(activity.sourceName).toBe('burnabyartgallery.ca');
+    expect(detail).toContain(`Source: <a class="kf-srclink" href="${ORGANISER_URL}"`);
+    expect(detail).toContain('>burnabyartgallery.ca<span class="kf-sr"> (opens in a new tab)</span></a>');
+    expect(count(detail, `href="${ORGANISER_URL}"`), 'hero control + panel link').toBe(2);
+    expect(detail).toContain('View source');
+    expect(detail).not.toContain('Official source');
+  });
+
+  it('resolves the same-line contradiction: no page says "Official source" AND "not directly confirmed"', async () => {
+    const tiers = ['manual', 'official', 'partner', 'editorial', null];
+    const labels = ['high', 'medium', 'low', null];
+    const checks = ['2020-01-01T00:00:00.000Z', new Date().toISOString()];
+    let official = 0;
+    let notConfirmed = 0;
+    for (const tier of tiers)
+      for (const label of labels)
+        for (const checked of checks)
+          for (const url of [ORGANISER_URL, ...AGGREGATOR_URLS]) {
+            const detail = renderDetail(
+              mapListingRecordToActivity(
+                await load(curatedRow({ source_authority_tier: tier, confidence_label: label, last_checked_at: checked, source_url: url })),
+              ),
+            );
+            const saysOfficial = detail.includes('Official source');
+            const saysNotConfirmed = detail.includes(NOT_CONFIRMED);
+            if (saysOfficial) official++;
+            if (saysNotConfirmed) notConfirmed++;
+            expect(saysOfficial && saysNotConfirmed, `${tier}/${label}/${checked}/${url}`).toBe(false);
+          }
+    // Non-vacuous: both halves really do render somewhere in the matrix.
+    expect(official).toBeGreaterThan(0);
+    expect(notConfirmed).toBeGreaterThan(0);
+  });
+
+  it('an official-tier listing is unchanged: "Official source:" and "View official source", fresh or not', async () => {
+    for (const checked of ['2020-01-01T00:00:00.000Z', new Date().toISOString()])
+      for (const label of MANUAL_LABELS) {
+        const detail = renderDetail(
+          mapListingRecordToActivity(
+            await load(curatedRow({ source_authority_tier: 'official', confidence_label: label, last_checked_at: checked, source_url: 'https://vancouver.ca/parks/kits-pool' })),
+          ),
+        );
+        expect(detail, `${label}/${checked}`).toContain('Official source: <a class="kf-srclink" href="https://vancouver.ca/parks/kits-pool"');
+        expect(count(detail, 'View official source'), `${label}/${checked}`).toBe(1);
+        expect(detail).not.toContain('View source');
+        expect(detail).toContain('Verified — confirmed directly by the official source');
+      }
+  });
+
+  it('a booking URL still labels the hero with the booking action, on either tier', async () => {
+    for (const tier of ['manual', 'official']) {
+      const detail = renderDetail(
+        mapListingRecordToActivity(await load(curatedRow({ source_authority_tier: tier, booking_url: 'https://example.org/register' }))),
+      );
+      expect(detail, tier).not.toContain('View official source');
+      expect(detail, tier).not.toContain('View source');
+    }
+  });
+
+  it('a cancelled curated listing keeps a source control, without the adjective', async () => {
+    const detail = renderDetail(
+      mapListingRecordToActivity(
+        await load(curatedRow({ status_state: 'cancelled', source_url: AGGREGATOR_URLS[0], booking_url: 'https://example.org/register' })),
+      ),
+    );
+    expect(detail).toContain('View source');
+    expect(detail).not.toContain('Official source');
+    expect(detail).not.toContain('View official source');
+  });
+
+  it('sourceLinkWording says "official" exactly when confidenceSentence says "Verified"', () => {
+    for (const tier of ['confirmed', 'official', 'editorial', 'candidate'] as const) {
+      const official = sourceLinkWording(tier).lead === 'Official source';
+      expect(official, tier).toBe(confidenceSentence(tier).startsWith('Verified'));
+      expect(sourceLinkWording(tier).action, tier).toBe(official ? 'View official source' : 'View source');
+    }
   });
 });

@@ -592,6 +592,54 @@ export function confidenceSentence(confidence: ConfidenceLabel): string {
 }
 
 /**
+ * How the detail page names a listing's source LINK: the "Official source: <host>" lead in the
+ * Source & freshness panel, and the hero's "View official source" control.
+ *
+ * ═══ "OFFICIAL" IS A TIER CLAIM, SO IT COMES FROM THE TIER (QA, 2026-09-24) ═══
+ * Both strings used to be literals, printed for every listing that had a source URL. That was
+ * true when every source URL came from an official-tier adapter feed. It stopped being true for
+ * the operator-curated import (authority_tier 'manual'), whose source_url is whatever page the
+ * researcher cited: often the organiser's own site, but on ~31 of 435 loadable rows a tourism
+ * board, a listings site, a news outlet or a Facebook page (visitrichmondbc.com,
+ * vancouversbestplaces.com, tourismburnaby.com, dailyhive.com, …). Those rendered
+ * "Official source: dailyhive.com".
+ *
+ * And since 61c3404 capped manual-tier rows at 'editorial'/'inferred', the SAME panel line also
+ * says "From an editorial or listings source, not directly confirmed by the venue or organiser"
+ * on every one of the 275 editorial-tier curated rows, organiser domain or not. The lead and the
+ * sentence were computed from two unrelated facts (a hard-coded literal vs. the tier), so they
+ * could disagree, and did, in one breath.
+ *
+ * Keying the word "official" off the same tier `confidenceSentence` and `confidenceMeta` read
+ * makes that disagreement impossible by construction: "Official source" appears exactly when the
+ * sentence says "Verified — confirmed directly by the official source". This is deliberately NOT a
+ * list of aggregator hostnames. A list only covers the hosts someone has already spotted, and the
+ * next curated batch brings new ones. The tier covers every row, now and later. The link itself,
+ * its host name and the hero control are unchanged; only the unearned adjective goes.
+ *
+ * Every official-tier listing maps to 'confirmed' or 'official' (postgres-repository.ts
+ * `confidence()`), so the adapter-fed catalogue reads exactly as before.
+ */
+export interface SourceLinkWording {
+  /** Lead before the linked host in the Source & freshness panel, e.g. "Official source". */
+  lead: string;
+  /** The hero control's label when it points at the source (no booking URL, or blocked). */
+  action: string;
+}
+
+export function sourceLinkWording(confidence: ConfidenceLabel): SourceLinkWording {
+  switch (confidence) {
+    case 'confirmed':
+    case 'official':
+      return { lead: 'Official source', action: 'View official source' };
+    case 'editorial':
+    case 'candidate':
+    default:
+      return { lead: 'Source', action: 'View source' };
+  }
+}
+
+/**
  * Plain-language age read for the "Who it's for" section. Grounded ONLY in the
  * numeric age_min/age_max the source gave us — no invented "fit score". Maps the
  * range onto the canonical age_band taxonomy (under2 / 2-4 / 5-9 / 10-14 / 15+)
