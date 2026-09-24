@@ -82,6 +82,14 @@ export const ACTIVE_USER_EXCLUSION_MINUTE_THRESHOLD = 10;
 import { createHmac } from 'node:crypto';
 import { query } from '@/lib/db/client';
 import { phoneHashSalt } from '@/lib/sms/config';
+import {
+  DB_LIMITER_DEADLINE_MS,
+  SearchRateLimitDeadlineError,
+  defaultSearchRateLimitDegradedState,
+  describeLimiterFailure,
+  withDeadline,
+  type SearchRateLimitDegradedState,
+} from '@/lib/security/search-rate-limit-degraded';
 
 type WindowGranularity = 'minute' | 'hour';
 type IdentityKind = 'ip' | 'session';
@@ -102,19 +110,29 @@ export interface SearchRateLimitResult {
   /** Whole seconds until the refused bucket next admits a request. 0 when allowed. */
   retryAfterSeconds: number;
   /**
-   * The check could not run — no salt provisioned, no usable subject (neither IP nor session
-   * present), or the counter table itself errored (e.g. migration 0051 not applied yet) — and the
-   * request was let through. FAIL OPEN, deliberately, matching every other throttle in this repo
-   * (lib/sms/instant-picks-throttle.ts's header makes the argument in full): a limiter that can
-   * 500 or block real traffic because ITS OWN table is unreachable is worse than the abuse it
-   * exists to stop. The caller (app/api/search/route.ts) reports 'db_error' and 'no_salt' to
-   * Sentry (the latter because it means the limiter is a COMPLETE, SILENT no-op — every request
-   * degrades open); 'no_subject' is a property of one request, not a standing misconfiguration,
-   * and is not reported.
+   * The DB check could not run, and the decision came from somewhere else:
+   *   • 'no_salt' / 'no_subject' — there is nothing to count against, so the request is let
+   *     through (FAIL OPEN, unchanged). 'no_salt' means the limiter is a COMPLETE, SILENT no-op
+   *     and the caller reports it; 'no_subject' is a property of one request and is not reported.
+   *   • 'db_error' — the counter table errored, hit its deadline, or the breaker is open. Since
+   *     2026-09-24 this is NOT fail-open any more: the same buckets and limits are evaluated
+   *     against a per-instance in-memory counter (`fallback: 'memory'`), so the request can still
+   *     be REFUSED. Not fail-closed either: a limiter that blocked real parents because ITS OWN
+   *     table is unreachable (while search still worked from cache, or a migration had not landed
+   *     yet) would be worse than the abuse it exists to stop. See
+   *     lib/security/search-rate-limit-degraded.ts for the full reasoning.
    */
   degraded: boolean;
-  /** Why `degraded` is true. Null when allowed and not degraded. */
+  /** Why `degraded` is true. Null when not degraded. */
   degradedReason: 'no_salt' | 'no_subject' | 'db_error' | null;
+  /** 'memory' when the decision came from the in-memory fallback (only with 'db_error'). */
+  fallback: 'memory' | null;
+  /**
+   * Short, non-secret description of why the DB limiter was unavailable — the pg/Node error code
+   * plus a truncated message, `SEARCH_RATE_LIMIT_DEADLINE: …`, or `breaker_open`. Null unless
+   * `degradedReason === 'db_error'`. For reporting only; never put it in a response body.
+   */
+  degradedCause: string | null;
   /**
    * The subject's ALLOWED count in the current MINUTE bucket, for whichever identity actually
    * governed the decision — session when a session subject was checked, else ip. Null when
@@ -156,7 +174,18 @@ export interface SearchRateLimitOptions {
   limits?: SearchRateLimitLimits;
   /** Injected for tests; defaults to the shared pool in lib/db/client.ts. */
   query?: typeof query;
+  /** Injected for tests; defaults to this instance's shared breaker + memory fallback. */
+  degradedState?: SearchRateLimitDegradedState;
+  /** Injected for tests; defaults to DB_LIMITER_DEADLINE_MS. */
+  dbDeadlineMs?: number;
 }
+
+type BucketCounter = (
+  scope: Scope,
+  hash: string,
+  windowSeconds: number,
+  maxAttempts: number
+) => Promise<{ allowed: boolean; attempts: number }>;
 
 /** HMAC the subject under the shared SMS phone-hash salt, domain-separated per identity kind —
  *  same pattern as lib/sms/instant-picks-throttle.ts's `instantPicksSubjectHash`. Reusing the salt
@@ -206,6 +235,11 @@ async function countAttempt(
  * Check (and, if allowed, record) one request against the search rate limit. NEVER THROWS — a
  * limiter that can 500 the page is a worse outage than the traffic it is meant to stop.
  *
+ * When the counter table cannot answer (error, DB_LIMITER_DEADLINE_MS exceeded, or this instance's
+ * breaker is open), the SAME decision is made against an in-memory fallback and returned with
+ * `degradedReason: 'db_error', fallback: 'memory'` — so a DB outage no longer lets every request
+ * through. See lib/security/search-rate-limit-degraded.ts.
+ *
  * Order of checks: ip_minute, ip_hour, session_minute, session_hour. IP first because it is the
  * CHEAPER-TO-EVALUATE, more generous backstop (see this module's header) — a request that IP
  * already refuses should not also spend a session-scope write, exactly like lib/sms/throttle.ts's
@@ -251,6 +285,8 @@ export async function checkSearchRateLimit(
       retryAfterSeconds: 0,
       degraded: true,
       degradedReason,
+      fallback: null,
+      degradedCause: null,
       minuteAttempts: null,
       sessionMinuteAttempts: null,
     };
@@ -266,99 +302,166 @@ export async function checkSearchRateLimit(
   // `run` down here means a request with no subject (the branch above) never touches `query` at
   // all, exactly like it never touches the database.
   const run = options.query ?? query;
+  const state = options.degradedState ?? defaultSearchRateLimitDegradedState;
+  const deadlineMs = options.dbDeadlineMs ?? DB_LIMITER_DEADLINE_MS;
+
+  if (!state.breaker.tryAcquire(Date.now())) {
+    return memoryFallback(state, ipHash, sessionHash, limits, 'breaker_open');
+  }
 
   try {
-    let minuteAttempts: number | null = null;
-    // Stays null unless the session bucket is actually reached — see this field's header on
-    // SearchRateLimitResult for why an ip-derived count must never leak into it (F3).
-    let sessionMinuteAttempts: number | null = null;
-
-    if (ipHash) {
-      const minute = await countAttempt(run, 'ip_minute', ipHash, WINDOW_SECONDS.minute, limits.ip.perMinute);
-      if (!minute.allowed) {
-        return {
-          allowed: false,
-          reason: 'ip_minute',
-          retryAfterSeconds: WINDOW_SECONDS.minute,
-          degraded: false,
-          degradedReason: null,
-          minuteAttempts: minute.attempts,
-          sessionMinuteAttempts: null,
-        };
-      }
-      minuteAttempts = minute.attempts;
-
-      const hour = await countAttempt(run, 'ip_hour', ipHash, WINDOW_SECONDS.hour, limits.ip.perHour);
-      if (!hour.allowed) {
-        return {
-          allowed: false,
-          reason: 'ip_hour',
-          retryAfterSeconds: WINDOW_SECONDS.hour,
-          degraded: false,
-          degradedReason: null,
-          minuteAttempts,
-          sessionMinuteAttempts: null,
-        };
-      }
-    }
-
-    if (sessionHash) {
-      const minute = await countAttempt(run, 'session_minute', sessionHash, WINDOW_SECONDS.minute, limits.session.perMinute);
-      if (!minute.allowed) {
-        return {
-          allowed: false,
-          reason: 'session_minute',
-          retryAfterSeconds: WINDOW_SECONDS.minute,
-          degraded: false,
-          degradedReason: null,
-          minuteAttempts: minute.attempts,
-          sessionMinuteAttempts: minute.attempts,
-        };
-      }
-      // The session-scope minute count is the more precise DIAGNOSTIC signal when both
-      // identities were checked (it is the exact subject, not a possibly-shared IP), so it wins
-      // for `minuteAttempts`. `sessionMinuteAttempts` is set HERE and only here — the one place
-      // in this function a real session subject was confirmed present.
-      minuteAttempts = minute.attempts;
-      sessionMinuteAttempts = minute.attempts;
-
-      const hour = await countAttempt(run, 'session_hour', sessionHash, WINDOW_SECONDS.hour, limits.session.perHour);
-      if (!hour.allowed) {
-        return {
-          allowed: false,
-          reason: 'session_hour',
-          retryAfterSeconds: WINDOW_SECONDS.hour,
-          degraded: false,
-          degradedReason: null,
-          minuteAttempts,
-          sessionMinuteAttempts,
-        };
-      }
-    }
-
-    return {
-      allowed: true,
-      reason: null,
-      retryAfterSeconds: 0,
-      degraded: false,
-      degradedReason: null,
-      minuteAttempts,
-      sessionMinuteAttempts,
-    };
+    const result = await withDeadline(
+      (budget) =>
+        evaluateBuckets(
+          (scope, hash, windowSeconds, maxAttempts) => {
+            // Once the deadline has fired, the abandoned sequence must not go on to issue its
+            // remaining statements against a pool that is already struggling.
+            if (budget.expired) return Promise.reject(new SearchRateLimitDeadlineError(deadlineMs));
+            return countAttempt(run, scope, hash, windowSeconds, maxAttempts);
+          },
+          ipHash,
+          sessionHash,
+          limits
+        ),
+      deadlineMs
+    );
+    state.breaker.recordSuccess();
+    return result;
   } catch (err) {
-    // The counter table errored (most likely: migration 0051 not applied yet in this
-    // environment — a deploy-ordering state, not an attack). Fail open and let the caller decide
-    // whether to report it (a genuine DB outage is worth Sentry noise; this deploy-ordering case
-    // resolves itself the moment the migration runs).
-    void err;
-    return {
-      allowed: true,
-      reason: null,
-      retryAfterSeconds: 0,
-      degraded: true,
-      degradedReason: 'db_error',
-      minuteAttempts: null,
-      sessionMinuteAttempts: null,
-    };
+    // The counter table errored, or did not answer within the deadline (a real DB outage, pooler
+    // exhaustion, or migration 0051 not applied yet). Count it against the breaker and decide
+    // from the in-memory fallback instead — see lib/security/search-rate-limit-degraded.ts.
+    state.breaker.recordFailure(Date.now());
+    return memoryFallback(state, ipHash, sessionHash, limits, describeLimiterFailure(err));
   }
+}
+
+/**
+ * The four-bucket decision — ip_minute, ip_hour, session_minute, session_hour, first refusal wins —
+ * against whichever counter it is handed (the DB table, or the in-memory fallback), so both paths
+ * share one definition of the ordering and short-circuit rules described on checkSearchRateLimit.
+ */
+async function evaluateBuckets(
+  count: BucketCounter,
+  ipHash: string | null,
+  sessionHash: string | null,
+  limits: SearchRateLimitLimits
+): Promise<SearchRateLimitResult> {
+  let minuteAttempts: number | null = null;
+  // Stays null unless the session bucket is actually reached — see this field's header on
+  // SearchRateLimitResult for why an ip-derived count must never leak into it (F3).
+  let sessionMinuteAttempts: number | null = null;
+
+  if (ipHash) {
+    const minute = await count('ip_minute', ipHash, WINDOW_SECONDS.minute, limits.ip.perMinute);
+    if (!minute.allowed) {
+      return {
+        allowed: false,
+        reason: 'ip_minute',
+        retryAfterSeconds: WINDOW_SECONDS.minute,
+        degraded: false,
+        degradedReason: null,
+        fallback: null,
+        degradedCause: null,
+        minuteAttempts: minute.attempts,
+        sessionMinuteAttempts: null,
+      };
+    }
+    minuteAttempts = minute.attempts;
+
+    const hour = await count('ip_hour', ipHash, WINDOW_SECONDS.hour, limits.ip.perHour);
+    if (!hour.allowed) {
+      return {
+        allowed: false,
+        reason: 'ip_hour',
+        retryAfterSeconds: WINDOW_SECONDS.hour,
+        degraded: false,
+        degradedReason: null,
+        fallback: null,
+        degradedCause: null,
+        minuteAttempts,
+        sessionMinuteAttempts: null,
+      };
+    }
+  }
+
+  if (sessionHash) {
+    const minute = await count('session_minute', sessionHash, WINDOW_SECONDS.minute, limits.session.perMinute);
+    if (!minute.allowed) {
+      return {
+        allowed: false,
+        reason: 'session_minute',
+        retryAfterSeconds: WINDOW_SECONDS.minute,
+        degraded: false,
+        degradedReason: null,
+        fallback: null,
+        degradedCause: null,
+        minuteAttempts: minute.attempts,
+        sessionMinuteAttempts: minute.attempts,
+      };
+    }
+    // The session-scope minute count is the more precise DIAGNOSTIC signal when both
+    // identities were checked (it is the exact subject, not a possibly-shared IP), so it wins
+    // for `minuteAttempts`. `sessionMinuteAttempts` is set HERE and only here — the one place
+    // in this function a real session subject was confirmed present.
+    minuteAttempts = minute.attempts;
+    sessionMinuteAttempts = minute.attempts;
+
+    const hour = await count('session_hour', sessionHash, WINDOW_SECONDS.hour, limits.session.perHour);
+    if (!hour.allowed) {
+      return {
+        allowed: false,
+        reason: 'session_hour',
+        retryAfterSeconds: WINDOW_SECONDS.hour,
+        degraded: false,
+        degradedReason: null,
+        fallback: null,
+        degradedCause: null,
+        minuteAttempts,
+        sessionMinuteAttempts,
+      };
+    }
+  }
+
+  return {
+    allowed: true,
+    reason: null,
+    retryAfterSeconds: 0,
+    degraded: false,
+    degradedReason: null,
+    fallback: null,
+    degradedCause: null,
+    minuteAttempts,
+    sessionMinuteAttempts,
+  };
+}
+
+/**
+ * The same buckets and limits, counted in this instance's memory. Marked degraded, and neither
+ * attempts field is populated: an in-memory count is per instance and approximate, so it must not
+ * reach analytics_event.search_minute_request_count ("null means not measured").
+ */
+async function memoryFallback(
+  state: SearchRateLimitDegradedState,
+  ipHash: string | null,
+  sessionHash: string | null,
+  limits: SearchRateLimitLimits,
+  cause: string
+): Promise<SearchRateLimitResult> {
+  const decision = await evaluateBuckets(
+    (scope, hash, windowSeconds, maxAttempts) =>
+      Promise.resolve(state.store.countAttempt(scope, hash, windowSeconds, maxAttempts, Date.now())),
+    ipHash,
+    sessionHash,
+    limits
+  );
+  return {
+    ...decision,
+    degraded: true,
+    degradedReason: 'db_error',
+    fallback: 'memory',
+    degradedCause: cause,
+    minuteAttempts: null,
+    sessionMinuteAttempts: null,
+  };
 }
