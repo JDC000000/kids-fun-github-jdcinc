@@ -38,6 +38,7 @@ import { readCookie } from '@/lib/http/request-context';
 import { clientIpFrom } from '@/lib/sms/client-ip';
 import { ANON_SESSION_COOKIE } from '@/lib/db/session';
 import { checkSearchRateLimit } from '@/lib/security/search-rate-limit';
+import { defaultSearchRateLimitDegradedState } from '@/lib/security/search-rate-limit-degraded';
 // Stage 2a — reuse the rail's own vocabulary for the new typed params (age/when/time) rather
 // than duplicating the allowed-value lists, so route.ts and the /search page can never accept
 // different sets. See app/search/_lib/params.ts's header for the structured-vs-composed split.
@@ -69,9 +70,18 @@ async function searchGet(request: Request): Promise<NextResponse> {
     ip: clientIpFrom(request.headers),
     sessionId: readCookie(request.headers, ANON_SESSION_COOKIE) ?? null,
   });
-  if (rateLimit.degraded && (rateLimit.degradedReason === 'db_error' || rateLimit.degradedReason === 'no_salt')) {
-    // db_error: expected once, harmlessly, the moment this ships ahead of migration 0051 being
-    // applied to an environment; anything after that is a real counter-table outage worth seeing.
+  const degradedReason = rateLimit.degradedReason;
+  if (
+    rateLimit.degraded &&
+    (degradedReason === 'db_error' || degradedReason === 'no_salt') &&
+    defaultSearchRateLimitDegradedState.reportThrottle.shouldReport(degradedReason, Date.now())
+  ) {
+    // db_error: the counter table errored, hit its deadline, or this instance's breaker is open —
+    // the decision above came from the in-memory fallback (lib/security/search-rate-limit-degraded.ts),
+    // so the limit is still enforced, approximately. Worth seeing: expected once around a deploy that
+    // ships ahead of its migration; anything else is a real counter-table or DB outage. `cause`
+    // carries the pg/Node error code so the next audit can tell those apart (the 2026-09-24 audit
+    // could not — the error used to be discarded).
     // no_salt: SMS_PHONE_HASH_SALT unset/rotated means the limiter is a COMPLETE, SILENT no-op —
     // every request degrades open with no subject to count against. That is expected in dev/test
     // (captureAndFlush no-ops with no Sentry DSN configured, so this costs nothing there) but is
@@ -79,10 +89,23 @@ async function searchGet(request: Request): Promise<NextResponse> {
     // unnoticed in an environment where it does have a DSN. 'no_subject' (a request with neither
     // an IP nor a session — now rare after forwardedIdentityHeaders, see app/search/page.tsx) is
     // NOT reported: it is a property of one request, not a standing misconfiguration.
-    await captureAndFlush(new Error(`search_rate_limit_degraded:${rateLimit.degradedReason}`), undefined, {
-      route: 'api/search',
-      operation: 'check_search_rate_limit',
-    });
+    // Reported at most once per reason per minute per instance (it used to be every degraded
+    // request — one event plus one blocking flush each, for the whole length of an outage), and
+    // fingerprinted per reason so db_error and no_salt can never again share one Sentry issue.
+    await captureAndFlush(
+      new Error(`search_rate_limit_degraded:${degradedReason}`),
+      undefined,
+      {
+        route: 'api/search',
+        operation: 'check_search_rate_limit',
+        degraded_reason: degradedReason,
+        rate_limit_fallback: rateLimit.fallback ?? 'none',
+      },
+      {
+        fingerprint: ['search_rate_limit_degraded', degradedReason],
+        extra: { cause: rateLimit.degradedCause },
+      }
+    );
   }
   if (!rateLimit.allowed) {
     return jsonRateLimited(rateLimit.retryAfterSeconds);
