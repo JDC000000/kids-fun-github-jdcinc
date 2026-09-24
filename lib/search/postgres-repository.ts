@@ -352,6 +352,12 @@ function confidence(label: string | null, authority: string | null, checked: Dat
   const daysOld = checked ? (Date.now() - new Date(checked).getTime()) / 86_400_000 : Number.POSITIVE_INFINITY;
   if (authority === 'official' && daysOld <= 7) return 'official_recent';
   if (authority === 'official') return 'official';
+  // OUR OWN RESEARCH IS NEVER "THE OFFICIAL SOURCE". A 'manual'-tier source is operator-authored
+  // (the same provenance sourceAgeNotes() keys on), and the operator's own 'high' confidence in a
+  // row is not the organiser confirming it — yet the line below turned it into 'official', which
+  // the detail page renders as "Verified — confirmed directly by the official source" (122 curated
+  // rows, QA 2026-09-24). Capped at 'editorial': "not directly confirmed by the venue or organiser".
+  if (authority === 'manual') return label === 'high' || label === 'medium' ? 'editorial' : 'inferred';
   if (label === 'high') return 'official';
   if (label === 'medium') return 'editorial';
   if (label === 'low') return 'inferred';

@@ -215,3 +215,37 @@ describe('C — a missing or zero-length end never prints "X–X"', () => {
     }
   });
 });
+
+describe('D — operator research is never "Verified — confirmed directly by the official source"', () => {
+  // Same class as B: a false claim about where the content came from. confidence() mapped a
+  // manual-tier row's own 'high' label to 'official' (122 curated rows in production).
+  const OFFICIAL_CLAIM = 'confirmed directly by the official source';
+
+  it('read model: a manual-tier row is capped at editorial / inferred, whatever its own label says', async () => {
+    expect((await load(curatedRow({ confidence_label: 'high' }))).confidenceLabel).toBe('editorial');
+    expect((await load(curatedRow({ confidence_label: 'medium' }))).confidenceLabel).toBe('editorial');
+    expect((await load(curatedRow({ confidence_label: 'low' }))).confidenceLabel).toBe('inferred');
+    expect((await load(curatedRow({ confidence_label: null }))).confidenceLabel).toBe('inferred');
+    // Fresh check date must not promote it either (the official_recent arm is official-only).
+    expect((await load(curatedRow({ confidence_label: 'high', last_checked_at: new Date().toISOString() }))).confidenceLabel).toBe('editorial');
+  });
+
+  it('the detail page makes no official-source verification claim for a manual-tier row', async () => {
+    const detail = renderDetail(mapListingRecordToActivity(await load(curatedRow({ confidence_label: 'high' }))));
+    expect(detail).not.toContain(OFFICIAL_CLAIM);
+    expect(detail).toContain('not directly confirmed by the venue or organiser');
+  });
+
+  it('an official source is unchanged', async () => {
+    expect((await load(curatedRow({ source_authority_tier: 'official', confidence_label: 'high', last_checked_at: '2020-01-01T00:00:00.000Z' }))).confidenceLabel).toBe('official');
+    const detail = renderDetail(
+      mapListingRecordToActivity(await load(curatedRow({ source_authority_tier: 'official', confidence_label: 'high', last_checked_at: '2020-01-01T00:00:00.000Z' }))),
+    );
+    expect(detail).toContain(OFFICIAL_CLAIM);
+  });
+
+  it('other non-official tiers keep their existing mapping (out of scope, pinned so a change is deliberate)', async () => {
+    expect((await load(curatedRow({ source_authority_tier: 'partner', confidence_label: 'high' }))).confidenceLabel).toBe('official');
+    expect((await load(curatedRow({ source_authority_tier: 'editorial', confidence_label: 'medium' }))).confidenceLabel).toBe('editorial');
+  });
+});
