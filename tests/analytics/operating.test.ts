@@ -14,6 +14,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { closePool, query } from '../../lib/db/client';
+import { TODAY_SEED_ANCHOR_SQL } from '../../lib/testing/today-seed-anchor';
 import {
   ACTIVATION_EVENT_TYPES,
   DAILY_REVIEW_PERIODS,
@@ -457,7 +458,8 @@ describe('buildOperatingKpis', () => {
 // Layer 2: the real SQL against real Postgres
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Insert one analytics_event at a chosen age (minutes) for a chosen session. Optionally
+/** Insert one analytics_event at a chosen age (minutes, measured back from TODAY_SEED_ANCHOR_SQL
+ *  so a recent event stays in today's bucket even just after midnight) for a chosen session. Optionally
  *  stamps `search_minute_request_count` (the 2026-09-22 high-frequency signal — see
  *  lib/analytics/high-frequency-exclusion.ts) so a test can mint a threshold-crossing row. */
 async function insertEvent(
@@ -470,7 +472,7 @@ async function insertEvent(
   await query(
     `INSERT INTO analytics_event
        (event_type, user_or_session, created_at, result_summary_json, search_minute_request_count)
-       VALUES ($1, $2, now() - ($3 || ' minutes')::interval, $4, $5)`,
+       VALUES ($1, $2, ${TODAY_SEED_ANCHOR_SQL} - ($3 || ' minutes')::interval, $4, $5)`,
     [
       eventType,
       session,

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, it, expect, vi } from 'vitest';
+import { afterAll, afterEach, describe, it, expect, onTestFinished, vi } from 'vitest';
 import {
   VenueAdapter,
   LAUNCH_VENUES,
@@ -19,6 +19,8 @@ import { parseQualityFactor, computeConfidence, statusForConfidence } from '../.
 import { ingestSource } from '../../worker/core/ingest';
 import { loadPostgresListings, loadPostgresListingById } from '../../lib/search/postgres-repository';
 import { getPool, query, closePool } from '../../lib/db/client';
+import { deleteSourceRows } from '../../lib/testing/delete-source-rows';
+import type { VenueConfig } from '../../worker/adapters/venue/config';
 
 // KIDS FUN Round 22 / Task LL — Venue (museum/attraction) adapter (T11).
 // Parses the semi-structured schema.org data a venue embeds in its public HTML:
@@ -298,6 +300,28 @@ describe('Venue adapter — live path is a credential-free GET of schema.org HTM
 });
 
 // ── DB-backed end-to-end: fixture -> ingest pipeline -> search read model ─────
+
+/**
+ * The launch config's fixture events are calendar-dated, and once the last of them ended
+ * (2026-09-13) the read model's visibility gate hid every special event, so this suite failed
+ * on every run. The config registry is not the test's to edit (it is what the worker ingests),
+ * so the suite ingests a COPY whose events are moved, spacing and durations intact, to start a
+ * week after the run.
+ */
+function withUpcomingFixtureEvents(config: VenueConfig): VenueConfig {
+  const earliestStartMs = Math.min(...config.fixtureEvents.map((e) => Date.parse(e.startDatetimeUtc)));
+  const shiftMs = Date.now() + 7 * 86_400_000 - earliestStartMs;
+  const shift = (iso: string) => new Date(Date.parse(iso) + shiftMs).toISOString();
+  return {
+    ...config,
+    fixtureEvents: config.fixtureEvents.map((event) => ({
+      ...event,
+      startDatetimeUtc: shift(event.startDatetimeUtc),
+      ...(event.endDatetimeUtc ? { endDatetimeUtc: shift(event.endDatetimeUtc) } : {}),
+    })),
+  };
+}
+
 describe.skipIf(!hasDb)('Venue ingest end-to-end + search visibility (G-T11-1/2/4)', () => {
   afterAll(async () => {
     await closePool();
@@ -312,8 +336,11 @@ describe.skipIf(!hasDb)('Venue ingest end-to-end + search visibility (G-T11-1/2/
       `INSERT INTO source (family, name, authority_tier, terms_status) VALUES ('venue_html', $1, 'official', 'allowed') RETURNING id`,
       [`Venue Ingest Source ${crypto.randomUUID()}`]
     );
+    // An allowed Vancouver source with a fresh `success` check run is exactly what
+    // coverage-status's region "last crawl" reads, so it must not outlive this test.
+    onTestFinished(() => deleteSourceRows(source.id));
 
-    const adapter = new VenueAdapter(getVenue('vancouver-aquarium')!);
+    const adapter = new VenueAdapter(withUpcomingFixtureEvents(getVenue('vancouver-aquarium')!));
     const summary = await ingestSource(pool, adapter, source.id);
 
     expect(summary.errors).toEqual([]);

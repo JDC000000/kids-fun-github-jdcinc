@@ -36,7 +36,13 @@ db_log="$(mktemp)"
 trap 'rm -f "$unit_log" "$db_log"' EXIT
 
 # --fileParallelism overrides the base config's serial default for this lane only.
-npx vitest run --project unit --fileParallelism >"$unit_log" 2>&1 &
+# The unit lane is "every file that CANNOT reach the database" (vitest.workspace.ts) — so it
+# runs WITHOUT the database env, rather than trusting each file to ignore it. CI exports
+# DATABASE_URL at job level for the db lane; inherited here, it let a unit-lane file open real
+# connections, and tests/sms/weekly_send_io.test.ts's "fails without a database" backstop
+# case received a working DB and failed deterministically in CI (not a flake).
+env -u DATABASE_URL -u USER_DATABASE_URL \
+  npx vitest run --project unit --fileParallelism >"$unit_log" 2>&1 &
 unit_pid=$!
 npx vitest run --project db >"$db_log" 2>&1 &
 db_pid=$!

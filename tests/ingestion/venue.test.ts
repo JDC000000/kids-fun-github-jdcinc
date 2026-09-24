@@ -1,5 +1,6 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, onTestFinished } from 'vitest';
 import { getPool, query, closePool } from '../../lib/db/client';
+import { deleteSourceRows } from '../../lib/testing/delete-source-rows';
 import { resolveVenue } from '../../worker/core/venue';
 import { VENUE_GEO_AUTHORITY } from '../../worker/core/venue-geo-authority';
 import { ingestSource } from '../../worker/core/ingest';
@@ -168,6 +169,9 @@ describe.skipIf(!hasDb)('venue resolver', () => {
       `INSERT INTO source (family, name, terms_status) VALUES ('activenet', $1, 'allowed') RETURNING id`,
       [`Ingest Phone Source ${crypto.randomUUID()}`]
     );
+    // Allowed + Vancouver + a fresh `success` check run: left behind, it becomes the region's
+    // "last crawl" in tests/coverage-status-db.test.ts.
+    onTestFinished(() => deleteSourceRows(source.id));
     const summary = await ingestSource(pool, adapter, source.id);
     expect(summary.errors).toEqual([]);
 

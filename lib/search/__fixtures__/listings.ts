@@ -22,6 +22,14 @@
 // (lowest band's lower bound → highest band's upper bound, null when the set reaches 15+), so
 // the pair round-trips exactly back through computeAgeBandMatches to the bands already stated.
 
+// EVERY LISTING NAMES ITS SOURCE (added 2026-09-24), for the same reason. Since 46f721c
+// (2026-09-11) a listing with no usable source URL renders no source name, which is correct
+// for real data and stops "fixture source" reaching parents. But none of these listings had a
+// URL, so KPI #5 went from 100% to 0/14 and the eval failed on every run. Real ingested
+// listings always carry an https source (tests/compliance/attribution.test.ts), so this
+// catalogue should too. The URLs are on the reserved example.org domain because the
+// activities are fictional and must not link to a real organisation's site.
+
 import type { ListingRecord } from '../types';
 import { makeListing } from './factory';
 import { REGION_IDS } from './regions';
@@ -41,6 +49,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- open_gym cluster (FR-02 relevance, typo tolerance, radius) ---
   makeListing({
     id: 'l-opengym-van',
+    sourceUrl: 'https://example.org/activities/l-opengym-van',
     activityName: 'Open Gym Drop-In',
     primaryCategoryKey: 'open_gym',
     categoryTags: ['drop_in'],
@@ -69,6 +78,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   }),
   makeListing({
     id: 'l-gymplay-nvan',
+    sourceUrl: 'https://example.org/activities/l-gymplay-nvan',
     activityName: 'Gymnasium Play Session',
     primaryCategoryKey: 'open_gym',
     categoryTags: ['drop_in'],
@@ -91,6 +101,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   }),
   makeListing({
     id: 'l-familydropin-bby',
+    sourceUrl: 'https://example.org/activities/l-familydropin-bby',
     activityName: 'Family Drop-In Gym',
     primaryCategoryKey: 'open_gym',
     categoryTags: ['drop_in'],
@@ -113,6 +124,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   }),
   makeListing({
     id: 'l-opengym-stale',
+    sourceUrl: 'https://example.org/activities/l-opengym-stale',
     activityName: 'Open Gym (unverified schedule)',
     primaryCategoryKey: 'open_gym',
     venueName: 'Old Hall Gym',
@@ -135,6 +147,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- Clean status-boost pair (G-T19-2): identical except status/confidence ---
   makeListing({
     id: 'l-rank-confirmed',
+    sourceUrl: 'https://example.org/activities/l-rank-confirmed',
     activityName: 'Rank Test Gym',
     primaryCategoryKey: 'open_gym',
     venueName: 'Test Centre',
@@ -156,6 +169,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   }),
   makeListing({
     id: 'l-rank-stale',
+    sourceUrl: 'https://example.org/activities/l-rank-stale',
     activityName: 'Rank Test Gym',
     primaryCategoryKey: 'open_gym',
     venueName: 'Test Centre',
@@ -179,6 +193,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- public_swim ---
   makeListing({
     id: 'l-publicswim-van',
+    sourceUrl: 'https://example.org/activities/l-publicswim-van',
     activityName: 'Family Public Swim',
     primaryCategoryKey: 'public_swim',
     venueName: 'Kitsilano Pool',
@@ -203,6 +218,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   }),
   makeListing({
     id: 'l-swim-nvan-evening',
+    sourceUrl: 'https://example.org/activities/l-swim-nvan-evening',
     activityName: 'Leisure Swim',
     primaryCategoryKey: 'public_swim',
     venueName: 'North Van Aquatic',
@@ -233,6 +249,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- skate (Richmond → outside 10km radius from East Van) ---
   makeListing({
     id: 'l-skate-rmd',
+    sourceUrl: 'https://example.org/activities/l-skate-rmd',
     activityName: 'Public Skate',
     primaryCategoryKey: 'skate',
     venueName: 'Richmond Ice Centre',
@@ -255,6 +272,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- storytime (free + unknown-cost variants for cost tests) ---
   makeListing({
     id: 'l-storytime-van',
+    sourceUrl: 'https://example.org/activities/l-storytime-van',
     activityName: 'Toddler Storytime',
     primaryCategoryKey: 'storytime',
     venueName: 'West Side Library',
@@ -275,6 +293,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   }),
   makeListing({
     id: 'l-storytime-unknown',
+    sourceUrl: 'https://example.org/activities/l-storytime-unknown',
     activityName: 'Family Storytime (check branch)',
     primaryCategoryKey: 'storytime',
     venueName: 'East Van Library',
@@ -296,6 +315,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- indoor_play ---
   makeListing({
     id: 'l-indoorplay-bby',
+    sourceUrl: 'https://example.org/activities/l-indoorplay-bby',
     activityName: 'Indoor Playground Open Play',
     primaryCategoryKey: 'indoor_play',
     venueName: 'Burnaby Play Centre',
@@ -319,6 +339,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- open-hours attraction (miniature_train) — no fixed occurrence times ---
   makeListing({
     id: 'l-minitrain-van',
+    sourceUrl: 'https://example.org/activities/l-minitrain-van',
     activityName: 'Miniature Train Ride',
     primaryCategoryKey: 'miniature_train',
     venueName: 'Stanley Park',
@@ -342,6 +363,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- open-hours indoor attraction (aquarium) — open 09:00–17:00 local ---
   makeListing({
     id: 'l-aquarium-van',
+    sourceUrl: 'https://example.org/activities/l-aquarium-van',
     activityName: 'Aquarium Daily Visit',
     primaryCategoryKey: 'aquarium',
     venueName: 'Vancouver Aquarium',
@@ -365,6 +387,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- expected/seasonal (out of season in July) → separate broadening section ---
   makeListing({
     id: 'l-toboggan-seasonal',
+    sourceUrl: 'https://example.org/activities/l-toboggan-seasonal',
     activityName: 'Tobogganing Hill',
     primaryCategoryKey: 'tobogganing',
     venueName: 'Mount Seymour',
@@ -384,6 +407,7 @@ export const FIXTURE_LISTINGS: ListingRecord[] = [
   // --- hidden (never surfaced) ---
   makeListing({
     id: 'l-cancelled-gym',
+    sourceUrl: 'https://example.org/activities/l-cancelled-gym',
     activityName: 'Cancelled Gym Session',
     primaryCategoryKey: 'open_gym',
     venueName: 'Britannia Community Centre',
