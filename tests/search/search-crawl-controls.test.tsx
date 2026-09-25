@@ -99,6 +99,32 @@ function anchors(html: string): Array<{ href: string; rel: string | null }> {
 
 const relTokens = (rel: string | null) => (rel ?? '').split(/\s+/).filter(Boolean);
 
+/**
+ * The raw-anchor guard (QA findings F3, R-F3): lines, as `file:line: text`, that render an anchor
+ * WITHOUT going through SearchLink. That means a JSX `<a` followed by whitespace, `>` or the END OF
+ * THE LINE (the multi-line form; R-F3 was `$` missing here), or a polymorphic `as="a"`.
+ * Comments are stripped first, keeping line numbers, because several files explain in prose that
+ * chips are "a real <a>".
+ * ONE allowlisted exception: ResultsMap's popup is an HTML STRING for the map library (not JSX),
+ * and its href is /preview/{id}, never /search.
+ */
+const RAW_ANCHOR = /<a(\s|>|$)/;
+const POLYMORPHIC_ANCHOR = /\bas=(\{\s*)?["']a["']/;
+const ALLOWED_RAW_ANCHORS = [/<a class="kf-map__pop" href="\/preview\//];
+function rawAnchorOffenders(files: ReadonlyArray<{ name: string; source: string }>): string[] {
+  const offenders: string[] = [];
+  for (const { name, source } of files) {
+    const code = source
+      .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ''))
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    code.split('\n').forEach((line, i) => {
+      const rawAnchor = RAW_ANCHOR.test(line) && !ALLOWED_RAW_ANCHORS.some((ok) => ok.test(line));
+      if (rawAnchor || POLYMORPHIC_ANCHOR.test(line)) offenders.push(`${name}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  return offenders;
+}
+
 const ORIGIN = 'https://kidsfunapp.ca';
 /** The robots.txt a crawler actually receives: Next's own serializer over app/robots.ts. */
 const ROBOTS_TXT = serializeRobotsTxt(robots());
@@ -386,28 +412,56 @@ describe('3a — which hrefs are /search permutations', () => {
 });
 
 describe('3b — rel="nofollow" on every link into a /search permutation, and nowhere else', () => {
-  it('no raw anchor anywhere under app/search: every link must go through SearchLink (QA finding F3)', () => {
+  it('no raw anchor anywhere under app/search: every link must go through SearchLink (QA findings F3, R-F3)', () => {
     // A raw <a href="/search?…"> (or a Chip rendered `as="a"`) would skip SearchLink and lose
     // rel="nofollow" without failing anything else. That is how QA's mutation M4a (a broadening chip
     // turned into <a> in page.tsx) passed the whole unit lane. The existing no-prefetch guard only
     // forbids IMPORTING next/link, so this complements it.
-    // ONE allowlisted exception: ResultsMap's popup is an HTML STRING for the map library (not JSX),
-    // and its href is /preview/{id}, never /search.
-    const ALLOWED_RAW_ANCHORS = [/<a class="kf-map__pop" href="\/preview\//];
     const searchDir = join(APP_DIR, 'search');
-    const offenders: string[] = [];
-    for (const path of sourceFiles(searchDir)) {
-      // Strip comments first: several files explain in prose that chips are "a real <a>".
-      const code = readFileSync(path, 'utf8')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/(^|[^:])\/\/.*$/gm, '$1');
-      code.split('\n').forEach((line, i) => {
-        const where = `${relative(searchDir, path)}:${i + 1}: ${line.trim()}`;
-        if (/<a[\s>]/.test(line) && !ALLOWED_RAW_ANCHORS.some((ok) => ok.test(line))) offenders.push(where);
-        if (/\bas=(\{\s*)?["']a["']/.test(line)) offenders.push(where);
-      });
-    }
-    expect(offenders).toEqual([]);
+    const files = sourceFiles(searchDir).map((path) => ({ name: relative(searchDir, path), source: readFileSync(path, 'utf8') }));
+    expect(files.length).toBeGreaterThan(10); // not vacuous
+    expect(rawAnchorOffenders(files)).toEqual([]);
+  });
+
+  it('the raw-anchor guard catches the MULTI-LINE form, `<a` alone at the end of a line (R-F3 control)', () => {
+    // Prettier writes long anchors this way. The first version of the guard tested /<a[\s>]/ per line,
+    // which never matched a line ENDING in `<a`, so this exact shape passed the whole unit lane
+    // (QA re-QA of 0b30aa0). The fixture is a broadening chip, as QA mutated it.
+    const multiLine = [
+      '{alternatives.map((chip) => (',
+      '  <li key={chip.key}>',
+      '    <a',
+      '      className="kf-broaden-chips__chip"',
+      '      href={chip.href}',
+      '    >',
+      '      {chip.label}',
+      '    </a>',
+      '  </li>',
+      '))}',
+    ].join('\n');
+    expect(multiLine.split('\n').some((line) => /<a[\s>]/.test(line))).toBe(false); // the old regex: blind
+    expect(rawAnchorOffenders([{ name: 'page.tsx', source: multiLine }])).toEqual(['page.tsx:3: <a']);
+  });
+
+  it('the raw-anchor guard: other RED shapes, and no false positives', () => {
+    const offending = [
+      '<a className="x" href={hrefFor(state)}>x</a>',
+      '<a href="/search?free=1">',
+      '<a>',
+      '<Chip as="a" href="/search?x=1">',
+      "<Chip as={'a'} href={h}>",
+    ];
+    for (const src of offending) expect(rawAnchorOffenders([{ name: 'f.tsx', source: src }]), src).toHaveLength(1);
+    const clean = [
+      '<Link href="/search?free=1">', // SearchLink imported as Link
+      '<abbr title="x">', '<area shape="rect">', '<aside>', // other elements starting with "a"
+      '// every chip here is a real <a> (implicit role="link")', // prose in a line comment
+      '{/* Each sort option is a real <a> link */}', // prose in a JSX comment
+      '/*\n * a multi-line comment mentioning <a\n */',
+      '`<a class="kf-map__pop" href="/preview/${id}">` +', // the one allowlisted HTML string
+      "const url = 'https://example.com/<a'; // a URL is not a comment",
+    ];
+    for (const src of clean) expect(rawAnchorOffenders([{ name: 'f.tsx', source: src }]), src).toEqual([]);
   });
 
   it('SearchLink (every link on /search goes through it) nofollows permutations only', () => {
