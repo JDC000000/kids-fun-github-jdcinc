@@ -32,8 +32,9 @@ import {
   getHealthAlerts,
   getRecentCorrections,
   type HealthAlerts,
-  type RecentCorrection,
+  type DisplayedCorrection,
 } from '@/lib/admin/dashboard';
+import type { PersonalDataOptions } from '@/lib/admin/personal-data';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants — targets and canonical taxonomy. The region/family lists are NOT
@@ -539,7 +540,8 @@ export interface DataHealthData {
   /** G-T33-2 — reused from lib/admin/dashboard.ts. */
   alerts: HealthAlerts;
   /** G-T33-4 recent list — reused from lib/admin/dashboard.ts. */
-  corrections: RecentCorrection[];
+  /** Redacted IN SQL for a read-only viewer (see getDataHealthData's `redactPersonalData`). */
+  corrections: DisplayedCorrection[];
 }
 
 /**
@@ -548,13 +550,16 @@ export interface DataHealthData {
  * a crash. `nowMs` threads a single clock through the SLA + staleness reads so both
  * agree on "now".
  */
-export async function getDataHealthData(nowMs: number = Date.now()): Promise<DataHealthData> {
+export async function getDataHealthData(
+  opts: PersonalDataOptions & { nowMs?: number }
+): Promise<DataHealthData> {
+  const nowMs = opts.nowMs ?? Date.now();
   const [sla, coverage, correctionsSummary, alerts, corrections] = await Promise.all([
     getSourceFreshnessSla(nowMs),
     getCoverageMatrix(),
     getCorrectionsQueueSummary(),
     getHealthAlerts(nowMs),
-    getRecentCorrections(),
+    getRecentCorrections({ redactPersonalData: opts.redactPersonalData }),
   ]);
   return {
     generatedAt: new Date(nowMs).toISOString(),

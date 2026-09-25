@@ -128,11 +128,16 @@ export interface DisplayedCorrection extends RecentCorrection {
 }
 
 /**
- * The recent-corrections list, ready to render for THIS admin. `note` is free text typed by a member
- * of the public (lib/snapshot/policy.ts classes it as PII); a read-only 'viewer' gets it NULLed, with
- * `hasNote` still saying whether one exists. Applied by /admin/dashboard and /admin/data-health
- * before anything renders — the dashboard's list comes from a role-independent snapshot, so there
- * is no per-role query to redact in (see lib/admin/personal-data.ts).
+ * The render-layer GUARD for the recent-corrections list: `note` is free text typed by a member of
+ * the public (lib/snapshot/policy.ts classes it as PII), NULLed here for a read-only 'viewer'.
+ *
+ * This is the SECOND line, not the first (QA M1, 2026-09-25). A viewer's list is already redacted IN
+ * SQL — getRecentCorrections({ redactPersonalData: true }) — on /admin/data-health (live query) and
+ * on /admin/dashboard, which reads a viewer's list live instead of from the role-independent
+ * snapshot. This guard then runs on whatever list a page is about to render, so a future edit that
+ * wires the wrong list in still cannot put a note on a viewer's screen. `hasNote` is taken from the
+ * SQL row when it has one (the note is already NULL there), else derived from the note.
+ * Pinned by a full render over a real database: tests/admin/viewer-render-db.test.ts.
  */
 export function correctionsForDisplay(
   list: readonly RecentCorrection[],
@@ -143,7 +148,10 @@ export function correctionsForDisplay(
     ...c,
     note: redact ? null : c.note,
     redacted: redact,
-    hasNote: typeof c.note === 'string' && c.note.length > 0,
+    hasNote:
+      'hasNote' in c && typeof (c as DisplayedCorrection).hasNote === 'boolean'
+        ? (c as DisplayedCorrection).hasNote
+        : typeof c.note === 'string' && c.note.length > 0,
   }));
 }
 
@@ -641,13 +649,17 @@ export async function getHealthAlerts(nowMs: number = Date.now()): Promise<Healt
  * for a human label. Read-only visibility — the actual triage (resolve/archive) is a
  * later data-health slice; this just surfaces that reports are arriving.
  */
-export async function getRecentCorrections(): Promise<RecentCorrection[]> {
+export async function getRecentCorrections(opts: PersonalDataOptions): Promise<DisplayedCorrection[]> {
+  // REDACTED IN SQL for a read-only 'viewer' (QA M1, 2026-09-25): the note never leaves the
+  // database; `has_note` is computed from the real column first so the page can still say one exists.
+  const redact = shouldRedact(opts);
   const rows = await query<{
     id: string;
     occurrence_id: string;
     activity_name: string | null;
     issue_type: string;
     note: string | null;
+    has_note: boolean;
     status: string;
     created_at: Date | null;
   }>(
@@ -657,7 +669,8 @@ export async function getRecentCorrections(): Promise<RecentCorrection[]> {
       cr.occurrence_id,
       o.activity_name,
       cr.issue_type,
-      cr.note,
+      CASE WHEN $2::boolean THEN NULL ELSE cr.note END AS note,
+      (coalesce(cr.note, '') <> '') AS has_note,
       cr.status,
       cr.created_at
     FROM correction_report cr
@@ -666,7 +679,7 @@ export async function getRecentCorrections(): Promise<RecentCorrection[]> {
     ORDER BY cr.created_at DESC
     LIMIT $1::int
     `,
-    [RECENT_CORRECTIONS_LIMIT]
+    [RECENT_CORRECTIONS_LIMIT, redact]
   );
   return rows.map((r) => ({
     id: r.id,
@@ -674,6 +687,8 @@ export async function getRecentCorrections(): Promise<RecentCorrection[]> {
     activityName: r.activity_name,
     issueType: r.issue_type,
     note: r.note,
+    redacted: redact,
+    hasNote: r.has_note,
     status: r.status,
     createdAt: toIso(r.created_at),
   }));
@@ -686,7 +701,10 @@ export async function getAdminDashboardData(): Promise<AdminDashboardData> {
     getIngestionHealth(),
     getAnalyticsSummary(),
     getHealthAlerts(),
-    getRecentCorrections(),
+    // The ROLE-INDEPENDENT snapshot payload (lib/admin/snapshot-refresh.ts stores it for every
+    // admin), so it carries the notes. It is never rendered to a read-only viewer: /admin/dashboard
+    // reads a viewer's list live, redacted in SQL — see the page.
+    getRecentCorrections({ redactPersonalData: false }),
   ]);
   return {
     generatedAt: new Date().toISOString(),

@@ -13,7 +13,7 @@
 //       subscriber detail page refuses the SMS preview for a viewer;
 //   (5) the five mutate-capable pages decide canMutate from the role, not from "has a session".
 // The SQL-level redaction itself is proven against a real database in viewer-role-db.test.ts.
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactElement } from 'react';
@@ -117,22 +117,81 @@ describe('(1) capabilities are fail-closed allow-lists', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 type Action = (fd: FormData) => Promise<{ ok: boolean; message?: string }>;
 
-function actionFiles(): string[] {
-  const root = join(process.cwd(), 'app/admin');
-  return readdirSync(root)
-    .map((d) => join('app/admin', d, 'actions.ts'))
-    .filter((f) => existsSync(join(process.cwd(), f)));
+// ── ENUMERATION (widened after QA L3, 2026-09-25) ────────────────────────────────────────
+// The first version read only `^export async function` in app/admin/<dir>/actions.ts, so an ungated
+// `export const x = async …` or a nested `'use server'` module (e.g. app/admin/x/_lib/more.ts) slipped
+// past it. Now: EVERY file under app/ is scanned (comments stripped); any module whose first statement
+// is a 'use server' directive is a server-action module, and EVERY export shape is collected. The set
+// of modules and the set of exported names must both equal the reviewed lists below, and no
+// function-level (inline) 'use server' may exist anywhere under app/.
+const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+function walkApp(dir = 'app'): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(join(process.cwd(), dir), { withFileTypes: true })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...walkApp(rel));
+    else if (/\.(ts|tsx|js|jsx|mjs)$/.test(entry.name) && !/\.(test|spec)\./.test(entry.name)) out.push(rel);
+  }
+  return out;
 }
 
-function exportedActionNames(file: string): string[] {
-  const src = readFileSync(join(process.cwd(), file), 'utf8');
-  return [...src.matchAll(/^export async function (\w+)\s*\(/gm)].map((m) => m[1]);
+const USE_SERVER = /(['"])use server\1/g;
+function isServerActionModule(code: string): boolean {
+  return /^\s*(['"])use server\1\s*;?/.test(code);
+}
+function inlineUseServerCount(code: string): number {
+  const all = (code.match(USE_SERVER) ?? []).length;
+  return isServerActionModule(code) ? all - 1 : all;
+}
+
+/** Every exported name of a module, whatever the export shape. */
+function exportedNames(code: string): string[] {
+  const names: string[] = [];
+  for (const m of code.matchAll(/^\s*export\s+(?:async\s+)?function\s*\*?\s*(\w+)/gm)) names.push(m[1]);
+  for (const m of code.matchAll(/^\s*export\s+(?:const|let|var|class)\s+(\w+)/gm)) names.push(m[1]);
+  for (const m of code.matchAll(/^\s*export\s*\{([^}]*)\}/gm)) {
+    for (const part of m[1].split(',')) {
+      const name = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name) names.push(name);
+    }
+  }
+  if (/^\s*export\s+default\b/m.test(code)) names.push('default');
+  if (/^\s*export\s*\*/m.test(code)) names.push('*');
+  return names;
+}
+
+function serverActionInventory(): Array<{ file: string; name: string }> {
+  return walkApp()
+    .map((file) => ({ file, code: stripComments(readFileSync(join(process.cwd(), file), 'utf8')) }))
+    .filter(({ code }) => isServerActionModule(code))
+    .flatMap(({ file, code }) => exportedNames(code).map((name) => ({ file, name })));
 }
 
 describe('(2) every admin server action refuses a viewer before touching anything', () => {
-  const all = actionFiles().flatMap((f) => exportedActionNames(f).map((name) => ({ file: f, name })));
+  const all = serverActionInventory();
 
-  it('finds exactly the 9 known actions (a new action must be added to this review)', () => {
+  it('the server-action MODULES under app/ are exactly the 5 reviewed ones (a new one must be added to this review)', () => {
+    expect([...new Set(all.map((a) => a.file))].sort()).toEqual(
+      [
+        'app/admin/corrections/actions.ts',
+        'app/admin/listings/actions.ts',
+        'app/admin/qa-queue/actions.ts',
+        'app/admin/sources/actions.ts',
+        'app/admin/taxonomy/actions.ts',
+      ].sort()
+    );
+  });
+
+  it('there is no function-level (inline) "use server" anywhere under app/', () => {
+    const inline = walkApp()
+      .map((file) => ({ file, n: inlineUseServerCount(stripComments(readFileSync(join(process.cwd(), file), 'utf8'))) }))
+      .filter(({ n }) => n > 0)
+      .map(({ file }) => file);
+    expect(inline).toEqual([]);
+  });
+
+  it('finds exactly the 9 known actions, whatever the export shape (a new action must be added to this review)', () => {
     expect(all.map((a) => `${a.file}#${a.name}`).sort()).toEqual(
       [
         'app/admin/corrections/actions.ts#resolveCorrectionAction',
@@ -148,6 +207,16 @@ describe('(2) every admin server action refuses a viewer before touching anythin
     );
   });
 
+  it('the enumeration catches the shapes QA used to evade it (tripwire)', () => {
+    expect(exportedNames('export const evil = async (fd: FormData) => ({ ok: true });')).toEqual(['evil']);
+    expect(exportedNames('export function plain() {}\nexport { a, b as c }\nexport default async function () {}')).toEqual(
+      ['plain', 'a', 'c', 'default']
+    );
+    expect(isServerActionModule(stripComments("// header\n'use server';\nexport const x = 1;"))).toBe(true);
+    expect(isServerActionModule(stripComments("// 'use server' only in a comment\nexport const x = 1;"))).toBe(false);
+    expect(inlineUseServerCount('export async function f() {\n  "use server";\n}')).toBe(1);
+  });
+
   it('🔴 each action gates on resolveSessionAdmin() as its first statement', () => {
     for (const { file, name } of all) {
       const src = readFileSync(join(process.cwd(), file), 'utf8');
@@ -157,7 +226,7 @@ describe('(2) every admin server action refuses a viewer before touching anythin
     }
   });
 
-  for (const { file, name } of actionFiles().flatMap((f) => exportedActionNames(f).map((n) => ({ file: f, name: n })))) {
+  for (const { file, name } of serverActionInventory()) {
     it(`🔴 viewer → refused, nothing touched: ${file}#${name}`, async () => {
       state.role = 'viewer';
       const mod = (await import(/* @vite-ignore */ join(process.cwd(), file))) as Record<string, Action>;
@@ -305,17 +374,20 @@ describe('(4) PII pages redact for a viewer and not for a human', () => {
     }
   });
 
-  it('🔴 /admin/dashboard and /admin/data-health pass their correction list through correctionsForDisplay by role', () => {
-    // Source-level: these two pages render large role-independent payloads (the dashboard's is a
-    // precomputed snapshot), so the check is that the ONLY list they render is the role-filtered
-    // one. correctionsForDisplay itself is proven against real rows in viewer-role-db.test.ts.
+  it('🔴 /admin/dashboard and /admin/data-health: a viewer\'s correction list is SQL-redacted, then render-guarded', () => {
+    // Source-level wiring check (QA M1). The BEHAVIOURAL proof — a full render of both pages over a real
+    // database, with a CANARY note planted — is tests/admin/viewer-render-db.test.ts, which is what
+    // turns RED if either page renders the raw snapshot/live list to a viewer.
     const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const dash = strip(readFileSync('app/admin/dashboard/page.tsx', 'utf8'));
-    expect(dash).toMatch(/const corrections = correctionsForDisplay\(data\.corrections, \{\s*redactPersonalData: !canSeePersonalData\(grant\.admin\.role\),?\s*\}\)/);
-    expect(dash).not.toMatch(/\{[^}]*\bcorrections\b[^}]*\}\s*=\s*data\b/); // not destructured raw from the payload
+    expect(dash).toContain('const redact = !canSeePersonalData(grant.admin.role);');
+    expect(dash).toMatch(/const correctionsToRender = redact\s*\?\s*await getRecentCorrections\(\{ redactPersonalData: true \}\)\s*:\s*data\.corrections;/);
+    expect(dash).toContain('const corrections = correctionsForDisplay(correctionsToRender, { redactPersonalData: redact });');
+    expect(dash).not.toMatch(/\{[^}]*\bcorrections\b[^}]*\}\s*=\s*data\b/);
     const dh = strip(readFileSync('app/admin/data-health/page.tsx', 'utf8'));
-    expect(dh).toMatch(/corrections=\{correctionsForDisplay\(data\.corrections, \{\s*redactPersonalData: !canSeePersonalData\(grant\.admin\.role\),?\s*\}\)\}/);
-    expect(dh).not.toMatch(/corrections=\{data\.corrections\}/);
+    expect(dh).toContain('const redact = !canSeePersonalData(grant.admin.role);');
+    expect(dh).toContain('await getDataHealthData({ redactPersonalData: redact })');
+    expect(dh).toContain('corrections={correctionsForDisplay(data.corrections, { redactPersonalData: redact })}');
   });
 });
 

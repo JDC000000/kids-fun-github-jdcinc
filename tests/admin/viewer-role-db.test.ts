@@ -226,12 +226,21 @@ describe.skipIf(!hasDb)('viewer role over a live database', () => {
     expect(full[0]).toMatchObject({ note: CANARY_NOTE, reporter: 'anon-canary-reporter', redacted: false, hasNote: true });
   });
 
-  it('🔴 recent corrections (dashboard / data-health): note NULLed before render for a viewer', async () => {
-    const recent = (await getRecentCorrections()).filter((c) => c.occurrenceId === ids.occurrence);
-    expect(recent).toHaveLength(1);
-    const red = correctionsForDisplay(recent, { redactPersonalData: true });
+  it('🔴 recent corrections (dashboard / data-health): note NULLed IN SQL for a viewer (QA M1)', async () => {
+    const red = (await getRecentCorrections({ redactPersonalData: true })).filter((c) => c.occurrenceId === ids.occurrence);
+    const full = (await getRecentCorrections({ redactPersonalData: false })).filter((c) => c.occurrenceId === ids.occurrence);
+    expect(red).toHaveLength(1);
     expect(leaks(red)).toEqual([]);
     expect(red[0]).toMatchObject({ note: null, redacted: true, hasNote: true });
-    expect(correctionsForDisplay(recent, { redactPersonalData: false })[0].note).toBe(CANARY_NOTE);
+    expect(full[0]).toMatchObject({ note: CANARY_NOTE, redacted: false, hasNote: true });
+  });
+
+  it('the render guard keeps hasNote from the SQL row, and still nulls a raw list for a viewer', async () => {
+    const sqlRedacted = (await getRecentCorrections({ redactPersonalData: true })).filter((c) => c.occurrenceId === ids.occurrence);
+    expect(correctionsForDisplay(sqlRedacted, { redactPersonalData: true })[0]).toMatchObject({ note: null, hasNote: true });
+    const raw = (await getRecentCorrections({ redactPersonalData: false })).filter((c) => c.occurrenceId === ids.occurrence);
+    const guarded = correctionsForDisplay(raw, { redactPersonalData: true });
+    expect(leaks(guarded)).toEqual([]);
+    expect(guarded[0]).toMatchObject({ note: null, redacted: true, hasNote: true });
   });
 });

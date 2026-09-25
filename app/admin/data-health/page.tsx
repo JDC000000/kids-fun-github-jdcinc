@@ -37,7 +37,10 @@ export default async function AdminDataHealthPage() {
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
 
-  const data = await getDataHealthData();
+  // A read-only 'viewer' gets the correction notes NULLed IN SQL (QA M1); the render guard below
+  // (correctionsForDisplay) is the second line.
+  const redact = !canSeePersonalData(grant.admin.role);
+  const data = await getDataHealthData({ redactPersonalData: redact });
   const nowMs = Date.parse(data.generatedAt);
 
   return (
@@ -63,9 +66,7 @@ export default async function AdminDataHealthPage() {
         <HealthAlertsPanel alerts={data.alerts} nowMs={nowMs} />
         <CorrectionsQueue
           summary={data.correctionsSummary}
-          corrections={correctionsForDisplay(data.corrections, {
-            redactPersonalData: !canSeePersonalData(grant.admin.role),
-          })}
+          corrections={correctionsForDisplay(data.corrections, { redactPersonalData: redact })}
           nowMs={nowMs}
         />
       </div>
