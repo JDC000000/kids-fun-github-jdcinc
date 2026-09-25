@@ -386,6 +386,29 @@ describe('3a — which hrefs are /search permutations', () => {
 });
 
 describe('3b — rel="nofollow" on every link into a /search permutation, and nowhere else', () => {
+  it('no raw anchor anywhere under app/search: every link must go through SearchLink (QA finding F3)', () => {
+    // A raw <a href="/search?…"> (or a Chip rendered `as="a"`) would skip SearchLink and lose
+    // rel="nofollow" without failing anything else. That is how QA's mutation M4a (a broadening chip
+    // turned into <a> in page.tsx) passed the whole unit lane. The existing no-prefetch guard only
+    // forbids IMPORTING next/link, so this complements it.
+    // ONE allowlisted exception: ResultsMap's popup is an HTML STRING for the map library (not JSX),
+    // and its href is /preview/{id}, never /search.
+    const ALLOWED_RAW_ANCHORS = [/<a class="kf-map__pop" href="\/preview\//];
+    const searchDir = join(APP_DIR, 'search');
+    const offenders: string[] = [];
+    for (const path of sourceFiles(searchDir)) {
+      // Strip comments first: several files explain in prose that chips are "a real <a>".
+      const code = readFileSync(path, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      code.split('\n').forEach((line, i) => {
+        const where = `${relative(searchDir, path)}:${i + 1}: ${line.trim()}`;
+        if (/<a[\s>]/.test(line) && !ALLOWED_RAW_ANCHORS.some((ok) => ok.test(line))) offenders.push(where);
+        if (/\bas=(\{\s*)?["']a["']/.test(line)) offenders.push(where);
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
 
   it('SearchLink (every link on /search goes through it) nofollows permutations only', () => {
     expect(renderToStaticMarkup(<SearchLink href="/search?when=today">Today</SearchLink>)).toBe(
