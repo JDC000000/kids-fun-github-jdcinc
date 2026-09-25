@@ -40,7 +40,15 @@
 //
 // `Disallow: /search` is a PREFIX rule, so it covers every /search?… permutation as well as the
 // bare page. It would also cover any future route starting with "/search"; none exists today.
-// It out-ranks `Allow: /` because the longest matching rule wins (RFC 9309 §2.2.2).
+//
+// ═══ NO `Allow: /` LINE, ON PURPOSE (QA finding F1, 2026-09-25) ═══
+// This group used to open with `Allow: /`, and Next always serializes Allow lines BEFORE Disallow
+// lines. Under RFC 9309 longest-match (Google, Bing, robots-parser) that was harmless. But a
+// FIRST-match parser (e.g. Python's stdlib urllib.robotparser) stops at `Allow: /` and reads
+// /search and every private path below as ALLOWED. Allow is the default for any path no rule
+// matches, so the line added nothing under either reading, and it is gone.
+// tests/search/search-crawl-controls.test.tsx checks the result with a first-match evaluator too.
+// Do not add an `allow` here unless it is narrower than every disallow it could shadow.
 //
 // Accepted trade-off: /search stops being crawled, so it drops out of search-engine results over
 // time. Parents still reach it from every page through the nav, the home page and the 404.
@@ -67,7 +75,6 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: '*',
-        allow: '/',
         disallow: ['/admin', '/api', '/u/', '/s/', '/preview', '/search'],
       },
       {

@@ -129,13 +129,123 @@ const SEARCH_PATHS = [
 /** Pre-existing private/housekeeping disallows (unchanged by this work). */
 const PRIVATE_PATHS = ['/admin', '/api/search', '/u/some-token', '/s/some-token', '/preview/abc'];
 
+// ═══ INDEPENDENT EXPECTATIONS (QA finding F2, 2026-09-25) ═══
+// These are hand-written LITERALS. They must never be derived from AI_CRAWLER_USER_AGENTS or
+// robots(). An expectation built from the implementation's own array cannot see a token being
+// dropped from it or added to it; that is exactly how 12 of the 30 tokens went unpinned. Changing
+// the blocked set therefore means editing this list too, on purpose.
+const EXPECTED_AI_TOKENS = [
+  'GPTBot', 'OAI-SearchBot', 'ChatGPT-User',
+  'ClaudeBot', 'Claude-User', 'Claude-SearchBot', 'Claude-Web', 'anthropic-ai',
+  'PerplexityBot', 'Perplexity-User',
+  'Google-Extended', 'Google-CloudVertexBot',
+  'Applebot-Extended',
+  'meta-externalagent', 'Meta-ExternalFetcher', 'Meta-WebIndexer', 'FacebookBot',
+  'Amazonbot', 'Amzn-SearchBot', 'Amzn-User',
+  'CCBot', 'Bytespider', 'DuckAssistBot',
+  'MistralAI-User', 'MistralAI-Index', 'MistralAI-Training',
+  'cohere-ai', 'Diffbot', 'Omgilibot', 'Webzio-Extended',
+] as const;
+
+/** The exact robots.txt the site must serve, as literal text. */
+const EXPECTED_ROBOTS_TXT = `User-Agent: *
+Disallow: /admin
+Disallow: /api
+Disallow: /u/
+Disallow: /s/
+Disallow: /preview
+Disallow: /search
+
+User-Agent: GPTBot
+User-Agent: OAI-SearchBot
+User-Agent: ChatGPT-User
+User-Agent: ClaudeBot
+User-Agent: Claude-User
+User-Agent: Claude-SearchBot
+User-Agent: Claude-Web
+User-Agent: anthropic-ai
+User-Agent: PerplexityBot
+User-Agent: Perplexity-User
+User-Agent: Google-Extended
+User-Agent: Google-CloudVertexBot
+User-Agent: Applebot-Extended
+User-Agent: meta-externalagent
+User-Agent: Meta-ExternalFetcher
+User-Agent: Meta-WebIndexer
+User-Agent: FacebookBot
+User-Agent: Amazonbot
+User-Agent: Amzn-SearchBot
+User-Agent: Amzn-User
+User-Agent: CCBot
+User-Agent: Bytespider
+User-Agent: DuckAssistBot
+User-Agent: MistralAI-User
+User-Agent: MistralAI-Index
+User-Agent: MistralAI-Training
+User-Agent: cohere-ai
+User-Agent: Diffbot
+User-Agent: Omgilibot
+User-Agent: Webzio-Extended
+Disallow: /
+
+Host: https://kidsfunapp.ca
+Sitemap: https://kidsfunapp.ca/sitemap.xml
+`;
+
+/**
+ * Agents that MUST keep the `*` group: allowed on every public page, blocked only on /search and
+ * the private paths. That covers search engines, link-preview fetchers (sharing a KIDS FUN link on
+ * Facebook/Instagram/Messenger/WhatsApp/X/LinkedIn/Slack), Twilio's link fetcher, and the two ad
+ * checkers the Operator approved as NOT blocked (OAI-AdsBot, Meta-ExternalAds).
+ */
+const MUST_STAY_ALLOWED = [
+  'Googlebot', 'Googlebot-Image', 'Bingbot', 'Applebot', 'DuckDuckBot', 'YandexBot',
+  'facebookexternalhit', 'WhatsApp', 'Twitterbot', 'LinkedInBot', 'Slackbot', 'Slackbot-LinkExpanding',
+  'TwilioProxy', 'OAI-AdsBot', 'Meta-ExternalAds',
+] as const;
+
+/**
+ * FIRST-match evaluation (QA finding F1): select the group by exact product token (falling back to
+ * `*`), then apply the FIRST rule, in file order, whose path is a prefix of the URL. This is how
+ * Python's stdlib urllib.robotparser and other naive parsers behave, unlike RFC 9309's longest
+ * match. A file that is correct under BOTH readings is correct for every crawler we care about.
+ */
+function firstMatchMayFetch(robotsTxt: string, productToken: string, pathAndQuery: string): boolean {
+  const groups: Array<{ agents: string[]; rules: Array<{ allow: boolean; path: string }> }> = [];
+  let current: (typeof groups)[number] | null = null;
+  let lastWasAgent = false;
+  for (const raw of robotsTxt.split('\n')) {
+    const m = raw.match(/^\s*([A-Za-z-]+)\s*:\s*(.*?)\s*$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    if (key === 'user-agent') {
+      if (!current || !lastWasAgent) groups.push((current = { agents: [], rules: [] }));
+      current.agents.push(m[2].toLowerCase());
+      lastWasAgent = true;
+    } else if ((key === 'allow' || key === 'disallow') && current) {
+      if (m[2] !== '') current.rules.push({ allow: key === 'allow', path: m[2] });
+      lastWasAgent = false;
+    } else {
+      lastWasAgent = false;
+    }
+  }
+  const token = productToken.toLowerCase().split('/')[0];
+  const group = groups.find((g) => g.agents.includes(token)) ?? groups.find((g) => g.agents.includes('*'));
+  const first = group?.rules.find((r) => pathAndQuery.startsWith(r.path));
+  return first ? first.allow : true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 describe('1 — robots.txt disallows /search and keeps every existing rule', () => {
-  it('serializes to exactly the previous file plus `Disallow: /search` and the AI group', () => {
-    expect(ROBOTS_TXT).toBe(
+  it('serializes to EXACTLY the hand-written expected robots.txt (independent literal, F2)', () => {
+    expect(ROBOTS_TXT).toBe(EXPECTED_ROBOTS_TXT);
+  });
+
+  it('the literal is the previous file minus `Allow: /` (F1), plus `Disallow: /search` and the AI group', () => {
+    // Kept as a readable diff against the pre-branch file; built only from literals.
+    expect(EXPECTED_ROBOTS_TXT).toBe(
       [
         'User-Agent: *',
-        'Allow: /',
         'Disallow: /admin',
         'Disallow: /api',
         'Disallow: /u/',
@@ -143,7 +253,7 @@ describe('1 — robots.txt disallows /search and keeps every existing rule', () 
         'Disallow: /preview',
         'Disallow: /search',
         '',
-        ...AI_CRAWLER_USER_AGENTS.map((ua) => `User-Agent: ${ua}`),
+        ...EXPECTED_AI_TOKENS.map((ua) => `User-Agent: ${ua}`),
         'Disallow: /',
         '',
         'Host: https://kidsfunapp.ca',
@@ -160,7 +270,8 @@ describe('1 — robots.txt disallows /search and keeps every existing rule', () 
     const rules = Array.isArray(r.rules) ? r.rules : [r.rules];
     expect(rules).toHaveLength(2);
     expect(rules[0].userAgent).toBe('*');
-    expect(rules[0].allow).toBe('/');
+    // No `allow` (F1): under first-match parsing a leading `Allow: /` shadowed every disallow.
+    expect(rules[0].allow).toBeUndefined();
     expect(rules[0].disallow).toEqual(expect.arrayContaining(['/admin', '/api', '/u/', '/s/', '/preview', '/search']));
   });
 
@@ -275,6 +386,7 @@ describe('3a — which hrefs are /search permutations', () => {
 });
 
 describe('3b — rel="nofollow" on every link into a /search permutation, and nowhere else', () => {
+
   it('SearchLink (every link on /search goes through it) nofollows permutations only', () => {
     expect(renderToStaticMarkup(<SearchLink href="/search?when=today">Today</SearchLink>)).toBe(
       '<a href="/search?when=today" rel="nofollow">Today</a>',
@@ -405,6 +517,20 @@ describe('4 — AI crawlers are blocked site-wide; search engines are not', () =
     expect(REQUIRED_AI_TOKENS.filter((t) => !listed.has(t.toLowerCase()))).toEqual([]);
   });
 
+  it('the blocked set is EXACTLY the hand-written 30: nothing dropped, nothing added (F2)', () => {
+    const lower = (xs: readonly string[]) => [...xs].map((t) => t.toLowerCase()).sort();
+    expect(lower(AI_CRAWLER_USER_AGENTS)).toEqual(lower(EXPECTED_AI_TOKENS));
+    // The brief's minimum is itself part of the hand-written list.
+    expect(REQUIRED_AI_TOKENS.filter((t) => !lower(EXPECTED_AI_TOKENS).includes(t.toLowerCase()))).toEqual([]);
+  });
+
+  it.each([...MUST_STAY_ALLOWED])('%s is NOT in the blocked list and keeps the `*` group (F2)', (token) => {
+    expect(AI_CRAWLER_USER_AGENTS.map((t) => t.toLowerCase())).not.toContain(token.toLowerCase());
+    for (const url of PUBLIC_PATHS) expect(mayFetch(token, url), `${token} ${url}`).toBe(true);
+    for (const url of SEARCH_PATHS) expect(mayFetch(token, url), `${token} ${url}`).toBe(false);
+    for (const url of PRIVATE_PATHS) expect(mayFetch(token, url), `${token} ${url}`).toBe(false);
+  });
+
   it('the list has no duplicates and names no search engine or link-preview fetcher', () => {
     const lower = AI_CRAWLER_USER_AGENTS.map((t) => t.toLowerCase());
     expect(new Set(lower).size).toBe(lower.length);
@@ -413,7 +539,8 @@ describe('4 — AI crawlers are blocked site-wide; search engines are not', () =
     }
   });
 
-  it.each([...AI_CRAWLER_USER_AGENTS])('%s is disallowed on / and on every public, search and private path', (token) => {
+  // Iterates the hand-written list, NOT the implementation's, so a dropped token fails here (F2).
+  it.each([...EXPECTED_AI_TOKENS])('%s is disallowed on / and on every public, search and private path', (token) => {
     for (const url of [...PUBLIC_PATHS, ...SEARCH_PATHS, ...PRIVATE_PATHS]) {
       expect(mayFetch(token, url), `${token} ${url}`).toBe(false);
     }
@@ -451,6 +578,35 @@ describe('4 — AI crawlers are blocked site-wide; search engines are not', () =
     expect(mayFetch('Googlebot', '/')).toBe(true);
     expect(mayFetch('Applebot-Extended', '/')).toBe(false);
     expect(mayFetch('Applebot', '/')).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('4b — the same answers under FIRST-match parsing (QA finding F1)', () => {
+  it('the `*` group has no Allow line at all (a leading `Allow: /` shadows every disallow under first-match)', () => {
+    const starGroup = ROBOTS_TXT.split('\n\n')[0];
+    expect(starGroup.startsWith('User-Agent: *\n')).toBe(true);
+    expect(starGroup).not.toMatch(/^Allow:/m);
+  });
+
+  it.each(['Googlebot', 'Bingbot', 'Applebot', 'SomeUnlistedBot'])(
+    'first-match: %s is blocked on /search and the private paths, allowed on the public pages',
+    (token) => {
+      for (const url of [...SEARCH_PATHS, ...PRIVATE_PATHS]) {
+        expect(firstMatchMayFetch(ROBOTS_TXT, token, url), `${token} ${url}`).toBe(false);
+      }
+      for (const url of PUBLIC_PATHS) expect(firstMatchMayFetch(ROBOTS_TXT, token, url), `${token} ${url}`).toBe(true);
+    },
+  );
+
+  it('first-match: every AI token is blocked on /', () => {
+    expect(EXPECTED_AI_TOKENS.filter((t) => firstMatchMayFetch(ROBOTS_TXT, t, '/'))).toEqual([]);
+  });
+
+  it('the first-match evaluator is not vacuous: it DOES let a leading `Allow: /` win', () => {
+    const shadowed = 'User-Agent: *\nAllow: /\nDisallow: /search\n';
+    expect(firstMatchMayFetch(shadowed, 'Googlebot', '/search')).toBe(true);
+    expect(firstMatchMayFetch('User-Agent: *\nDisallow: /search\n', 'Googlebot', '/search')).toBe(false);
   });
 });
 
