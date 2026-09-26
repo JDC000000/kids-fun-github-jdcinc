@@ -3,8 +3,8 @@
 // Jon's need, as scoped by the Operator: "see everything about a subscriber in one place." This is
 // the index; the per-subscriber send history is a separate drill-down page.
 //
-// ACCESS CONTROL: the shared choke point app/admin/_lib/gate.ts resolveAdminAccess() — real
-// session/role primary, interim shared-secret token fallback — identical to every other admin
+// ACCESS CONTROL: the shared choke point app/admin/_lib/gate.ts resolveAdminAccess() — a
+// signed-in admin session, no token path — identical to every other admin
 // route. An un-gated caller gets a 404 and the route's existence is never advertised.
 //
 // ═══ THIS PAGE RENDERS REAL PHONE NUMBERS. WHAT KEEPS THEM OFF THE WIRE ═══
@@ -17,14 +17,11 @@
 //
 // Nothing here puts a number in an error either: a failure on this page must be diagnosable from
 // the subscriber id, because ids are safe to send to Sentry and numbers are not.
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { formatTimestampUtc } from '@/lib/admin/format';
-import { adminHref } from './_lib/href';
 import {
   getSmsSubscribers,
   summariseSubscribers,
@@ -40,16 +37,8 @@ export const metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function AdminSmsSubscribersPage({
-  searchParams,
-}: {
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
-  const grant = await resolveAdminAccess({
-    surface: 'admin_sms_subscribers',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+export default async function AdminSmsSubscribersPage() {
+  const grant = await resolveAdminAccess({ surface: 'admin_sms_subscribers' });
   if (!grant.ok) {
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
@@ -112,7 +101,7 @@ export default async function AdminSmsSubscribersPage({
               {rows.map((row) => (
                 <tr key={row.id}>
                   <td>
-                    <Link href={adminHref(`/admin/sms-subscribers/${row.id}`, searchParams)}>
+                    <Link href={`/admin/sms-subscribers/${row.id}`}>
                       {row.shortRef}
                     </Link>
                   </td>

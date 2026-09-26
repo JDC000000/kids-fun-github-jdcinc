@@ -1,12 +1,13 @@
-// tests/admin/gate.test.ts — G-T34-1 composite admin gate (app/admin/_lib/gate.ts).
+// tests/admin/gate.test.ts — the admin gate (app/admin/_lib/gate.ts).
 //
-// DB-FREE unit coverage of the OR-composition and its fail-safe behaviour. The two
-// DB-touching dependencies (getRequestUser, requireAdmin) and the audit side effect
-// (recordAdminAccess) are stubbed so this runs everywhere, including CI without a DB.
-// The real requireAdmin/audit SQL round-trip is proven separately against a live DB
-// in tests/admin/gate-db.test.ts and tests/admin/audit-db.test.ts.
+// DB-FREE unit coverage. The two DB-touching dependencies (getRequestUser, requireAdmin) and the
+// audit side effect (recordAdminAccess) are stubbed so this runs everywhere, including CI without
+// a DB. The real requireAdmin/audit SQL round-trip is proven separately against a live DB in
+// tests/admin/gate-db.test.ts and tests/admin/audit-db.test.ts.
+//
+// 2026-09-24: the interim ADMIN_DASHBOARD_TOKEN fallback (`x-admin-token` / `?token=`) was removed.
+// The cases that used to prove the token worked now prove it does nothing — even when configured.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ADMIN_DASHBOARD_TOKEN_ENV } from '@/lib/admin/access';
 import { NotAdminError, type AdminUser } from '@/lib/db/admin-guard';
 
 // vi.hoisted: the mock factories below are hoisted above imports, so the stubs they
@@ -25,58 +26,47 @@ vi.mock('@/lib/db/admin-guard', async (importOriginal) => {
 vi.mock('@/lib/admin/audit', () => ({ recordAdminAccess: mocks.recordAdminAccess }));
 
 // Import AFTER the mocks are declared (vi.mock is hoisted, so this binds the stubs).
-import { resolveAdminAccess } from '@/app/admin/_lib/gate';
+import { resolveAdminAccess, resolveSessionAdmin } from '@/app/admin/_lib/gate';
 
 const ADMIN: AdminUser = { userId: 'admin-uuid', role: 'admin' };
-const TOKEN = 'sekret-value';
+const LEGACY_ENV = 'ADMIN_DASHBOARD_TOKEN';
 
-function req(overrides: Partial<Parameters<typeof resolveAdminAccess>[0]> = {}) {
-  return { surface: 'admin_dashboard', headerToken: null, queryToken: null, ...overrides };
-}
-
-describe('resolveAdminAccess — composite admin gate (G-T34-1)', () => {
+describe('resolveAdminAccess — the admin gate', () => {
   let savedToken: string | undefined;
   beforeEach(() => {
-    savedToken = process.env[ADMIN_DASHBOARD_TOKEN_ENV];
+    savedToken = process.env[LEGACY_ENV];
+    // The dangerous state: the legacy secret is configured. Nothing below may depend on it.
+    process.env[LEGACY_ENV] = 'legacy-secret-that-opens-nothing';
     mocks.getRequestUser.mockReset();
     mocks.requireAdmin.mockReset();
     mocks.recordAdminAccess.mockReset();
     mocks.recordAdminAccess.mockResolvedValue(true); // audit write succeeds by default
   });
   afterEach(() => {
-    if (savedToken === undefined) delete process.env[ADMIN_DASHBOARD_TOKEN_ENV];
-    else process.env[ADMIN_DASHBOARD_TOKEN_ENV] = savedToken;
+    if (savedToken === undefined) delete process.env[LEGACY_ENV];
+    else process.env[LEGACY_ENV] = savedToken;
+    vi.restoreAllMocks();
   });
 
-  // ── Combo 1: no session + no token → blocked (fail-closed) ──────────────────
-  it('denies when there is neither a session nor a token', async () => {
-    process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
+  it('🔴 denies when there is no session, even with ADMIN_DASHBOARD_TOKEN configured', async () => {
     mocks.getRequestUser.mockResolvedValue(null);
-    expect(await resolveAdminAccess(req())).toEqual({ ok: false });
+    expect(await resolveAdminAccess({ surface: 'admin_dashboard' })).toEqual({ ok: false });
     expect(mocks.recordAdminAccess).not.toHaveBeenCalled();
   });
 
-  // ── Combo 2: valid token + no session → still works (regression guard) ──────
-  it('grants via the interim token when there is no session (token unchanged)', async () => {
-    process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
+  it('🔴 the gate contract has no field that could carry a request credential', async () => {
     mocks.getRequestUser.mockResolvedValue(null);
-    expect(await resolveAdminAccess(req({ headerToken: TOKEN }))).toEqual({ ok: true, via: 'token' });
-    // token path carries no admin identity → it is NEVER audited
-    expect(mocks.recordAdminAccess).not.toHaveBeenCalled();
+    // A compile-time guard as much as a runtime one: tsc fails this file if AdminGateRequest ever
+    // grows a token field again (the @ts-expect-error would become unused).
+    // @ts-expect-error — queryToken is not part of the gate contract any more
+    const grant = await resolveAdminAccess({ surface: 'admin_dashboard', queryToken: process.env[LEGACY_ENV] });
+    expect(grant).toEqual({ ok: false });
   });
 
-  it('accepts the token via the ?token= query param too (not just the header)', async () => {
-    process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
-    mocks.getRequestUser.mockResolvedValue(null);
-    expect(await resolveAdminAccess(req({ queryToken: TOKEN }))).toEqual({ ok: true, via: 'token' });
-  });
-
-  // ── Combo 3: real admin session + no token → granted via the NEW path ───────
   it('grants via session for a real admin and records an audit access event', async () => {
-    delete process.env[ADMIN_DASHBOARD_TOKEN_ENV]; // token not even configured
     mocks.getRequestUser.mockResolvedValue({ userId: ADMIN.userId, email: 'a@b.c' });
     mocks.requireAdmin.mockResolvedValue(ADMIN);
-    const grant = await resolveAdminAccess(req({ surface: 'admin_data_health' }));
+    const grant = await resolveAdminAccess({ surface: 'admin_data_health' });
     expect(grant).toEqual({ ok: true, via: 'session', admin: ADMIN });
     expect(mocks.recordAdminAccess).toHaveBeenCalledTimes(1);
     expect(mocks.recordAdminAccess).toHaveBeenCalledWith(ADMIN.userId, 'admin_data_health');
@@ -85,46 +75,49 @@ describe('resolveAdminAccess — composite admin gate (G-T34-1)', () => {
   it('session grant survives an audit-write failure (audit is best-effort, never blocks)', async () => {
     mocks.getRequestUser.mockResolvedValue({ userId: ADMIN.userId, email: null });
     mocks.requireAdmin.mockResolvedValue(ADMIN);
-    mocks.recordAdminAccess.mockResolvedValue(false); // write failed, swallowed by recordAdminAccess
-    const grant = await resolveAdminAccess(req());
-    expect(grant).toEqual({ ok: true, via: 'session', admin: ADMIN });
+    mocks.recordAdminAccess.mockResolvedValue(false);
+    expect(await resolveAdminAccess({ surface: 'admin_dashboard' })).toEqual({ ok: true, via: 'session', admin: ADMIN });
   });
 
-  it('prefers the session path over the token even when a valid token is also present', async () => {
-    process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
+  it('denies a signed-in NON-admin, un-audited', async () => {
+    mocks.getRequestUser.mockResolvedValue({ userId: 'plain-user', email: null });
+    mocks.requireAdmin.mockRejectedValue(new NotAdminError());
+    expect(await resolveAdminAccess({ surface: 'admin_dashboard' })).toEqual({ ok: false });
+    expect(mocks.recordAdminAccess).not.toHaveBeenCalled();
+  });
+
+  it('fails CLOSED when the role check errors (DB down): denies, never throws, logs the message only', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mocks.getRequestUser.mockResolvedValue({ userId: ADMIN.userId, email: null });
+    mocks.requireAdmin.mockRejectedValue(new Error('connection refused'));
+    expect(await resolveAdminAccess({ surface: 'admin_dashboard' })).toEqual({ ok: false });
+    expect(mocks.recordAdminAccess).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('denying');
+  });
+});
+
+describe('resolveSessionAdmin — the write-path resolver', () => {
+  beforeEach(() => {
+    mocks.getRequestUser.mockReset();
+    mocks.requireAdmin.mockReset();
+  });
+
+  it('returns the admin for an active admin session', async () => {
     mocks.getRequestUser.mockResolvedValue({ userId: ADMIN.userId, email: null });
     mocks.requireAdmin.mockResolvedValue(ADMIN);
-    const grant = await resolveAdminAccess(req({ headerToken: TOKEN }));
-    expect(grant).toEqual({ ok: true, via: 'session', admin: ADMIN });
-    expect(mocks.recordAdminAccess).toHaveBeenCalledWith(ADMIN.userId, 'admin_dashboard');
+    expect(await resolveSessionAdmin()).toEqual(ADMIN);
   });
 
-  // ── Combo 4: real NON-admin session + no token → blocked ────────────────────
-  it('denies a signed-in NON-admin when no token is presented', async () => {
-    process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
+  it('returns null for anonymous, non-admin and errored checks', async () => {
+    mocks.getRequestUser.mockResolvedValue(null);
+    expect(await resolveSessionAdmin()).toBeNull();
     mocks.getRequestUser.mockResolvedValue({ userId: 'plain-user', email: null });
     mocks.requireAdmin.mockRejectedValue(new NotAdminError());
-    expect(await resolveAdminAccess(req())).toEqual({ ok: false });
-    expect(mocks.recordAdminAccess).not.toHaveBeenCalled();
-  });
-
-  it('lets a signed-in NON-admin still use a valid token (coexistence), un-audited', async () => {
-    process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
-    mocks.getRequestUser.mockResolvedValue({ userId: 'plain-user', email: null });
-    mocks.requireAdmin.mockRejectedValue(new NotAdminError());
-    expect(await resolveAdminAccess(req({ headerToken: TOKEN }))).toEqual({ ok: true, via: 'token' });
-    expect(mocks.recordAdminAccess).not.toHaveBeenCalled();
-  });
-
-  // ── No-lockout invariant: a DB error on the NEW path must NOT deny a token ──
-  it('falls back to the token if the session/role check throws a non-NotAdminError (DB down)', async () => {
-    process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
-    mocks.getRequestUser.mockResolvedValue({ userId: 'admin-uuid', email: null });
-    mocks.requireAdmin.mockRejectedValue(new Error('connection refused')); // e.g. Postgres unreachable
-    // With a valid token, access is preserved despite the new path erroring.
-    expect(await resolveAdminAccess(req({ headerToken: TOKEN }))).toEqual({ ok: true, via: 'token' });
-    // Without a token, a broken new path denies (fail-closed) rather than throwing.
-    expect(await resolveAdminAccess(req())).toEqual({ ok: false });
-    expect(mocks.recordAdminAccess).not.toHaveBeenCalled();
+    expect(await resolveSessionAdmin()).toBeNull();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mocks.requireAdmin.mockRejectedValue(new Error('db down'));
+    expect(await resolveSessionAdmin()).toBeNull();
+    vi.restoreAllMocks();
   });
 });

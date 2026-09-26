@@ -2,9 +2,8 @@
 // registry (create + edit). 'use server': these run only on the server and are the
 // single write path the client SourceForm posts to.
 //
-// AUTH: writes are gated by resolveSessionAdmin() — a real signed-in admin only, never
-// the interim read token (a write must be attributable in admin_audit_log, whose FK
-// needs a real admin_user id). A token-only viewer sees a read-only console; the action
+// AUTH: writes are gated by resolveSessionAdmin() — a real signed-in admin only (a write
+// must be attributable in admin_audit_log, whose FK needs a real admin_user id). The action
 // re-checks here so the gate cannot be bypassed by posting the form directly.
 'use server';
 
@@ -26,7 +25,7 @@ export interface SourceActionState {
 const NEEDS_SESSION_ADMIN: SourceActionState = {
   ok: false,
   message:
-    'Making changes requires a signed-in admin account. The interim access token grants read-only access; ask an admin to be seeded, then sign in.',
+    'Making changes requires a signed-in admin account. Read-only access cannot make changes.',
 };
 
 /**

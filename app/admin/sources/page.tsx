@@ -6,15 +6,12 @@
 // before promoting terms_status to allowed/summarise_only.
 //
 // ACCESS (reuses app/admin/_lib/gate.ts, identical posture to /admin/dashboard):
-//   • VIEW — a real admin session OR the interim ADMIN_DASHBOARD_TOKEN (header/query).
-//     Un-gated → 404 (route existence unadvertised).
-//   • WRITE — session admins only (grant.via === 'session'). A token viewer sees a
-//     read-only console; every write is re-checked in saveSourceAction and recorded in
-//     admin_audit_log (the audit FK needs a real admin id the token path can't provide).
-import { headers } from 'next/headers';
+//   • VIEW  — a signed-in admin session (the only way in). Un-gated → 404 (route existence
+//     unadvertised).
+//   • WRITE — the same session; every write is re-checked in saveSourceAction and recorded in
+//     admin_audit_log.
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { listSources } from './_lib/data';
 import { SourceForm } from './_components/SourceForm';
@@ -34,11 +31,7 @@ export default async function AdminSourcesPage({
 }: {
   searchParams: Record<string, string | string[] | undefined>;
 }) {
-  const grant = await resolveAdminAccess({
-    surface: 'admin_sources',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_sources' });
   if (!grant.ok) notFound();
 
   const canMutate = grant.via === 'session';
@@ -66,8 +59,8 @@ export default async function AdminSourcesPage({
           </p>
         ) : (
           <p className="adm-note">
-            🔒 Read-only (interim token). Sign in as a seeded admin to add or edit sources — a change must be attributable
-            in the audit log, which the token cannot satisfy.
+            🔒 Read-only access. Your admin account cannot add or edit sources — that needs an admin with write access, because a change must be attributable
+            in the audit log.
           </p>
         )}
       </header>

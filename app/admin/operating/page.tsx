@@ -18,12 +18,9 @@
 //
 // ACCESS CONTROL: identical to /admin/dashboard, /admin/data-health and
 // /admin/product-health — the shared choke point app/admin/_lib/gate.ts
-// resolveAdminAccess() (real session/role primary, interim shared-secret token
-// fallback). An un-gated caller gets a 404; the route's existence is not advertised.
-import { headers } from 'next/headers';
+// resolveAdminAccess() (a signed-in admin session; no token path). An un-gated caller gets a 404; the route's existence is not advertised.
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { getOperatingDashboardData } from '@/lib/admin/operating';
 import { describeSnapshotAge, operatingSnapshotKey, readAdminSnapshot } from '@/lib/admin/snapshot';
@@ -75,11 +72,7 @@ export default async function AdminOperatingPage({
   searchParams: Record<string, string | string[] | undefined>;
 }) {
   // --- admin access gate (identical to the other admin routes) -----------------
-  const grant = await resolveAdminAccess({
-    surface: 'admin_operating',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_operating' });
   if (!grant.ok) {
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
@@ -309,8 +302,8 @@ function renderReview({
         <ReviewModeSwitch grain={grain} />
 
         <p className={styles.note}>
-          🔒 Access gate: real role-based admin sign-in (session + admin role), with the interim shared-secret token
-          retained only as a coexistence fallback. Review protocol — what to check, who reviews it, what escalates — is
+          🔒 Access gate: a signed-in admin session (session + active admin role) is the only way in; there is no
+          shared-secret or URL-token access. Review protocol — what to check, who reviews it, what escalates — is
           in <span className={styles.mono}>docs/kpi-cadence.md</span>.
         </p>
 

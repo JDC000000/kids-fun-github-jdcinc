@@ -3,9 +3,8 @@
 // run only on the server and are the single write path the client forms post to.
 //
 // AUTH: every write is gated by resolveSessionAdmin() (Round-19 gate, reused) — a real
-// signed-in admin only, never the interim read token (a write must be attributable in
-// admin_audit_log, whose FK needs a real admin_user id). A token-only viewer sees a
-// read-only console; each action re-checks here so the gate cannot be bypassed by
+// signed-in admin only (a write must be attributable in admin_audit_log, whose FK needs a
+// real admin_user id). Each action re-checks here so the gate cannot be bypassed by
 // posting a form directly.
 'use server';
 
@@ -53,7 +52,7 @@ export interface AliasActionState {
 }
 
 const NEEDS_SESSION_ADMIN_MSG =
-  'Making changes requires a signed-in admin account. The interim access token grants read-only access; ask an admin to be seeded, then sign in.';
+  'Making changes requires a signed-in admin account. Read-only access cannot make changes.';
 
 function str(v: FormDataEntryValue | null): string {
   return typeof v === 'string' ? v : '';

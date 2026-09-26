@@ -1,6 +1,6 @@
 // app/admin/listings/actions.ts — G-T34-3 server action: create a manual listing.
 // 'use server'. Gated by resolveSessionAdmin() (write must be audited → session admin
-// only; token viewers are read-only, re-checked here).
+// only, re-checked here).
 'use server';
 
 import { revalidatePath } from 'next/cache';
@@ -19,7 +19,7 @@ export interface ManualListingActionState {
 const NEEDS_SESSION_ADMIN: ManualListingActionState = {
   ok: false,
   message:
-    'Adding a listing requires a signed-in admin account. The interim access token is read-only; ask an admin to be seeded, then sign in.',
+    'Adding a listing requires a signed-in admin account. Read-only access cannot make changes.',
 };
 
 /** Create a manual listing. Called directly by the client form inside a transition. */

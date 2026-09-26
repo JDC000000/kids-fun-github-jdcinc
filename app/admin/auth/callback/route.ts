@@ -19,8 +19,8 @@ import { adminAuthResponse, createAdminAuthClient, sanitizeAdminNext } from '../
 // That is what makes this route un-abusable as a backdoor into the disabled public sign-in: a
 // non-admin who walks the entire flow ends up with no session, so they gain nothing that the
 // gated /auth/signin would have given them. The check is fail-CLOSED on purpose — an
-// infrastructure error denies rather than grants, and cannot lock anyone out, because
-// app/admin/_lib/gate.ts still accepts the interim ADMIN_DASHBOARD_TOKEN as a fallback.
+// infrastructure error denies rather than grants; the admin signs in again once it recovers.
+// (There is no fallback path: the interim ADMIN_DASHBOARD_TOKEN was removed on 2026-09-24.)
 //
 // ── WHY IT IS SEPARATELY GUARDED FROM /auth/callback ────────────────────────────────────
 // This handler is independently reachable (a bare GET with a `code`), which is precisely why

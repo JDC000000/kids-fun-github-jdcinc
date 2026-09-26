@@ -7,8 +7,8 @@
 // /auth/signin and /auth/callback. That ruling is untouched here. What it left behind is a
 // separate, unrelated problem: the admin console's real gate (app/admin/_lib/gate.ts) has a
 // session path that can never fire, because there is no way for an admin to obtain a
-// session — so the only working way into /admin/* is ADMIN_DASHBOARD_TOKEN in the URL, which
-// is what Jon is currently blocked on.
+// session — so the only working way into /admin/* was ADMIN_DASHBOARD_TOKEN in the URL (that
+// token path was removed on 2026-09-24; this sign-in is now the only way in).
 //
 // This module is the admin-scoped entry point that closes that gap WITHOUT reopening the
 // public one. The separation is structural, not a convention:

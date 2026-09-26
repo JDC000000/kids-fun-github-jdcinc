@@ -214,14 +214,6 @@ const MODES: { grain: OperatingGrain; view: string; label: string }[] = [
  * real, shareable, bookmarkable URL an operator can drop into a standup or a calendar
  * invite (which is what docs/kpi-cadence.md asks reviewers to do), and it keeps the
  * page a pure server component.
- *
- * ── DELIBERATE: the interim `?token=` admin secret is NOT propagated into these
- * hrefs. Rendering a shared secret into page HTML puts it in every screenshot of a
- * dashboard whose whole purpose is to be screenshotted into a review note. The
- * sibling admin pages already omit it from their cross-links, so this matches
- * precedent; the cost is that a reviewer using the interim TOKEN path (rather than a
- * real admin session, which is the primary gate) must re-append `&token=` when
- * switching modes. Flagged rather than silently traded away.
  */
 export function ReviewModeSwitch({ grain }: { grain: OperatingGrain }) {
   return (

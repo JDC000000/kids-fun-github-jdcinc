@@ -22,8 +22,18 @@ describe('the redirect itself', () => {
   it('🔴 does NOT capture the API route', () => {
     // /api/sms/signup is where both forms POST. A wildcard source, or a source of '/sms/signup:path*',
     // would swallow it and break every signup. The source must be that exact path and nothing more.
-    expect(config).not.toMatch(/source:\s*'\/sms\/signup[^']/);
-    expect(config).not.toMatch(/source:\s*'\/api/);
+    //
+    // Scoped to the redirects() block (2026-09-24): the file-wide form of the second assertion also
+    // matched a HEADER rule — `/api/admin/:path*` gets no-referrer / no-store headers, which
+    // redirects nothing. The property under test is "no REDIRECT source captures /api".
+    const start = config.indexOf('async redirects()');
+    const end = config.indexOf('async headers()');
+    expect(start, 'next.config.mjs has a redirects() block').toBeGreaterThan(-1);
+    expect(end, 'redirects() is followed by headers() — if the order changes, re-scope this slice').toBeGreaterThan(start);
+    const redirects = config.slice(start, end);
+    expect(redirects).toMatch(/source:\s*'\/sms\/signup'/);
+    expect(redirects).not.toMatch(/source:\s*'\/sms\/signup[^']/);
+    expect(redirects).not.toMatch(/source:\s*'\/api/);
   });
 });
 

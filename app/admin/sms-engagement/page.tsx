@@ -17,9 +17,7 @@
 // There is currently ONE real subscriber. A dashboard that pads that into something resembling a
 // populated product would be lying about the state of the world; the empty state below says how
 // many real subscribers exist and stops there. When the numbers are real they will fill this in.
-import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { formatTimestampUtc } from '@/lib/admin/format';
@@ -42,11 +40,7 @@ export default async function AdminSmsEngagementPage({
 }: {
   searchParams: Record<string, string | string[] | undefined>;
 }) {
-  const grant = await resolveAdminAccess({
-    surface: 'admin_sms_engagement',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_sms_engagement' });
   if (!grant.ok) {
     notFound();
   }

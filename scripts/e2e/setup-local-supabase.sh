@@ -24,14 +24,14 @@ export PATH="$HOME/.npm-global/bin:$PATH"
 # Local-only dummy password for the RLS role (same spirit as the local-db auth stub).
 E2E_AUTH_PW="e2e_local_authenticated"
 
-# Local-only shared secret for the INTERIM admin gate (lib/admin/access.ts). Without
-# it the gate fails closed and every /admin/* route 404s for the harness — which is
-# exactly why the Round 17 a11y audit had to record /admin/dashboard as an explicit
-# AUDIT GAP. Provisioning it here closes that gap: the admin a11y sweep (and any
-# future admin E2E spec) can reach the real, served admin pages.
-# This is a fixed, PUBLIC, loopback-only test value on par with the well-known
-# `supabase start` demo keys emitted below — it is NOT a production secret, and the
-# real deployment secret is supplied out-of-band via the platform env.
+# A DECOY for the retired admin shared secret. The admin console accepted ADMIN_DASHBOARD_TOKEN
+# (as `?token=` / `x-admin-token`) until 2026-09-24; that code is gone and the app no longer reads
+# the variable at all. It is still provisioned into .env.e2e.local ON PURPOSE, so the served app
+# runs in the dangerous configuration: tests/e2e/a11y/routes.anon.a11y.spec.ts then presents this
+# exact value to every admin route and asserts a 404, which proves on a real `next start` build —
+# not only in unit tests — that setting the variable re-opens nothing.
+# The admin a11y sweep itself now signs in for real (routes.authed.a11y.spec.ts, via the seeded
+# local test user). Fixed, PUBLIC, loopback-only value — NOT a production secret.
 E2E_ADMIN_TOKEN="e2e-local-admin-dashboard-token"
 
 echo "→ ensuring local Supabase stack is up"
@@ -84,10 +84,8 @@ USER_DATABASE_URL=${USER_DB_URL}
 NEXT_PUBLIC_APP_ENV=test
 NEXT_PUBLIC_SITE_URL=http://127.0.0.1:3000
 E2E_BASE_URL=http://127.0.0.1:3000
-# Interim admin-gate shared secret — local/test only (see E2E_ADMIN_TOKEN above).
-# Read by BOTH the app server (lib/admin/access.ts) and the Playwright process
-# (tests/e2e/a11y/routes.anon.a11y.spec.ts), because run-e2e.sh sources this file
-# before starting either — so the token the spec presents is the one the gate expects.
+# DECOY (see E2E_ADMIN_TOKEN above): the app no longer reads this; the anon a11y spec asserts that
+# presenting it to /admin/* still 404s. Sourced by run-e2e.sh into BOTH the app and Playwright.
 ADMIN_DASHBOARD_TOKEN=${E2E_ADMIN_TOKEN}
 # The SMS signup release switch (lib/sms/config.ts \`smsSignupEnabled()\`). It DEFAULTS TO FALSE,
 # which means the default state of a local E2E run was: /sms/start 404s, the home page correctly
@@ -95,8 +93,7 @@ ADMIN_DASHBOARD_TOKEN=${E2E_ADMIN_TOKEN}
 # look at. Two specs need it and neither skips silently —
 # tests/e2e/public/sms-cta-analytics.public.spec.ts (M1 T1.6) asserts the CTA is present with a
 # message naming this variable, and tests/e2e/public/address-integrity.public.spec.ts (M4 T4.3)
-# asserts /sms/start's status against it. Provisioned here for the same reason
-# ADMIN_DASHBOARD_TOKEN above is: run-e2e.sh sources this file before starting BOTH the app server
+# asserts /sms/start's status against it. Provisioned here because run-e2e.sh sources this file before starting BOTH the app server
 # and the Playwright process, so the flag the specs expect is the flag the app is running with.
 # Flip it to any other value to exercise the fail-safe (404 / no-action) branch instead.
 SMS_SIGNUP_ENABLED=true

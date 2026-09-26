@@ -155,7 +155,28 @@ const nextConfig = {
       { key: 'strict-transport-security', value: 'max-age=31536000' },
     ];
 
+    /*
+     * The admin console and its APIs (2026-09-24). /admin/sms-subscribers renders subscriber phone
+     * numbers, postal codes and children's ages; the admin sign-in round-trip carries an OAuth
+     * `code` in its URL; and until 2026-09-24 the console accepted a shared secret as `?token=`.
+     *   · no-referrer — an outbound click (the corrections queue links to each listing's source
+     *     site) must not hand the admin URL, query string included, to a third party.
+     *   · no-store — a page of personal data must not be kept by a browser or intermediary cache,
+     *     so the back button on a shared machine cannot resurrect it.
+     *   · noindex — the console is unadvertised; this is the header form of the pages' own
+     *     `robots` metadata, and it also covers the API routes, which have no metadata.
+     * No CSP / frame headers here on purpose: the console renders its own inline <style> blocks,
+     * which the public pages' `style-src 'self'` would break. Pinned by tests/admin/admin_headers.test.ts.
+     */
+    const adminPrivacy = [
+      { key: 'referrer-policy', value: 'no-referrer' },
+      { key: 'cache-control', value: 'no-store, max-age=0' },
+      { key: 'x-robots-tag', value: 'noindex, nofollow' },
+    ];
+
     return [
+      { source: '/admin/:path*', headers: adminPrivacy },
+      { source: '/api/admin/:path*', headers: adminPrivacy },
       {
         source: '/u/:preferencesToken',
         headers: [

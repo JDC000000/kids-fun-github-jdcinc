@@ -1,4 +1,4 @@
-// tests/admin/gate-db.test.ts — G-T34-1 end-to-end: all four access combinations
+// tests/admin/gate-db.test.ts — G-T34-1 end-to-end: the access combinations
 // driven through the REAL gate against a LIVE database.
 //
 // Unlike gate.test.ts (which stubs requireAdmin/audit), this test stubs ONLY the
@@ -8,10 +8,12 @@
 // live smoke, and it verifies the audit write is actually persisted + queryable.
 // Skips when DATABASE_URL is unset.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ADMIN_DASHBOARD_TOKEN_ENV } from '../../lib/admin/access';
 import { closePool, query } from '../../lib/db/client';
 
 const hasDb = Boolean(process.env.DATABASE_URL);
+// The legacy interim secret (removed 2026-09-24). Set in the env for the cases below to prove it
+// is ignored — the gate no longer reads it at all.
+const ADMIN_DASHBOARD_TOKEN_ENV = 'ADMIN_DASHBOARD_TOKEN';
 const TOKEN = 'gate-db-smoke-token';
 
 // Inject the "signed-in user" without touching Supabase. vi.hoisted so the factory
@@ -76,16 +78,17 @@ describe.skipIf(!hasDb)('admin gate end-to-end over a live DB (G-T34-1, 4 combin
   it('COMBO 1: no session, no token → denied', async () => {
     process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
     session.user = null;
-    const grant = await resolveAdminAccess({ surface: 'admin_dashboard', headerToken: null, queryToken: null });
+    const grant = await resolveAdminAccess({ surface: 'admin_dashboard' });
     expect(grant).toEqual({ ok: false });
   });
 
-  // Combo 2 — valid token + no session → still works (the critical regression).
-  it('COMBO 2: valid token, no session → granted via token (no audit row)', async () => {
+  // Combo 2 — the legacy token is configured, no session → DENIED. Until 2026-09-24 this was the
+  // interim shared-secret grant; it is now proof that the fallback is gone.
+  it('COMBO 2: legacy token configured, no session → denied (the token fallback is removed)', async () => {
     process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
     session.user = null;
-    const grant = await resolveAdminAccess({ surface: 'admin_dashboard', headerToken: TOKEN, queryToken: null });
-    expect(grant).toEqual({ ok: true, via: 'token' });
+    const grant = await resolveAdminAccess({ surface: 'admin_dashboard' });
+    expect(grant).toEqual({ ok: false });
   });
 
   // Combo 3 — real admin session + no token → granted via the new path + audited.
@@ -94,7 +97,7 @@ describe.skipIf(!hasDb)('admin gate end-to-end over a live DB (G-T34-1, 4 combin
     session.user = { userId: ids.adminId, email: 'admin@example.test' };
     const before = await viewAuditCount(ids.adminId);
 
-    const grant = await resolveAdminAccess({ surface: 'admin_dashboard', headerToken: null, queryToken: null });
+    const grant = await resolveAdminAccess({ surface: 'admin_dashboard' });
     expect(grant).toMatchObject({ ok: true, via: 'session', admin: { userId: ids.adminId, role: 'superadmin' } });
 
     // The access was actually recorded in admin_audit_log and is queryable.
@@ -113,17 +116,17 @@ describe.skipIf(!hasDb)('admin gate end-to-end over a live DB (G-T34-1, 4 combin
   it('COMBO 4: real non-admin session, no token → denied and nothing is audited', async () => {
     process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
     session.user = { userId: ids.nonAdminId, email: 'user@example.test' };
-    const grant = await resolveAdminAccess({ surface: 'admin_dashboard', headerToken: null, queryToken: null });
+    const grant = await resolveAdminAccess({ surface: 'admin_dashboard' });
     expect(grant).toEqual({ ok: false });
     expect(await viewAuditCount(ids.nonAdminId)).toBe(0);
   });
 
-  // Coexistence corner: a signed-in non-admin can still fall back to the token.
-  it('COMBO 4b: non-admin session + valid token → granted via token, still un-audited', async () => {
+  // Former coexistence corner: a signed-in non-admin can NOT fall back to the token any more.
+  it('COMBO 4b: non-admin session + legacy token configured → denied, un-audited', async () => {
     process.env[ADMIN_DASHBOARD_TOKEN_ENV] = TOKEN;
     session.user = { userId: ids.nonAdminId, email: 'user@example.test' };
-    const grant = await resolveAdminAccess({ surface: 'admin_dashboard', headerToken: TOKEN, queryToken: null });
-    expect(grant).toEqual({ ok: true, via: 'token' });
+    const grant = await resolveAdminAccess({ surface: 'admin_dashboard' });
+    expect(grant).toEqual({ ok: false });
     expect(await viewAuditCount(ids.nonAdminId)).toBe(0);
   });
 });

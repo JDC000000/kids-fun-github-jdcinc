@@ -8,16 +8,13 @@
 // not a parent-facing page. Every number is queried live from the same tables the
 // worker and correction API populate.
 //
-// ACCESS CONTROL (G-T34-1): identical to /admin/dashboard — the real role-based gate
-// (session + active admin_user row) is primary, with the interim shared-secret token
-// (lib/admin/access.ts, via the `x-admin-token` header or `?token=` query param)
-// retained only as a coexistence fallback. Both are composed in the shared choke
+// ACCESS CONTROL (G-T34-1): identical to /admin/dashboard — a signed-in session whose
+// user is an active admin_user row, the only way in (the shared-secret URL token was removed
+// 2026-09-24), resolved in the shared choke
 // point app/admin/_lib/gate.ts resolveAdminAccess(); do NOT weaken or fork it. An
 // un-gated caller still gets a 404 (the route's existence is not advertised).
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { getDataHealthData } from '@/lib/admin/data-health';
 import { formatTimestampUtc } from '@/lib/admin/format';
@@ -31,17 +28,9 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs'; // pg pool needs the Node runtime, not edge.
 export const metadata = { title: 'KIDS FUN — Admin / Data health', robots: { index: false, follow: false } };
 
-export default async function AdminDataHealthPage({
-  searchParams,
-}: {
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
+export default async function AdminDataHealthPage() {
   // --- admin access gate (G-T34-1, identical to /admin/dashboard) --------------
-  const grant = await resolveAdminAccess({
-    surface: 'admin_data_health',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_data_health' });
   if (!grant.ok) {
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
@@ -61,8 +50,8 @@ export default async function AdminDataHealthPage({
           <span className={styles.mono}>{formatTimestampUtc(data.generatedAt)}</span>
         </p>
         <p className={styles.note}>
-          🔒 Access gate: real role-based admin sign-in (session + admin role). The interim shared-secret token is
-          retained only as a coexistence fallback until the first admin is seeded, then it will be retired.
+          🔒 Access gate: a signed-in admin session (session + active admin role) is the only way in. There is no
+          shared-secret or URL-token access.
         </p>
       </header>
 

@@ -1,7 +1,6 @@
 // app/admin/corrections/actions.ts — G-T34-7 server action: resolve one correction
 // report. 'use server'. Gated by resolveSessionAdmin() (a write must be attributable in
-// admin_audit_log — the interim token has no admin identity, so a token viewer is
-// read-only; re-checked here so a direct POST can't bypass the read gate).
+// admin_audit_log; re-checked here so a direct POST cannot bypass the page gate).
 'use server';
 
 import { revalidatePath } from 'next/cache';
@@ -20,7 +19,7 @@ export interface ResolveActionState {
 const NEEDS_SESSION_ADMIN: ResolveActionState = {
   ok: false,
   message:
-    'Resolving a correction requires a signed-in admin account. The interim access token is read-only; ask an admin to be seeded, then sign in.',
+    'Resolving a correction requires a signed-in admin account. Read-only access cannot make changes.',
 };
 
 /**

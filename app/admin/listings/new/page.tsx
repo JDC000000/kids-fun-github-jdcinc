@@ -4,13 +4,10 @@
 // one (see _lib/data.ts createManualListing). First real writer of a manually-curated
 // activity_occurrence; every create is recorded in admin_audit_log.
 //
-// ACCESS (reuses app/admin/_lib/gate.ts): VIEW = session OR interim token (un-gated →
-// 404); WRITE = session admins only (the form is shown only to a session admin; the
-// action re-checks).
-import { headers } from 'next/headers';
+// ACCESS (reuses app/admin/_lib/gate.ts): VIEW = a signed-in admin session (un-gated → 404);
+// WRITE = the same session (the action re-checks).
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../../_lib/gate';
 import { listSourcesForSelect, getStatusStateOptions } from '../_lib/data';
 import { CONFIDENCE_LABELS, COST_STATUSES } from '../_lib/vocab';
@@ -26,11 +23,7 @@ export default async function AdminNewListingPage({
 }: {
   searchParams: Record<string, string | string[] | undefined>;
 }) {
-  const grant = await resolveAdminAccess({
-    surface: 'admin_listings_new',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_listings_new' });
   if (!grant.ok) notFound();
 
   const canMutate = grant.via === 'session';
@@ -60,7 +53,7 @@ export default async function AdminNewListingPage({
             default to the <span className="mono">manual_candidate</span> (unverified) health state.
           </p>
         ) : (
-          <p className="adm-note">🔒 Read-only (interim token). Sign in as a seeded admin to add a listing.</p>
+          <p className="adm-note">🔒 Read-only access. Your admin account cannot add a listing — that needs an admin with write access.</p>
         )}
       </header>
 

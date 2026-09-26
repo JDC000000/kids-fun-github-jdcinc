@@ -15,13 +15,11 @@
 // dashboard from sprawling. See the round findings doc for the full rationale.
 //
 // ACCESS CONTROL (G-T34-1): identical to /admin/dashboard and /admin/data-health —
-// the shared choke point app/admin/_lib/gate.ts resolveAdminAccess() (real session/
-// role primary, interim shared-secret token fallback). An un-gated caller gets a 404;
+// the shared choke point app/admin/_lib/gate.ts resolveAdminAccess() (a signed-in
+// admin session; no token path). An un-gated caller gets a 404;
 // the route's existence is not advertised.
-import { headers } from 'next/headers';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { getProductHealthKpis } from '@/lib/analytics/kpi';
 import { ADMIN_SNAPSHOT_KEYS, snapshotOrCompute } from '@/lib/admin/snapshot';
@@ -45,17 +43,9 @@ export const metadata = {
 
 const fmtCount = (n: number) => n.toLocaleString('en-CA');
 
-export default async function AdminProductHealthPage({
-  searchParams,
-}: {
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
+export default async function AdminProductHealthPage() {
   // --- admin access gate (G-T34-1, identical to the other admin routes) --------
-  const grant = await resolveAdminAccess({
-    surface: 'admin_product_health',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_product_health' });
   if (!grant.ok) {
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
@@ -125,8 +115,8 @@ export default async function AdminProductHealthPage({
             : 'Computed live on this request — no scheduled snapshot was available, so this load paid the full read cost.'}
         </p>
         <p className={styles.note}>
-          🔒 Access gate: real role-based admin sign-in (session + admin role), with the interim shared-secret token
-          retained only as a coexistence fallback. The current-window KPI snapshot tiles live on{' '}
+          🔒 Access gate: a signed-in admin session (session + active admin role) is the only way in; there is no
+          shared-secret or URL-token access. The current-window KPI snapshot tiles live on{' '}
           <Link href="/admin/dashboard">/admin/dashboard</Link>; this page adds the over-time and target view.
         </p>
       </header>

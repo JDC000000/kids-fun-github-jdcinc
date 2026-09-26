@@ -173,61 +173,46 @@ test.describe('home — heading structure (hard gate, scoped to the restructured
   });
 });
 
-// --- Admin routes (project-wide sweep) -------------------------------------------
-// H2 — CLOSES THE LONG-STANDING ADMIN AUDIT GAP.
+// --- Admin routes: anonymous, with the retired shared secret -----------------------------
+// Until 2026-09-24 this block audited the admin pages by presenting the interim shared secret
+// (ADMIN_DASHBOARD_TOKEN) as `?token=`. That path is removed from the app; the admin a11y sweep
+// now signs in for real and lives in routes.authed.a11y.spec.ts.
 //
-// These routes are gated by app/admin/_lib/gate.ts: a real admin session first, with
-// the INTERIM shared secret (ADMIN_DASHBOARD_TOKEN, lib/admin/access.ts) as the
-// coexistence fallback. No admin_user row is seeded locally, so the session path never
-// matches and the token path is what the harness uses — it needs no auth *plumbing*,
-// only the same token in BOTH the app-server env and this test process.
-//
-// Rounds 17/18 could not audit these: scripts/e2e/setup-local-supabase.sh did not
-// provision ADMIN_DASHBOARD_TOKEN, the gate failed closed, every /admin/* route 404'd,
-// and the audit recorded a visible skip ("audit gap"). That script now emits a
-// loopback-only ADMIN_DASHBOARD_TOKEN and run-e2e.sh sources it before starting both
-// the app and Playwright — so the gap is closed rather than re-logged.
-//
-// The skip below is RETAINED as a safety net (not the expected path): if someone runs
-// the a11y projects against a server without the token, every admin route would 404
-// and axe would happily report "0 violations" on a Next.js not-found page — a false
-// clean. Skipping loudly is the honest failure mode. CI asserts the token IS present.
-test.describe('a11y audit — admin (token-gated surfaces)', () => {
-  const adminToken = process.env.ADMIN_DASHBOARD_TOKEN;
-
-  // Every token-gated admin surface, including the two charts-heavy KPI dashboards.
-  // /admin/operating is audited in BOTH review modes (?view=day | ?view=month): the
-  // grain switches the KPI grid, the section headings and the whole detail table, so
-  // one mode does not stand in for the other. /admin/product-health has a single mode
-  // (no view param) — its variation is the benchmark tile, always rendered.
-  const ADMIN_ROUTES: { route: string; label: string }[] = [
-    { route: '/admin/dashboard', label: 'admin dashboard' },
-    { route: '/admin/operating?view=day', label: 'admin operating (daily review)' },
-    { route: '/admin/operating?view=month', label: 'admin operating (monthly review)' },
-    { route: '/admin/product-health', label: 'admin product-health' },
-    { route: '/admin/data-health', label: 'admin data-health' },
+// What stays HERE is the negative control: scripts/e2e/setup-local-supabase.sh still provisions
+// ADMIN_DASHBOARD_TOKEN into the served app's env as a DECOY, and every admin route must 404 an
+// anonymous visitor who presents that exact value as `?token=` AND as `x-admin-token`. This is the
+// real `next start` build proving what tests/compliance/admin-no-url-credentials.test.ts proves in
+// unit form: setting the variable re-opens nothing.
+test.describe('admin routes refuse the retired shared secret (anonymous)', () => {
+  const decoy = process.env.ADMIN_DASHBOARD_TOKEN;
+  const ADMIN_ROUTES = [
+    '/admin/dashboard',
+    '/admin/operating?view=day',
+    '/admin/product-health',
+    '/admin/data-health',
+    '/admin/sms-subscribers',
+    '/admin/sms-engagement',
+    '/admin/corrections',
+    '/admin/qa-queue',
+    '/admin/sources',
+    '/admin/taxonomy',
+    '/admin/listings/new',
   ];
 
-  for (const { route, label } of ADMIN_ROUTES) {
-    test(`axe: ${label}`, async ({ page }, testInfo) => {
+  for (const route of ADMIN_ROUTES) {
+    test(`404: ${route} with ?token=<decoy> and x-admin-token`, async ({ request }) => {
       test.skip(
-        !adminToken,
-        `ADMIN_DASHBOARD_TOKEN is not set in this test process, so ${route} fails closed ` +
-          '(404) and auditing it would report a false clean on a not-found page. Run ' +
-          '`npm run e2e:setup` (which now provisions the local token) and drive the suite ' +
-          'through scripts/e2e/run-e2e.sh, which sources .env.e2e.local. See docs/a11y-audit.md.',
+        !decoy,
+        'ADMIN_DASHBOARD_TOKEN (the decoy) is not set in this test process — run through ' +
+          'scripts/e2e/run-e2e.sh, which sources .env.e2e.local into both the app and Playwright.',
       );
-      // Append the token with the correct separator — two of these routes already
-      // carry a query string, so a hardcoded "?" would silently drop the view mode.
       const sep = route.includes('?') ? '&' : '?';
-      const audit = await auditRoute(page, testInfo, `${route}${sep}token=${adminToken}`, label);
-
-      // Prove we audited the REAL admin page, not a 404. Without this, a gate/env
-      // regression turns every admin finding into a silent "clean" — the precise
-      // failure mode that let this gap sit un-noticed for several rounds.
-      await expect(page.locator('h1'), `${route} rendered the real admin surface, not a 404`)
-        .toContainText('KIDS FUN');
-      expect(audit.url, 'audit ran against the requested admin route').toContain('/admin/');
+      const res = await request.get(`${route}${sep}token=${encodeURIComponent(decoy!)}`, {
+        headers: { 'x-admin-token': decoy! },
+        maxRedirects: 0,
+      });
+      expect(res.status(), `${route} must not open for the retired secret`).toBe(404);
+      expect(res.headers()['referrer-policy']).toBe('no-referrer');
     });
   }
 });

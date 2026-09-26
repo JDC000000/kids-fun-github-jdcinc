@@ -1,4 +1,5 @@
 import { Client } from 'pg';
+import { assertTestDatabaseUrl } from '../../../lib/testing/local-db-guard';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -76,5 +77,25 @@ export async function readAuthUserAuditMarker(
       is_e2e_test_user: meta.is_e2e_test_user,
       created_by: meta.created_by,
     };
+  });
+}
+
+/**
+ * Make the E2E test user an active admin in the LOCAL e2e database, so the admin a11y sweep can
+ * reach /admin/* through the real session gate (app/admin/_lib/gate.ts) instead of the retired
+ * `?token=` secret. Idempotent (the light and dark projects may both call it).
+ *
+ * LOCAL ONLY: refuses unless DATABASE_URL is a local/disposable test database (the same guard the
+ * db test lane uses). This never runs against staging or production.
+ */
+export async function seedTestUserAsAdmin(userId: string): Promise<void> {
+  assertTestDatabaseUrl(process.env.DATABASE_URL, 'DATABASE_URL');
+  await withServiceDb(async (c) => {
+    await c.query('INSERT INTO user_profile (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [userId]);
+    await c.query(
+      `INSERT INTO admin_user (user_id, role, active) VALUES ($1, 'admin', true)
+       ON CONFLICT (user_id) DO UPDATE SET role = 'admin', active = true`,
+      [userId],
+    );
   });
 }

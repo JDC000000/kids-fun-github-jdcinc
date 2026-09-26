@@ -6,12 +6,10 @@
 // health (status_state) + confidence, and writes an admin_audit_log row.
 //
 // ACCESS (reuses app/admin/_lib/gate.ts, same posture as /admin/dashboard):
-//   • VIEW  — real admin session OR interim token; un-gated → 404.
-//   • WRITE — session admins only (grant.via === 'session'); token viewers are read-only.
-import { headers } from 'next/headers';
+//   • VIEW  — a signed-in admin session (the only way in); un-gated → 404.
+//   • WRITE — the same session, re-checked in the server action.
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ADMIN_TOKEN_HEADER, ADMIN_TOKEN_QUERY_PARAM } from '@/lib/admin/access';
 import { resolveAdminAccess } from '../_lib/gate';
 import { listOpenCorrections, getStatusStateOptions } from './_lib/data';
 import { CONFIDENCE_LABELS } from './_lib/vocab';
@@ -31,11 +29,7 @@ export default async function AdminCorrectionsPage({
 }: {
   searchParams: Record<string, string | string[] | undefined>;
 }) {
-  const grant = await resolveAdminAccess({
-    surface: 'admin_corrections',
-    headerToken: headers().get(ADMIN_TOKEN_HEADER),
-    queryToken: searchParams[ADMIN_TOKEN_QUERY_PARAM],
-  });
+  const grant = await resolveAdminAccess({ surface: 'admin_corrections' });
   if (!grant.ok) notFound();
 
   const canMutate = grant.via === 'session';
@@ -62,7 +56,7 @@ export default async function AdminCorrectionsPage({
           </p>
         ) : (
           <p className="adm-note">
-            🔒 Read-only (interim token). Sign in as a seeded admin to resolve reports.
+            🔒 Read-only access. Your admin account cannot resolve reports — that needs an admin with write access.
           </p>
         )}
       </header>
