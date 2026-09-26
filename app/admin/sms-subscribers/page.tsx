@@ -22,7 +22,7 @@ import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
 import { canSeePersonalData } from '@/lib/db/admin-guard';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
-import { formatTimestampUtc } from '@/lib/admin/format';
+import { EM_DASH, formatTimestampUtc } from '@/lib/admin/format';
 import {
   getSmsSubscribers,
   summariseSubscribers,
@@ -46,7 +46,8 @@ export default async function AdminSmsSubscribersPage() {
   }
 
   // A read-only 'viewer' gets the same rows with the personal columns NULLed in SQL.
-  const rows = await getSmsSubscribers({ redactPersonalData: !canSeePersonalData(grant.admin.role) });
+  const canSeePersonal = canSeePersonalData(grant.admin.role);
+  const rows = await getSmsSubscribers({ redactPersonalData: !canSeePersonal });
   const summary = summariseSubscribers(rows);
   // ONE clock for the whole table. Ages are derived from a birth year against "this year", so
   // taking the date per row would let a render that straddles midnight on December 31st print two
@@ -98,6 +99,9 @@ export default async function AdminSmsSubscribersPage() {
                 <th>Confirmed</th>
                 <th>Empty wks</th>
                 <th>Stopped</th>
+                {/* The Friday preview, one click from the list (Jon, 2026-09-24). Absent for a
+                    read-only role, which is refused the preview server-side anyway. */}
+                {canSeePersonal && <th>Friday text</th>}
               </tr>
             </thead>
             <tbody>
@@ -138,6 +142,15 @@ export default async function AdminSmsSubscribersPage() {
                   <td>{formatTimestampUtc(row.confirmedTimestamp)}</td>
                   <td>{row.consecutiveEmptyWeeks}</td>
                   <td>{formatTimestampUtc(row.stoppedAt)}</td>
+                  {canSeePersonal && (
+                    <td>
+                      {row.purged ? (
+                        <span className="adm-hint">{EM_DASH}</span>
+                      ) : (
+                        <Link href={`/admin/sms-subscribers/${row.id}?preview=1#this-weeks-sms`}>Preview</Link>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

@@ -42,11 +42,19 @@
 // masked, exactly as the script masks it, while the /s/ activity links stay real and clickable —
 // those are what "see what the activities are" actually means. Segment and character counts are
 // computed on the REAL body before masking, so the numbers reviewed are the true ones.
+//
+// ═══ …BUT A PREVIEW TAP IS NOT A PARENT'S CLICK (2026-09-24) ═══
+// Those /s/ links carry the SUBSCRIBER's real tokens, so an admin opening one used to write an
+// `sms_click_event` in that parent's name. Every /s/ link in the DISPLAYED body is therefore tagged
+// `?via=preview` (markPreviewLinks), which the /s/ route verifies and redirects exactly as before
+// but does not count. Applied after masking and after the counts, to the displayed body only —
+// nothing that is sent is touched.
 import { loadActiveSubscribers, loadWeeklySmsDeps } from '@/lib/sms/weekly-send-io';
 import { RESEND_SUPPRESSION_WINDOW_DAYS } from '@/lib/sms/weekly-send-io';
 import { buildWeeklySms } from '@/lib/sms/weekly-send';
 import { shortLinkSecret } from '@/lib/sms/config';
 import type { SmsSendLogRow, SmsSubscriberListRow } from '@/lib/admin/sms-subscribers';
+import { markPreviewLinks } from '@/lib/sms/click-through';
 
 export type SmsPreviewResult =
   /**
@@ -65,7 +73,10 @@ export type SmsPreviewResult =
   | { status: 'no_message'; outcome: string }
   | {
       status: 'ok';
-      /** The body as it would arrive, with the preferences token masked. */
+      /**
+       * The body as it would arrive, with the preferences token masked and every /s/ link tagged
+       * `?via=preview` so that opening it from the admin page is not counted as the parent's click.
+       */
       body: string;
       /** Counts measured on the UNMASKED body — the real ones. */
       segments: number;
@@ -131,6 +142,36 @@ export function redactPreferencesToken(body: string, token: string | null | unde
   return body.split(token).join('#'.repeat(token.length));
 }
 
+/** One run of a displayed preview body: plain text, or a (preview-tagged) link. */
+export interface PreviewBodyPart {
+  text: string;
+  /** Present only for an http(s) /s/ link that ALREADY carries `?via=preview`. */
+  href?: string;
+}
+
+/** An absolute http(s) short link that has been tagged by markPreviewLinks — nothing else. */
+const TAGGED_PREVIEW_LINK = /(https?:\/\/[^\s/]+(?:\/[^\s]*)?\/s\/[0-9A-Za-z]+\?via=preview)/g;
+
+/**
+ * Split a DISPLAYED preview body into text and clickable links, for the admin page.
+ *
+ * Only links that are http(s), are /s/ short links, and ALREADY carry `?via=preview` become
+ * anchors. An untagged link can therefore never be made clickable here: the one way to click
+ * through from the preview is the way that is not counted as the parent's tap.
+ */
+export function splitPreviewLinks(body: string): PreviewBodyPart[] {
+  const parts: PreviewBodyPart[] = [];
+  let last = 0;
+  for (const m of body.matchAll(TAGGED_PREVIEW_LINK)) {
+    const at = m.index ?? 0;
+    if (at > last) parts.push({ text: body.slice(last, at) });
+    parts.push({ text: m[0], href: m[0] });
+    last = at + m[0].length;
+  }
+  if (last < body.length) parts.push({ text: body.slice(last) });
+  return parts;
+}
+
 /** The exact weekly text this subscriber would receive, or why they would receive none. */
 export async function previewWeeklySmsForSubscriber(
   subscriberId: string,
@@ -157,7 +198,8 @@ export async function previewWeeklySmsForSubscriber(
   if (!plan.message) return { status: 'no_message', outcome: plan.outcome };
 
   const token = subscriber.preferencesToken;
-  const body = redactPreferencesToken(plan.message.body, token);
+  const masked = redactPreferencesToken(plan.message.body, token);
+  const body = markPreviewLinks(masked);
   return {
     status: 'ok',
     body,
@@ -166,6 +208,6 @@ export async function previewWeeklySmsForSubscriber(
     outcome: plan.outcome,
     areaLabel: plan.areaLabel,
     pickCount: plan.picks?.picks.length ?? 0,
-    tokenRedacted: Boolean(token) && body !== plan.message.body,
+    tokenRedacted: Boolean(token) && masked !== plan.message.body,
   };
 }

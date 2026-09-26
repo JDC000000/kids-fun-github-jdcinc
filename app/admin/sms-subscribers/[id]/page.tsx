@@ -26,6 +26,7 @@ import {
 import {
   ineligibilityReason,
   previewWeeklySmsForSubscriber,
+  splitPreviewLinks,
   type SmsPreviewResult,
 } from '@/lib/admin/sms-preview';
 
@@ -101,6 +102,16 @@ export default async function AdminSmsSubscriberDetailPage({
 
       <div className="adm-nav">
         <Link href="/admin/sms-subscribers">← All subscribers</Link>
+        {/* The preview, one click from the top of the page (Jon, 2026-09-24). Not offered to a
+            read-only role, which is refused the preview server-side anyway (see below). */}
+        {!redact && (
+          <>
+            {' · '}
+            <Link href={`/admin/sms-subscribers/${subscriber.id}?preview=1#this-weeks-sms`}>
+              Preview this Friday’s text →
+            </Link>
+          </>
+        )}
       </div>
 
       {purged && (
@@ -149,7 +160,7 @@ export default async function AdminSmsSubscriberDetailPage({
       </div>
 
       <div className="adm-section">
-        <h2>This week’s SMS</h2>
+        <h2 id="this-weeks-sms">This week’s SMS</h2>
         {redact && (
           <p className="adm-note">
             The SMS preview is not available to a read-only role: the message is built from this
@@ -162,7 +173,7 @@ export default async function AdminSmsSubscriberDetailPage({
             <Link
               href={`/admin/sms-subscribers/${subscriber.id}?preview=1`}
             >
-              Preview this week’s SMS →
+              Preview this Friday’s text →
             </Link>
             <br />
             <span className="adm-hint">
@@ -219,7 +230,17 @@ export default async function AdminSmsSubscriberDetailPage({
                 fontFamily: 'inherit',
               }}
             >
-              {preview.body}
+              {/* Only preview-tagged /s/ links become anchors (splitPreviewLinks): opening one goes
+                  to the real activity and is NOT counted as this parent's click. */}
+              {splitPreviewLinks(preview.body).map((part, i) =>
+                part.href ? (
+                  <a key={i} href={part.href} target="_blank" rel="noreferrer noopener">
+                    {part.text}
+                  </a>
+                ) : (
+                  <span key={i}>{part.text}</span>
+                )
+              )}
             </pre>
             {preview.tokenRedacted && (
               <p className="adm-hint">
@@ -232,7 +253,9 @@ export default async function AdminSmsSubscriberDetailPage({
             )}
             <p className="adm-hint">
               Nothing was sent and nothing was recorded — building this message touches no
-              subscriber state.
+              subscriber state. The activity links open the real listing; each carries{' '}
+              <code>?via=preview</code> (not part of the text that is sent), so opening one from here
+              is not counted as this parent’s click and adds no page view.
             </p>
           </>
         )}

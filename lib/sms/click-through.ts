@@ -206,6 +206,67 @@ export function hubClickPath(token: string): string {
   return `/s/${token}?${LINK_ORIGIN_PARAM}=hub`;
 }
 
+// ── ADMIN PREVIEW TAPS ARE NOT CLICKS (2026-09-24) ───────────────────────────────────────
+//
+// /admin/sms-subscribers/[id]?preview=1 renders the exact Friday text a subscriber would receive,
+// and its /s/ links are that SUBSCRIBER's real tokens. Before this, an admin who opened one of those
+// links to check the activity wrote an `sms_click_event` attributed to the subscriber — inventing
+// engagement the parent never had, in the very table PRD §6's click-through metric is computed from.
+//
+// The fix marks every link in a preview body with `?via=preview` (previewClickUrl, applied by
+// lib/admin/sms-preview.ts), and the /s/ route, on seeing that marker, still verifies the token and
+// still redirects to the same place — but COUNTS NOTHING: no `sms_click_event`, and not even the
+// subscriber/send-log reads that exist only to build one.
+//
+// ═══ 'preview' IS DELIBERATELY NOT A LinkOrigin ═══
+// LinkOrigin is the value WRITTEN to `sms_click_event.link_origin` (CHECK 'direct' | 'hub'). A
+// preview tap writes no row, so it has no origin; making 'preview' a member of the union would
+// invite a future edit to record it, and 0036's CHECK would then silently eat the click. It is a
+// separate, boolean decision: isPreviewTap().
+//
+// ═══ SPOOFABLE, AND THE BLAST RADIUS IS "THE TAPPER'S OWN CLICK IS NOT COUNTED" ═══
+// Anyone can append `?via=preview` to a link. What that changes, exhaustively:
+//   • no `sms_click_event` row for THAT request — an undercount of one tap on that token;
+//   • a 60-second cookie, scoped to that one activity's path on THAT browser, which makes the
+//     activity page skip its own `listing_viewed` for that browser (see PREVIEW_HOP_COOKIE).
+// What it cannot change — same argument as `?via=hub` above, because the query string is not part
+// of the signed payload: whether the token verifies, which occurrence it resolves to, the redirect
+// destination (no query string survives into Location), or anything about any other request,
+// browser or subscriber. It writes nothing and reads no subscriber data. The only party who could
+// use it to skew a metric is someone holding valid tokens, and the only skew available is to make
+// their own taps disappear. Pinned by tests/sms/click_through_preview.test.ts.
+
+/** The `?via=` value that marks a tap from an admin preview. EXACT match only (case-sensitive). */
+export const PREVIEW_VIA_VALUE = 'preview';
+
+/** Is this request an admin-preview tap? Only the exact value counts; everything else is a real tap. */
+export function isPreviewTap(raw: string | null | undefined): boolean {
+  return raw === PREVIEW_VIA_VALUE;
+}
+
+/**
+ * Tag every /s/ short link in a message body as a preview tap: `…/s/{token}` → `…/s/{token}?via=preview`.
+ *
+ * Applied ONLY to the admin preview's DISPLAYED body (lib/admin/sms-preview.ts), after the counts
+ * have been measured on the real body — never to anything that is sent. Matches the path shape
+ * shortLinkUrl() mints (`/s/` + base62), so it is indifferent to which origin minted the link.
+ */
+export function markPreviewLinks(body: string): string {
+  return body.replace(/(\/s\/[0-9A-Za-z]+)(?![0-9A-Za-z?])/g, `$1?${LINK_ORIGIN_PARAM}=${PREVIEW_VIA_VALUE}`);
+}
+
+/**
+ * The cookie a preview tap leaves so the activity page it lands on skips its own `listing_viewed`.
+ *
+ * WHY A COOKIE AND NOT A QUERY PARAMETER ON THE REDIRECT: the Location header must stay free of
+ * any tagging (see the route) — and a `?via=preview` on /activity/{id} would be a SHAREABLE switch
+ * that suppressed analytics for every visitor who followed a pasted link. A cookie can only ever
+ * affect the browser that made the preview tap. It is scoped to the one destination path, lives 60
+ * seconds, is HttpOnly and carries no data but '1'.
+ */
+export const PREVIEW_HOP_COOKIE = 'kf_preview_hop';
+export const PREVIEW_HOP_COOKIE_MAX_AGE_S = 60;
+
 export type ClickOutcome =
   /** Token verified, occurrence live — go to the activity. */
   | 'redirect'
@@ -267,6 +328,12 @@ export interface ClickThroughOptions extends ClickThroughDeps {
    * — under the origin that under-counts the hub rather than inventing credit for it.
    */
   linkOrigin?: LinkOrigin;
+  /**
+   * Whether to count this tap at all. Defaults to TRUE — every real tap is counted. FALSE only for
+   * an admin-preview tap (isPreviewTap): the token is still verified and the redirect is identical,
+   * but no subscriber or send-log is looked up and no `sms_click_event` is written.
+   */
+  countClick?: boolean;
 }
 
 // ── The reads and the write ─────────────────────────────────────────────────────────────
@@ -496,20 +563,23 @@ export async function resolveClickThrough(
   }
 
   // 3. Count the tap. BEST-EFFORT: everything below is wrapped, and nothing it does can change
-  //    where the parent ends up.
+  //    where the parent ends up. Skipped entirely for an admin-preview tap (countClick: false) —
+  //    not even the subscriber lookup runs, because it exists only to build the row.
   let clickLogged = false;
-  try {
-    const subscriberId = await findSubscriber(refs.subscriberShortRef);
-    if (subscriberId) {
-      const sendLogId = await findSendLog(subscriberId, occurrenceId);
-      if (sendLogId) {
-        await record({ subscriberId, sendLogId, occurrenceId, linkOrigin });
-        clickLogged = true;
+  if (options.countClick !== false) {
+    try {
+      const subscriberId = await findSubscriber(refs.subscriberShortRef);
+      if (subscriberId) {
+        const sendLogId = await findSendLog(subscriberId, occurrenceId);
+        if (sendLogId) {
+          await record({ subscriberId, sendLogId, occurrenceId, linkOrigin });
+          clickLogged = true;
+        }
       }
+    } catch {
+      // Swallowed on purpose. See the header: the redirect never depends on the logging.
+      clickLogged = false;
     }
-  } catch {
-    // Swallowed on purpose. See the header: the redirect never depends on the logging.
-    clickLogged = false;
   }
 
   return {

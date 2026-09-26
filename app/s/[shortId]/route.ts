@@ -26,6 +26,9 @@
 import { NextResponse } from 'next/server';
 import {
   LINK_ORIGIN_PARAM,
+  PREVIEW_HOP_COOKIE,
+  PREVIEW_HOP_COOKIE_MAX_AGE_S,
+  isPreviewTap,
   parseLinkOrigin,
   resolveClickThrough,
 } from '@/lib/sms/click-through';
@@ -60,9 +63,15 @@ export async function GET(
   // ANYTHING UNRECOGNISED IS 'direct', not an error: a junk parameter must not cost a parent
   // their redirect, and the value is MAPPED onto the union rather than passed through to the
   // insert, where 0036's CHECK would reject it and the click would vanish silently.
-  const linkOrigin = parseLinkOrigin(new URL(request.url).searchParams.get(LINK_ORIGIN_PARAM));
+  const via = new URL(request.url).searchParams.get(LINK_ORIGIN_PARAM);
+  const linkOrigin = parseLinkOrigin(via);
 
-  const resolution = await resolveClickThrough(params.shortId, { linkOrigin });
+  // AN ADMIN-PREVIEW TAP (`?via=preview`, minted only into the admin preview's displayed body) is
+  // verified and redirected exactly like any other, but COUNTS NOTHING — see isPreviewTap in
+  // lib/sms/click-through.ts for why, and for the full blast radius of somebody appending it.
+  const previewTap = isPreviewTap(via);
+
+  const resolution = await resolveClickThrough(params.shortId, { linkOrigin, countClick: !previewTap });
 
   // Resolve against the REQUEST's own origin rather than NEXT_PUBLIC_SITE_URL: this route is
   // reached from a text message and may be hit on a preview deployment or a staging host, and a
@@ -86,6 +95,19 @@ export async function GET(
   // own booking page should not hand that site a Referer identifying which KIDS FUN link they
   // came from.
   response.headers.set('referrer-policy', 'no-referrer');
+
+  // The preview tap also asks the ONE activity page it lands on to skip its `listing_viewed` — for
+  // this browser, for 60 seconds, and nothing else (PREVIEW_HOP_COOKIE). Only on a real redirect
+  // to an activity: the interstitials record no listing view anyway.
+  if (previewTap && resolution.outcome === 'redirect') {
+    response.cookies.set(PREVIEW_HOP_COOKIE, '1', {
+      path: resolution.destination,
+      maxAge: PREVIEW_HOP_COOKIE_MAX_AGE_S,
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: target.protocol === 'https:',
+    });
+  }
 
   return response;
 }
