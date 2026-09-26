@@ -6,6 +6,7 @@ import {
   SENDER_IDENTITY,
   SUPPORT_SMS_HREF,
 } from '@/lib/sms/consent-copy';
+import { searchLinkRel } from '@/app/_lib/search-link-rel';
 
 // /link-unavailable — where a tapped weekly short link goes when the TOKEN ITSELF does not verify:
 // malformed, truncated, altered in transit, or never minted. The `invalid_token` outcome of
@@ -55,6 +56,8 @@ import {
 
 export const dynamic = 'force-static';
 
+const ONWARD_HREF = '/search?when=weekend';
+
 export const metadata = {
   title: 'That link didn’t work — KIDS FUN',
   robots: { index: false, follow: false },
@@ -84,9 +87,15 @@ export default function LinkUnavailablePage() {
             A bare `/search` is the unfiltered page this whole change exists to get a parent off;
             sending them back to it under a label promising the weekend would be the same dead end
             with a sentence in front of it. `when=weekend` is the canonical form parsed by
-            app/search/_lib/params.ts (WHEN_OPTIONS), not a string invented here. */}
+            app/search/_lib/params.ts (WHEN_OPTIONS), not a string invented here.
+            It is a /search permutation, so it carries rel="nofollow" like every other one (see
+            app/_lib/search-link-rel.ts). That is a crawler hint only: a parent arriving from a
+            text taps it exactly as before. The page's own robots metadata already says nofollow;
+            this makes the link agree with it. */}
         <p className="kf-interstitial__onward">
-          <a href="/search?when=weekend">{LINK_UNAVAILABLE_ONWARD}</a>
+          <a href={ONWARD_HREF} rel={searchLinkRel(ONWARD_HREF)}>
+            {LINK_UNAVAILABLE_ONWARD}
+          </a>
         </p>
       </div>
     </main>
