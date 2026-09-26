@@ -143,4 +143,21 @@ describe('captureAndFlush', () => {
     await captureAndFlush(new Error('e'));
     expect(order).toEqual(['capture', 'flush']);
   });
+
+  it('applies an optional fingerprint and extras to the capture scope, and touches neither when not asked', async () => {
+    const scope = { setTags: vi.fn(), setFingerprint: vi.fn(), setExtras: vi.fn() };
+    withScope.mockImplementationOnce((cb: (s: typeof scope) => void) => cb(scope));
+    await captureAndFlush(new Error('e'), undefined, { route: 'r' }, {
+      fingerprint: ['search_rate_limit_degraded', 'db_error'],
+      extra: { cause: 'ENOTFOUND: x' },
+    });
+    expect(scope.setFingerprint).toHaveBeenCalledWith(['search_rate_limit_degraded', 'db_error']);
+    expect(scope.setExtras).toHaveBeenCalledWith({ cause: 'ENOTFOUND: x' });
+
+    const plain = { setTags: vi.fn(), setFingerprint: vi.fn(), setExtras: vi.fn() };
+    withScope.mockImplementationOnce((cb: (s: typeof plain) => void) => cb(plain));
+    await captureAndFlush(new Error('e'), undefined, { route: 'r' });
+    expect(plain.setFingerprint).not.toHaveBeenCalled();
+    expect(plain.setExtras).not.toHaveBeenCalled();
+  });
 });

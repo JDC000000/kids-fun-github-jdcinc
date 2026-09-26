@@ -13,6 +13,10 @@ import {
   SEARCH_RATE_LIMITS,
   type SearchRateLimitSubject,
 } from '@/lib/security/search-rate-limit';
+import {
+  createSearchRateLimitDegradedState,
+  resetDefaultSearchRateLimitDegradedState,
+} from '@/lib/security/search-rate-limit-degraded';
 import type { query as dbQuery } from '@/lib/db/client';
 
 const IP = '203.0.113.7';
@@ -63,6 +67,8 @@ beforeEach(() => {
   // Stubbed so the lane does not depend on whoever's shell runs it — mirrors
   // tests/sms/signup_throttle.test.ts's convention for the same shared salt.
   vi.stubEnv('SMS_PHONE_HASH_SALT', 'rate-limit-test-salt');
+  // The breaker + memory fallback are per-instance module state; every test starts cold.
+  resetDefaultSearchRateLimitDegradedState();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -302,6 +308,8 @@ describe('what it never lets out, and how it degrades', () => {
       retryAfterSeconds: 0,
       degraded: true,
       degradedReason: 'no_salt',
+      fallback: null,
+      degradedCause: null,
       minuteAttempts: null,
       sessionMinuteAttempts: null,
     });
@@ -316,16 +324,27 @@ describe('what it never lets out, and how it degrades', () => {
     expect(result.allowed).toBe(true);
   });
 
-  it('degrades OPEN when the counter table is unreachable — a search must not 500', async () => {
-    // Fail-open, same posture as lib/sms/instant-picks-throttle.ts: the two ways this query
-    // fails are a real DB outage (in which case the search itself will fail right after anyway)
-    // and migration 0051 not being applied yet, which is a deploy-ordering state, not an attack.
+  it('degrades to the MEMORY fallback when the counter table is unreachable — a search must not 500, and the limit still bites', async () => {
+    // Used to FAIL OPEN here (every request through). Since 2026-09-24 the same buckets are counted
+    // in memory instead (lib/security/search-rate-limit-degraded.ts): the first request is still
+    // allowed — a real parent never notices — but the caller is NOT unlimited. The two ways this
+    // query fails are a real DB outage and migration 0051 not being applied yet.
     const exploding = (async () => {
-      throw new Error('relation "search_rate_limit" does not exist');
+      throw Object.assign(new Error('relation "search_rate_limit" does not exist'), { code: '42P01' });
     }) as unknown as typeof dbQuery;
-    const result = await checkSearchRateLimit(subject(IP, SESSION), { query: exploding });
+    const degradedState = createSearchRateLimitDegradedState();
+    const result = await checkSearchRateLimit(subject(IP, SESSION), { query: exploding, degradedState });
     expect(result.allowed).toBe(true);
     expect(result.degraded).toBe(true);
     expect(result.degradedReason).toBe('db_error');
+    expect(result.fallback).toBe('memory');
+    expect(result.degradedCause).toContain('42P01');
+
+    for (let i = 1; i < SEARCH_RATE_LIMITS.session.perMinute; i++) {
+      expect((await checkSearchRateLimit(subject(IP, SESSION), { query: exploding, degradedState })).allowed).toBe(true);
+    }
+    const refused = await checkSearchRateLimit(subject(IP, SESSION), { query: exploding, degradedState });
+    expect(refused.allowed).toBe(false);
+    expect(refused.reason).toBe('session_minute');
   });
 });

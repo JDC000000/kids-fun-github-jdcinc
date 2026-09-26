@@ -1,0 +1,411 @@
+// lib/security/search-rate-limit-degraded.ts — what the /search rate limit does when its own
+// counter table is unreachable (2026-09-24, option C+D of
+// documents/kids-fun/search-ratelimit-fail-closed-SCOPE-2026-09-24.md in the Control Room workspace).
+//
+// ═══ WHY NOT JUST "FAIL CLOSED" ═══
+// Until this module, a DB error in lib/security/search-rate-limit.ts let EVERY request through
+// (fail open). That silently disabled the protection doing ~95% of the Vercel cost control against
+// crawlers walking /search filter permutations. The obvious flip — refuse everything when the
+// counter table errors — was rejected, because the limiter can fail while search itself still
+// works: the catalogue/alias/region reads are cached per instance, and a migration shipped after
+// its code (the 2026-09-22 10:26Z event) breaks ONLY the limiter's table. Fail-closed would turn
+// each of those into a full /search outage for real parents.
+//
+// ═══ WHAT HAPPENS INSTEAD ═══
+//   1. DEADLINE — the DB limiter path gets a total time budget. A saturated pool used to make a
+//      request wait the full 10s acquire timeout before failing open; now it fails over quickly.
+//   2. BREAKER — after repeated DB-limiter failures this instance stops calling the DB limiter for
+//      a short window (then lets exactly one probe through). While an outage lasts, the limiter
+//      stops adding up to four pool acquires per request to a pool that is already failing — in
+//      the 2026-09-24 EMAXCONNSESSION window it was one of the clients competing for it.
+//   3. MEMORY FALLBACK — while the DB limiter is unavailable (error, deadline, or breaker open),
+//      the SAME four buckets with the SAME limits are evaluated against a bounded, per-instance
+//      in-memory counter. A real parent (far below 12/min) never notices; a crawler is still
+//      refused, at worst `limit × number of warm instances it lands on`.
+// `no_salt` and `no_subject` are NOT handled here and still fail open, unchanged: there is no
+// subject to count in either case, and refusing on `no_salt` would take down any environment
+// missing the salt (staging has none today).
+//
+// Everything here is per serverless INSTANCE and deliberately so: no shared state means no new
+// dependency that could itself be down during the outage this exists for. State is lost on cold
+// start, which only ever makes the fallback more lenient, never stricter than the DB limiter.
+
+/** Total budget for the DB limiter path (all up-to-four statements), in ms. Well above a healthy
+ *  round trip (~20ms cross-region × 4) and far below the pool's 10s acquire timeout. */
+export const DB_LIMITER_DEADLINE_MS = 1_500;
+
+/** Breaker: this many DB-limiter failures inside BREAKER_FAILURE_WINDOW_MS opens it. More than
+ *  one, so a single stale pooled connection (57P01 on a reclaimed backend) cannot trip it. */
+export const BREAKER_FAILURE_THRESHOLD = 3;
+export const BREAKER_FAILURE_WINDOW_MS = 10_000;
+/** How long an open breaker skips the DB limiter before letting one probe through. */
+export const BREAKER_OPEN_MS = 15_000;
+
+/** Upper bound on in-memory buckets per instance, so a cookie-dropping, IP-rotating caller cannot
+ *  grow memory without bound while the DB limiter is down. Each entry is a short string + 2
+ *  numbers; 10k is well under a megabyte. */
+export const MEMORY_FALLBACK_MAX_ENTRIES = 10_000;
+
+/** A degraded reason is reported to Sentry at most once per this window, per instance. */
+export const DEGRADED_REPORT_INTERVAL_MS = 60_000;
+
+// ── In-memory counter ──────────────────────────────────────────────────────────────────────────
+
+interface MemoryBucket {
+  attempts: number;
+  expiresAtMs: number;
+}
+
+/**
+ * Same contract as the DB `countAttempt` in search-rate-limit.ts, so the four-bucket evaluation
+ * can run unchanged against either: the first attempt in a window creates the bucket at 1, an
+ * attempt under `maxAttempts` increments and is allowed, and a REFUSED attempt leaves the bucket
+ * untouched (hammering a closed limit must not extend the caller's own lockout).
+ */
+export class MemoryRateLimitStore {
+  private readonly buckets = new Map<string, MemoryBucket>();
+  /** Lower bound on the earliest `expiresAtMs` in the map (may be stale-low after an eviction). */
+  private nextExpiryMs = Number.POSITIVE_INFINITY;
+  private scans = 0;
+  /**
+   * A LIVE iterator over the map, kept across evictions. `keys().next()` from a fresh iterator
+   * restarts at the head and re-skips every deleted slot V8 has not compacted yet — measured at
+   * ~18µs per eviction at the 10k cap, vs ~1.4µs with this cursor. Correct as LRU because every key
+   * it has passed was evicted, and a touched key is re-inserted at the END, ahead of the cursor.
+   */
+  private evictionCursor: IterableIterator<string> | null = null;
+
+  constructor(private readonly maxEntries: number = MEMORY_FALLBACK_MAX_ENTRIES) {}
+
+  countAttempt(
+    scope: string,
+    hash: string,
+    windowSeconds: number,
+    maxAttempts: number,
+    nowMs: number
+  ): { allowed: boolean; attempts: number } {
+    const windowMs = windowSeconds * 1000;
+    const windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
+    const key = `${scope}|${hash}|${windowStartMs}`;
+    const existing = this.buckets.get(key);
+
+    if (!existing) {
+      this.makeRoom(nowMs);
+      const expiresAtMs = windowStartMs + windowMs;
+      this.buckets.set(key, { attempts: 1, expiresAtMs });
+      if (expiresAtMs < this.nextExpiryMs) this.nextExpiryMs = expiresAtMs;
+      return { allowed: true, attempts: 1 };
+    }
+    // Re-insert so Map order tracks recency: the oldest key is always the least recently used.
+    // A REFUSED attempt refreshes recency too (2026-09-24 QA F3): otherwise the bucket of a caller
+    // that is actively being refused is the stalest entry once the map is full, and is evicted
+    // FIRST — QA re-admitted a blocked bot after 5,000 distinct cookieless requests. It still does
+    // not increment (see this class's header).
+    this.buckets.delete(key);
+    this.buckets.set(key, existing);
+    if (existing.attempts >= maxAttempts) {
+      return { allowed: false, attempts: existing.attempts };
+    }
+    existing.attempts += 1;
+    return { allowed: true, attempts: existing.attempts };
+  }
+
+  get size(): number {
+    return this.buckets.size;
+  }
+
+  /** How many full expiry sweeps have run — diagnostic, and what the F4 test asserts on. */
+  get fullScans(): number {
+    return this.scans;
+  }
+
+  clear(): void {
+    this.buckets.clear();
+    this.nextExpiryMs = Number.POSITIVE_INFINITY;
+    this.evictionCursor = null;
+  }
+
+  /**
+   * At capacity: drop expired buckets first; if that frees nothing, evict least recently used.
+   *
+   * The expiry sweep is O(n), so it only runs when something CAN have expired (nowMs has reached
+   * the earliest known expiry) — 2026-09-24 QA F4 measured the unconditional version at ~114µs per
+   * insert (a full 10k-entry scan every time) under a flood of live buckets. After a sweep
+   * `nextExpiryMs` is the true minimum of what remains, so the next sweep waits for the next real
+   * window boundary: at most about one per minute-bucket boundary, however hard the flood.
+   */
+  private makeRoom(nowMs: number): void {
+    if (this.buckets.size < this.maxEntries) return;
+    if (nowMs >= this.nextExpiryMs) {
+      this.scans += 1;
+      let earliest = Number.POSITIVE_INFINITY;
+      for (const [key, bucket] of this.buckets) {
+        if (bucket.expiresAtMs <= nowMs) this.buckets.delete(key);
+        else if (bucket.expiresAtMs < earliest) earliest = bucket.expiresAtMs;
+      }
+      this.nextExpiryMs = earliest;
+    }
+    while (this.buckets.size >= this.maxEntries) {
+      this.evictionCursor ??= this.buckets.keys();
+      let next = this.evictionCursor.next();
+      if (next.done) {
+        this.evictionCursor = this.buckets.keys();
+        next = this.evictionCursor.next();
+      }
+      if (next.done) break;
+      this.buckets.delete(next.value);
+    }
+  }
+}
+
+// ── Circuit breaker ────────────────────────────────────────────────────────────────────────────
+
+export type BreakerState = 'closed' | 'open' | 'half_open';
+
+export interface BreakerOptions {
+  failureThreshold?: number;
+  failureWindowMs?: number;
+  openMs?: number;
+}
+
+/**
+ * What `tryAcquire` hands a caller that may use the DB limiter. The caller passes it back to
+ * `recordSuccess` / `recordFailure`, so the breaker can tell WHICH breaker episode an outcome
+ * belongs to (see `generation`).
+ */
+export interface BreakerTicket {
+  readonly generation: number;
+  /** True for the single half-open probe; only its success may close an open breaker. */
+  readonly probe: boolean;
+}
+
+/**
+ * closed → open after `failureThreshold` failures within a SLIDING `failureWindowMs`.
+ * open → half_open once `openMs` has elapsed; exactly ONE caller is let through as the probe,
+ * every concurrent caller keeps using the fallback until the probe settles.
+ * half_open → closed on probe success, → open (fresh `openMs`) on probe failure.
+ *
+ * ═══ 2026-09-24 QA F1: SUCCESSES DO NOT ERASE FAILURES, AND STRAGGLERS DO NOT COUNT ═══
+ * The first version reset everything on ANY success, which made it "3 failures IN A ROW", not
+ * "3 in 10s". Measured by independent QA against a real DB whose latency flapped around the
+ * deadline (1.34s successes alternating with 1.50s timeouts): 5 failures inside 10s and the
+ * breaker NEVER opened, so every request kept paying ~1.5s and adding pool pressure — the brownout
+ * case this breaker exists for. And a slow success from a request that had acquired while CLOSED,
+ * but finished after the breaker OPENED, closed it again ~1.2s later instead of 15s.
+ * Now: a success while closed leaves the failure window alone (old failures age out of it on their
+ * own), and only the half-open PROBE's success can close the breaker (a non-probe success never
+ * does — that alone fixes the straggler). Every ticket also carries the breaker `generation` it was
+ * issued in; `generation` advances on every open/close, so ANY outcome from an earlier episode is
+ * ignored — e.g. a failure from a request that started before the breaker opened cannot count
+ * against the next closed episode after recovery.
+ */
+export class SearchRateLimitBreaker {
+  private state: BreakerState = 'closed';
+  private failureTimes: number[] = [];
+  private openedAtMs = 0;
+  private probeInFlight = false;
+  private generation = 0;
+  private lastCause: string | null = null;
+  private readonly failureThreshold: number;
+  private readonly failureWindowMs: number;
+  private readonly openMs: number;
+
+  constructor(options: BreakerOptions = {}) {
+    this.failureThreshold = options.failureThreshold ?? BREAKER_FAILURE_THRESHOLD;
+    this.failureWindowMs = options.failureWindowMs ?? BREAKER_FAILURE_WINDOW_MS;
+    this.openMs = options.openMs ?? BREAKER_OPEN_MS;
+  }
+
+  currentState(): BreakerState {
+    return this.state;
+  }
+
+  /**
+   * The cause of the most recent counted failure, kept while the breaker is open or half-open so a
+   * `breaker_open` decision can still say WHY (2026-09-24 QA F2: over a 180s outage, the reports at
+   * +60s and +120s carried only `breaker_open`). Cleared when the breaker closes.
+   */
+  lastFailureCause(): string | null {
+    return this.lastCause;
+  }
+
+  /**
+   * A ticket if this caller may use the DB limiter now, else null (use the fallback). Claims the
+   * probe slot when half-opening.
+   */
+  tryAcquire(nowMs: number): BreakerTicket | null {
+    if (this.state === 'closed') return { generation: this.generation, probe: false };
+    if (this.state === 'open') {
+      if (nowMs - this.openedAtMs < this.openMs) return null;
+      this.state = 'half_open';
+      this.probeInFlight = false;
+    }
+    if (this.probeInFlight) return null;
+    this.probeInFlight = true;
+    return { generation: this.generation, probe: true };
+  }
+
+  recordSuccess(ticket: BreakerTicket): void {
+    if (ticket.generation !== this.generation) return; // from an earlier episode: ignore
+    if (this.state === 'half_open' && ticket.probe) this.transition('closed', 0);
+    // A success while closed deliberately does NOT clear `failureTimes` (F1).
+  }
+
+  recordFailure(ticket: BreakerTicket, nowMs: number, cause: string | null = null): void {
+    if (ticket.generation !== this.generation) return; // from an earlier episode: ignore
+    if (cause !== null) this.lastCause = cause;
+    if (this.state === 'half_open') {
+      if (ticket.probe) this.transition('open', nowMs);
+      return;
+    }
+    if (this.state !== 'closed') return;
+    this.failureTimes = this.failureTimes.filter((t) => nowMs - t < this.failureWindowMs);
+    this.failureTimes.push(nowMs);
+    if (this.failureTimes.length >= this.failureThreshold) this.transition('open', nowMs);
+  }
+
+  reset(): void {
+    this.transition('closed', 0);
+  }
+
+  private transition(to: 'open' | 'closed', nowMs: number): void {
+    this.state = to;
+    this.generation += 1;
+    this.failureTimes = [];
+    this.probeInFlight = false;
+    if (to === 'open') this.openedAtMs = nowMs;
+    else this.lastCause = null;
+  }
+}
+
+// ── Degraded-report throttle ───────────────────────────────────────────────────────────────────
+
+/**
+ * The route used to `await captureAndFlush` on EVERY degraded request — during an outage that is
+ * one Sentry event plus one flush round trip per request, paid in latency and Observability
+ * events. This lets each reason through at most once per interval, per instance.
+ */
+export class DegradedReportThrottle {
+  private readonly lastReportedAtMs = new Map<string, number>();
+
+  constructor(private readonly intervalMs: number = DEGRADED_REPORT_INTERVAL_MS) {}
+
+  shouldReport(reason: string, nowMs: number): boolean {
+    const last = this.lastReportedAtMs.get(reason);
+    if (last !== undefined && nowMs - last < this.intervalMs) return false;
+    this.lastReportedAtMs.set(reason, nowMs);
+    return true;
+  }
+
+  clear(): void {
+    this.lastReportedAtMs.clear();
+  }
+}
+
+// ── Deadline ───────────────────────────────────────────────────────────────────────────────────
+
+export class SearchRateLimitDeadlineError extends Error {
+  readonly code = 'SEARCH_RATE_LIMIT_DEADLINE';
+  constructor(readonly deadlineMs: number) {
+    super(`search rate-limit DB check exceeded its ${deadlineMs}ms deadline`);
+    this.name = 'SearchRateLimitDeadlineError';
+  }
+}
+
+/**
+ * A handle the DB limiter path checks before each statement, so that once the deadline has fired
+ * the abandoned sequence does not go on to issue its remaining statements.
+ */
+export interface DeadlineBudget {
+  expired: boolean;
+}
+
+/**
+ * Race `work(budget)` against `deadlineMs`. On expiry: `budget.expired` is set and the returned
+ * promise rejects with SearchRateLimitDeadlineError. The in-flight statement is ABANDONED, not
+ * cancelled — safe here because every limiter statement is a single autocommit
+ * `INSERT … ON CONFLICT`, so there is no open transaction to leave `idle in transaction` (the
+ * 2026-09-14 wedge lib/db/client.ts's queryWithTimeout header describes). queryWithTimeout itself
+ * is deliberately NOT used: its BEGIN/SET LOCAL/COMMIT wrapper would triple the round trips.
+ */
+export function withDeadline<T>(work: (budget: DeadlineBudget) => Promise<T>, deadlineMs: number): Promise<T> {
+  const budget: DeadlineBudget = { expired: false };
+  const running = work(budget);
+  // The abandoned promise may still reject after the deadline; never let that go unhandled.
+  running.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      budget.expired = true;
+      reject(new SearchRateLimitDeadlineError(deadlineMs));
+    }, deadlineMs);
+  });
+  return Promise.race([running, deadline]).finally(() => clearTimeout(timer));
+}
+
+// ── Cause, for reporting ───────────────────────────────────────────────────────────────────────
+
+/**
+ * A short, non-secret description of WHY the DB limiter failed. The 2026-09-24 Sentry audit could
+ * not tell a missing migration from ENOTFOUND from pooler exhaustion because the error was
+ * discarded. `code` (pg SQLSTATE or Node errno) is the stable part; the message is truncated and
+ * still passes through sentry.scrub.ts's redaction when it is sent.
+ */
+export function describeLimiterFailure(err: unknown): string {
+  if (!(err instanceof Error)) return `non_error:${typeof err}`;
+  const code = (err as { code?: unknown }).code;
+  const codePart = typeof code === 'string' && code.length > 0 ? code : err.name;
+  const message = err.message.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s@/]+@/gi, '<redacted>@').slice(0, 160);
+  return `${codePart}: ${message}`;
+}
+
+/** The `degradedCause` for a request answered from the fallback because the breaker is open. */
+export function breakerOpenCause(lastFailureCause: string | null): string {
+  return lastFailureCause ? `breaker_open (last: ${lastFailureCause})` : 'breaker_open';
+}
+
+// ── Per-instance state ─────────────────────────────────────────────────────────────────────────
+
+export interface SearchRateLimitDegradedState {
+  store: MemoryRateLimitStore;
+  breaker: SearchRateLimitBreaker;
+  reportThrottle: DegradedReportThrottle;
+  /**
+   * The MONOTONIC clock (ms) for every DURATION here — breaker failure window, open time, and the
+   * report interval. Never Date.now(): 2026-09-24 QA F5 stepped the wall clock back 1h while the
+   * breaker was open and it stayed open ~1h (DB limiter bypassed, analytics counts null all that
+   * time). Wall-clock time is still what names the rate-limit WINDOWS (minute/hour buckets must
+   * line up with the DB limiter's `window_start`), so the memory store keeps using Date.now().
+   */
+  now: () => number;
+}
+
+/** Monotonic milliseconds. Looked up per call (not captured) so fake timers can substitute it. */
+export function monotonicNowMs(): number {
+  return performance.now();
+}
+
+export function createSearchRateLimitDegradedState(
+  options: { maxEntries?: number; breaker?: BreakerOptions; reportIntervalMs?: number; now?: () => number } = {}
+): SearchRateLimitDegradedState {
+  return {
+    store: new MemoryRateLimitStore(options.maxEntries),
+    breaker: new SearchRateLimitBreaker(options.breaker),
+    reportThrottle: new DegradedReportThrottle(options.reportIntervalMs),
+    now: options.now ?? monotonicNowMs,
+  };
+}
+
+/** The one instance-wide state the route uses. Tests inject their own via the options seams. */
+export const defaultSearchRateLimitDegradedState: SearchRateLimitDegradedState =
+  createSearchRateLimitDegradedState();
+
+/**
+ * Test/ops hook: return this instance's shared state to a cold start — empty memory counters,
+ * breaker closed, report throttle cleared. Same role as clearPostgresListingsCache().
+ */
+export function resetDefaultSearchRateLimitDegradedState(): void {
+  defaultSearchRateLimitDegradedState.store.clear();
+  defaultSearchRateLimitDegradedState.breaker.reset();
+  defaultSearchRateLimitDegradedState.reportThrottle.clear();
+}

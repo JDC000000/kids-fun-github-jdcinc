@@ -86,6 +86,20 @@ export function withObservedRoute<A extends unknown[]>(
 }
 
 /**
+ * Optional per-capture scope data for captureAndFlush.
+ *
+ * `fingerprint` exists because Sentry groups by stack trace: two different messages thrown from the
+ * same line land in ONE issue named after whichever arrived first. The 2026-09-24 audit found 12
+ * staging `search_rate_limit_degraded:no_salt` events counted inside a production-looking
+ * "db_error" issue for exactly that reason. `extra` passes through sentry.scrub.ts's deep redaction
+ * like any other event data.
+ */
+export interface CaptureScopeOptions {
+  fingerprint?: string[];
+  extra?: Record<string, unknown>;
+}
+
+/**
  * Capture an exception and BLOCK until it is actually sent to Sentry (or the timeout elapses). This
  * is the guarantee the serverless auto-path lacks. Exposed for the rare handler that catches its own
  * error, degrades gracefully, and returns a non-500 — it can still `await captureAndFlush(err)` to be
@@ -96,10 +110,17 @@ export async function captureAndFlush(
   err: unknown,
   flushTimeoutMs: number = DEFAULT_FLUSH_TIMEOUT_MS,
   tags?: Record<string, string>,
+  scopeOptions?: CaptureScopeOptions,
 ): Promise<void> {
   Sentry.withScope((scope) => {
     if (tags) {
       scope.setTags(tags);
+    }
+    if (scopeOptions?.fingerprint) {
+      scope.setFingerprint(scopeOptions.fingerprint);
+    }
+    if (scopeOptions?.extra) {
+      scope.setExtras(scopeOptions.extra);
     }
     Sentry.captureException(err, {
       mechanism: { handled: false, type: 'kids_fun.observed_route' },
