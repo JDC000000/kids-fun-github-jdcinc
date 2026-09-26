@@ -27,14 +27,17 @@
 // (first three characters of the postal code) is the coarsest useful location and is as far as
 // this module goes.
 import { query } from '@/lib/db/client';
+import { shouldRedact } from '@/lib/admin/personal-data';
 
 export interface SmsEngagementRow {
   subscriberId: string;
   /** 0034's database-issued compact alias. Safe to display; a phone number is not. */
   shortRef: string;
   isTest: boolean;
-  /** Forward sortation area only — never the full postal code. Null once purged. */
+  /** Forward sortation area only — never the full postal code. Null once purged, or when redacted. */
   fsa: string | null;
+  /** True when the caller may not see personal data; `fsa` is then NULL regardless of the row. */
+  redacted: boolean;
   status: string;
   /** Weekly messages recorded in sms_send_log, all outcomes. */
   sends: number;
@@ -70,6 +73,12 @@ export interface SmsEngagementOptions {
    * nothing about it. The toggle exists for QA visibility, and defaults to the honest answer.
    */
   includeTest?: boolean;
+  /**
+   * REQUIRED, no default: whether the caller may see personal data (lib/db/admin-guard.ts
+   * canSeePersonalData). A per-subscriber FSA is location data about one household's area, so a
+   * read-only 'viewer' gets it NULLed in SQL. Anything other than an explicit `false` redacts.
+   */
+  redactPersonalData: boolean;
 }
 
 /** Percentage to one decimal, or null when the denominator is zero. Never NaN, never Infinity. */
@@ -79,9 +88,10 @@ function pct(numerator: number, denominator: number): number | null {
 }
 
 export async function getSmsEngagement(
-  options: SmsEngagementOptions = {}
+  options: SmsEngagementOptions
 ): Promise<{ rows: SmsEngagementRow[]; summary: SmsEngagementSummary }> {
   const includeTest = options.includeTest ?? false;
+  const redact = shouldRedact(options);
 
   const rows = await query<{
     subscriber_id: string;
@@ -140,7 +150,9 @@ export async function getSmsEngagement(
       c.id                              AS subscriber_id,
       c.short_ref::text                 AS short_ref,
       c.is_test,
-      nullif(upper(left(regexp_replace(coalesce(c.postal_code, ''), '\\s', '', 'g'), 3)), '') AS fsa,
+      CASE WHEN $2::boolean THEN NULL
+           ELSE nullif(upper(left(regexp_replace(coalesce(c.postal_code, ''), '\\s', '', 'g'), 3)), '')
+      END AS fsa,
       c.status::text                    AS status,
       coalesce(s.sends, 0)::text        AS sends,
       coalesce(s.delivered, 0)::text    AS delivered,
@@ -157,7 +169,7 @@ export async function getSmsEngagement(
     WHERE ($1::boolean OR c.is_test = false)
     ORDER BY c.consent_timestamp DESC
     `,
-    [includeTest]
+    [includeTest, redact]
   );
 
   const mapped: SmsEngagementRow[] = rows.map((r) => {
@@ -168,6 +180,7 @@ export async function getSmsEngagement(
       shortRef: r.short_ref,
       isTest: r.is_test,
       fsa: r.fsa,
+      redacted: redact,
       status: r.status,
       sends: Number(r.sends),
       delivered: Number(r.delivered),

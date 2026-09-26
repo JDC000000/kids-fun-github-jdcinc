@@ -90,7 +90,7 @@ describe.skipIf(!hasDb)('getSmsEngagement', () => {
     await seedSend(id, 5);
     for (const origin of ['direct', 'direct', 'hub', 'hub']) await seedTap(id, a, origin);
 
-    const { rows } = await getSmsEngagement();
+    const { rows } = await getSmsEngagement({ redactPersonalData: false });
     const row = rows.find((r) => r.subscriberId === id)!;
     expect(row.sends).toBe(3);
     expect(row.taps).toBe(4);
@@ -103,13 +103,13 @@ describe.skipIf(!hasDb)('getSmsEngagement', () => {
     const real = await seedSubscriber();
     const test = await seedSubscriber({ isTest: true });
 
-    const def = await getSmsEngagement();
+    const def = await getSmsEngagement({ redactPersonalData: false });
     expect(def.rows.map((r) => r.subscriberId)).toContain(real);
     expect(def.rows.map((r) => r.subscriberId)).not.toContain(test);
 
     // Both present in the same run, so the exclusion is proven to discriminate rather than to
     // return nothing — "the test row is absent" passes vacuously on an empty result.
-    const all = await getSmsEngagement({ includeTest: true });
+    const all = await getSmsEngagement({ includeTest: true, redactPersonalData: false });
     expect(all.rows.map((r) => r.subscriberId)).toContain(real);
     expect(all.rows.map((r) => r.subscriberId)).toContain(test);
   });
@@ -124,7 +124,7 @@ describe.skipIf(!hasDb)('getSmsEngagement', () => {
     await seedTap(real, s1, 'direct');
     for (let i = 0; i < 7; i += 1) await seedTap(test, s2, 'direct');
 
-    const { summary } = await getSmsEngagement();
+    const { summary } = await getSmsEngagement({ redactPersonalData: false });
     expect(summary.picksOffered).toBe(4);
     expect(summary.taps).toBe(1);
   });
@@ -138,7 +138,7 @@ describe.skipIf(!hasDb)('getSmsEngagement', () => {
        VALUES ($1, 'hash', 1, 'weekly', NULL, 'sent', 'delivered', 'test')`,
       [id]
     );
-    const { rows } = await getSmsEngagement();
+    const { rows } = await getSmsEngagement({ redactPersonalData: false });
     const row = rows.find((r) => r.subscriberId === id)!;
     expect(row.sends).toBe(1);
     expect(row.picksOffered).toBe(0);
@@ -147,7 +147,7 @@ describe.skipIf(!hasDb)('getSmsEngagement', () => {
   it('🔴 tap rate is null rather than NaN when nothing was offered', async () => {
     // 0/0. A dashboard showing "NaN%" or "Infinity%" is how a metric silently stops being read.
     const id = await seedSubscriber();
-    const { rows, summary } = await getSmsEngagement();
+    const { rows, summary } = await getSmsEngagement({ redactPersonalData: false });
     const row = rows.find((r) => r.subscriberId === id)!;
     expect(row.picksOffered).toBe(0);
     expect(row.tapRatePct).toBeNull();
@@ -156,7 +156,7 @@ describe.skipIf(!hasDb)('getSmsEngagement', () => {
 
   it('reports the FSA only, never the full postal code, and no phone number anywhere', async () => {
     const id = await seedSubscriber();
-    const { rows } = await getSmsEngagement();
+    const { rows } = await getSmsEngagement({ redactPersonalData: false });
     const row = rows.find((r) => r.subscriberId === id)!;
     expect(row.fsa).toBe('V5K');
     expect(JSON.stringify(row)).not.toContain('0A1');

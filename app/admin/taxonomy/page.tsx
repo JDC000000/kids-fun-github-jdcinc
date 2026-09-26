@@ -15,6 +15,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
+import { canWrite } from '@/lib/db/admin-guard';
 import { ADMIN_CONSOLE_CSS } from '../sources/_lib/console-css';
 import { listRegions, listCategories, listTags, listAliases } from './_lib/data';
 import type { Option } from './_components/fields';
@@ -44,7 +45,7 @@ export default async function AdminTaxonomyPage({
   const grant = await resolveAdminAccess({ surface: 'admin_taxonomy' });
   if (!grant.ok) notFound();
 
-  const canMutate = grant.via === 'session';
+  const canMutate = canWrite(grant.admin.role);
   const [regions, categories, tags, aliases] = await Promise.all([
     listRegions(),
     listCategories(),

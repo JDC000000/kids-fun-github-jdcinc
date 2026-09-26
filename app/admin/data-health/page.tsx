@@ -17,6 +17,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
 import { getDataHealthData } from '@/lib/admin/data-health';
+import { correctionsForDisplay } from '@/lib/admin/dashboard';
+import { canSeePersonalData } from '@/lib/db/admin-guard';
 import { formatTimestampUtc } from '@/lib/admin/format';
 import { SlaTile } from './_components/SlaTile';
 import { CoverageMatrix } from './_components/CoverageMatrix';
@@ -35,7 +37,10 @@ export default async function AdminDataHealthPage() {
     notFound(); // 404 — do not reveal that this route exists to un-gated callers.
   }
 
-  const data = await getDataHealthData();
+  // A read-only 'viewer' gets the correction notes NULLed IN SQL (QA M1); the render guard below
+  // (correctionsForDisplay) is the second line.
+  const redact = !canSeePersonalData(grant.admin.role);
+  const data = await getDataHealthData({ redactPersonalData: redact });
   const nowMs = Date.parse(data.generatedAt);
 
   return (
@@ -59,7 +64,11 @@ export default async function AdminDataHealthPage() {
         <SlaTile sla={data.sla} nowMs={nowMs} />
         <CoverageMatrix coverage={data.coverage} />
         <HealthAlertsPanel alerts={data.alerts} nowMs={nowMs} />
-        <CorrectionsQueue summary={data.correctionsSummary} corrections={data.corrections} nowMs={nowMs} />
+        <CorrectionsQueue
+          summary={data.correctionsSummary}
+          corrections={correctionsForDisplay(data.corrections, { redactPersonalData: redact })}
+          nowMs={nowMs}
+        />
       </div>
 
       <footer className={styles.foot}>

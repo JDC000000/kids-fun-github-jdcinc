@@ -9,6 +9,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../../_lib/gate';
+import { canWrite } from '@/lib/db/admin-guard';
 import { listSourcesForSelect, getStatusStateOptions } from '../_lib/data';
 import { CONFIDENCE_LABELS, COST_STATUSES } from '../_lib/vocab';
 import { ManualListingForm } from '../_components/ManualListingForm';
@@ -26,7 +27,7 @@ export default async function AdminNewListingPage({
   const grant = await resolveAdminAccess({ surface: 'admin_listings_new' });
   if (!grant.ok) notFound();
 
-  const canMutate = grant.via === 'session';
+  const canMutate = canWrite(grant.admin.role);
   const createdId =
     searchParams.flash === 'listing-created' && typeof searchParams.id === 'string' ? searchParams.id : null;
 

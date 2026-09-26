@@ -7,6 +7,7 @@
 // correction_report (0006_provenance_ops.sql): status text CHECK(open|in_review|resolved),
 // resolved_at (previously unused — set here), occurrence_id NOT NULL FK activity_occurrence.
 import { query } from '@/lib/db/client';
+import { shouldRedact, type PersonalDataOptions } from '@/lib/admin/personal-data';
 import { writeAdminAudit, withAdminTransaction, ADMIN_AUDIT_ACTIONS } from '@/lib/admin/audit';
 import type { ResolveInput } from './vocab';
 
@@ -17,6 +18,13 @@ export interface OpenCorrection {
   reporter: string | null;
   issueType: string;
   note: string | null;
+  /**
+   * True when the caller may not see personal data (a read-only 'viewer'). `note` (free text a
+   * member of the public typed — lib/snapshot/policy.ts classes it as PII) and `reporter` (an anon
+   * session / user id) were then NULLed in SQL; `hasNote` still says whether a note exists.
+   */
+  redacted: boolean;
+  hasNote: boolean;
   status: string;
   createdAt: string;
   /** activity_occurrence.activity_name (occurrence always exists — FK NOT NULL). */
@@ -35,6 +43,7 @@ interface OpenCorrectionDbRow {
   reporter: string | null;
   issue_type: string;
   note: string | null;
+  has_note: boolean;
   status: string;
   created_at: Date | string;
   activity_name: string;
@@ -53,10 +62,19 @@ function iso(v: Date | string | null): string | null {
  * The open corrections queue — non-archived, not-yet-resolved reports, oldest first
  * (FIFO triage), joined to their occurrence for the reviewing context the admin needs.
  */
-export async function listOpenCorrections(limit = 100): Promise<OpenCorrection[]> {
+export async function listOpenCorrections(
+  opts: PersonalDataOptions & { limit?: number }
+): Promise<OpenCorrection[]> {
+  const redact = shouldRedact(opts);
+  const limit = opts.limit ?? 100;
   const rows = await query<OpenCorrectionDbRow>(
     `SELECT
-       cr.id, cr.occurrence_id, cr.reporter, cr.issue_type, cr.note, cr.status, cr.created_at,
+       cr.id, cr.occurrence_id,
+       CASE WHEN $2::boolean THEN NULL ELSE cr.reporter END AS reporter,
+       cr.issue_type,
+       CASE WHEN $2::boolean THEN NULL ELSE cr.note END AS note,
+       (coalesce(cr.note, '') <> '') AS has_note,
+       cr.status, cr.created_at,
        o.activity_name,
        o.status_state::text AS occ_status_state,
        o.confidence_label   AS occ_confidence_label,
@@ -67,7 +85,7 @@ export async function listOpenCorrections(limit = 100): Promise<OpenCorrection[]
      WHERE cr.archived_at IS NULL AND cr.status <> 'resolved'
      ORDER BY cr.created_at ASC
      LIMIT $1::int`,
-    [limit]
+    [limit, redact]
   );
   return rows.map((r) => ({
     id: r.id,
@@ -75,6 +93,8 @@ export async function listOpenCorrections(limit = 100): Promise<OpenCorrection[]
     reporter: r.reporter,
     issueType: r.issue_type,
     note: r.note,
+    redacted: redact,
+    hasNote: r.has_note,
     status: r.status,
     createdAt: iso(r.created_at)!,
     activityName: r.activity_name,

@@ -14,11 +14,14 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
+import { canSeePersonalData } from '@/lib/db/admin-guard';
 import {
   getAdminDashboardData,
+  getRecentCorrections,
   STALE_CADENCE_GRACE,
   type IngestionSourceHealth,
-  type RecentCorrection,
+  correctionsForDisplay,
+  type DisplayedCorrection,
   type RunNeedingAttention,
   type StaleSource,
 } from '@/lib/admin/dashboard';
@@ -134,7 +137,7 @@ function AttentionRow({ f, nowMs }: { f: RunNeedingAttention; nowMs: number }) {
   );
 }
 
-function CorrectionRow({ c, nowMs }: { c: RecentCorrection; nowMs: number }) {
+function CorrectionRow({ c, nowMs }: { c: DisplayedCorrection; nowMs: number }) {
   return (
     <tr>
       <td>
@@ -145,7 +148,13 @@ function CorrectionRow({ c, nowMs }: { c: RecentCorrection; nowMs: number }) {
         <span className="badge muted">{c.issueType}</span>
       </td>
       <td className="err-cell">
-        {c.note ? <span>{c.note}</span> : <span className="dim">(no note)</span>}
+        {c.note ? (
+          <span>{c.note}</span>
+        ) : c.redacted && c.hasNote ? (
+          <span className="dim">(note hidden — read-only role)</span>
+        ) : (
+          <span className="dim">(no note)</span>
+        )}
       </td>
       <td>
         <span className={`badge ${c.status === 'resolved' ? 'ok' : c.status === 'in_review' ? 'info' : 'warn'}`}>{c.status}</span>
@@ -190,7 +199,17 @@ export default async function AdminDashboardPage() {
   });
   const { data, kpis } = snapshot.payload;
   const nowMs = Date.parse(data.generatedAt);
-  const { registry, ingestion, analytics, alerts, corrections } = data;
+  const { registry, ingestion, analytics, alerts } = data;
+  // CORRECTION NOTES (QA M1, 2026-09-25). The snapshot is role-independent, so its list carries the
+  // notes. A read-only 'viewer' therefore never renders the snapshot's list: theirs is read LIVE,
+  // with the notes NULLed in SQL (a single LIMITed query — cheap, unlike the rest of this page).
+  // correctionsForDisplay then runs on whichever list is rendered, as the render-layer guard.
+  // Pinned by a real-DB full render: tests/admin/viewer-render-db.test.ts.
+  const redact = !canSeePersonalData(grant.admin.role);
+  const correctionsToRender = redact
+    ? await getRecentCorrections({ redactPersonalData: true })
+    : data.corrections;
+  const corrections = correctionsForDisplay(correctionsToRender, { redactPersonalData: redact });
   const allHealthy = alerts.staleSources.length === 0 && alerts.runsNeedingAttention.length === 0;
   const totalSeries = ingestion.reduce((sum, s) => sum + s.seriesCount, 0);
   const totalOccurrences = ingestion.reduce((sum, s) => sum + s.occurrenceCount, 0);

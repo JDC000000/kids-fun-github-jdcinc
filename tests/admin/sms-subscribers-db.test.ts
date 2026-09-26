@@ -43,7 +43,7 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
   });
 
   it('returns both rows with the columns the page renders', async () => {
-    const mine = (await getSmsSubscribers()).filter((r) => r.phoneNumber === '+16045550188');
+    const mine = (await getSmsSubscribers({ redactPersonalData: false })).filter((r) => r.phoneNumber === '+16045550188');
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ status: 'active', consentMethod: 'web_form', purged: false });
     expect(mine[0].consentTimestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -52,7 +52,7 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
   it('🔴 selects postal_code and birth_years — the two columns Jon asked to see', async () => {
     // These were absent from the SELECT entirely until 2026-09-18. A test that only checked the
     // TypeScript interface would have passed the whole time the query never asked for them.
-    const [mine] = (await getSmsSubscribers()).filter((r) => r.phoneNumber === '+16045550188');
+    const [mine] = (await getSmsSubscribers({ redactPersonalData: false })).filter((r) => r.phoneNumber === '+16045550188');
     expect(mine.postalCode).toBe('V5N 1A1');
     expect(mine.birthYears).toEqual([2019, 2022]);
   });
@@ -60,7 +60,7 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
   it('🔴 hands birth_years back as real numbers, not strings', async () => {
     // int[] round-tripping through node-postgres as ['2019','2022'] would make every age NaN and
     // still render a plausible-looking cell. Asserted at the boundary, like short_ref above.
-    const [mine] = (await getSmsSubscribers()).filter((r) => r.phoneNumber === '+16045550188');
+    const [mine] = (await getSmsSubscribers({ redactPersonalData: false })).filter((r) => r.phoneNumber === '+16045550188');
     for (const y of mine.birthYears ?? []) expect(typeof y).toBe('number');
   });
 
@@ -68,7 +68,7 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
     // lib/retention/sms.ts NULLs all of them in ONE statement. That is what makes the `purged`
     // flag — derived from phone_number alone — authoritative for the two new columns too, rather
     // than an inference the UI is quietly making on its own.
-    for (const r of (await getSmsSubscribers()).filter((r) => r.purged)) {
+    for (const r of (await getSmsSubscribers({ redactPersonalData: false })).filter((r) => r.purged)) {
       expect(r.phoneNumber).toBeNull();
       expect(r.postalCode).toBeNull();
       expect(r.birthYears).toBeNull();
@@ -76,7 +76,7 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
   });
 
   it('🔴 reports an erased row as purged, not as a missing phone number', async () => {
-    const rows = await getSmsSubscribers();
+    const rows = await getSmsSubscribers({ redactPersonalData: false });
     const purged = rows.filter((r) => r.purged);
     expect(purged.length).toBeGreaterThanOrEqual(1);
     for (const r of purged) {
@@ -90,14 +90,14 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
   it('normalises short_ref to a string — pg returns bigint as text', async () => {
     // A bigint silently becoming a JS number is a precision bug that only appears past 2^53, i.e.
     // never in testing and eventually in production. Asserted at the boundary instead.
-    for (const r of await getSmsSubscribers()) {
+    for (const r of await getSmsSubscribers({ redactPersonalData: false })) {
       expect(typeof r.shortRef).toBe('string');
       expect(r.shortRef).toMatch(/^\d+$/);
     }
   });
 
   it('orders newest consent first', async () => {
-    const times = (await getSmsSubscribers())
+    const times = (await getSmsSubscribers({ redactPersonalData: false }))
       .map((r) => r.consentTimestamp)
       .filter((t): t is string => t !== null);
     const sorted = [...times].sort().reverse();
@@ -105,7 +105,7 @@ describe.skipIf(!hasDb)('SMS subscriber list read model', () => {
   });
 
   it('the summary agrees with the rows it was given', async () => {
-    const rows = await getSmsSubscribers();
+    const rows = await getSmsSubscribers({ redactPersonalData: false });
     const s = summariseSubscribers(rows);
     expect(s.total).toBe(rows.length);
     expect(s.active + s.pending + s.paused + s.stopped).toBeLessThanOrEqual(s.total);
@@ -168,7 +168,7 @@ describe.skipIf(!hasDb)('one subscriber\'s full send history', () => {
   it('🔴 shows the LIVE subscriber the history from their earlier, purged signup', () => {
     // This is the ruling. subscriber_id alone answers "what happened to this ROW"; the question
     // the page is for is "what happened to this PERSON", and only phone_hash joins the two.
-    return getSmsSubscriberDetail(ids.liveNew).then((d) => {
+    return getSmsSubscriberDetail(ids.liveNew, { redactPersonalData: false }).then((d) => {
       expect(d).not.toBeNull();
       expect(d!.sends).toHaveLength(2);
       expect(d!.sends.filter((r) => !r.linkedToThisRow)).toHaveLength(1);
@@ -178,7 +178,7 @@ describe.skipIf(!hasDb)('one subscriber\'s full send history', () => {
   it('🔴 shows the PURGED subscriber both rows too — hash recovered from its own log row', () => {
     // The trap this covers: a purged row has phone_number = NULL, so phoneHash() cannot be
     // recomputed for it. The hash is read back off the rows it still owns via subscriber_id.
-    return getSmsSubscriberDetail(ids.purgedOld).then((d) => {
+    return getSmsSubscriberDetail(ids.purgedOld, { redactPersonalData: false }).then((d) => {
       expect(d!.purged).toBe(true);
       expect(d!.subscriber.phoneNumber).toBeNull();
       expect(d!.sends).toHaveLength(2);
@@ -186,7 +186,7 @@ describe.skipIf(!hasDb)('one subscriber\'s full send history', () => {
   });
 
   it('marks which rows belong to the record being viewed', async () => {
-    const d = await getSmsSubscriberDetail(ids.liveNew);
+    const d = await getSmsSubscriberDetail(ids.liveNew, { redactPersonalData: false });
     const own = d!.sends.filter((r) => r.linkedToThisRow);
     expect(own).toHaveLength(1);
     expect(own[0].sendType).toBe('weekly');
@@ -194,12 +194,12 @@ describe.skipIf(!hasDb)('one subscriber\'s full send history', () => {
 
   it('never returns the phone hash in any field', async () => {
     // The salt is global and the keyspace is small, so the hash must not cross this boundary.
-    const d = await getSmsSubscriberDetail(ids.liveNew);
+    const d = await getSmsSubscriberDetail(ids.liveNew, { redactPersonalData: false });
     expect(JSON.stringify(d)).not.toContain(hash);
   });
 
   it('returns null for an id that is not a subscriber', async () => {
-    expect(await getSmsSubscriberDetail('00000000-0000-4000-8000-000000000000')).toBeNull();
+    expect(await getSmsSubscriberDetail('00000000-0000-4000-8000-000000000000', { redactPersonalData: false })).toBeNull();
   });
 });
 

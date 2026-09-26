@@ -13,12 +13,14 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../../_lib/gate';
+import { canSeePersonalData } from '@/lib/db/admin-guard';
 import { ADMIN_CONSOLE_CSS } from '../../sources/_lib/console-css';
 import { formatTimestampUtc } from '@/lib/admin/format';
 import {
   getSmsSubscriberDetail,
   displayChildAges,
   displayPostalCode,
+  REDACTED_TEXT,
   SMS_SEND_HISTORY_LIMIT,
 } from '@/lib/admin/sms-subscribers';
 import {
@@ -51,7 +53,9 @@ export default async function AdminSmsSubscriberDetailPage({
     notFound();
   }
 
-  const detail = await getSmsSubscriberDetail(params.id);
+  // A read-only 'viewer' gets the personal columns NULLed in SQL, and no SMS preview (below).
+  const redact = !canSeePersonalData(grant.admin.role);
+  const detail = await getSmsSubscriberDetail(params.id, { redactPersonalData: redact });
   if (!detail) {
     notFound(); // an id that is not a subscriber gets the same 404 as an un-gated caller
   }
@@ -68,9 +72,14 @@ export default async function AdminSmsSubscriberDetailPage({
 
   // ON DEMAND. The preview loads the whole search catalogue to build one message, so it runs only
   // when an admin actually asks — never on the plain drill-down.
+  //
+  // REFUSED for a viewer: the message is built from the subscriber's postal code and children's
+  // ages, so its picks and area label are personal data by inference — and it loads the whole
+  // catalogue. The refusal is decided here, before any preview work, not by hiding the link.
   const previewRequested = firstParam(searchParams.preview) === '1';
+  const previewRefused = previewRequested && redact;
   let preview: SmsPreviewResult | null = null;
-  if (previewRequested) {
+  if (previewRequested && !previewRefused) {
     preview = await previewWeeklySmsForSubscriber(subscriber.id, now);
     if (preview.status === 'not_eligible') {
       // The module cannot see the consent row; this page can, so it supplies the specific reason.
@@ -84,7 +93,8 @@ export default async function AdminSmsSubscriberDetailPage({
       <div className="adm-head">
         <h1>Subscriber {subscriber.shortRef}</h1>
         <p className="adm-sub">
-          {purged ? 'personal data erased' : subscriber.phoneNumber} · {subscriber.status} ·{' '}
+          {purged ? 'personal data erased' : redact ? REDACTED_TEXT : subscriber.phoneNumber} ·{' '}
+          {subscriber.status} ·{' '}
           consented {formatTimestampUtc(subscriber.consentTimestamp)}
         </p>
       </div>
@@ -140,7 +150,14 @@ export default async function AdminSmsSubscriberDetailPage({
 
       <div className="adm-section">
         <h2>This week’s SMS</h2>
-        {!previewRequested && (
+        {redact && (
+          <p className="adm-note">
+            The SMS preview is not available to a read-only role: the message is built from this
+            subscriber’s postal code and children’s ages, so it would reveal them.
+          </p>
+        )}
+
+        {!previewRequested && !redact && (
           <p>
             <Link
               href={`/admin/sms-subscribers/${subscriber.id}?preview=1`}

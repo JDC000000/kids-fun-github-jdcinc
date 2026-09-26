@@ -11,6 +11,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { resolveAdminAccess } from '../_lib/gate';
+import { canWrite, canSeePersonalData } from '@/lib/db/admin-guard';
 import { listOpenCorrections, getStatusStateOptions } from './_lib/data';
 import { CONFIDENCE_LABELS } from './_lib/vocab';
 import { ResolveForm } from './_components/ResolveForm';
@@ -32,8 +33,11 @@ export default async function AdminCorrectionsPage({
   const grant = await resolveAdminAccess({ surface: 'admin_corrections' });
   if (!grant.ok) notFound();
 
-  const canMutate = grant.via === 'session';
-  const [corrections, statusOptions] = await Promise.all([listOpenCorrections(), getStatusStateOptions()]);
+  const canMutate = canWrite(grant.admin.role);
+  const [corrections, statusOptions] = await Promise.all([
+    listOpenCorrections({ redactPersonalData: !canSeePersonalData(grant.admin.role) }),
+    getStatusStateOptions(),
+  ]);
   const resolved = searchParams.flash === 'correction-resolved';
 
   return (
@@ -104,7 +108,15 @@ export default async function AdminCorrectionsPage({
                     <span className="badge muted">{c.issueType}</span>{' '}
                     <span className={`badge ${c.status === 'in_review' ? 'info' : 'warn'}`}>{c.status}</span>
                   </td>
-                  <td className="err-cell">{c.note ? <span>{c.note}</span> : <span className="dim">(no note)</span>}</td>
+                  <td className="err-cell">
+                    {c.note ? (
+                      <span>{c.note}</span>
+                    ) : c.redacted && c.hasNote ? (
+                      <span className="dim">(note hidden — read-only role)</span>
+                    ) : (
+                      <span className="dim">(no note)</span>
+                    )}
+                  </td>
                   <td>
                     <div className="mono">{c.occStatusState}</div>
                     <div className="dim mono">conf: {c.occConfidenceLabel}</div>

@@ -192,7 +192,7 @@ describe.skipIf(!hasDb)('data-health DB read layer', () => {
     expect(Date.parse(summary.oldestOpenAt as string)).toBeLessThanOrEqual(ids.dbNowMs - 9 * 86_400_000);
 
     // The reused recent-list read surfaces our seeded reports.
-    const recent = await getRecentCorrections();
+    const recent = await getRecentCorrections({ redactPersonalData: false });
     expect(recent.some((c) => c.occurrenceId === ids.occId)).toBe(true);
   });
 });
