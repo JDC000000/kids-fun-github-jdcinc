@@ -87,7 +87,7 @@ export type SmsPreviewResult =
  * reason will go looking for a bug that is not there.
  */
 export function ineligibilityReason(
-  row: Pick<SmsSubscriberListRow, 'status' | 'isTest' | 'purged'>,
+  row: Pick<SmsSubscriberListRow, 'status' | 'isTest' | 'purged' | 'confirmedTimestamp'>,
   sends: readonly Pick<SmsSendLogRow, 'sendType' | 'createdAt'>[],
   now: Date
 ): string {
@@ -96,6 +96,11 @@ export function ineligibilityReason(
   }
   if (row.status !== 'active') {
     return `their status is "${row.status}", and only active subscribers are sent to`;
+  }
+  // P6 (2026-09-24): `loadActiveSubscribers` also requires a recorded JOIN. An active row without
+  // one is reachable (pending → STOP → START) and is deliberately not texted.
+  if (row.confirmedTimestamp == null) {
+    return 'they are active but never confirmed by replying JOIN, and only confirmed subscribers are sent to';
   }
   if (row.isTest) {
     return 'they are marked as a test handset, which the weekly job excludes';

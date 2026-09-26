@@ -375,6 +375,7 @@ describe('sendWelcomeText', () => {
       now: NOW,
       dryRun: false,
       deps: EMPTY_DEPS,
+      loadConsent: async () => ({ status: 'active', confirmedTimestamp: NOW, phoneNumber: '+16045550123' }),
       dispatch: carrierOptOut,
       record: async () => {},
       markStopped: async (id) => {

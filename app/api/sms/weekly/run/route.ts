@@ -108,8 +108,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   // WHY HERE AS WELL AS IN `sendWeeklySmsBulk`. The bulk job carries its own `assertAuditableSend`
   // pre-flight, but SINGLE-SUBSCRIBER MODE BELOW DOES NOT GO THROUGH IT — it calls
   // `sendWeeklySmsForSubscriber` directly, and that function is contractually NEVER-THROWS (the
-  // bulk loop depends on it), so the guard cannot live inside it. Without this line the ad-hoc
-  // path would be the one way to send a real, unauditable text.
+  // bulk loop depends on it), so a THROWING guard cannot live inside it. Without this line the
+  // ad-hoc path would be the one way to send a real, unauditable text. (The CONSENT check, by
+  // contrast, does live inside it — as a non-throwing `refused_consent` result, P6 2026-09-24.)
   //
   // A dry run is exempt for the same reason it is exempt in the job: `dispatchSms` returns
   // `dry_run` before anything is dispatched or logged, so no salt is needed and gating it would
