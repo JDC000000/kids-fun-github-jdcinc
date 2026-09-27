@@ -18,8 +18,12 @@ name: Admin dashboard snapshot refresh
 # kids-fun-admin-snapshot-cron-secret). Until that secret exists this workflow no-ops with a
 # warning, same pattern as migration-drift.yml, so it never sits perpetually red before wiring.
 #
-# SCHEDULE: once daily, 14:00 UTC (~7am Pacific, ahead of a typical morning review) -- revised
-# 2026-09-18 from an initial every-4h guess after real measurement showed that guess was itself
+# SCHEDULE: once WEEKLY, Monday 14:00 UTC (~7am Pacific, ahead of a typical morning review) --
+# revised 2026-09-27 from once daily: Jon asked for fewer runs (5 users, one SMS a week), and
+# it cuts GitHub Actions minutes (the repo went past the Free plan's 2,000 min/month). For a
+# fresh snapshot between Mondays, use the Actions "Run workflow" button (workflow_dispatch).
+# History: daily was itself revised on 2026-09-18 from an initial every-4h guess after real
+# measurement showed that guess was itself
 # expensive: the refresh costs ~265s of real DB work per run (measured 2026-09-18, see below),
 # so 6x/day would cost ~26 min/day of database time regardless of whether anyone ever opens the
 # page -- directly against Jon's own "less expensive" framing. This is a review surface, not a
@@ -31,11 +35,11 @@ name: Admin dashboard snapshot refresh
 # showed source_rows barely moved (2,970,600 vs 2,969,684) while compute time varied
 # significantly -- this is RUN-TO-RUN VARIANCE UNDER LOAD, not just data growth, and variance
 # can breach the ceiling with zero change in data volume. Worth re-measuring after a few real
-# daily runs rather than trusting this one sample.
+# scheduled runs rather than trusting this one sample.
 
 on:
   schedule:
-    - cron: '0 14 * * *'
+    - cron: '0 14 * * 1'       # weekly: Monday 14:00 UTC
   workflow_dispatch: {}
 
 concurrency:
