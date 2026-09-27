@@ -8,7 +8,8 @@ name: Migration Drift (staging)
 #   • on every merge that changes the migration set → checks staging immediately
 #     (goes RED until someone applies the migration — a self-clearing "apply me"
 #      reminder, NOT a broken build; ci.yml is the build gate, this is separate);
-#   • every 6h as a backstop for out-of-band drift (rogue/reverted migrations);
+#   • daily (15:00 UTC) as a backstop for out-of-band drift (rogue/reverted migrations);
+#     reduced from every 6h on 2026-09-27 to cut GitHub Actions minutes;
 #   • on-demand via the Actions "Run workflow" button.
 #
 # It is DETECTION ONLY. It never applies migrations (that stays a deliberate
@@ -21,7 +22,7 @@ name: Migration Drift (staging)
 
 on:
   schedule:
-    - cron: '0 */6 * * *'      # backstop: 4×/day (schedule fires on default branch only)
+    - cron: '0 15 * * *'       # backstop: 1×/day, 15:00 UTC (schedule fires on default branch only)
   push:
     branches: [main]
     paths:

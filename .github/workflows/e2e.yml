@@ -1,0 +1,153 @@
+name: E2E (report-only)
+
+# The report-only e2e lane (Playwright + filter invariants). Moved VERBATIM out of ci.yml on
+# 2026-09-27 so it can run on its own, slower schedule. The job below is byte-identical to the
+# job that used to sit inside ci.yml, including every safety comment, so a few of its comments
+# still read as if it lived there:
+#   • "the `ci` job above" means the `ci` job in ci.yml. That job is still the real merge gate,
+#     and it still runs on every pull_request and on every push to main.
+#   • the remarks about pull requests (why it is "safe to run on pull requests", the PR's
+#     "Some checks were not successful" banner) come from when this lane ran on every PR. It no
+#     longer does. The reasoning still holds if it is ever put back on PRs.
+#
+# SCHEDULE: WEEKLY, Thursday 18:00 UTC, plus on demand via the Actions "Run workflow" button.
+# It is NOT triggered by push or pull_request any more. Why: Jon asked for fewer runs (5 users,
+# one SMS a week), and running this ~20-minute lane on every push/PR pushed the repo past the
+# GitHub Free plan's 2,000 Actions minutes/month (2,024 used in the 30 days to 2026-09-27).
+# Schedules fire on the default branch only.
+on:
+  schedule:
+    - cron: '0 18 * * 4'       # weekly: Thursday 18:00 UTC
+  workflow_dispatch: {}
+
+# Same cancel-in-progress behaviour the job had while it shared ci.yml's concurrency group.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── e2e (Playwright) — REPORT-ONLY LANE, STRUCTURALLY UNABLE TO FAIL THE BUILD ──────
+  #
+  # WHY THIS JOB EXISTS
+  # The Playwright suite had NO CI step at all until now, and the cost of that was
+  # measured rather than theorised: three specs (search-desktop-rail,
+  # search-map-toggle-filters, search-mobile-filter-sheet) went on asserting a "Max price"
+  # filter group long after it was removed from FilterRail.tsx, and nobody noticed —
+  # because nothing ran them. A suite nothing runs is not coverage, it is a liability that
+  # rots quietly and then has to be excavated.
+  #
+  # WHY IT IS NON-BLOCKING (Jon's ruling, 2026-08-16 — Option B of three)
+  # Browser tests are the flakiest thing in this repo: real Chromium, a real Next build, a
+  # real Supabase stack, timing, and cold image pulls. On a pre-launch project with zero
+  # users, letting that class of flake block a merge costs more than it protects. This lane
+  # therefore RESTORES SIGNAL without ever holding the gate — it reports, it uploads a
+  # report a human can actually open, and it stays out of the way. The `ci` job above is
+  # unchanged and remains the real gate; its failure behaviour is untouched by this.
+  e2e:
+    runs-on: ubuntu-latest
+
+    # ⚠️ LOAD-BEARING — THIS LINE IS THE WHOLE POINT OF THE JOB. DO NOT "TIDY IT AWAY".
+    # At JOB level (not step level) continue-on-error forces this job's CONCLUSION to
+    # success, so it cannot block a merge even if someone later adds "e2e" to the branch
+    # protection required-status-checks list. It also covers the failure modes no per-step
+    # guard can reach: an `npm ci` blow-up, a Supabase image pull that dies, or the
+    # timeout-minutes below firing. Delete it and this lane silently becomes a second gate,
+    # which is precisely the outcome the ruling above rejected.
+    continue-on-error: true
+
+    # Bounded so a hung browser or a wedged stack cannot squat a runner for the 6h default.
+    # 20 rather than something tighter because the FIRST run on a cold cache pays for the
+    # whole Supabase image set plus a Chromium download before a single test executes.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # The Supabase CLI is a standalone binary, NOT a devDependency — `npm ci` does not
+      # bring it, and scripts/e2e/setup-local-supabase.sh shells out to `supabase` directly,
+      # so it must be on PATH before that script runs. Pinned rather than floating on
+      # `latest`: the harness was verified end-to-end against this version, and an unpinned
+      # CLI would let a third-party release change what this lane does with no commit here.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.109.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Metamorphic / invariant suite over the combinatorial filter space ──────────────
+      #
+      # WHY IT IS IN THIS JOB RATHER THAN THE `ci` JOB ABOVE. It is commissioned as REPORT-ONLY,
+      # for the same reason the Playwright suite below it is: it asserts properties over a
+      # 752,640-selection space that the product is still actively changing, and a property that
+      # turns out to encode an assumption rather than a rule must not be able to hold a merge
+      # hostage. It runs here, it reports, and it never gates. The `ci` job's `bash scripts/test.sh`
+      # invokes `--project unit` and `--project db` explicitly and therefore cannot pick this lane
+      # up by accident — see the note in vitest.workspace.ts.
+      #
+      # It runs FIRST in this job, before the Supabase stack and the Chromium download, because it
+      # needs neither: it is pure in-memory logic over a generated catalogue, it takes seconds, and
+      # putting it ahead of the expensive setup means its result is in the log even on a run where
+      # a cold image pull later eats the 20-minute budget.
+      #
+      # The `||` fallback is the SAME two-layer guarantee the Playwright step documents below, for
+      # the same reason and with the same reasoning — job-level continue-on-error already forces
+      # this job's conclusion to success, but a red step still paints the run and feeds the PR's
+      # "Some checks were not successful" banner, which reads as "CI broke" for an outcome that is
+      # expected and tolerated here. Do not "tidy away" either layer.
+      - name: Filter invariants (metamorphic, pinned clocks) — report only
+        run: |
+          npm run test:invariants \
+            || echo "::warning title=Filter invariants failed::A metamorphic invariant over the region × age × date × cost × time filter space was violated. This lane is REPORT-ONLY and never blocks the build — the step log above names the exact query, the pinned clock and the invariant."
+
+      # chromium ONLY — playwright.config.ts uses devices['Desktop Chrome'] for every
+      # project (setup / public / authed / a11y, light and dark). Installing the other
+      # engines would add minutes to every run for browsers no spec ever opens.
+      # --with-deps pulls the system libraries headless Chromium needs on a bare runner.
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+
+      # Stands up the LOCAL Supabase stack (loopback-only, using the well-known
+      # `supabase start` demo keys) and writes .env.e2e.local. NO production secret is
+      # involved at any point — this lane deliberately requires none, which is a large part
+      # of why it is safe to run on pull requests from any branch. Docker is present on
+      # ubuntu-latest natively, so the stack needs no docker-in-docker setup.
+      - name: Start local Supabase stack
+        run: npm run e2e:setup
+
+      # run-e2e.sh does the whole dance: next build → next start → health wait →
+      # playwright test (all projects) → tear the server down.
+      #
+      # The `||` fallback is the SECOND half of the non-blocking guarantee, and it is NOT
+      # redundant with the job-level continue-on-error above. That setting makes the job's
+      # CONCLUSION success, but a failed step still paints the run with a red ✗ and feeds
+      # GitHub's "Some checks were not successful" banner on the PR — which reads as "CI
+      # broke" to a reviewer, for whom a red e2e here is an EXPECTED and tolerated outcome.
+      # Swallowing the exit code keeps the ordinary "some tests failed" case honestly green
+      # and puts the truth in the step log and the uploaded report instead of in a banner
+      # that cries wolf. continue-on-error still backs this up for everything this line
+      # cannot catch (a failing setup step, or the job timeout).
+      - name: E2E (Playwright, full suite) — report only
+        run: |
+          bash scripts/e2e/run-e2e.sh \
+            || echo "::warning title=E2E suite failed::Playwright reported failures. This lane is REPORT-ONLY and never blocks the build — open the playwright-report artifact on this run for details."
+
+      # Makes "report" mean something. Without this the only trace of a real regression is a
+      # status icon nobody can drill into; with it, a human opens the HTML report from the
+      # run and sees the failing spec, its screenshot and its trace. if: always() because
+      # the runs worth keeping an artifact from are precisely the ones that failed.
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
