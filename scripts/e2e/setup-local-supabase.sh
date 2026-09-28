@@ -34,9 +34,20 @@ E2E_AUTH_PW="e2e_local_authenticated"
 # local test user). Fixed, PUBLIC, loopback-only value — NOT a production secret.
 E2E_ADMIN_TOKEN="e2e-local-admin-dashboard-token"
 
+# On the shared dev server, `supabase start` publishes the stack's ports on 0.0.0.0 (Docker's
+# default), which bypasses the host firewall and exposes the demo-password Postgres to the internet
+# (this happened: incident 2026-09-25). The server provides a wrapper that starts the stack and
+# immediately rebinds every published port to 127.0.0.1. Use it when present; elsewhere (CI runners,
+# laptops) fall back to plain `supabase start`.
+SAFE_START=/opt/projects/crhq-satellite/documents/security/supabase-start-safe.sh
+
 echo "→ ensuring local Supabase stack is up"
 if ! supabase status >/dev/null 2>&1; then
-  supabase start
+  if [ -f "$SAFE_START" ]; then
+    bash "$SAFE_START" "$ROOT"
+  else
+    supabase start
+  fi
 else
   echo "  (already running)"
 fi
